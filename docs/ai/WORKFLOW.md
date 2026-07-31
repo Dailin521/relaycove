@@ -96,6 +96,7 @@ pwsh ./scripts/verify.ps1 -Mode Full
 
 ## 5. 速度原则
 
+- Codex 全局和项目默认启用 Fast；Fast 只提高服务速度，不替代 reasoning effort 或验证。
 - 开发循环运行 `Fast`，提交前再运行 `Full`。
 - 提示词只引用必要章节，不粘贴整份工程方案。
 - 日志只保留决策和证据，不保存思考过程或完整终端输出。
@@ -107,5 +108,6 @@ pwsh ./scripts/verify.ps1 -Mode Full
 - 主代理继承用户全局配置：`gpt-5.6-sol + xhigh`，负责需求、决策、实现和最终验证。
 - 普通子代理默认使用 `gpt-5.6-terra + high`，处理只读探索、资料压缩和独立测试。
 - `reviewer` 使用 `gpt-5.6-sol + high`，处理正确性、安全性和可靠性复核；极关键任务可在调用时显式提升到 `xhigh`。
-- `claude_second_brain` MCP 默认使用 Claude Opus High，只用于架构反证、盲点检查和关键审查，不用于可由搜索或测试直接确认的事实。
+- `claude_second_brain` MCP 默认使用 Claude Opus XHigh，只用于架构反证、盲点检查和关键审查，不用于可由搜索或测试直接确认的事实。
+- 架构、安全、数据库和协议审查使用 `xhigh`；仅在结论存在重要争议、验收范围明确且已缩小输入时，最终复核可显式使用 `max`。
 - 子代理和 Claude 默认只读。只有主代理拥有实现职责，避免并行修改同一文件。

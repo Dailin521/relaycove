@@ -19,7 +19,7 @@ const defaultModel = normalizeChoice(
 const defaultEffort = normalizeChoice(
   process.env.CLAUDE_SECOND_BRAIN_EFFORT,
   efforts,
-  "high"
+  "xhigh"
 );
 const defaultTimeout = normalizeTimeoutSeconds(
   process.env.CLAUDE_SECOND_BRAIN_TIMEOUT_SECONDS,
@@ -54,6 +54,7 @@ server.registerTool(
     outputSchema: {
       answer: z.string(),
       requested_model: z.string(),
+      requested_effort: z.string(),
       model: z.string().nullable(),
       model_mismatch: z.boolean(),
       cost_usd: z.number().nullable(),
@@ -87,6 +88,7 @@ server.registerTool(
       const structuredContent = {
         answer: result.answer,
         requested_model: result.requestedModel,
+        requested_effort: result.requestedEffort,
         model: result.model,
         model_mismatch: result.modelMismatch,
         cost_usd: result.costUsd,

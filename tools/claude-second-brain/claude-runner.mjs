@@ -9,7 +9,7 @@ const MAX_TIMEOUT_SECONDS = 300;
 
 export const perspectives = ["analysis", "review", "challenge", "brainstorm"];
 export const models = ["opus", "sonnet"];
-export const efforts = ["low", "medium", "high", "xhigh"];
+export const efforts = ["low", "medium", "high", "xhigh", "max"];
 
 const perspectiveInstructions = {
   analysis:
@@ -61,7 +61,7 @@ export function buildClaudeArgs({
   prompt,
   perspective = "analysis",
   model = process.env.CLAUDE_SECOND_BRAIN_MODEL || "opus",
-  effort = process.env.CLAUDE_SECOND_BRAIN_EFFORT || "high",
+  effort = process.env.CLAUDE_SECOND_BRAIN_EFFORT || "xhigh",
   repoAccess = true,
   budgetUsd = readPositiveNumber(
     process.env.CLAUDE_SECOND_BRAIN_MAX_BUDGET_USD,
@@ -191,7 +191,7 @@ export async function consultClaude({
       ? normalizeChoice(
           process.env.CLAUDE_SECOND_BRAIN_EFFORT,
           efforts,
-          "high"
+          "xhigh"
         )
       : effort;
   const args = buildClaudeArgs({
@@ -255,6 +255,7 @@ export async function consultClaude({
           resolve({
             ...result,
             requestedModel,
+            requestedEffort,
             modelMismatch,
             warning: [result.warning, mismatchWarning].filter(Boolean).join("\n") || null
           });

@@ -1,3 +1,8 @@
+service_tier = "fast"
+
+[features]
+fast_mode = true
+
 [agents]
 enabled = true
 max_concurrent_threads_per_session = 3
@@ -23,7 +28,7 @@ enabled_tools = ["consult_claude"]
 default_tools_approval_mode = "auto"
 env = {
   CLAUDE_SECOND_BRAIN_MODEL = "opus",
-  CLAUDE_SECOND_BRAIN_EFFORT = "high",
+  CLAUDE_SECOND_BRAIN_EFFORT = "xhigh",
   CLAUDE_SECOND_BRAIN_MAX_BUDGET_USD = "0.50",
   CLAUDE_SECOND_BRAIN_TIMEOUT_SECONDS = "240"
 }

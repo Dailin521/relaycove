@@ -7,11 +7,12 @@
 MCP 只暴露 `consult_claude`：
 
 - 支持 `analysis`、`review`、`challenge`、`brainstorm` 四种视角。
-- 默认使用 Claude `opus`、`high` effort。
+- 默认使用 Claude `opus`、`xhigh` effort。
+- 架构、安全、数据库和协议审查使用默认 `xhigh`；只有争议较大且范围明确的最终复核才显式使用 `max`。
 - 仓库访问开启时，Claude 只能使用 `Read`、`Glob`、`Grep`。
 - 不开放 Bash、编辑、写文件、Chrome 或会话持久化。
 - 默认单次预算上限 `$0.50`，Claude 调用超时 240 秒；Codex MCP 工具总超时 300 秒。两者都可通过项目配置调整。
-- 结果同时返回请求模型和 Claude CLI 报告的实际模型；两者不一致时设置 `model_mismatch=true`，不得假定别名一定被上游采用。
+- 结果同时返回请求模型、请求 effort 和 Claude CLI 报告的实际模型；模型不一致时设置 `model_mismatch=true`，不得假定别名一定被上游采用。
 
 Claude 的回答是第二意见，不能替代本地构建、测试、人工验收或主代理的证据检查。
 
@@ -47,6 +48,7 @@ npm run smoke
 - 主代理已有方案后的盲点检查
 
 深度审查应指定少量相关文件；接近超时时按子系统拆分调用，不应持续提高单次超时。
+`max` 不是普通审查默认值，调用时仍受单次 `$0.50` 预算和 240 秒超时限制。
 
 不适合调用：
 

@@ -17,9 +17,12 @@ const transport = new StdioClientTransport({
     ...process.env,
     CLAUDE_SECOND_BRAIN_MODEL:
       process.env.CLAUDE_SECOND_BRAIN_SMOKE_MODEL || "opus",
-    CLAUDE_SECOND_BRAIN_EFFORT: "low",
-    CLAUDE_SECOND_BRAIN_MAX_BUDGET_USD: "0.10",
-    CLAUDE_SECOND_BRAIN_TIMEOUT_SECONDS: "60"
+    CLAUDE_SECOND_BRAIN_EFFORT:
+      process.env.CLAUDE_SECOND_BRAIN_SMOKE_EFFORT || "low",
+    CLAUDE_SECOND_BRAIN_MAX_BUDGET_USD:
+      process.env.CLAUDE_SECOND_BRAIN_SMOKE_MAX_BUDGET_USD || "0.10",
+    CLAUDE_SECOND_BRAIN_TIMEOUT_SECONDS:
+      process.env.CLAUDE_SECOND_BRAIN_SMOKE_TIMEOUT_SECONDS || "60"
   }
 });
 
@@ -40,9 +43,10 @@ try {
       prompt:
         "Read AGENTS.md and return exactly its first Markdown heading without the leading # or any other text.",
       perspective: "analysis",
-      effort: "low",
       repo_access: true,
-      timeout_seconds: 60
+      timeout_seconds: Number(
+        process.env.CLAUDE_SECOND_BRAIN_SMOKE_TIMEOUT_SECONDS || 60
+      )
     }
   });
 
@@ -51,6 +55,10 @@ try {
   }
   assert.equal(result.structuredContent.answer.trim(), "Repository Guidelines");
   assert.equal(result.structuredContent.requested_model, "opus");
+  assert.equal(
+    result.structuredContent.requested_effort,
+    process.env.CLAUDE_SECOND_BRAIN_SMOKE_EFFORT || "low"
+  );
   assert.match(result.structuredContent.model, /^claude-/);
   assert.equal(result.structuredContent.model_mismatch, false);
 
@@ -59,6 +67,7 @@ try {
       ok: true,
       tool: "consult_claude",
       requested_model: result.structuredContent.requested_model,
+      requested_effort: result.structuredContent.requested_effort,
       model: result.structuredContent.model,
       model_mismatch: result.structuredContent.model_mismatch,
       cost_usd: result.structuredContent.cost_usd,

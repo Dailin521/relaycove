@@ -41,6 +41,17 @@ test("buildClaudeArgs can disable all repository access", () => {
   assert.equal(args[args.indexOf("--tools") + 1], "");
 });
 
+test("buildClaudeArgs accepts max effort for an explicit final review", () => {
+  const args = buildClaudeArgs({
+    prompt: "Perform a narrow final review of the supplied protocol change.",
+    perspective: "review",
+    effort: "max",
+    repoAccess: true
+  });
+
+  assert.equal(args[args.indexOf("--effort") + 1], "max");
+});
+
 test("parseClaudeResult returns the answer and bounded metadata", () => {
   const stdout = JSON.stringify({
     is_error: false,
