@@ -1,0 +1,29 @@
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 3
+default_subagent_model = "gpt-5.6-terra"
+default_subagent_reasoning_effort = "high"
+
+[agents.explorer]
+description = "Fast read-only explorer for locating code paths and returning concise evidence."
+config_file = "./agents/explorer.toml"
+
+[agents.reviewer]
+description = "Independent reviewer for correctness, security, reliability, and missing tests."
+config_file = "./agents/reviewer.toml"
+
+[mcp_servers.claude_second_brain]
+enabled = true
+required = false
+command = "node"
+args = ["tools/claude-second-brain/server.mjs"]
+startup_timeout_sec = 20.0
+tool_timeout_sec = 300.0
+enabled_tools = ["consult_claude"]
+default_tools_approval_mode = "auto"
+env = {
+  CLAUDE_SECOND_BRAIN_MODEL = "opus",
+  CLAUDE_SECOND_BRAIN_EFFORT = "high",
+  CLAUDE_SECOND_BRAIN_MAX_BUDGET_USD = "0.50",
+  CLAUDE_SECOND_BRAIN_TIMEOUT_SECONDS = "240"
+}

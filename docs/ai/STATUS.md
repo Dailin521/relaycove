@@ -5,10 +5,12 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 0 — 仓库初始化
-- **当前分支成果：** AI 开发工作流已建立，未创建业务代码
+- **当前分支成果：** AI 开发工作流、Claude Second Brain MCP 和分级子代理模型已建立，未创建业务代码
 - **最近验证通过的状态：** 本文件所在提交；使用 `git log -1 --format=%H` 取得准确提交
 - **可构建状态：** `未验证` — `RelayCove.sln` 尚未创建
 - **自动化验证：** `未验证` — 按约定延后到解决方案脚手架完成后
+- **Claude MCP：** `已验证` — 单元测试与真实只读 MCP 调用通过
+- **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
@@ -19,6 +21,7 @@
 - 产品定位、第一版边界和工程落地方案
 - 公开仓库、README、MIT License 与基础 `.gitignore`
 - AI 工作流、任务模板、状态页、关键决策索引与独立审查模板
+- Claude Second Brain MCP；Terra High Explorer 与 Sol High Reviewer
 
 ## 下一任务
 

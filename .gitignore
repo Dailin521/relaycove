@@ -25,6 +25,8 @@ coverage/
 *.nupkg
 *.snupkg
 packages/
+node_modules/
+npm-debug.log*
 
 # Local configuration and secrets
 .env
