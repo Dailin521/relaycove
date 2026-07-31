@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 const DEFAULT_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
 const DEFAULT_TIMEOUT_SECONDS = 240;
@@ -35,22 +34,79 @@ export function normalizeChoice(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback;
 }
 
+export function buildClaudeEnvironment(source = process.env) {
+  const allowedNames = new Set([
+    "ALL_PROXY",
+    "APPDATA",
+    "COMSPEC",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "LOCALAPPDATA",
+    "NODE_EXTRA_CA_CERTS",
+    "NO_PROXY",
+    "PATH",
+    "PATHEXT",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERDOMAIN",
+    "USERNAME",
+    "USERPROFILE"
+  ]);
+  const environment = {};
+
+  for (const [key, value] of Object.entries(source)) {
+    const upperKey = key.toUpperCase();
+    if (
+      upperKey.startsWith("CLAUDE_SECOND_BRAIN_") ||
+      upperKey === "CLAUDE_PROJECT_DIR"
+    ) {
+      continue;
+    }
+    if (
+      allowedNames.has(upperKey) ||
+      upperKey.startsWith("ANTHROPIC_") ||
+      upperKey.startsWith("AWS_") ||
+      upperKey.startsWith("CLAUDE_") ||
+      upperKey.startsWith("GOOGLE_")
+    ) {
+      environment[key] = value;
+    }
+  }
+
+  delete environment.INIT_CWD;
+  delete environment.OLDPWD;
+  delete environment.PWD;
+  return environment;
+}
+
 function readPositiveNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-export function findWorkspaceRoot(startPath = path.dirname(fileURLToPath(import.meta.url))) {
-  let current = path.resolve(startPath);
+export function findWorkspaceRoot(startPath = process.cwd()) {
+  const resolvedStart = path.resolve(startPath);
+  let current = resolvedStart;
 
   while (true) {
-    if (existsSync(path.join(current, ".git")) || existsSync(path.join(current, "AGENTS.md"))) {
+    if (
+      existsSync(path.join(current, ".git")) ||
+      existsSync(path.join(current, "AGENTS.md")) ||
+      existsSync(path.join(current, "CLAUDE.md"))
+    ) {
       return current;
     }
 
     const parent = path.dirname(current);
     if (parent === current) {
-      throw new Error(`Could not locate repository root from ${startPath}`);
+      return resolvedStart;
     }
 
     current = parent;
@@ -63,6 +119,7 @@ export function buildClaudeArgs({
   model = process.env.CLAUDE_SECOND_BRAIN_MODEL || "opus",
   effort = process.env.CLAUDE_SECOND_BRAIN_EFFORT || "xhigh",
   repoAccess = true,
+  workspaceRoot,
   budgetUsd = readPositiveNumber(
     process.env.CLAUDE_SECOND_BRAIN_MAX_BUDGET_USD,
     0.5
@@ -80,21 +137,33 @@ export function buildClaudeArgs({
   if (!efforts.includes(effort)) {
     throw new Error(`Unsupported effort: ${effort}`);
   }
+  if (repoAccess && (!workspaceRoot || !path.isAbsolute(workspaceRoot))) {
+    throw new Error("workspaceRoot must be an absolute path when repository access is enabled");
+  }
 
+  const workspaceInstruction = repoAccess
+    ? `The only target workspace is ${workspaceRoot}. Resolve all repository-relative paths against this directory and ignore project context from any other directory.`
+    : "Repository access is disabled for this consultation.";
   const systemPrompt = [
-    "You are an independent second brain for the RelayCove project.",
-    "Treat the repository as read-only. Never claim you edited files or ran commands you could not run.",
-    "Read AGENTS.md and relevant docs when repository access is enabled.",
+    "You are an independent second brain for the current software project.",
+    "Treat the current workspace as read-only. Never claim you edited files or ran commands you could not run.",
+    workspaceInstruction,
+    "Read AGENTS.md, CLAUDE.md, and relevant project docs from the target workspace when repository access is enabled and those files exist.",
     "Keep the response concise and separate verified facts from assumptions.",
     perspectiveInstructions[perspective]
   ].join("\n");
+  const scopedPrompt = repoAccess
+    ? `Target workspace root: ${workspaceRoot}\n\n${prompt.trim()}`
+    : prompt.trim();
 
   return [
-    prompt.trim(),
     "--print",
+    scopedPrompt,
     "--output-format",
     "json",
     "--no-session-persistence",
+    "--setting-sources",
+    "user",
     "--permission-mode",
     "dontAsk",
     "--no-chrome",
@@ -106,6 +175,7 @@ export function buildClaudeArgs({
     String(budgetUsd),
     "--append-system-prompt",
     systemPrompt,
+    ...(repoAccess ? ["--add-dir", workspaceRoot] : []),
     "--tools",
     repoAccess ? "Read,Glob,Grep" : ""
   ];
@@ -178,6 +248,7 @@ export async function consultClaude({
   workspaceRoot = findWorkspaceRoot(),
   command = process.env.CLAUDE_CLI_COMMAND || "claude"
 }) {
+  const resolvedWorkspaceRoot = findWorkspaceRoot(workspaceRoot);
   const requestedModel =
     model === undefined
       ? normalizeChoice(
@@ -199,7 +270,8 @@ export async function consultClaude({
     perspective,
     model: requestedModel,
     effort: requestedEffort,
-    repoAccess
+    repoAccess,
+    workspaceRoot: resolvedWorkspaceRoot
   });
   const timeout = normalizeTimeoutSeconds(timeoutSeconds) * 1000;
 
@@ -208,8 +280,9 @@ export async function consultClaude({
       command,
       args,
       {
-        cwd: workspaceRoot,
+        cwd: resolvedWorkspaceRoot,
         encoding: "utf8",
+        env: buildClaudeEnvironment(),
         maxBuffer: DEFAULT_MAX_BUFFER_BYTES,
         timeout,
         windowsHide: true
@@ -254,6 +327,7 @@ export async function consultClaude({
 
           resolve({
             ...result,
+            workspaceRoot: resolvedWorkspaceRoot,
             requestedModel,
             requestedEffort,
             modelMismatch,

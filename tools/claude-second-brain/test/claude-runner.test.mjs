@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
+  buildClaudeEnvironment,
   buildClaudeArgs,
   findWorkspaceRoot,
   normalizeChoice,
@@ -9,9 +13,54 @@ import {
   parseClaudeResult
 } from "../claude-runner.mjs";
 
-test("findWorkspaceRoot locates the RelayCove repository", () => {
-  const root = findWorkspaceRoot();
-  assert.match(root, /RelayCove$/i);
+test("findWorkspaceRoot locates the current project instead of the MCP installation", () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), "second-brain-root-"));
+  const nestedPath = path.join(temporaryRoot, "src", "feature");
+
+  try {
+    mkdirSync(nestedPath, { recursive: true });
+    writeFileSync(path.join(temporaryRoot, "AGENTS.md"), "# Test Project\n");
+
+    assert.equal(findWorkspaceRoot(nestedPath), temporaryRoot);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("findWorkspaceRoot falls back to the launch directory without project markers", () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), "second-brain-cwd-"));
+
+  try {
+    assert.equal(findWorkspaceRoot(temporaryRoot), temporaryRoot);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("buildClaudeEnvironment removes inherited project roots", () => {
+  const environment = buildClaudeEnvironment({
+    ANTHROPIC_API_KEY: "test-key",
+    CLAUDE_PROJECT_DIR: "E:\\StaleProject",
+    CLAUDE_SECOND_BRAIN_SMOKE_WORKSPACE: "E:\\StaleProject",
+    CODEX_WORKSPACE_ROOT: "E:\\StaleProject",
+    INIT_CWD: "E:\\PackageSource",
+    OLDPWD: "E:\\PreviousProject",
+    PWD: "E:\\StaleProject",
+    npm_config_local_prefix: "E:\\PackageSource",
+    npm_package_json: "E:\\PackageSource\\package.json",
+    PATH: "C:\\Tools"
+  });
+
+  assert.equal(environment.CLAUDE_PROJECT_DIR, undefined);
+  assert.equal(environment.CLAUDE_SECOND_BRAIN_SMOKE_WORKSPACE, undefined);
+  assert.equal(environment.CODEX_WORKSPACE_ROOT, undefined);
+  assert.equal(environment.INIT_CWD, undefined);
+  assert.equal(environment.OLDPWD, undefined);
+  assert.equal(environment.PWD, undefined);
+  assert.equal(environment.npm_config_local_prefix, undefined);
+  assert.equal(environment.npm_package_json, undefined);
+  assert.equal(environment.ANTHROPIC_API_KEY, "test-key");
+  assert.equal(environment.PATH, "C:\\Tools");
 });
 
 test("buildClaudeArgs limits repository tools to read-only operations", () => {
@@ -21,10 +70,14 @@ test("buildClaudeArgs limits repository tools to read-only operations", () => {
     model: "opus",
     effort: "high",
     repoAccess: true,
+    workspaceRoot: "D:\\CurrentProject",
     budgetUsd: 0.25
   });
 
-  assert.equal(args[0], "Review the synchronization design.");
+  assert.equal(args[0], "--print");
+  assert.match(args[1], /Target workspace root: D:\\CurrentProject/);
+  assert.equal(args[args.indexOf("--add-dir") + 1], "D:\\CurrentProject");
+  assert.equal(args[args.indexOf("--setting-sources") + 1], "user");
   assert.equal(args[args.indexOf("--tools") + 1], "Read,Glob,Grep");
   assert.equal(args[args.indexOf("--permission-mode") + 1], "dontAsk");
   assert.equal(args[args.indexOf("--max-budget-usd") + 1], "0.25");
@@ -35,7 +88,8 @@ test("buildClaudeArgs limits repository tools to read-only operations", () => {
 test("buildClaudeArgs can disable all repository access", () => {
   const args = buildClaudeArgs({
     prompt: "Compare two supplied options.",
-    repoAccess: false
+    repoAccess: false,
+    workspaceRoot: undefined
   });
 
   assert.equal(args[args.indexOf("--tools") + 1], "");
@@ -46,10 +100,23 @@ test("buildClaudeArgs accepts max effort for an explicit final review", () => {
     prompt: "Perform a narrow final review of the supplied protocol change.",
     perspective: "review",
     effort: "max",
-    repoAccess: true
+    repoAccess: true,
+    workspaceRoot: "D:\\CurrentProject"
   });
 
   assert.equal(args[args.indexOf("--effort") + 1], "max");
+});
+
+test("buildClaudeArgs requires an absolute workspace for repository access", () => {
+  assert.throws(
+    () =>
+      buildClaudeArgs({
+        prompt: "Review this repository.",
+        repoAccess: true,
+        workspaceRoot: "relative/path"
+      }),
+    /workspaceRoot must be an absolute path/
+  );
 });
 
 test("parseClaudeResult returns the answer and bounded metadata", () => {

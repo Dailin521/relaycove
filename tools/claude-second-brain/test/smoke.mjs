@@ -7,12 +7,24 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const toolDir = path.resolve(testDir, "..");
-const serverPath = path.join(toolDir, "server.mjs");
+const serverPath =
+  process.env.CLAUDE_SECOND_BRAIN_SMOKE_SERVER_PATH ||
+  path.join(toolDir, "server.mjs");
+const workspaceRoot =
+  process.env.CLAUDE_SECOND_BRAIN_SMOKE_WORKSPACE ||
+  path.resolve(toolDir, "..", "..");
+const expectedAnswer =
+  process.env.CLAUDE_SECOND_BRAIN_SMOKE_EXPECTED_ANSWER ||
+  process.env.CLAUDE_SECOND_BRAIN_SMOKE_EXPECTED_HEADING ||
+  "RELAYCOVE";
+const smokePrompt =
+  process.env.CLAUDE_SECOND_BRAIN_SMOKE_PROMPT ||
+  "Read the target workspace AGENTS.md. Return exactly RELAYCOVE if it contains the planned path src/RelayCove.Client; otherwise return exactly WRONG_WORKSPACE.";
 
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [serverPath],
-  cwd: toolDir,
+  cwd: workspaceRoot,
   env: {
     ...process.env,
     CLAUDE_SECOND_BRAIN_MODEL:
@@ -40,8 +52,7 @@ try {
   const result = await client.callTool({
     name: "consult_claude",
     arguments: {
-      prompt:
-        "Read AGENTS.md and return exactly its first Markdown heading without the leading # or any other text.",
+      prompt: smokePrompt,
       perspective: "analysis",
       repo_access: true,
       timeout_seconds: Number(
@@ -53,7 +64,11 @@ try {
   if (result.isError) {
     throw new Error(`MCP tool returned an error: ${JSON.stringify(result)}`);
   }
-  assert.equal(result.structuredContent.answer.trim(), "Repository Guidelines");
+  assert.equal(
+    path.resolve(result.structuredContent.workspace_root),
+    path.resolve(workspaceRoot)
+  );
+  assert.equal(result.structuredContent.answer.trim(), expectedAnswer);
   assert.equal(result.structuredContent.requested_model, "opus");
   assert.equal(
     result.structuredContent.requested_effort,

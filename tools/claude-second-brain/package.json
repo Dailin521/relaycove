@@ -1,9 +1,9 @@
 {
   "name": "@relaycove/claude-second-brain-mcp",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "Read-only MCP bridge from Codex to the local Claude Code CLI.",
+  "description": "Project-agnostic read-only MCP bridge from Codex to the local Claude Code CLI.",
   "engines": {
     "node": ">=20"
   },

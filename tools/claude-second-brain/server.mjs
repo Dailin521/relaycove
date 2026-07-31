@@ -28,8 +28,8 @@ const defaultTimeout = normalizeTimeoutSeconds(
 
 const server = new McpServer(
   {
-    name: "relaycove-claude-second-brain",
-    version: "0.1.0"
+    name: "claude-second-brain",
+    version: "0.3.0"
   },
   {
     instructions:
@@ -42,7 +42,7 @@ server.registerTool(
   {
     title: "Consult Claude Second Brain",
     description:
-      "Ask the local Claude Code CLI for an independent read-only analysis of RelayCove. Use for architecture tradeoffs, challenge passes, and critical reviews—not trivial questions. Repository access exposes only Read, Glob, and Grep.",
+      "Ask the local Claude Code CLI for an independent read-only analysis of the current project. Use for architecture tradeoffs, challenge passes, and critical reviews—not trivial questions. Repository access exposes only Read, Glob, and Grep.",
     inputSchema: {
       prompt: z.string().min(1).max(40_000),
       perspective: z.enum(perspectives).default("analysis"),
@@ -53,6 +53,7 @@ server.registerTool(
     },
     outputSchema: {
       answer: z.string(),
+      workspace_root: z.string(),
       requested_model: z.string(),
       requested_effort: z.string(),
       model: z.string().nullable(),
@@ -87,6 +88,7 @@ server.registerTool(
       });
       const structuredContent = {
         answer: result.answer,
+        workspace_root: result.workspaceRoot,
         requested_model: result.requestedModel,
         requested_effort: result.requestedEffort,
         model: result.model,
