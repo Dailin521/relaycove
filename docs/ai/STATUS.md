@@ -6,17 +6,17 @@
 
 - **当前阶段：** 阶段 8 — production 账户组合与聊天 UI
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply，以及消息复制/日期分割已完成
-- **最近验证通过的状态：** 消息复制与日期分割最终代码提交 `ab56431` 已通过全部门禁；完成记录待仅快进到绿色集成分支
+- **最近验证通过的状态：** 消息复制与日期分割代码 `ab56431`、完成记录 `c55cebb` 已仅快进到远端绿色集成分支
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — 最终 Fast 与两次 Full、format、766 项测试、Client 555/555；日期/presentation/当前快照 Copy/Clipboard writer 关键集每轮 8 项、Release 连续 10 轮 80/80；真实 Release WPF 非零窗口句柄/响应/单实例/精确进程清理、model drift、八项目漏洞审计与空白检查通过；真实 Clipboard 内容、登录视觉、VPS、双客户端与 Narrator 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
-- **最近 Claude 调用：** `已验证` — Reply 客户端闭环 #64 MCP 当前差异只读 review 因认证源优先级失败，无 job、模型、费用或结论；失败不冒充通过，Codex 继续实现与验证
+- **最近 Claude 调用：** `已验证` — 安全链接识别 #65 MCP 只读 challenge 因认证源优先级失败，无 job、模型、费用或结论；失败不冒充通过，Codex 继续实现与验证
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
-- 消息复制与日期分割切片已完成并等待仅快进绿色集成；随后继续阶段 8 链接识别或新消息分割线。`@用户` 仍需普通用户目录协议，不读取 VPS 配置。
+- 阶段 8 有界 HTTP(S) 链接识别、当前快照授权与显式浏览器打开任务进行中；不读取 VPS 配置。
 
 ## 已完成
 
