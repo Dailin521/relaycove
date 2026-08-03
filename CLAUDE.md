@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 仓库现状
 
-RelayCove 已完成**可构建工程骨架**：`RelayCove.sln` 包含 Client、Server、Shared、Updater 四个源项目和四个镜像 xUnit 测试项目。当前只有最小启动入口与程序集基线测试，尚未实现登录、消息、同步、通知等业务功能。
+RelayCove 已完成**可构建工程骨架与认证存储基线**：`RelayCove.sln` 包含 Client、Server、Shared、Updater 四个源项目和四个镜像 xUnit 测试项目；Server 已有认证共享契约、Users/RefreshTokens SQLite 迁移、密码与 token 哈希服务，但尚未实现可调用的登录、消息、同步、通知等业务端点。
 
 统一验证脚本会真实执行还原、构建和测试；只有实际运行成功的模式才能标成通过。当前阶段、绿色提交和下一任务以 `docs/ai/V1_EXECUTION.md`、`docs/ai/STATUS.md` 与活动任务为准，不要依赖历史聊天。
 

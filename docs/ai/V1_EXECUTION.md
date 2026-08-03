@@ -7,15 +7,15 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M1
-CurrentStage: 阶段 1
+CurrentStage: 阶段 2
 ActiveTask: docs/ai/tasks/2026-08-03-stage-2-auth-storage.md
-TaskStatus: running
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: e5ea2174e915cac5a79d152efa2921d223fb3737
+LatestGreenCodeCommit: 6b0c85e35cb3ed56f58646b569908a8d61958876
 LatestGreenIntegrationCommit: 0e5eefb0c44cdb024e4e455ff91b3eb542adfa8e
-NextAction: 固定认证存储候选 ReviewHead 并执行一次 Claude/Codex 独立复核
-ClaudeCalls: 12（软上限 24，硬上限 30）
-ClaudeCostUsd: 1.67582775 confirmed；另有八次失败/中断调用费用 unavailable
+NextAction: 完成认证存储交接提交，仅快进本地集成头，然后启动登录/refresh/current-user 最小纵向切片
+ClaudeCalls: 15（软上限 24，硬上限 30）
+ClaudeCostUsd: 4.0273085 confirmed；另有十次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -32,7 +32,7 @@ RequiredUserGate: none
 | 里程碑 | 状态 | 当前证据 | 下一出口 |
 | --- | --- | --- | --- |
 | M0 | `completed` | 同步契约、`DEC-003`、解决方案和真实 Fast/Full 验证均通过 | 已进入 M1 |
-| M1 | `running` | 可构建骨架与认证共享契约（含 `DEC-004`）已完成；认证存储任务已开始 | 认证、会话、权限、文字消息、历史与 SignalR 形成纵向闭环 |
+| M1 | `running` | 可构建骨架、认证共享契约（`DEC-004`）与认证存储/密码哈希（`DEC-005`）已完成 | 认证、会话、权限、文字消息、历史与 SignalR 形成纵向闭环 |
 | M2 | `pending` | 尚未开始 | Internal Alpha 验收证据完整 |
 | M3 | `pending` | 尚未开始 | Beta 验收证据完整 |
 | M4 | `pending` | 尚未开始 | RC 自动化、包与发布材料完整 |
@@ -43,7 +43,7 @@ RequiredUserGate: none
 ## 集成与绿色状态
 
 - `agent/v1-integration` 是本地最新绿色集成头；任务分支只有完成验证和交接提交后，才允许仅快进该分支。
-- 当前任务代码检查点 `b1da3ea38678ed85a6e59cd9566879d3f7b0ee92` 已通过 Fast、Full、4 个测试、负向验证与进程烟测；任务完成后才允许仅快进集成头。
+- 当前认证存储代码检查点 `6b0c85e35cb3ed56f58646b569908a8d61958876` 已通过 Fast、Full、41 项测试、迁移/依赖审计与 Claude 独立复核；完成交接提交后才允许仅快进集成头。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 未经用户明确授权，不 push、不合并 `main`、不创建 PR/Tag/Release、不部署，也不删除远端分支。
 
@@ -63,9 +63,12 @@ RequiredUserGate: none
 | 10 | 2026-08-03 | 认证存储 | 只读 CLI challenge | Opus / XHigh | 仓库限域 CLI 在 300 秒外层上限被截断，无终局结果 | `unavailable` |
 | 11 | 2026-08-03 | 认证存储 | 无仓库 MCP challenge | Opus / XHigh | 已提供仓库事实但仍在 300 秒 MCP 上限被截断，无结构化结果 | `unavailable` |
 | 12 | 2026-08-03 | 认证存储 | 无工具 CLI challenge | Opus / XHigh | 实际 `claude-opus-5`、mismatch=`false`、提供事实对应 `ChallengeHead=6b821f1e9ba23b005630a3781fd407737e579684`；`REVISE`，有效发现纳入 `DEC-005` | `$0.3419475` |
+| 13 | 2026-08-03 | 认证存储 | 只读 CLI 候选 review | Opus / XHigh | `ReviewHead=134fea6ceca3ec40aa8e5ce7e35a66eb1ba83d9a`；600 秒外层上限前无终局结果，本地降级复核发现并修复时间精度、CHECK 与用户名不变量缺口 | `unavailable` |
+| 14 | 2026-08-03 | 认证存储 | 最终 MCP review | Opus / XHigh | `claude_second_brain` 接单后因 wrapper 认证源优先级导致 claude.ai connector 被禁用，未返回结构化模型、workspace 或费用 | `unavailable` |
+| 15 | 2026-08-03 | 认证存储 | safe-mode 只读 CLI 最终 review | Opus / XHigh | 显式工作目录 `E:\WorkSpace\RelayCove`，工具限于 `Read/Glob/Grep`；实际 `claude-opus-5`、请求模型无偏差，`Base=0e5eefb..ReviewHead=6b0c85e`；耗时 `782578 ms`，`PASS`，无阻塞发现 | `$2.35148075` |
 
-- 调用计数：`12 / 24 soft / 30 hard`。
-- 已确认费用合计：`$1.67582775`；其余八次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`15 / 24 soft / 30 hard`。
+- 已确认费用合计：`$4.0273085`；其余十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - Claude 恢复可用后，每次调用必须记录返回的 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；达到调用或费用硬上限时降级为 Codex 独立复核，不停止开发。
 
 ## 阻塞与用户 Gate

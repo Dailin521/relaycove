@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 2 — 建立用户与 refresh token 持久化安全基线
-- **状态：** 进行中（候选验证完成，等待独立复核）
+- **状态：** 已完成
 - **基准提交：** `0e5eefb0c44cdb024e4e455ff91b3eb542adfa8e`
 - **工作分支：** `agent/stage-2-auth-storage`
 - **相关方案章节：** `RelayCove_工程落地方案.md` 第 3.2、5.4、7.1、8.1、11.1、11.2、18.4、19.4、阶段 2；`DEC-001`、`DEC-004`、`DEC-005`
@@ -67,7 +67,7 @@
 - [x] RefreshTokens 只有 43 字符 `TokenHash`，SHA-256 结果稳定且唯一，非法长度被 CHECK 拒绝，User 删除可清理其 Token。
 - [x] 同一密码两次 hash 不同，正确/错误/畸形验证与 dummy verify 不泄漏异常，并以本地结果保留 `SuccessRehashNeeded` 语义。
 - [x] Server 运行时依赖不包含 Design 包资产；Shared 不新增依赖；包版本与官方证据一致且漏洞审计无已知漏洞。
-- [ ] Claude challenge、Fast、Full、迁移 up/down、文件白名单、`git diff --check` 和候选独立复核通过或按规则如实降级记录。
+- [x] Claude challenge、Fast、Full、迁移 up/down、文件白名单、`git diff --check` 和候选独立复核通过或按规则如实降级记录。
 
 ### 验证命令
 
@@ -113,13 +113,13 @@ Fast 后创建代码检查点，Full 后固定 ReviewHead 做候选复核；不�
 | --- | --- | --- |
 | `已验证` | 基准 `pwsh ./scripts/verify.ps1 -Mode Fast` | Debug 0 警告、0 错误；Shared 9 项，Client/Server/Updater 各 1 项，共 12 项通过 |
 | `已验证` | Claude challenge | MCP #9/#11 在 300 秒上限无结果，CLI #10 也被外层上限截断；无工具 CLI #12 以实际 `claude-opus-5` / XHigh 完成，费用 `$0.3419475`，结论 `REVISE`；`ChallengeHead=6b821f1e9ba23b005630a3781fd407737e579684` 且调用前后工作树干净 |
-| `已验证` | 实现期 Fast | Debug 0 警告、0 错误；Server 28、Shared 9、Client/Updater 各 1，共 40 项测试通过 |
+| `已验证` | 最终 Fast | `ReviewHead=6b0c85e`：Debug 0 警告、0 错误；Server 30、Shared 9、Client/Updater 各 1，共 41 项测试通过 |
 | `已验证` | `dotnet ef migrations list` | 工具构建通过并列出唯一 `InitialAuthenticationStorage` 迁移；未对开发数据库执行更新 |
 | `已验证` | 依赖与发布审计 | 原生 SQLite 固定 `3.53.3` 后 8 个项目无已知漏洞；Server publish 的 deps 不含 EF Design，包含安全原生库 |
-| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full` | `ReviewHead=e5ea2174e915cac5a79d152efa2921d223fb3737`：format、Release 构建、40 项测试和 `git diff --check` 通过，0 警告、0 错误 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full` | `ReviewHead=6b0c85e`：format、Release 构建、41 项测试和 `git diff --check` 通过，0 警告、0 错误 |
 | `已验证` | SQLite migration up/down 与模型漂移 | Server 测试在真实临时 SQLite 文件上调用 `MigrateAsync` 与 `IMigrator.MigrateAsync("0")`，表/列、约束、级联和 `HasPendingModelChanges=false` 均通过 |
 | `未验证` | 当前分支后台进程烟测 | `Start-Process`/停止脚本被本机命令策略拒绝且未执行；M0 已验证 Server 监听，本任务以 Release 构建、发布与迁移测试覆盖新增路径，且开发 DB 文件不存在 |
-| `未验证` | 候选独立复核 | 待固定 ReviewHead 后执行 |
+| `已验证` | 候选独立复核 | 早期候选 CLI #13 在 600 秒无终局结果；最终 MCP #14 因 wrapper 的认证源/connector 冲突失败；随后在显式只读 `Read/Glob/Grep`、safe mode 与 `E:\WorkSpace\RelayCove` 工作目录下执行 CLI #15，实际 `claude-opus-5` / XHigh，耗时约 13 分钟、费用 `$2.35148075`，对 `Base=0e5eefb..ReviewHead=6b0c85e` 返回 `PASS`，无阻塞发现 |
 
 ### 文件范围
 
@@ -130,7 +130,7 @@ Fast 后创建代码检查点，Full 后固定 ReviewHead 做候选复核；不�
 ### 决策与限制
 
 - 决策：challenge 后采用 ASCII 登录标识、固定 UTC/GUID 文本、hash-only refresh token、显式 IdentityV3 参数和显式迁移应用边界；详见 `DEC-005`。
-- 已知限制：本任务不提供任何可调用认证端点，也不证明 Token 签发、会话轮换、WAL/备份或真实 Linux 迁移安全性；当前分支后台进程烟测受命令策略限制未重复执行。
+- 已知限制：本任务不提供任何可调用认证端点，也不证明 Token 签发、会话轮换、WAL/备份或真实 Linux 迁移安全性；当前分支后台进程烟测受命令策略限制未重复执行。Claude 复核另指出 `UpdatedAt` 推进与原始/哈希 token 同为 43 字符导致的类型误用风险应在下一端点切片优先封装和验证。
 
 ### 下一步
 
