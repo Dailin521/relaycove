@@ -130,6 +130,11 @@ public sealed class MessageEndpointTests(
             request with { Content = "different payload" });
         await AssertErrorAsync(conflictResponse, HttpStatusCode.Conflict, ApiErrorCodes.IdempotencyKeyReuse);
 
+        using var differentSenderResponse = await adminClient.PostAsJsonAsync(
+            "/api/messages",
+            request with { Content = "same client key from a different sender" });
+        Assert.Equal(HttpStatusCode.Created, differentSenderResponse.StatusCode);
+
         var concurrentRequest = request with { ClientMessageId = Guid.NewGuid(), Content = "concurrent" };
         var firstTask = memberClient.PostAsJsonAsync("/api/messages", concurrentRequest);
         var secondTask = memberClient.PostAsJsonAsync("/api/messages", concurrentRequest);
@@ -163,7 +168,7 @@ public sealed class MessageEndpointTests(
 
         await using var scope = factory.Services.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<RelayCoveDbContext>();
-        Assert.Equal(2, await dbContext.Messages.CountAsync(message => message.ConversationId == conversation.Id));
+        Assert.Equal(3, await dbContext.Messages.CountAsync(message => message.ConversationId == conversation.Id));
         Assert.Equal(1, await dbContext.Messages.CountAsync(message =>
             message.SenderId == memberId && message.ClientMessageId == concurrentRequest.ClientMessageId));
         Assert.DoesNotContain(
