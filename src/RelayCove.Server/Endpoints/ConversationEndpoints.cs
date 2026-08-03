@@ -17,6 +17,9 @@ public static class ConversationEndpoints
         group.MapPost(string.Empty, CreateAsync);
         group.MapGet("/{conversationId:guid}", GetAsync);
         group.MapGet("/{conversationId:guid}/members", ListMembersAsync);
+        group.MapGet(
+            "/{conversationId:guid}/mention-candidates",
+            ListMentionCandidatesAsync);
         group.MapPost("/{conversationId:guid}/members", UpsertMemberAsync);
         group.MapDelete("/{conversationId:guid}/members/{userId:guid}", RemoveMemberAsync);
         return endpoints;
@@ -94,6 +97,37 @@ public static class ConversationEndpoints
         }
 
         var result = await queryService.ListMembersAsync(actorUserId, conversationId, cancellationToken);
+        return result.Status == ConversationOperationStatus.Success
+            ? Results.Ok(result.Value)
+            : ConversationError(context, result.Status);
+    }
+
+    private static async Task<IResult> ListMentionCandidatesAsync(
+        Guid conversationId,
+        [FromQuery] string? query,
+        [FromQuery] int? limit,
+        HttpContext context,
+        MentionCandidateQueryValidator validator,
+        MentionCandidateQueryService queryService,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetActorUserId(context, out var actorUserId))
+        {
+            return AuthenticationRequired(context);
+        }
+
+        var errors = validator.Validate(query, limit);
+        if (errors.Count > 0)
+        {
+            return ValidationError(context, errors);
+        }
+
+        var result = await queryService.ListAsync(
+            actorUserId,
+            conversationId,
+            query!,
+            limit ?? MentionCandidateQueryValidator.DefaultLimit,
+            cancellationToken);
         return result.Status == ConversationOperationStatus.Success
             ? Results.Ok(result.Value)
             : ConversationError(context, result.Status);

@@ -480,3 +480,15 @@
 - **理由：** selection 冻结区分“用户打开时尚未读”与“当前数据库已读”，避免 UI 回执反过来抹掉自己的定位依据；分页证明把有界加载与精确 UX 连接起来，阻止 History/Around 缺口造成错误标记。复用现有事务、generation 和 presentation，不新增持久状态，也不会在重启后保留陈旧 UI 标记。
 - **影响：** Client 扩展无 schema 的本地页 outcome、selection/presenter 和 WPF 行模板；不改 Shared/Server 协议、SQLite schema/migration、消息合并、通知或依赖。超出当前加载范围且尚未被分页证明的边界暂不显示；真实登录、VPS/双客户端与 Narrator 保留到 M5 Gate。
 - **来源：** 工程落地方案第 9.2–9.4、12.3、12.6–12.8、阶段 8；`DEC-026`、`DEC-027`、`DEC-034`；`docs/ai/tasks/2026-08-04-stage-8-new-message-divider.md`；最终 Fast/两次 Full 788 项、Client 577 项、cache/shell/presenter 关键集 520/520、真实 Release WPF 响应窗口/单实例/精确清理、model drift、八项目漏洞审计与空白检查。Claude #66 因认证源优先级失败，无结论；Codex 固定差异、自审与本机门禁为依据。
+
+### DEC-040：会话作用域提及候选与发送授权同构查询
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** Shared、服务端消息存储和 `DEC-010/035` 已支持最多 20 个不可变 `MentionUserIds`，发送事务也会验证 Public 目标为活跃用户、Private/Direct 目标为活跃成员，但普通客户端没有安全获得这些 ID 的协议。复用管理员用户响应会泄露不必要的管理员/禁用等状态；复用 `/members` 会破坏 Public 稳定类型冲突契约；开放无界全局用户目录又会把聊天功能扩大成新的枚举面。
+- **决策：** 新增认证的 `GET /api/conversations/{conversationId}/mention-candidates`，只接受 1–64 位 ASCII 用户名字符前缀和默认 20、范围 1–50 的 limit。响应只包含会话 ID、`UserId/UserName/DisplayName` 候选与 `HasMore`；候选和响应 `ToString()` 全量脱敏，不返回密码/哈希、管理员/禁用、在线时间、成员角色/已读或头像。用户名是唯一可插入 token，昵称只用于展示；本切片不提供昵称/模糊搜索或全局目录。
+- **决策：** 候选 SQL 自身同时约束当前 actor 活跃、会话未删除且按消息访问规则可见、candidate 活跃，以及 Public 为任意活跃用户、Private/Direct 为当前成员；该规则与 `MessageCommandService.AreMentionsAccessibleAsync` 同构。规范用户名以 invariant-uppercase 匹配，`LIKE ... ESCAPE '\\'` 把合法 `_` 当作字面字符；按 `NormalizedUserName, UserId` 稳定排序，读取 `limit+1` 后截断并生成 `HasMore`。只有候选 SQL 返回零行时才执行同一可见性查询，区分授权空 200 与未知/删除/撤权 403；正结果不会先进行一个可与候选读取分离的宽松授权检查。
+- **决策：** 允许返回当前用户，因为发送端“当前可访问正常用户”契约本身允许自提及；客户端可在 UX 层降低或隐藏，但不得制造服务端拒绝的伪规则。查询和用户名/昵称不进入应用日志或错误详情；actor/conversation ID 继续作为现有授权审计元数据。SQLite busy/locked 继续由统一错误中间件映射稳定 503。
+- **理由：** 会话作用域 endpoint 同时覆盖 Public 和成员型会话而不改变 `/members`，且候选查询自身绑定授权，避免“先授权、后目录查询”之间把撤权后的数据当成当前结果。限制字段、前缀和结果量把必要的普通用户发现能力压缩到 `@用户` 的实际用途；发送事务仍是最终授权真源，可拒绝搜索后发生的禁用或撤权。
+- **影响：** Shared 增加两个向后兼容响应 record，Server 增加无 schema 的 validator/query service/GET endpoint；不改数据库、迁移、现有成员/消息协议、发送验证、客户端或依赖。客户端候选传输、token 编辑语义和 durable 非空提及发送留在下一切片。
+- **来源：** 工程落地方案第 8.3、10.4、12.1–12.3、12.6–12.8、阶段 8；`DEC-009`、`DEC-010`、`DEC-035`；`docs/ai/tasks/2026-08-04-stage-8-mention-candidates.md`；Fast 807 项与 Shared/validator/真实 HTTP/SQLite endpoint 19 项初检。Claude #67 因认证源优先级失败，无结论；Codex 威胁建模、固定差异与本机门禁为依据。
