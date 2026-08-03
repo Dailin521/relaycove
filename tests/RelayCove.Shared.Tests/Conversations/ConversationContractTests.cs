@@ -47,6 +47,9 @@ public sealed class ConversationContractTests
         Assert.Equal(["conversations", "complete"], document.RootElement.EnumerateObject().Select(property => property.Name));
         Assert.True(roundTripped!.Complete);
         Assert.Equal(conversation, Assert.Single(roundTripped.Conversations));
+        Assert.DoesNotContain(conversation.Name, response.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Conversations = [REDACTED]", response.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Complete = True", response.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]
