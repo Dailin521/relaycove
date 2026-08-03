@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 1
-ActiveTask: none（下一个任务尚未创建）
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-1-auth-contracts.md
+TaskStatus: running
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: b1da3ea38678ed85a6e59cd9566879d3f7b0ee92
-LatestGreenIntegrationCommit: 1dd6eb08c1f839bf651a433e9dc647347ef68469
-NextAction: 创建 M1 共享协议最小纵向切片任务
+LatestGreenIntegrationCommit: c1f7020f2eb23867ec089d3328ab3cd6645fd5df
+NextAction: 实现并验证 Login DTO、稳定 API 错误 envelope、敏感字段脱敏与 DEC-004
 ClaudeCalls: 2（软上限 24，硬上限 30）
 ClaudeCostUsd: unavailable（两次失败调用均未返回 cost_usd，不能推定为 0）
 Blocker: none
@@ -32,7 +32,7 @@ RequiredUserGate: none
 | 里程碑 | 状态 | 当前证据 | 下一出口 |
 | --- | --- | --- | --- |
 | M0 | `completed` | 同步契约、`DEC-003`、解决方案和真实 Fast/Full 验证均通过 | 已进入 M1 |
-| M1 | `pending` | 可构建骨架已就绪，尚未创建首个协议任务 | 认证、会话、权限、文字消息、历史与 SignalR 形成纵向闭环 |
+| M1 | `running` | 可构建骨架已就绪，认证共享契约任务进行中 | 认证、会话、权限、文字消息、历史与 SignalR 形成纵向闭环 |
 | M2 | `pending` | 尚未开始 | Internal Alpha 验收证据完整 |
 | M3 | `pending` | 尚未开始 | Beta 验收证据完整 |
 | M4 | `pending` | 尚未开始 | RC 自动化、包与发布材料完整 |
