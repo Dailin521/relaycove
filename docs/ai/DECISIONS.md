@@ -368,3 +368,15 @@
 - **理由：** 复用 AppInstance 保持 Windows 原生 activation 语义并减少自定义 IPC 攻击面；目标进程退出观察与有界继任者改向覆盖 shutdown handoff，通知注销先于 key 释放避免旧主拆掉新主注册。账户、认证和权威缓存三重门确保 Toast 只是一条不可信导航请求，不能凭陈旧 ID 展示已撤权内容。
 - **影响：** Client/Client.Tests 增加 activation provider/host/dispatcher/router 与退出顺序协调，不改 Shared/Server 协议、SQLite schema/migration 或依赖。pending 两分钟、跨进程 at-least-once 和实际账户/UI 尚未接线是明确边界；阶段 8 必须在 runtime 已有可用权威快照后建立/更新账户 lease，并完成真实导航体验 Gate。
 - **来源：** 工程落地方案第 12.7–12.8、13.5–13.7；`DEC-017`、`DEC-025`、`DEC-028`、`DEC-029`；`docs/ai/tasks/2026-08-04-stage-7-single-instance-activation.md`；最终 600 项自动化、activation 600/600 压力、30 轮每轮 10 竞争者的真实优雅交接、冷/运行中/交接后真实 `INotificationActivationCallback`、并发冷启动与强杀恢复探针；Claude #43/#44 只读挑战中经 Codex 复算并以本机实测确认的读取所有权、继任者交接、退出顺序、授权与已知边界。
+
+### DEC-031：Toast 后单轮桌面提醒与托盘驻留生命周期
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-028/029/030` 已冻结串行通知候选、Windows Toast 传输和单实例激活，但默认 WPF 进程仍没有声音、任务栏闪烁或托盘驻留。PerMessage 同步轮次可接受多条 Toast，失败轮还可能先后派发 Realtime 与旧 Recovery；若声音放在每条 Toast 或每次 dispatch 内部，会越过工程方案“一轮最多一次”的边界。Windows App SDK Toast 默认音频也会在门禁外逐条播放。窗口普通关闭若直接进入既有 `Closed` 路径，则会注销通知并释放实例键，无法继续实时接收或由次实例恢复。
+- **决策：** `ClientNotificationCoordinator` 只在平台返回 `Accepted` 后尝试进程级 attention，并在本地 handled 确认前执行；attention 异常只记录异常类型，不改变 Toast 结果或重试平台。每次独立 dispatch 默认拥有一个原子 attention gate，同一 Sync round 显式把同一个 gate 传给其所有 dispatch，因此首次 Accepted 后声音与闪烁合计最多一次。Windows App SDK builder 必须 `MuteAudio()`，以门禁后的 `MessageBeep` 作为唯一声音来源。
+- **决策：** Windows attention 使用线程安全的当前主窗口 HWND/前台快照。`MessageBeep` 在 Accepted 后尽力执行；只有非前台且 HWND 非零时调用 `FlashWindowEx(FLASHW_TRAY | FLASHW_TIMERNOFG)`，激活窗口、未来打开对应会话或退出时用 `FLASHW_STOP`。`FlashWindowEx` 返回的是调用前窗口激活状态，不是操作成功值；适配器不得因后台窗口返回 false 打虚假失败日志，完成 Start 调用后必须记录匹配 STOP 责任。异常日志不得包含账户、会话、消息、正文或显示名。
+- **决策：** WPF 主实例在窗口首次可见前创建 Windows Forms `NotifyIcon`，不新增 NuGet，第一版使用系统 Application icon。tooltip 与禁用菜单项显示 `0..999+` 总未读和全部 `ConnectionState`，Open/双击只恢复既有唯一窗口，Exit 只接受一次。托盘可用时普通 `Closing` 取消关闭并 Hide，保留通知 host、未来账户 runtime 和 AppInstance key；托盘初始化失败时允许真实关闭，避免不可恢复的无窗口进程。显式 Exit 先释放托盘和闪烁，再复用通知 native `Unregister()` 完成后释放 AppInstance key 的顺序；Windows 注销/关机不得被 Close-to-tray 拦截。
+- **理由：** 共享 gate 与 Toast 静音把用户可观察的声音/闪烁口径绑定到已提交同步轮次，而非平台 Toast 数；明确 STOP 所有权覆盖窗口激活之外的未来会话打开入口。先建立托盘再显示窗口封住 `Window.Show()` 可能泵入极早 WM_CLOSE 的竞态，显式退出继续服从 `DEC-030` 的单实例交接安全顺序。
+- **影响：** Client 启用 SDK 自带 Windows Forms 支持，增加无外部依赖的 desktop attention/tray 适配器、状态格式化和 WPF 生命周期接线；不改 Shared/Server 协议、SQLite schema/migration 或包依赖。当前 production App 尚未构造真实账户 runtime/chat UI，托盘只显示 `0 / Disconnected`，真实总未读/连接更新、会话打开 STOP 与消息端到端声音/闪烁必须在阶段 8 接线并保持 `未验证`，不能用 fake 或原生适配器 smoke 冒充。窗口隐藏到托盘时没有任务栏按钮，`FLASHW_TRAY` 无用户可见效果；系统注销/关机只完成代码级顺序复核，未执行破坏当前交互会话的实机探针。
+- **来源：** 工程落地方案第 13.4、13.6、13.7 与阶段 7；`DEC-028`、`DEC-029`、`DEC-030`；`docs/ai/tasks/2026-08-04-stage-7-desktop-attention-tray.md`；最终 Fast/Full 629 项、Client 418 项、桌面/通知定向 280/280、复审补丁定向 39/39、安装态静音 Toast Register/Show/GetAll/Remove、真实极早关闭隐藏/次实例同 HWND 恢复/托盘 Exit、原生 MessageBeep/FlashWindowEx Start/STOP 探针；Claude #45 challenge 中经 Codex 复算并修正的 per-round gate、Toast 默认音频和 FlashWindowEx 返回语义发现，以及 #46 固定检查点 `PASS` 后补齐的零句柄诊断、独立 gate/声音 false 测试、取消会话结束闭锁恢复和显式限制。
