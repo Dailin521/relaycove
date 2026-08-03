@@ -6,8 +6,10 @@ internal sealed record LocalReadThroughBatchOutcome(
     Guid? ContinuationConversationId,
     long SnapshotRevision)
 {
-    public static LocalReadThroughBatchOutcome Failure(LocalCacheOperationStatus status) =>
-        new(status, Array.Empty<LocalReadThroughUploadTarget>(), null, 0);
+    public static LocalReadThroughBatchOutcome Failure(
+        LocalCacheOperationStatus status,
+        long snapshotRevision = 0) =>
+        new(status, Array.Empty<LocalReadThroughUploadTarget>(), null, snapshotRevision);
 
     public override string ToString() =>
         $"{nameof(LocalReadThroughBatchOutcome)} {{ Status = {Status}, " +

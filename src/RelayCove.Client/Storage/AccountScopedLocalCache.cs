@@ -22,6 +22,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private readonly SemaphoreSlim operationGate;
     private readonly ConcurrentDictionary<Guid, byte> authorizedConversations = new();
     private readonly ConcurrentDictionary<Guid, long> authoritativeLastMessageIds = new();
+    private readonly ConcurrentDictionary<Guid, byte> invalidReadThroughConversations = new();
     private readonly ConcurrentDictionary<Guid, byte> deniedConversations;
     private long authoritativeSnapshotRevision;
     private int authoritativeSnapshotApplied;
@@ -45,6 +46,9 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     public AccountScopeIdentity Identity => identity;
 
     public bool IsFatal => Volatile.Read(ref scopeState.FatalScope) != 0;
+
+    internal long AuthoritativeSnapshotRevision =>
+        Volatile.Read(ref authoritativeSnapshotRevision);
 
     public static Task<AccountScopedLocalCache> CreateAsync(
         AccountScopeIdentity identity,
@@ -308,7 +312,10 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return await Task.Run(() => ReadPendingReadThroughBatch(afterConversationId, limit))
+            return await Task.Run(() => ReadPendingReadThroughBatch(
+                    afterConversationId,
+                    limit,
+                    cancellationToken))
                 .ConfigureAwait(false);
         }
         finally
@@ -365,6 +372,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         deniedConversations.TryAdd(conversationId, 0);
         authorizedConversations.TryRemove(conversationId, out _);
         authoritativeLastMessageIds.TryRemove(conversationId, out _);
+        invalidReadThroughConversations.TryRemove(conversationId, out _);
 
         // Once a revocation reaches this boundary, caller cancellation must not drop
         // the durable intent or tombstone work.
@@ -470,6 +478,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             Volatile.Write(ref authoritativeSnapshotApplied, 1);
             Volatile.Write(ref scopeState.FatalScope, 0);
             Interlocked.Increment(ref authoritativeSnapshotRevision);
+            invalidReadThroughConversations.Clear();
             logger.LogInformation("An authoritative conversation snapshot was committed.");
             return LocalCacheOperationStatus.Ready;
         }
@@ -1235,7 +1244,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
 
     private LocalReadThroughBatchOutcome ReadPendingReadThroughBatch(
         Guid? afterConversationId,
-        int limit)
+        int limit,
+        CancellationToken cancellationToken)
     {
         var status = GetSyncStatus();
         if (status != LocalCacheOperationStatus.Ready)
@@ -1245,6 +1255,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
 
         for (var attempt = 1; ; attempt++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 faultInjector?.BeforeReadPendingReadThroughBatch();
@@ -1279,11 +1290,20 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                        ) AS SafeMessageId
                 FROM LocalConversations AS c
                 WHERE c.PendingReadThroughMessageId IS NOT NULL
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM RevokedConversations AS revoked
+                      WHERE revoked.ConversationId = c.Id)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM LocalAppState AS state
+                      WHERE state.Key = $revocationIntentPrefix || c.Id)
                   AND ($afterConversationId IS NULL OR c.Id > $afterConversationId)
                 ORDER BY c.Id
                 LIMIT $limitPlusOne;
                 """);
                 AddParameter(command, "$committedCursor", committedCursor);
+                AddParameter(command, "$revocationIntentPrefix", RevocationIntentPrefix);
                 AddParameter(
                     command,
                     "$afterConversationId",
@@ -1308,17 +1328,19 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                         }
 
                         var rawPendingMessageId = reader.GetInt64(1);
-                        if (rawPendingMessageId <= 0)
+                        if (rawPendingMessageId <= 0 || reader.GetInt64(2) != 1)
                         {
-                            throw new InvalidDataException(
-                                "The local cache contains an invalid read-through target.");
+                            if (invalidReadThroughConversations.TryAdd(conversationId, 0))
+                            {
+                                logger.LogError(
+                                    "A conversation read-through target was isolated because its local pending state is invalid.");
+                            }
+
+                            rows.Add((conversationId, rawPendingMessageId, SafeMessageId: null));
+                            continue;
                         }
 
-                        if (reader.GetInt64(2) != 1)
-                        {
-                            throw new InvalidDataException(
-                                "The local cache contains an unowned read-through target.");
-                        }
+                        invalidReadThroughConversations.TryRemove(conversationId, out _);
 
                         long? safeMessageId = null;
                         if (!reader.IsDBNull(3))
@@ -1344,7 +1366,9 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 }
 
                 var targets = rows
-                    .Where(row => row.SafeMessageId.HasValue)
+                    .Where(row =>
+                        row.SafeMessageId.HasValue &&
+                        !deniedConversations.ContainsKey(row.ConversationId))
                     .Select(row => new LocalReadThroughUploadTarget(
                         row.ConversationId,
                         row.RawPendingMessageId,
@@ -1361,6 +1385,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             catch (SqliteException exception) when (IsBusy(exception) && attempt < WriteRetryCount)
             {
                 Thread.Sleep(TimeSpan.FromMilliseconds(25 * attempt));
+                cancellationToken.ThrowIfCancellationRequested();
             }
             catch (SqliteException exception) when (IsBusy(exception))
             {
@@ -1369,7 +1394,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                     "errorType={ExceptionType}.",
                     exception.GetType().Name);
                 return LocalReadThroughBatchOutcome.Failure(
-                    LocalCacheOperationStatus.TransientFailure);
+                    LocalCacheOperationStatus.TransientFailure,
+                    Volatile.Read(ref authoritativeSnapshotRevision));
             }
             catch (Exception exception)
             {

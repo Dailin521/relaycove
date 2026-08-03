@@ -14,8 +14,9 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
     private readonly ILogger<ClientReadThroughCoordinator> logger;
     private readonly CancellationTokenSource lifetimeCancellation = new();
     private readonly Dictionary<Guid, long> acknowledgedTargets = new();
-    private readonly Dictionary<Guid, SuppressedTarget> suppressedTargets = new();
+    private readonly HashSet<Guid> suppressedConversations = new();
     private Task<ClientReadThroughRunOutcome>? activeFlight;
+    private long deferredSnapshotRevision = -1;
     private long observedSnapshotRevision = -1;
     private bool rerunRequested;
     private bool rerunActive;
@@ -119,7 +120,7 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
             var runAgain = false;
             lock (stateGate)
             {
-                if (finalStatus == ClientReadThroughRunStatus.Completed &&
+                if (CanRunBoundedRerun(finalStatus) &&
                     rerunRequested &&
                     !lifetimeCancellation.IsCancellationRequested)
                 {
@@ -133,7 +134,9 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
             {
                 var secondPass = await RunPassAsync(lifetimeCancellation.Token)
                     .ConfigureAwait(false);
-                finalStatus = secondPass.Status;
+                finalStatus = CanRunBoundedRerun(secondPass.Status)
+                    ? SelectMoreSevere(finalStatus, secondPass.Status)
+                    : secondPass.Status;
                 requestCount += secondPass.RequestCount;
                 receiptCount += secondPass.ReceiptCount;
             }
@@ -168,6 +171,11 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
         var requestCount = 0;
         var receiptCount = 0;
         var finalStatus = ClientReadThroughRunStatus.Completed;
+        if (deferredSnapshotRevision == localCache.AuthoritativeSnapshotRevision)
+        {
+            return new ClientReadThroughRunOutcome(finalStatus, requestCount, receiptCount);
+        }
+
         Guid? afterConversationId = null;
         while (true)
         {
@@ -179,6 +187,12 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
                 .ConfigureAwait(false);
             if (batch.Status != LocalCacheOperationStatus.Ready)
             {
+                if (batch.Status == LocalCacheOperationStatus.TransientFailure)
+                {
+                    AlignTargetState(batch.SnapshotRevision);
+                    deferredSnapshotRevision = batch.SnapshotRevision;
+                }
+
                 return new ClientReadThroughRunOutcome(
                     batch.Status == LocalCacheOperationStatus.TransientFailure
                         ? ClientReadThroughRunStatus.TransientFailure
@@ -197,15 +211,9 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
                     continue;
                 }
 
-                if (suppressedTargets.TryGetValue(target.ConversationId, out var suppressed))
+                if (suppressedConversations.Contains(target.ConversationId))
                 {
-                    if (suppressed.RawPendingMessageId == target.RawPendingMessageId &&
-                        suppressed.SafeMessageId == target.SafeMessageId)
-                    {
-                        continue;
-                    }
-
-                    suppressedTargets.Remove(target.ConversationId);
+                    continue;
                 }
 
                 requestCount++;
@@ -225,7 +233,7 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
                                 CancellationToken.None)
                             .ConfigureAwait(false);
                         acknowledgedTargets.Remove(target.ConversationId);
-                        suppressedTargets.Remove(target.ConversationId);
+                        suppressedConversations.Remove(target.ConversationId);
                         if (revokeStatus == LocalCacheOperationStatus.RevokedConversation)
                         {
                             continue;
@@ -241,15 +249,14 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
                     if (mappedStatus is ClientReadThroughRunStatus.AuthenticationRequired or
                         ClientReadThroughRunStatus.TransientFailure)
                     {
+                        deferredSnapshotRevision = observedSnapshotRevision;
                         return new ClientReadThroughRunOutcome(
                             mappedStatus,
                             requestCount,
                             receiptCount);
                     }
 
-                    suppressedTargets[target.ConversationId] = new SuppressedTarget(
-                        target.RawPendingMessageId,
-                        target.SafeMessageId);
+                    suppressedConversations.Add(target.ConversationId);
                     finalStatus = SelectMoreSevere(finalStatus, mappedStatus);
                     continue;
                 }
@@ -258,9 +265,7 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
                 if (receipt.ConversationId != target.ConversationId ||
                     receipt.LastReadMessageId < target.SafeMessageId)
                 {
-                    suppressedTargets[target.ConversationId] = new SuppressedTarget(
-                        target.RawPendingMessageId,
-                        target.SafeMessageId);
+                    suppressedConversations.Add(target.ConversationId);
                     finalStatus = SelectMoreSevere(
                         finalStatus,
                         ClientReadThroughRunStatus.ProtocolError);
@@ -278,7 +283,7 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
                     LocalCacheOperationStatus.UnknownConversation)
                 {
                     acknowledgedTargets.Remove(target.ConversationId);
-                    suppressedTargets.Remove(target.ConversationId);
+                    suppressedConversations.Remove(target.ConversationId);
                     continue;
                 }
 
@@ -291,7 +296,7 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
                 }
 
                 acknowledgedTargets[target.ConversationId] = receipt.LastReadMessageId;
-                suppressedTargets.Remove(target.ConversationId);
+                suppressedConversations.Remove(target.ConversationId);
                 receiptCount++;
             }
 
@@ -339,9 +344,16 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
         }
 
         acknowledgedTargets.Clear();
-        suppressedTargets.Clear();
+        suppressedConversations.Clear();
+        deferredSnapshotRevision = -1;
         observedSnapshotRevision = snapshotRevision;
     }
+
+    private static bool CanRunBoundedRerun(ClientReadThroughRunStatus status) =>
+        status is ClientReadThroughRunStatus.Completed or
+            ClientReadThroughRunStatus.ProtocolError or
+            ClientReadThroughRunStatus.AccessDenied or
+            ClientReadThroughRunStatus.RemoteFailure;
 
     private static ClientReadThroughRunStatus SelectMoreSevere(
         ClientReadThroughRunStatus current,
@@ -366,8 +378,4 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
 
     private void ThrowIfDisposed() =>
         ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
-
-    private readonly record struct SuppressedTarget(
-        long RawPendingMessageId,
-        long SafeMessageId);
 }

@@ -134,6 +134,87 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task TriggerAsync_WhenMoreThanOneBatchIsPending_UploadsEveryConversation()
+    {
+        var identity = AccountScopeIdentity.Create(ServerBaseUri, UserId, rootDirectory);
+        await using var cache = await AccountScopedLocalCache.CreateAsync(
+            identity,
+            NullLogger<AccountScopedLocalCache>.Instance);
+        var conversations = Enumerable.Range(1, 102)
+            .Select(index => CreateConversationWithId(
+                Guid.Parse($"00000000-0000-0000-0000-{index:x12}")) with
+            {
+                LastMessageId = index,
+                UnreadCount = 1,
+            })
+            .ToArray();
+        var messages = conversations
+            .Select((conversation, index) => CreateMessage(index + 1, conversation.Id))
+            .ToArray();
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse(conversations, Complete: true)));
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            (await cache.ApplySyncPageAsync(
+                new SyncResponse(
+                    messages[..100],
+                    NextCursor: 100,
+                    SnapshotUpperBound: 102,
+                    HasMore: true),
+                expectedCursor: 0,
+                expectedSnapshotUpperBound: null)).Status);
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            (await cache.ApplySyncPageAsync(
+                new SyncResponse(
+                    messages[100..],
+                    NextCursor: 102,
+                    SnapshotUpperBound: 102,
+                    HasMore: false),
+                expectedCursor: 100,
+                expectedSnapshotUpperBound: 102)).Status);
+        foreach (var message in messages)
+        {
+            Assert.Equal(
+                LocalCacheOperationStatus.Ready,
+                (await cache.MergeIncomingMessageAsync(
+                    message,
+                    new LocalMessageIngestionContext(
+                        IncomingMessageSource.Realtime,
+                        message.ConversationId))).Status);
+        }
+
+        var requestedConversations = new ConcurrentDictionary<Guid, byte>();
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            async (request, cancellationToken) =>
+            {
+                var pathSegments = request.RequestUri!.AbsolutePath.Split('/');
+                var conversationId = Guid.Parse(pathSegments[^2]);
+                var payload = await request.Content!
+                    .ReadFromJsonAsync<MarkConversationReadRequest>(cancellationToken);
+                requestedConversations.TryAdd(conversationId, 0);
+                return Ok(new ConversationReadReceipt(conversationId, payload!.MessageId));
+            }));
+        await using var coordinator = new ClientReadThroughCoordinator(
+            identity,
+            httpClient,
+            new FakeAuthenticationSession("access-token"),
+            cache,
+            NullLogger<ClientReadThroughCoordinator>.Instance);
+
+        var outcome = await coordinator.TriggerAsync();
+        var afterClear = await coordinator.TriggerAsync();
+
+        Assert.Equal(ClientReadThroughRunStatus.Completed, outcome.Status);
+        Assert.Equal((102, 102), (outcome.RequestCount, outcome.ReceiptCount));
+        Assert.Equal(102, requestedConversations.Count);
+        Assert.Equal(ClientReadThroughRunStatus.Completed, afterClear.Status);
+        Assert.Equal((0, 0), (afterClear.RequestCount, afterClear.ReceiptCount));
+    }
+
+    [Fact]
     public async Task TriggerAsync_WhenUnreadGapRemains_DoesNotAdvancePastGap()
     {
         var prepared = await CreatePendingAsync(rawPendingMessageId: 63);
@@ -249,10 +330,20 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
             new FakeAuthenticationSession("access-token"));
 
         var outcome = await coordinator.TriggerAsync();
+        var deferred = await coordinator.TriggerAsync();
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await prepared.Cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([prepared.Conversation], Complete: true)));
+        var afterSnapshot = await coordinator.TriggerAsync();
 
         Assert.Equal(ClientReadThroughRunStatus.TransientFailure, outcome.Status);
         Assert.Equal((1, 0), (outcome.RequestCount, outcome.ReceiptCount));
-        Assert.Equal(1, requestCount);
+        Assert.Equal(ClientReadThroughRunStatus.Completed, deferred.Status);
+        Assert.Equal((0, 0), (deferred.RequestCount, deferred.ReceiptCount));
+        Assert.Equal(ClientReadThroughRunStatus.TransientFailure, afterSnapshot.Status);
+        Assert.Equal((1, 0), (afterSnapshot.RequestCount, afterSnapshot.ReceiptCount));
+        Assert.Equal(2, requestCount);
         Assert.Equal(
             50,
             ReadConversationAttention(
@@ -310,6 +401,13 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
             new FakeAuthenticationSession("access-token"));
 
         var first = await coordinator.TriggerAsync();
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            (await prepared.Cache.MergeIncomingMessageAsync(
+                CreateMessage(63, prepared.Conversation.Id),
+                new LocalMessageIngestionContext(
+                    IncomingMessageSource.Realtime,
+                    prepared.Conversation.Id))).Status);
         var suppressed = await coordinator.TriggerAsync();
         Assert.Equal(
             LocalCacheOperationStatus.Ready,
@@ -323,7 +421,7 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
         Assert.Equal(ClientReadThroughRunStatus.ProtocolError, afterSnapshot.Status);
         Assert.Equal(2, requestCount);
         Assert.Equal(
-            50,
+            63,
             ReadConversationAttention(
                 prepared.Identity,
                 prepared.Conversation.Id).PendingReadThroughMessageId);
@@ -435,6 +533,43 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task TriggerAsync_WhenRevocationStartsDuringBatchRead_DoesNotReturnRevokedTarget()
+    {
+        using var faultInjector = new BlockingReadFaultInjector();
+        var prepared = await CreatePendingAsync(
+            rawPendingMessageId: 50,
+            faultInjector);
+        var requestCount = 0;
+        using var httpClient = new HttpClient(new DelegateHttpHandler((_, _) =>
+        {
+            Interlocked.Increment(ref requestCount);
+            return Task.FromResult(Ok(new ConversationReadReceipt(
+                prepared.Conversation.Id,
+                50)));
+        }));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            new FakeAuthenticationSession("access-token"));
+
+        var flight = coordinator.TriggerAsync();
+        await faultInjector.Entered;
+        var revoke = prepared.Cache.RevokeConversationAccessAsync(prepared.Conversation.Id);
+        faultInjector.Release();
+        var outcome = await flight;
+
+        Assert.Equal(
+            LocalCacheOperationStatus.RevokedConversation,
+            await revoke);
+        Assert.Equal(ClientReadThroughRunStatus.Completed, outcome.Status);
+        Assert.Equal((0, 0), (outcome.RequestCount, outcome.ReceiptCount));
+        Assert.Equal(0, requestCount);
+        Assert.Equal(
+            LocalCacheOperationStatus.RevokedConversation,
+            (await prepared.Cache.ReadMessagesAsync(prepared.Conversation.Id)).Status);
+    }
+
+    [Fact]
     public async Task TriggerAsync_WhenPendingAdvancesInFlight_ReceiptDoesNotClearNewerTarget()
     {
         var prepared = await CreatePendingAsync(rawPendingMessageId: 50);
@@ -475,13 +610,15 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
     [InlineData(-1L)]
     [InlineData(59L)]
     [InlineData(60L)]
-    public async Task TriggerAsync_WhenPendingStateIsCorrupt_FailsScopeClosedWithoutSending(
+    public async Task TriggerAsync_WhenPendingStateIsCorrupt_IsolatesTargetWithoutSending(
         long corruptPendingMessageId)
     {
         var prepared = await CreatePendingAsync(rawPendingMessageId: 50);
         ExecuteNonQuery(
             prepared.Identity,
-            $"UPDATE LocalConversations SET PendingReadThroughMessageId = {corruptPendingMessageId};");
+            "UPDATE LocalConversations " +
+            $"SET PendingReadThroughMessageId = {corruptPendingMessageId} " +
+            $"WHERE Id = '{prepared.Conversation.Id:D}';");
         var requestCount = 0;
         using var httpClient = new HttpClient(new DelegateHttpHandler((_, _) =>
         {
@@ -497,12 +634,52 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
 
         var outcome = await coordinator.TriggerAsync();
 
-        Assert.Equal(ClientReadThroughRunStatus.LocalCacheFailure, outcome.Status);
+        Assert.Equal(ClientReadThroughRunStatus.Completed, outcome.Status);
         Assert.Equal((0, 0), (outcome.RequestCount, outcome.ReceiptCount));
         Assert.Equal(0, requestCount);
+        Assert.False(prepared.Cache.IsFatal);
         Assert.Equal(
-            LocalCacheOperationStatus.FatalScope,
+            LocalCacheOperationStatus.Ready,
             (await prepared.Cache.ReadMessagesAsync(prepared.Conversation.Id)).Status);
+    }
+
+    [Fact]
+    public async Task TriggerAsync_WhenOnePendingStateIsCorrupt_StillUploadsOtherConversation()
+    {
+        var prepared = await CreatePendingAsync(rawPendingMessageId: 50);
+        ExecuteNonQuery(
+            prepared.Identity,
+            "UPDATE LocalConversations SET PendingReadThroughMessageId = 59 " +
+            $"WHERE Id = '{prepared.Conversation.Id:D}';");
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            (await prepared.Cache.MergeIncomingMessageAsync(
+                CreateMessage(61, prepared.CursorOwner.Id),
+                new LocalMessageIngestionContext(
+                    IncomingMessageSource.Realtime,
+                    prepared.CursorOwner.Id))).Status);
+        var requestedConversations = new ConcurrentQueue<Guid>();
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            async (request, cancellationToken) =>
+            {
+                var payload = await request.Content!
+                    .ReadFromJsonAsync<MarkConversationReadRequest>(cancellationToken);
+                requestedConversations.Enqueue(prepared.CursorOwner.Id);
+                return Ok(new ConversationReadReceipt(
+                    prepared.CursorOwner.Id,
+                    payload!.MessageId));
+            }));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            new FakeAuthenticationSession("access-token"));
+
+        var outcome = await coordinator.TriggerAsync();
+
+        Assert.Equal(ClientReadThroughRunStatus.Completed, outcome.Status);
+        Assert.Equal((1, 1), (outcome.RequestCount, outcome.ReceiptCount));
+        Assert.Equal([prepared.CursorOwner.Id], requestedConversations.ToArray());
+        Assert.False(prepared.Cache.IsFatal);
     }
 
     [Fact]
@@ -572,6 +749,57 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
             Assert.Equal(ClientReadThroughRunStatus.Completed, outcome.Status);
             Assert.Equal((1, 1), (outcome.RequestCount, outcome.ReceiptCount));
         });
+    }
+
+    [Fact]
+    public async Task TriggerAsync_WhenPermanentErrorHasPendingOverlap_RunsOneBoundedRerun()
+    {
+        var prepared = await CreatePendingAsync(rawPendingMessageId: 50);
+        var requestStarted = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseResponse = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var requestCount = 0;
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            async (_, cancellationToken) =>
+            {
+                var currentRequest = Interlocked.Increment(ref requestCount);
+                if (currentRequest == 1)
+                {
+                    requestStarted.TrySetResult(true);
+                    await releaseResponse.Task.WaitAsync(cancellationToken);
+                    return new HttpResponseMessage(HttpStatusCode.BadRequest);
+                }
+
+                return Ok(new ConversationReadReceipt(prepared.CursorOwner.Id, 60));
+            }));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            new FakeAuthenticationSession("access-token"));
+
+        var first = coordinator.TriggerAsync();
+        await requestStarted.Task;
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            (await prepared.Cache.MergeIncomingMessageAsync(
+                CreateMessage(61, prepared.CursorOwner.Id),
+                new LocalMessageIngestionContext(
+                    IncomingMessageSource.Realtime,
+                    prepared.CursorOwner.Id))).Status);
+        var overlapping = coordinator.TriggerAsync();
+        releaseResponse.TrySetResult(true);
+        var outcomes = await Task.WhenAll(first, overlapping);
+
+        Assert.Equal(2, requestCount);
+        Assert.All(outcomes, outcome =>
+        {
+            Assert.Equal(ClientReadThroughRunStatus.ProtocolError, outcome.Status);
+            Assert.Equal((2, 1), (outcome.RequestCount, outcome.ReceiptCount));
+        });
+        Assert.Equal(
+            new ConversationAttention(LastReadMessageId: 60, PendingReadThroughMessageId: 61),
+            ReadConversationAttention(prepared.Identity, prepared.CursorOwner.Id));
     }
 
     [Fact]
@@ -781,7 +1009,12 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
             pendingMessage,
             new LocalMessageIngestionContext(IncomingMessageSource.Realtime, conversation.Id));
         Assert.Equal(LocalCacheOperationStatus.Ready, merge.Status);
-        return new PreparedReadThrough(identity, cache, conversation, pendingMessage);
+        return new PreparedReadThrough(
+            identity,
+            cache,
+            conversation,
+            cursorOwner,
+            pendingMessage);
     }
 
     private static ClientReadThroughCoordinator CreateCoordinator(
@@ -901,6 +1134,7 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
         AccountScopeIdentity Identity,
         AccountScopedLocalCache Cache,
         ConversationDto Conversation,
+        ConversationDto CursorOwner,
         MessageDto PendingMessage);
 
     private sealed record ConversationAttention(
@@ -960,5 +1194,28 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
             Interlocked.Increment(ref attemptCount);
             throw new SqliteException("busy", 5, 5);
         }
+    }
+
+    private sealed class BlockingReadFaultInjector : ILocalCacheFaultInjector, IDisposable
+    {
+        private readonly ManualResetEventSlim release = new(initialState: false);
+        private readonly TaskCompletionSource<bool> entered = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Entered => entered.Task;
+
+        public void BeforeRevocationTombstone(Guid conversationId)
+        {
+        }
+
+        public void BeforeReadPendingReadThroughBatch()
+        {
+            entered.TrySetResult(true);
+            release.Wait();
+        }
+
+        public void Release() => release.Set();
+
+        public void Dispose() => release.Dispose();
     }
 }
