@@ -8,14 +8,14 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 6
-ActiveTask: docs/ai/tasks/2026-08-03-stage-6-account-runtime.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-6-local-unread.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: e2195cd6835b9d858c00f1757e7fc7d640ea1021
-LatestGreenIntegrationCommit: 711de0b57acba6788cf834e052b1d31b3a695068
-NextAction: 快进集成单账户 runtime，随后实现本地未读与通知候选事务语义
-ClaudeCalls: 32（用户已取消固定上限，仅关键用途调用）
-ClaudeCostUsd: 9.0335275 confirmed；另有二十二次失败/中断调用费用 unavailable
+LatestGreenIntegrationCommit: 17329105102dce610f373c8eade813a7d128bb83
+NextAction: 实现并验证本地未读与通知候选的 Realtime/Sync 事务语义
+ClaudeCalls: 33（32 次终态，#33 持久 challenge 运行中；仅关键用途调用）
+ClaudeCostUsd: 9.0335275 confirmed；#33 pending；另有二十二次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```

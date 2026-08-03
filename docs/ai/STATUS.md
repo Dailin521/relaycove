@@ -6,7 +6,7 @@
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复和单账户 runtime 已完成
-- **最近验证通过的状态：** 单账户 runtime 与账户切换生命周期代码检查点 `e2195cd6835b9d858c00f1757e7fc7d640ea1021`
+- **最近验证通过的状态：** 单账户 runtime 与账户切换生命周期代码检查点 `e2195cd6835b9d858c00f1757e7fc7d640ea1021`，绿色集成头 `17329105102dce610f373c8eade813a7d128bb83`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — Fast/Full、format、382 项测试、真实磁盘 AccountScope/SQLite、HTTP Sync、客户端登录/启动恢复/持久轮换/logout、真实 Windows DPAPI、单账户 runtime 启动/重连/在飞行终止/切换所有权、客户端与服务端 SignalR、既有消息/会话/认证回归、model drift、八项目漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-6-account-runtime`：单账户 runtime、启动/重连、logout、Dispose 和账户切换顺序已完成并验证，待快进集成。
+- `agent/stage-6-local-unread`：把消息来源、窗口活动快照、本地未读/已读、pending read-through 与通知候选落入 Realtime/Sync 的 SQLite 事务，不接 Windows 平台副作用。
 
 ## 已完成
 
@@ -50,7 +50,7 @@
 
 ## 下一任务
 
-完成账户 runtime 后，实现未读/通知协调、窗口前后台触发与 Windows 通知可靠性入口。
+完成本地未读与通知候选事务语义后，实现串行候选轮次 gate、Recovery 与平台无关 NotificationCoordinator。
 
 ## 阻塞项
 
