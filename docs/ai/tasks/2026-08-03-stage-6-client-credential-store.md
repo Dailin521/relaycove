@@ -2,7 +2,7 @@
 
 ## 状态
 
-- `in_progress`
+- `completed`
 - 分支：`agent/stage-6-client-credential-store`
 - 基线：`dc31a9c76d7e26cdc02abd907ac1a76f3f985d2d`
 
@@ -48,10 +48,10 @@
 
 ## 验收标准
 
-- [ ] 真实 DPAPI CurrentUser round-trip 后字段一致，磁盘 bytes 不含服务器、user ID 或 refresh token 明文。
-- [ ] 保存同目录原子发布并能覆盖轮换 token；取消/失败不宣称成功，清除失败不宣称已删除。
-- [ ] 缺失、篡改、截断、超限、非法 schema/字段稳定 fail-closed，结果、日志和 `ToString` 脱敏。
-- [ ] Client 定向、Fast/Full、model drift、八项目漏洞审计、白名单、空白和固定差异复核通过。
+- [x] 真实 DPAPI CurrentUser round-trip 后字段一致，磁盘 bytes 不含服务器、user ID 或 refresh token 明文。
+- [x] 保存同目录原子发布并能覆盖轮换 token；取消/失败不宣称成功，清除失败不宣称已删除。
+- [x] 缺失、篡改、截断、超限、非法 schema/字段稳定 fail-closed，结果、日志和 `ToString` 脱敏。
+- [x] Client 定向、Fast/Full、model drift、八项目漏洞审计、白名单、空白和固定差异复核通过。
 
 ## 验证命令
 
@@ -72,12 +72,27 @@ dotnet list RelayCove.sln package --vulnerable --include-transitive
 
 ### 修改摘要
 
-- 待完成。
+- 新增 Client 程序集内部的 version 1 credential payload/read outcome/store；固定文件名不含身份，payload 只含 canonical server URI、user ID 和 refresh token，所有自动字符串输出脱敏。
+- 使用 Windows `ProtectedData` + `CurrentUser` + 固定应用/schema entropy；Protect/Unprotect 的明文与 ciphertext byte buffer 在使用后清零，未保存密码或 access token，未新增 NuGet 包。
+- 保存经同目录 WriteThrough 临时文件和异步 flush 后，以 `File.Replace`/首次 `File.Move` 原子发布；单 store 异步 gate 串行 Save/Load/Clear，正式/临时清除失败均如实返回失败。
+- 读取在解密前后限制大小并严格验证 schema、canonical URI、user ID 与 refresh token；错误用户/篡改/截断/非法 payload fail-closed 且保留正式文件。
+- 代码检查点为 `82267b785fa6ef7d04de4906b9b01de0e0cfda54`；未修改 Shared/服务端协议、数据库、migration、依赖、自动登录或账户 runtime。
 
 ### 验证证据
 
-- 待完成。
+| 状态 | 命令或场景 | 结果 |
+| --- | --- | --- |
+| `已验证` | 集成基线 | `agent/v1-integration` 本地/远端均为 `dc31a9c`；前序 Full/322 项测试、model drift 与漏洞审计通过 |
+| `已验证` | Client credential 定向 | Release 17/17；真实当前 Windows 用户 DPAPI round-trip，磁盘 bytes 不含 canonical URI、user ID 或 refresh token 明文 |
+| `已验证` | 原子与轮换 | 首次 Move、已有文件 Replace、12 个并发 Save 串行完成；目标/临时文件锁导致失败时旧正式凭据仍可读取且未发布新 token |
+| `已验证` | fail-closed | 缺失、DPAPI 篡改、截断、64 KiB 超限、非法 schema、非 canonical URI、非法 token、路径是目录、取消与幂等 Clear 全部稳定通过 |
+| `已验证` | 关键文件竞态 | 轮换、临时锁、正式文件替换锁、并发 Save、取消 5 项 Release 连续 10 轮通过 |
+| `已验证` | Fast/Full | Debug/Release 均 0 警告、0 错误；Client 130 + Shared 33 + Server 175 + Updater 1 = 339 项测试全部通过 |
+| `已验证` | 格式/空白/白名单 | `dotnet format --verify-no-changes`、`git diff --check` 通过；候选代码只含 5 个 Client Auth 文件/修改和 1 个凭据测试文件 |
+| `已验证` | EF model drift | `has-pending-model-changes --no-build` 返回自最新 migration 后模型无变化 |
+| `已验证` | 依赖漏洞审计 | 未新增包；8 个源/测试项目直接与传递依赖均未报告已知漏洞 |
+| `已验证` | 固定候选 Codex 复核 | 发现并修正临时 ciphertext 清理失败却返回成功、原子替换失败保留旧值的直接验证、损坏 URI 异常边界及 raw credential 公共表面；复核 DPAPI scope、明文清零、文件发布/读锁、取消和日志后无剩余发现；Claude 已达 `30/30` 硬上限 |
 
 ### 下一步
 
-- 使用安全存储的 refresh token 实现显式会话恢复和自动登录，再组合账户 runtime。
+- 快进集成本切片，随后使用安全存储的 refresh token 实现显式会话恢复和自动登录，再组合账户 runtime。

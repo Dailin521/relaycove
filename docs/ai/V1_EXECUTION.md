@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 6
 ActiveTask: docs/ai/tasks/2026-08-03-stage-6-client-credential-store.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 821d8598c8936376ba31e586bd8cfd4d23beda40
+LatestGreenCodeCommit: 82267b785fa6ef7d04de4906b9b01de0e0cfda54
 LatestGreenIntegrationCommit: dc31a9c76d7e26cdc02abd907ac1a76f3f985d2d
-NextAction: 实现并验证 DPAPI CurrentUser refresh 凭据安全存储与恢复
+NextAction: 快进集成 DPAPI 凭据存储，随后实现持久 refresh token 的显式会话恢复与自动登录
 ClaudeCalls: 30（软上限 24，硬上限 30，已封顶）
 ClaudeCostUsd: 6.710481 confirmed；另有二十一次失败/中断调用费用 unavailable
 Blocker: none
@@ -57,6 +57,7 @@ RequiredUserGate: none
 - 当前客户端 Complete 会话快照与 Sync 页原子提交代码检查点 `cb7b1ed26dbbb934d92865af829beb159370abcf` 已通过 Full、259 项测试、真实磁盘快照对账/durable intent/重新加入/整页回滚/游标重启/账户隔离、关键故障与竞态 Release 连续 5 轮、model drift 与八项目漏洞审计；Claude 已达 `30/30` 硬上限，按账本使用 Codex 固定差异复核。
 - 当前客户端 Sync HTTP 编排代码检查点 `8f7838baa79f194702cd88d3d4f6134d5f6e9341` 已通过 Full、285 项测试、真实磁盘 + 可控 HTTP 多页/重试/Retry-After/refresh/409 block/single-flight/取消/日志场景，关键 5 项竞态 Release 连续 10 轮、model drift 与八项目漏洞审计；Claude 已达 `30/30` 硬上限，按账本使用 Codex 固定差异复核。
 - 当前客户端认证会话代码检查点 `821d8598c8936376ba31e586bd8cfd4d23beda40` 已通过 Full、322 项测试、真实 login 请求与状态分类、响应/Bearer 校验、refresh single-flight rotation、logout/Dispose 线性化、取消与日志脱敏场景，关键 5 项竞态 Release 连续 10 轮、model drift 与八项目漏洞审计；Claude 已达 `30/30` 硬上限，按账本使用 Codex 固定差异复核。
+- 当前 DPAPI 客户端凭据存储代码检查点 `82267b785fa6ef7d04de4906b9b01de0e0cfda54` 已通过 Full、339 项测试、真实 Windows CurrentUser DPAPI、ciphertext 明文扫描、轮换原子替换/失败保旧、并发/取消、篡改/截断/超限/非法 payload、清除与日志脱敏场景，关键 5 项文件竞态 Release 连续 10 轮、model drift 与八项目漏洞审计；Claude 已达 `30/30` 硬上限，按账本使用 Codex 固定差异复核。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确授权绿色任务的常规 push、合入集成分支与任务分支清理，无需二次确认；`main`、Tag、Release、真实发布和生产部署仍须满足对应里程碑与发布 Gate，不由该授权自动放宽。
 
