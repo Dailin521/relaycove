@@ -447,6 +447,7 @@ public sealed class ClientAuthenticationClientTests
         CreateLoginResponse() with { DisplayName = new string('d', 129) },
         CreateLoginResponse() with { AccessToken = " " },
         CreateLoginResponse() with { AccessToken = "bad token" },
+        CreateLoginResponse() with { AccessToken = "bad,token" },
         CreateLoginResponse() with { RefreshToken = "bad\ntoken" },
         CreateLoginResponse() with { ExpiresAt = Now },
         CreateLoginResponse() with { ServerVersion = "" },

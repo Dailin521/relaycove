@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using RelayCove.Shared.Auth;
 
 namespace RelayCove.Client.Auth;
@@ -13,7 +14,7 @@ internal static class ClientAuthenticationResponseValidator
         return response is not null &&
             response.UserId != Guid.Empty &&
             IsRequiredText(response.DisplayName, MaximumDisplayNameLength) &&
-            IsValidToken(response.AccessToken) &&
+            IsValidAccessToken(response.AccessToken) &&
             IsValidToken(response.RefreshToken) &&
             response.ExpiresAt > now &&
             IsRequiredText(response.ServerVersion, MaximumVersionLength) &&
@@ -27,4 +28,12 @@ internal static class ClientAuthenticationResponseValidator
         !string.IsNullOrWhiteSpace(value) &&
         value.Length <= MaximumTokenLength &&
         !value.Any(char.IsWhiteSpace);
+
+    private static bool IsValidAccessToken(string? value)
+    {
+        return IsValidToken(value) &&
+            AuthenticationHeaderValue.TryParse($"Bearer {value}", out var header) &&
+            string.Equals(header.Scheme, "Bearer", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(header.Parameter, value, StringComparison.Ordinal);
+    }
 }
