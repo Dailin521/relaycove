@@ -198,7 +198,7 @@ public sealed class SyncPageCommitTests : IDisposable
         await using var cache = await CreateCacheAsync(identity);
         var conversation = CreateConversation("Conversation");
         var realtime = CreateMessage(1, conversation.Id);
-        var pendingEcho = CreateMessage(2, conversation.Id);
+        var pendingEcho = CreateMessage(2, conversation.Id) with { SenderId = UserId };
         await ApplySnapshotAsync(cache, conversation);
         await cache.MergeIncomingMessageAsync(realtime);
         await cache.AddPendingMessageAsync(new PendingMessage(
@@ -401,7 +401,8 @@ public sealed class SyncPageCommitTests : IDisposable
         var page = new SyncPageCommitOutcome(
             LocalCacheOperationStatus.Ready,
             [IncomingMessageMergeResult.Inserted],
-            123456789);
+            123456789,
+            [123456789]);
 
         Assert.DoesNotContain("123456789", cursor.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain("123456789", page.ToString(), StringComparison.Ordinal);

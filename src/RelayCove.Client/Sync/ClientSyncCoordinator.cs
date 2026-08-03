@@ -11,6 +11,7 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
     private readonly object stateGate = new();
     private readonly AccountScopedLocalCache localCache;
     private readonly ClientSyncHttpTransport transport;
+    private readonly Func<Guid?> foregroundConversationIdProvider;
     private readonly ILogger<ClientSyncCoordinator> logger;
     private readonly CancellationTokenSource lifetimeCancellation = new();
     private Task<ClientSyncRunOutcome>? activeFlight;
@@ -34,7 +35,28 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
             logger,
             delayAsync: null,
             nextJitter: null,
-            timeProvider: null)
+            timeProvider: null,
+            foregroundConversationIdProvider: null)
+    {
+    }
+
+    internal ClientSyncCoordinator(
+        AccountScopeIdentity identity,
+        HttpClient httpClient,
+        IClientAuthenticationSession authenticationSession,
+        AccountScopedLocalCache localCache,
+        ILogger<ClientSyncCoordinator> logger,
+        Func<Guid?> foregroundConversationIdProvider)
+        : this(
+            identity,
+            httpClient,
+            authenticationSession,
+            localCache,
+            logger,
+            delayAsync: null,
+            nextJitter: null,
+            timeProvider: null,
+            foregroundConversationIdProvider)
     {
     }
 
@@ -46,11 +68,14 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
         ILogger<ClientSyncCoordinator> logger,
         Func<TimeSpan, CancellationToken, Task>? delayAsync,
         Func<double>? nextJitter,
-        TimeProvider? timeProvider)
+        TimeProvider? timeProvider,
+        Func<Guid?>? foregroundConversationIdProvider = null)
     {
         ArgumentNullException.ThrowIfNull(identity);
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        this.foregroundConversationIdProvider = foregroundConversationIdProvider ??
+            (static () => null);
         if (!string.Equals(identity.Id, localCache.Identity.Id, StringComparison.Ordinal))
         {
             throw new ArgumentException(
@@ -276,6 +301,9 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
                     page,
                     cursor,
                     snapshotUpperBound,
+                    new LocalMessageIngestionContext(
+                        IncomingMessageSource.Sync,
+                        foregroundConversationIdProvider()),
                     cancellationToken)
                 .ConfigureAwait(false);
             if (commitOutcome.Status != LocalCacheOperationStatus.Ready)

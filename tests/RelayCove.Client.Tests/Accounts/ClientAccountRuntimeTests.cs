@@ -493,6 +493,137 @@ public sealed class ClientAccountRuntimeTests
     }
 
     [Fact]
+    public async Task FactoryRuntime_WhenConversationIsForeground_WiresActivityIntoSyncAndRealtimeTransactions()
+    {
+        using var directory = new TemporaryDirectory();
+        var conversation = new ConversationDto(
+            Guid.NewGuid(),
+            ConversationType.PrivateChannel,
+            "Foreground conversation",
+            null,
+            Now.AddHours(-2),
+            Now.AddHours(-1),
+            0,
+            0,
+            0);
+        var syncMessage = CreateMessage(conversation.Id);
+        var realtimeMessage = syncMessage with
+        {
+            Id = 2,
+            ClientMessageId = Guid.NewGuid(),
+            CreatedAt = syncMessage.CreatedAt.AddSeconds(1),
+        };
+        var handler = new DelegateHttpHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith(
+                    "/api/conversations",
+                    StringComparison.Ordinal))
+            {
+                return Task.FromResult(Ok(
+                    new ConversationListResponse([conversation], Complete: true)));
+            }
+
+            Assert.EndsWith("/api/sync", request.RequestUri.AbsolutePath);
+            return Task.FromResult(Ok(
+                new SyncResponse([syncMessage], 1, 1, HasMore: false)));
+        });
+        IRealtimeEventSink? capturedSink = null;
+        var factory = new ClientAccountRuntimeFactory(
+            new HttpClient(handler),
+            directory.Path,
+            NullLoggerFactory.Instance,
+            (_, _, sink, _) =>
+            {
+                capturedSink = sink;
+                return new FakeRealtimeConnection();
+            });
+        var runtime = await factory.CreateAsync(CreateSession());
+        runtime.UpdateActivity(new ClientActivitySnapshot(
+            IsMainWindowVisible: true,
+            IsMainWindowMinimized: false,
+            HasForegroundFocus: true,
+            OpenConversationId: conversation.Id));
+
+        var start = await runtime.StartAsync();
+        await capturedSink!.OnNewMessageAsync(realtimeMessage, CancellationToken.None);
+
+        Assert.True(start.IsAuthoritativeCacheReady);
+        using (var connection = OpenCache(runtime.Identity))
+        {
+            using var messages = connection.CreateCommand();
+            messages.CommandText = """
+                SELECT COUNT(*)
+                FROM LocalMessages
+                WHERE IsRead = 1 AND IsNotificationHandled = 1;
+                """;
+            Assert.Equal(2, Convert.ToInt32(messages.ExecuteScalar()));
+
+            using var conversationState = connection.CreateCommand();
+            conversationState.CommandText = """
+                SELECT LastMessageId, LastReadMessageId,
+                       PendingReadThroughMessageId, UnreadCount
+                FROM LocalConversations
+                WHERE Id = $conversationId;
+                """;
+            conversationState.Parameters.AddWithValue(
+                "$conversationId",
+                conversation.Id.ToString("D"));
+            using var reader = conversationState.ExecuteReader();
+            Assert.True(reader.Read());
+            Assert.Equal(2, reader.GetInt64(0));
+            Assert.Equal(1, reader.GetInt64(1));
+            Assert.Equal(2, reader.GetInt64(2));
+            Assert.Equal(0, reader.GetInt32(3));
+        }
+
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public void ActivityState_WhenWindowConditionsChange_OnlyExposesFullyForegroundConversation()
+    {
+        var conversationId = Guid.NewGuid();
+        var state = new ClientActivityState();
+        var inactiveSnapshots = new[]
+        {
+            new ClientActivitySnapshot(false, false, true, conversationId),
+            new ClientActivitySnapshot(true, true, true, conversationId),
+            new ClientActivitySnapshot(true, false, false, conversationId),
+            new ClientActivitySnapshot(true, false, true, OpenConversationId: null),
+        };
+
+        Assert.Null(state.GetForegroundConversationId());
+        foreach (var snapshot in inactiveSnapshots)
+        {
+            state.Update(snapshot);
+            Assert.Null(state.GetForegroundConversationId());
+        }
+
+        var foreground = new ClientActivitySnapshot(true, false, true, conversationId);
+        state.Update(foreground);
+
+        Assert.Equal(conversationId, state.GetForegroundConversationId());
+        Assert.DoesNotContain(conversationId.ToString(), foreground.ToString(), StringComparison.Ordinal);
+        Assert.Throws<ArgumentException>(() => state.Update(
+            new ClientActivitySnapshot(true, false, true, Guid.Empty)));
+    }
+
+    [Fact]
+    public async Task UpdateActivity_AfterRuntimeDisposal_RejectsLateWindowState()
+    {
+        using var directory = new TemporaryDirectory();
+        var runtime = CreateRuntime(
+            directory.Path,
+            CreateSession(),
+            new FakeRealtimeConnection(),
+            new FakeSyncCoordinator());
+        await runtime.DisposeAsync();
+
+        Assert.Throws<ObjectDisposedException>(() => runtime.UpdateActivity(
+            new ClientActivitySnapshot(true, false, true, Guid.NewGuid())));
+    }
+
+    [Fact]
     public async Task DisposeAsync_WhenExplicitSyncIsInFlight_WaitsBeforeCacheAndSession()
     {
         using var directory = new TemporaryDirectory();
@@ -891,6 +1022,7 @@ public sealed class ClientAccountRuntimeTests
             realtime,
             sync,
             cache ?? new RecordingAsyncDisposable(() => ValueTask.CompletedTask),
+            new ClientActivityState(),
             logger ?? NullLogger<ClientAccountRuntime>.Instance);
 
     private static ClientAuthenticationSession CreateSession(
@@ -935,6 +1067,18 @@ public sealed class ClientAccountRuntimeTests
             [],
             [],
             Now);
+
+    private static SqliteConnection OpenCache(AccountScopeIdentity identity)
+    {
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = identity.DatabasePath,
+            Mode = SqliteOpenMode.ReadWrite,
+            ForeignKeys = true,
+        }.ToString());
+        connection.Open();
+        return connection;
+    }
 
     private static TaskCompletionSource NewSignal() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -21,6 +21,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private readonly ScopeAccessState scopeState;
     private readonly SemaphoreSlim operationGate;
     private readonly ConcurrentDictionary<Guid, byte> authorizedConversations = new();
+    private readonly ConcurrentDictionary<Guid, long> authoritativeLastMessageIds = new();
     private readonly ConcurrentDictionary<Guid, byte> deniedConversations;
     private int authoritativeSnapshotApplied;
     private int disposed;
@@ -139,12 +140,26 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
     }
 
+    public Task<SyncPageCommitOutcome> ApplySyncPageAsync(
+        SyncResponse response,
+        long expectedCursor,
+        long? expectedSnapshotUpperBound,
+        CancellationToken cancellationToken = default) =>
+        ApplySyncPageAsync(
+            response,
+            expectedCursor,
+            expectedSnapshotUpperBound,
+            LocalMessageIngestionContext.Background(IncomingMessageSource.Sync),
+            cancellationToken);
+
     public async Task<SyncPageCommitOutcome> ApplySyncPageAsync(
         SyncResponse response,
         long expectedCursor,
         long? expectedSnapshotUpperBound,
+        LocalMessageIngestionContext context,
         CancellationToken cancellationToken = default)
     {
+        ValidateIngestionContext(context, IncomingMessageSource.Sync);
         ThrowIfDisposed();
         if (IsFatal)
         {
@@ -166,7 +181,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return await Task.Run(() => ApplySyncPage(response, expectedCursor))
+            return await Task.Run(() => ApplySyncPage(response, expectedCursor, context))
                 .ConfigureAwait(false);
         }
         finally
@@ -180,6 +195,13 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ValidatePendingMessage(message);
+        if (message.SenderId != identity.UserId)
+        {
+            throw new ArgumentException(
+                "A pending message must belong to the current account.",
+                nameof(message));
+        }
+
         ThrowIfDisposed();
 
         var initialStatus = GetAccessStatus(message.ConversationId);
@@ -199,11 +221,21 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
     }
 
+    public Task<LocalCacheMergeOutcome> MergeIncomingMessageAsync(
+        MessageDto message,
+        CancellationToken cancellationToken = default) =>
+        MergeIncomingMessageAsync(
+            message,
+            LocalMessageIngestionContext.Background(IncomingMessageSource.Realtime),
+            cancellationToken);
+
     public async Task<LocalCacheMergeOutcome> MergeIncomingMessageAsync(
         MessageDto message,
+        LocalMessageIngestionContext context,
         CancellationToken cancellationToken = default)
     {
         ValidateIncomingMessage(message);
+        ValidateIngestionContext(context);
         ThrowIfDisposed();
 
         var initialStatus = GetAccessStatus(message.ConversationId);
@@ -215,7 +247,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            return await Task.Run(() => MergeIncomingMessage(message)).ConfigureAwait(false);
+            return await Task.Run(() => MergeIncomingMessage(message, context))
+                .ConfigureAwait(false);
         }
         finally
         {
@@ -256,6 +289,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
 
         deniedConversations.TryAdd(conversationId, 0);
         authorizedConversations.TryRemove(conversationId, out _);
+        authoritativeLastMessageIds.TryRemove(conversationId, out _);
 
         // Once a revocation reaches this boundary, caller cancellation must not drop
         // the durable intent or tombstone work.
@@ -320,6 +354,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             {
                 deniedConversations.TryAdd(conversationId, 0);
                 authorizedConversations.TryRemove(conversationId, out _);
+                authoritativeLastMessageIds.TryRemove(conversationId, out _);
             }
 
             PersistRevocationIntents(missingConversationIds);
@@ -352,6 +387,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             foreach (var conversationId in conversationsById.Keys)
             {
                 authorizedConversations.TryAdd(conversationId, 0);
+                authoritativeLastMessageIds[conversationId] =
+                    conversationsById[conversationId].LastMessageId;
                 deniedConversations.TryRemove(conversationId, out _);
             }
 
@@ -395,7 +432,10 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
     }
 
-    private SyncPageCommitOutcome ApplySyncPage(SyncResponse response, long expectedCursor)
+    private SyncPageCommitOutcome ApplySyncPage(
+        SyncResponse response,
+        long expectedCursor,
+        LocalMessageIngestionContext context)
     {
         var status = GetSyncStatus();
         if (status != LocalCacheOperationStatus.Ready)
@@ -412,9 +452,16 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             }
 
             var mergeResults = new List<IncomingMessageMergeResult>(response.Messages.Count);
+            var notificationCandidateMessageIds = new List<long>(response.Messages.Count);
+            var foregroundReadThroughs = new ForegroundReadThroughAccumulator();
             foreach (var message in response.Messages)
             {
-                var mergeOutcome = MergeIncomingMessageInTransaction(connection, transaction, message);
+                var mergeOutcome = MergeIncomingMessageInTransaction(
+                    connection,
+                    transaction,
+                    message,
+                    context,
+                    foregroundReadThroughs);
                 if (mergeOutcome.Status != LocalCacheOperationStatus.Ready)
                 {
                     return TransactionResult<SyncPageCommitOutcome>.Rollback(
@@ -428,6 +475,19 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 }
 
                 mergeResults.Add(mergeOutcome.Result!.Value);
+                if (mergeOutcome.NotificationCandidateMessageId is { } candidateMessageId)
+                {
+                    notificationCandidateMessageIds.Add(candidateMessageId);
+                }
+            }
+
+            foreach (var readThrough in foregroundReadThroughs.Values)
+            {
+                AdvanceForegroundReadThrough(
+                    connection,
+                    transaction,
+                    readThrough.LatestMessage,
+                    readThrough.UncountedMessageIds);
             }
 
             WriteLastSyncCursor(connection, transaction, response.NextCursor);
@@ -435,7 +495,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 new SyncPageCommitOutcome(
                     LocalCacheOperationStatus.Ready,
                     mergeResults,
-                    response.NextCursor));
+                    response.NextCursor,
+                    notificationCandidateMessageIds));
         });
 
         if (outcome.Status == LocalCacheOperationStatus.Conflict)
@@ -471,16 +532,19 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         {
             deniedConversations.TryAdd(conversation.Id, 0);
             authorizedConversations.TryRemove(conversation.Id, out _);
+            authoritativeLastMessageIds.TryRemove(conversation.Id, out _);
             return result;
         }
 
         if (deniedConversations.ContainsKey(conversation.Id) || IsFatal)
         {
             authorizedConversations.TryRemove(conversation.Id, out _);
+            authoritativeLastMessageIds.TryRemove(conversation.Id, out _);
             return GetRegistrationStatus(conversation.Id);
         }
 
         authorizedConversations.TryAdd(conversation.Id, 0);
+        authoritativeLastMessageIds[conversation.Id] = conversation.LastMessageId;
         return LocalCacheOperationStatus.Ready;
     }
 
@@ -503,10 +567,12 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             using var command = CreateCommand(connection, transaction, """
                 INSERT INTO LocalMessages (
                     ServerMessageId, ClientMessageId, ConversationId, SenderId,
-                    SenderDisplayName, Type, Content, ReplyToMessageId, CreatedAt, LocalSendStatus)
+                    SenderDisplayName, Type, Content, ReplyToMessageId, CreatedAt,
+                    IsRead, IsNotificationHandled, LocalSendStatus)
                 VALUES (
                     NULL, $clientMessageId, $conversationId, $senderId,
-                    $senderDisplayName, $type, $content, $replyToMessageId, $createdAt, $sendStatus)
+                    $senderDisplayName, $type, $content, $replyToMessageId, $createdAt,
+                    1, 1, $sendStatus)
                 ON CONFLICT(SenderId, ClientMessageId) DO NOTHING;
                 """);
             AddMessageParameters(command, message);
@@ -521,7 +587,9 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         });
     }
 
-    private LocalCacheMergeOutcome MergeIncomingMessage(MessageDto message)
+    private LocalCacheMergeOutcome MergeIncomingMessage(
+        MessageDto message,
+        LocalMessageIngestionContext context)
     {
         var status = GetAccessStatus(message.ConversationId);
         if (status != LocalCacheOperationStatus.Ready)
@@ -529,20 +597,37 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             return new LocalCacheMergeOutcome(status, null);
         }
 
-        var outcome = ExecuteWriteWithRetry((connection, transaction) =>
+        LocalCacheMergeOutcome outcome;
+        try
         {
-            var mergeOutcome = MergeIncomingMessageInTransaction(connection, transaction, message);
-            var shouldCommit = mergeOutcome.Status == LocalCacheOperationStatus.Ready &&
-                mergeOutcome.Result != IncomingMessageMergeResult.Conflict;
-            return shouldCommit
-                ? TransactionResult<LocalCacheMergeOutcome>.Commit(mergeOutcome)
-                : TransactionResult<LocalCacheMergeOutcome>.Rollback(mergeOutcome);
-        });
+            outcome = ExecuteWriteWithRetry((connection, transaction) =>
+            {
+                var mergeOutcome = MergeIncomingMessageInTransaction(
+                    connection,
+                    transaction,
+                    message,
+                    context);
+                var shouldCommit = mergeOutcome.Status == LocalCacheOperationStatus.Ready &&
+                    mergeOutcome.Result != IncomingMessageMergeResult.Conflict;
+                return shouldCommit
+                    ? TransactionResult<LocalCacheMergeOutcome>.Commit(mergeOutcome)
+                    : TransactionResult<LocalCacheMergeOutcome>.Rollback(mergeOutcome);
+            });
+        }
+        catch (InvalidDataException exception)
+        {
+            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state during message attention processing after an error of type {ExceptionType}.",
+                exception.GetType().Name);
+            return new LocalCacheMergeOutcome(LocalCacheOperationStatus.FatalScope, null);
+        }
 
         if (outcome.Status == LocalCacheOperationStatus.RevokedConversation)
         {
             deniedConversations.TryAdd(message.ConversationId, 0);
             authorizedConversations.TryRemove(message.ConversationId, out _);
+            authoritativeLastMessageIds.TryRemove(message.ConversationId, out _);
         }
 
         if (outcome.Result == IncomingMessageMergeResult.Conflict)
@@ -557,7 +642,9 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private LocalCacheMergeOutcome MergeIncomingMessageInTransaction(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        MessageDto message)
+        MessageDto message,
+        LocalMessageIngestionContext context,
+        ForegroundReadThroughAccumulator? foregroundReadThroughs = null)
     {
         var databaseStatus = GetDatabaseAccessStatus(connection, transaction, message.ConversationId);
         if (databaseStatus != LocalCacheOperationStatus.Ready)
@@ -571,6 +658,11 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             return new LocalCacheMergeOutcome(databaseStatus, null);
         }
 
+        var conversationState = LoadConversationAttentionState(
+            connection,
+            transaction,
+            message.ConversationId,
+            GetAuthoritativeLastMessageId(message.ConversationId));
         var serverHit = LoadMessageByServerId(connection, transaction, message.Id);
         var keyHit = LoadMessageByClientKey(
             connection,
@@ -583,11 +675,35 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             var isDuplicate = keyHit is not null &&
                 serverHit.LocalId == keyHit.LocalId &&
                 IsExactMatch(connection, transaction, serverHit, message);
+            var result = isDuplicate
+                ? IncomingMessageMergeResult.Duplicate
+                : IncomingMessageMergeResult.Conflict;
+            if (isDuplicate && !string.Equals(
+                    serverHit.SenderDisplayName,
+                    message.SenderDisplayName,
+                    StringComparison.Ordinal))
+            {
+                RefreshSenderDisplayName(
+                    connection,
+                    transaction,
+                    serverHit.LocalId,
+                    message.SenderDisplayName);
+            }
+
+            var candidateMessageId = result == IncomingMessageMergeResult.Conflict
+                ? null
+                : ApplyMessageAttentionEffects(
+                    connection,
+                    transaction,
+                    message,
+                    context,
+                    conversationState,
+                    result,
+                    foregroundReadThroughs);
             return new LocalCacheMergeOutcome(
                 LocalCacheOperationStatus.Ready,
-                isDuplicate
-                    ? IncomingMessageMergeResult.Duplicate
-                    : IncomingMessageMergeResult.Conflict);
+                result,
+                candidateMessageId);
         }
 
         if (keyHit is not null)
@@ -618,9 +734,19 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 throw new InvalidOperationException("Pending message promotion did not update exactly one row.");
             }
 
+            var result = IncomingMessageMergeResult.PendingPromoted;
+            var candidateMessageId = ApplyMessageAttentionEffects(
+                connection,
+                transaction,
+                message,
+                context,
+                conversationState,
+                result,
+                foregroundReadThroughs);
             return new LocalCacheMergeOutcome(
                 LocalCacheOperationStatus.Ready,
-                IncomingMessageMergeResult.PendingPromoted);
+                result,
+                candidateMessageId);
         }
 
         using var insert = CreateCommand(connection, transaction, """
@@ -638,9 +764,309 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             transaction,
             GetLastInsertRowId(connection, transaction),
             message.MentionUserIds);
+        var insertedResult = IncomingMessageMergeResult.Inserted;
+        var insertedCandidateMessageId = ApplyMessageAttentionEffects(
+            connection,
+            transaction,
+            message,
+            context,
+            conversationState,
+            insertedResult,
+            foregroundReadThroughs);
         return new LocalCacheMergeOutcome(
             LocalCacheOperationStatus.Ready,
-            IncomingMessageMergeResult.Inserted);
+            insertedResult,
+            insertedCandidateMessageId);
+    }
+
+    private long? ApplyMessageAttentionEffects(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        MessageDto message,
+        LocalMessageIngestionContext context,
+        ConversationAttentionState conversationState,
+        IncomingMessageMergeResult mergeResult,
+        ForegroundReadThroughAccumulator? foregroundReadThroughs)
+    {
+        var liveSource = context.Source is IncomingMessageSource.Realtime or
+            IncomingMessageSource.Sync;
+        var ownMessage = message.SenderId == identity.UserId;
+        var atOrBelowReadBoundary = message.Id <= conversationState.LastReadMessageId;
+        var foregroundLiveMessage = liveSource &&
+            context.IsForegroundConversation(message.ConversationId);
+        var suppressNotification = ownMessage ||
+            atOrBelowReadBoundary ||
+            foregroundLiveMessage ||
+            context.Source is IncomingMessageSource.History or
+                IncomingMessageSource.SendResponse ||
+            mergeResult == IncomingMessageMergeResult.PendingPromoted;
+
+        if (foregroundLiveMessage && message.Id > conversationState.LastReadMessageId)
+        {
+            if (foregroundReadThroughs is null)
+            {
+                var uncountedMessageIds =
+                    mergeResult == IncomingMessageMergeResult.Inserted &&
+                    message.Id > conversationState.AuthoritativeLastMessageId
+                        ? new[] { message.Id }
+                        : Array.Empty<long>();
+                AdvanceForegroundReadThrough(
+                    connection,
+                    transaction,
+                    message,
+                    uncountedMessageIds);
+            }
+            else
+            {
+                foregroundReadThroughs.Observe(
+                    message,
+                    conversationState,
+                    mergeResult);
+            }
+        }
+        else
+        {
+            var markRead = ownMessage || atOrBelowReadBoundary ||
+                mergeResult == IncomingMessageMergeResult.PendingPromoted ||
+                context.Source == IncomingMessageSource.History;
+            var consumeObservedUnread =
+                context.Source == IncomingMessageSource.History &&
+                !ownMessage &&
+                !atOrBelowReadBoundary &&
+                message.Id <= conversationState.LastMessageId &&
+                IsMessageUnread(connection, transaction, message.Id);
+            UpdateMessageAttention(
+                connection,
+                transaction,
+                message.Id,
+                markRead,
+                suppressNotification);
+
+            if (consumeObservedUnread)
+            {
+                DecrementConversationUnread(
+                    connection,
+                    transaction,
+                    message.ConversationId);
+            }
+
+            if (mergeResult is IncomingMessageMergeResult.Inserted or
+                IncomingMessageMergeResult.PendingPromoted)
+            {
+                UpdateConversationForArrival(
+                    connection,
+                    transaction,
+                    message,
+                    context.Source,
+                    incrementUnread: mergeResult == IncomingMessageMergeResult.Inserted &&
+                        liveSource &&
+                        !ownMessage &&
+                        !atOrBelowReadBoundary &&
+                        message.Id > conversationState.AuthoritativeLastMessageId);
+            }
+        }
+
+        return mergeResult == IncomingMessageMergeResult.Inserted &&
+            liveSource &&
+            !suppressNotification
+                ? message.Id
+                : null;
+    }
+
+    private static ConversationAttentionState LoadConversationAttentionState(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid conversationId,
+        long authoritativeLastMessageId)
+    {
+        using var command = CreateCommand(connection, transaction, """
+            SELECT LastMessageId, LastReadMessageId
+            FROM LocalConversations
+            WHERE Id = $conversationId;
+            """);
+        AddParameter(command, "$conversationId", FormatGuid(conversationId));
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            throw new InvalidOperationException(
+                "The authorized local conversation disappeared during message ingestion.");
+        }
+
+        return new ConversationAttentionState(
+            reader.GetInt64(0),
+            reader.GetInt64(1),
+            authoritativeLastMessageId);
+    }
+
+    private long GetAuthoritativeLastMessageId(Guid conversationId)
+    {
+        if (authoritativeLastMessageIds.TryGetValue(
+                conversationId,
+                out var authoritativeLastMessageId))
+        {
+            return authoritativeLastMessageId;
+        }
+
+        throw new InvalidOperationException(
+            "An authorized conversation is missing its authoritative message boundary.");
+    }
+
+    private static void UpdateMessageAttention(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long serverMessageId,
+        bool markRead,
+        bool markNotificationHandled)
+    {
+        if (!markRead && !markNotificationHandled)
+        {
+            return;
+        }
+
+        using var command = CreateCommand(connection, transaction, """
+            UPDATE LocalMessages
+            SET IsRead = CASE WHEN $markRead = 1 THEN 1 ELSE IsRead END,
+                IsNotificationHandled = CASE
+                    WHEN $markNotificationHandled = 1 THEN 1
+                    ELSE IsNotificationHandled
+                END
+            WHERE ServerMessageId = $serverMessageId;
+            """);
+        AddParameter(command, "$markRead", markRead ? 1 : 0);
+        AddParameter(
+            command,
+            "$markNotificationHandled",
+            markNotificationHandled ? 1 : 0);
+        AddParameter(command, "$serverMessageId", serverMessageId);
+        command.ExecuteNonQuery();
+    }
+
+    private static bool IsMessageUnread(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long serverMessageId)
+    {
+        using var command = CreateCommand(connection, transaction, """
+            SELECT 1
+            FROM LocalMessages
+            WHERE ServerMessageId = $serverMessageId AND IsRead = 0
+            LIMIT 1;
+            """);
+        AddParameter(command, "$serverMessageId", serverMessageId);
+        return command.ExecuteScalar() is not null;
+    }
+
+    private static void DecrementConversationUnread(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid conversationId)
+    {
+        using var command = CreateCommand(connection, transaction, """
+            UPDATE LocalConversations
+            SET UnreadCount = MAX(UnreadCount - 1, 0)
+            WHERE Id = $conversationId;
+            """);
+        AddParameter(command, "$conversationId", FormatGuid(conversationId));
+        command.ExecuteNonQuery();
+    }
+
+    private static void UpdateConversationForArrival(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        MessageDto message,
+        IncomingMessageSource source,
+        bool incrementUnread)
+    {
+        if (source == IncomingMessageSource.History)
+        {
+            return;
+        }
+
+        using var command = CreateCommand(connection, transaction, """
+            UPDATE LocalConversations
+            SET LastMessageId = MAX(LastMessageId, $serverMessageId),
+                UnreadCount = UnreadCount + $unreadIncrement,
+                UpdatedAt = CASE
+                    WHEN LastMessageId < $serverMessageId THEN $updatedAt
+                    ELSE UpdatedAt
+                END
+            WHERE Id = $conversationId;
+            """);
+        AddParameter(command, "$serverMessageId", message.Id);
+        AddParameter(command, "$unreadIncrement", incrementUnread ? 1 : 0);
+        AddParameter(command, "$updatedAt", FormatDateTime(message.CreatedAt));
+        AddParameter(command, "$conversationId", FormatGuid(message.ConversationId));
+        command.ExecuteNonQuery();
+    }
+
+    private void AdvanceForegroundReadThrough(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        MessageDto message,
+        IReadOnlyCollection<long> uncountedMessageIds)
+    {
+        // A realtime ID can be ahead of unseen sync gaps. The message row is safe to
+        // mark read immediately, but the contiguous conversation boundary must not
+        // advance beyond the cursor already committed before this transaction.
+        var committedSyncCursor = ReadLastSyncCursor(connection, transaction);
+        var safeReadBoundary = Math.Min(message.Id, committedSyncCursor);
+        foreach (var uncountedMessageId in uncountedMessageIds)
+        {
+            UpdateMessageAttention(
+                connection,
+                transaction,
+                uncountedMessageId,
+                markRead: true,
+                markNotificationHandled: true);
+        }
+
+        using var countCommand = CreateCommand(connection, transaction, """
+            SELECT COUNT(*)
+            FROM LocalMessages
+            WHERE ConversationId = $conversationId
+              AND ServerMessageId <= $serverMessageId
+              AND IsRead = 0
+              AND SenderId <> $currentUserId;
+            """);
+        AddParameter(countCommand, "$conversationId", FormatGuid(message.ConversationId));
+        AddParameter(countCommand, "$serverMessageId", message.Id);
+        AddParameter(countCommand, "$currentUserId", FormatGuid(identity.UserId));
+        var newlyReadCount = Convert.ToInt32(countCommand.ExecuteScalar());
+
+        using (var messagesCommand = CreateCommand(connection, transaction, """
+            UPDATE LocalMessages
+            SET IsRead = 1,
+                IsNotificationHandled = 1
+            WHERE ConversationId = $conversationId
+              AND ServerMessageId <= $serverMessageId
+              AND (IsRead = 0 OR IsNotificationHandled = 0);
+            """))
+        {
+            AddParameter(messagesCommand, "$conversationId", FormatGuid(message.ConversationId));
+            AddParameter(messagesCommand, "$serverMessageId", message.Id);
+            messagesCommand.ExecuteNonQuery();
+        }
+
+        using var conversationCommand = CreateCommand(connection, transaction, """
+            UPDATE LocalConversations
+            SET LastMessageId = MAX(LastMessageId, $serverMessageId),
+                LastReadMessageId = MAX(LastReadMessageId, $safeReadBoundary),
+                PendingReadThroughMessageId = MAX(
+                    COALESCE(PendingReadThroughMessageId, 0),
+                    $serverMessageId),
+                UnreadCount = MAX(UnreadCount - $newlyReadCount, 0),
+                UpdatedAt = CASE
+                    WHEN LastMessageId < $serverMessageId THEN $updatedAt
+                    ELSE UpdatedAt
+                END
+            WHERE Id = $conversationId;
+            """);
+        AddParameter(conversationCommand, "$serverMessageId", message.Id);
+        AddParameter(conversationCommand, "$safeReadBoundary", safeReadBoundary);
+        AddParameter(conversationCommand, "$newlyReadCount", newlyReadCount);
+        AddParameter(conversationCommand, "$updatedAt", FormatDateTime(message.CreatedAt));
+        AddParameter(conversationCommand, "$conversationId", FormatGuid(message.ConversationId));
+        conversationCommand.ExecuteNonQuery();
     }
 
     private LocalCacheReadOutcome ReadMessages(Guid conversationId)
@@ -735,7 +1161,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         });
     }
 
-    private static void UpsertConversation(
+    private void UpsertConversation(
         SqliteConnection connection,
         SqliteTransaction transaction,
         ConversationDto conversation)
@@ -751,10 +1177,38 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 Type = excluded.Type,
                 Name = excluded.Name,
                 AvatarUrl = excluded.AvatarUrl,
-                LastMessageId = excluded.LastMessageId,
+                LastMessageId = MAX(LocalConversations.LastMessageId, excluded.LastMessageId),
                 LastReadMessageId = MAX(LocalConversations.LastReadMessageId, excluded.LastReadMessageId),
-                UnreadCount = excluded.UnreadCount,
-                UpdatedAt = excluded.UpdatedAt;
+                PendingReadThroughMessageId = CASE
+                    WHEN LocalConversations.PendingReadThroughMessageId IS NOT NULL
+                         AND excluded.LastReadMessageId >=
+                             LocalConversations.PendingReadThroughMessageId
+                        THEN NULL
+                    ELSE LocalConversations.PendingReadThroughMessageId
+                END,
+                UnreadCount =
+                    MAX(
+                        excluded.UnreadCount - (
+                            SELECT COUNT(*)
+                            FROM LocalMessages
+                            WHERE ConversationId = excluded.Id
+                              AND ServerMessageId > excluded.LastReadMessageId
+                              AND ServerMessageId <= excluded.LastMessageId
+                              AND SenderId <> $currentUserId
+                              AND IsRead = 1),
+                        0)
+                    + (
+                        SELECT COUNT(*)
+                        FROM LocalMessages
+                        WHERE ConversationId = excluded.Id
+                          AND ServerMessageId > excluded.LastMessageId
+                          AND SenderId <> $currentUserId
+                          AND IsRead = 0),
+                UpdatedAt = CASE
+                    WHEN LocalConversations.LastMessageId > excluded.LastMessageId
+                        THEN LocalConversations.UpdatedAt
+                    ELSE excluded.UpdatedAt
+                END;
             """);
         AddParameter(command, "$id", FormatGuid(conversation.Id));
         AddParameter(command, "$type", (int)conversation.Type);
@@ -764,6 +1218,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         AddParameter(command, "$lastReadMessageId", conversation.LastReadMessageId);
         AddParameter(command, "$unreadCount", conversation.UnreadCount);
         AddParameter(command, "$updatedAt", FormatDateTime(conversation.UpdatedAt));
+        AddParameter(command, "$currentUserId", FormatGuid(identity.UserId));
         command.ExecuteNonQuery();
     }
 
@@ -1007,7 +1462,11 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     }
 
     private static SyncPageCommitOutcome SyncPageOutcome(LocalCacheOperationStatus status) =>
-        new(status, Array.Empty<IncomingMessageMergeResult>(), null);
+        new(
+            status,
+            Array.Empty<IncomingMessageMergeResult>(),
+            null,
+            Array.Empty<long>());
 
     private LocalCacheOperationStatus GetRegistrationStatus(Guid conversationId)
     {
@@ -1197,11 +1656,30 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         record.ClientMessageId == message.ClientMessageId &&
         record.ConversationId == message.ConversationId &&
         record.SenderId == message.SenderId &&
-        string.Equals(record.SenderDisplayName, message.SenderDisplayName, StringComparison.Ordinal) &&
         record.Type == message.Type &&
         string.Equals(record.Content, message.Content, StringComparison.Ordinal) &&
         record.ReplyToMessageId == message.ReplyToMessageId &&
         record.CreatedAt.Equals(message.CreatedAt);
+
+    private static void RefreshSenderDisplayName(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long localMessageId,
+        string senderDisplayName)
+    {
+        using var command = CreateCommand(connection, transaction, """
+            UPDATE LocalMessages
+            SET SenderDisplayName = $senderDisplayName
+            WHERE LocalId = $localMessageId;
+            """);
+        AddParameter(command, "$senderDisplayName", senderDisplayName);
+        AddParameter(command, "$localMessageId", localMessageId);
+        if (command.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                "Refreshing a message sender display name did not update exactly one row.");
+        }
+    }
 
     private static bool IsPendingCompatible(
         SqliteConnection connection,
@@ -1456,6 +1934,31 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
     }
 
+    private static void ValidateIngestionContext(
+        LocalMessageIngestionContext context,
+        IncomingMessageSource? requiredSource = null)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (!Enum.IsDefined(context.Source))
+        {
+            throw new ArgumentOutOfRangeException(nameof(context));
+        }
+
+        if (requiredSource.HasValue && context.Source != requiredSource.Value)
+        {
+            throw new ArgumentException(
+                $"This operation requires the {requiredSource.Value} message source.",
+                nameof(context));
+        }
+
+        if (context.ForegroundConversationId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "A foreground conversation ID cannot be empty.",
+                nameof(context));
+        }
+    }
+
     private static void ValidatePendingMessage(PendingMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
@@ -1481,6 +1984,52 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private void ThrowIfDisposed()
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+    }
+
+    private sealed record ConversationAttentionState(
+        long LastMessageId,
+        long LastReadMessageId,
+        long AuthoritativeLastMessageId);
+
+    private sealed class ForegroundReadThroughAccumulator
+    {
+        private readonly Dictionary<Guid, ForegroundReadThrough> values = new();
+
+        public IEnumerable<ForegroundReadThrough> Values => values.Values;
+
+        public void Observe(
+            MessageDto message,
+            ConversationAttentionState conversationState,
+            IncomingMessageMergeResult mergeResult)
+        {
+            if (!values.TryGetValue(message.ConversationId, out var readThrough))
+            {
+                readThrough = new ForegroundReadThrough(message, conversationState);
+                values.Add(message.ConversationId, readThrough);
+            }
+            else if (message.Id > readThrough.LatestMessage.Id)
+            {
+                readThrough.LatestMessage = message;
+            }
+
+            if (mergeResult == IncomingMessageMergeResult.Inserted &&
+                message.Id > readThrough.AuthoritativeLastMessageId)
+            {
+                readThrough.UncountedMessageIds.Add(message.Id);
+            }
+        }
+    }
+
+    private sealed class ForegroundReadThrough(
+        MessageDto latestMessage,
+        ConversationAttentionState initialState)
+    {
+        public MessageDto LatestMessage { get; set; } = latestMessage;
+
+        public long AuthoritativeLastMessageId { get; } =
+            initialState.AuthoritativeLastMessageId;
+
+        public HashSet<long> UncountedMessageIds { get; } = [];
     }
 
     private sealed record LocalMessageRecord(

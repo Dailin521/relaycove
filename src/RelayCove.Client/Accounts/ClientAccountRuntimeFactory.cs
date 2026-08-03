@@ -77,6 +77,7 @@ internal sealed class ClientAccountRuntimeFactory
         IClientAccountRealtimeConnection? realtimeConnection = null;
         try
         {
+            var activityState = new ClientActivityState();
             cache = await AccountScopedLocalCache.CreateAsync(
                     identity,
                     loggerFactory.CreateLogger<AccountScopedLocalCache>(),
@@ -88,7 +89,8 @@ internal sealed class ClientAccountRuntimeFactory
                 httpClient,
                 authenticationSession,
                 cache,
-                loggerFactory.CreateLogger<ClientSyncCoordinator>());
+                loggerFactory.CreateLogger<ClientSyncCoordinator>(),
+                activityState.GetForegroundConversationId);
             var syncRequestor = new ClientAccountSyncRequestor(
                 syncCoordinator,
                 loggerFactory.CreateLogger<ClientAccountSyncRequestor>());
@@ -99,6 +101,7 @@ internal sealed class ClientAccountRuntimeFactory
                     syncRequestor.Request(SyncReason.Reconnect);
                     return Task.CompletedTask;
                 },
+                activityState.GetForegroundConversationId,
                 loggerFactory.CreateLogger<LocalCacheRealtimeEventSink>());
             var realtimeSink = new ClientAccountRealtimeEventSink(cacheSink, syncRequestor);
             realtimeConnection = createRealtimeConnection(
@@ -114,6 +117,7 @@ internal sealed class ClientAccountRuntimeFactory
                 realtimeConnection,
                 syncCoordinator,
                 cache,
+                activityState,
                 loggerFactory.CreateLogger<ClientAccountRuntime>());
         }
         catch (Exception creationFailure)

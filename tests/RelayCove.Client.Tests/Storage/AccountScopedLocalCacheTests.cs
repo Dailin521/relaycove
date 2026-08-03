@@ -46,7 +46,7 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         var identity = CreateIdentity(UserId);
         await using var cache = await CreateCacheAsync(identity);
         var conversation = CreateConversation();
-        var message = CreateMessage(conversation.Id);
+        var message = CreateMessage(conversation.Id) with { SenderId = UserId };
         await RegisterAsync(cache, conversation);
         var pending = new PendingMessage(
             message.ClientMessageId,

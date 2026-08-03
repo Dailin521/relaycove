@@ -14,6 +14,7 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
     private readonly IClientAccountRealtimeConnection realtimeConnection;
     private readonly IClientAccountSyncCoordinator syncCoordinator;
     private readonly IAsyncDisposable localCache;
+    private readonly ClientActivityState activityState;
     private readonly ILogger<ClientAccountRuntime> logger;
     private readonly CancellationTokenSource lifetimeCancellation = new();
     private readonly HashSet<Task> explicitFlights = [];
@@ -27,6 +28,7 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
         IClientAccountRealtimeConnection realtimeConnection,
         IClientAccountSyncCoordinator syncCoordinator,
         IAsyncDisposable localCache,
+        ClientActivityState activityState,
         ILogger<ClientAccountRuntime> logger)
     {
         Identity = identity ?? throw new ArgumentNullException(nameof(identity));
@@ -37,6 +39,7 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
         this.syncCoordinator = syncCoordinator ??
             throw new ArgumentNullException(nameof(syncCoordinator));
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
+        this.activityState = activityState ?? throw new ArgumentNullException(nameof(activityState));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         if (!authenticationSession.IsAuthenticated ||
             authenticationSession.UserId != identity.UserId ||
@@ -55,6 +58,15 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
     public override string ToString() =>
         $"{nameof(ClientAccountRuntime)} {{ Identity = [REDACTED], " +
         $"ConnectionState = {ConnectionState} }}";
+
+    public void UpdateActivity(ClientActivitySnapshot snapshot)
+    {
+        lock (stateGate)
+        {
+            ThrowIfTerminating();
+            activityState.Update(snapshot);
+        }
+    }
 
     public Task<ClientAccountRuntimeStartOutcome> StartAsync(
         CancellationToken cancellationToken = default)

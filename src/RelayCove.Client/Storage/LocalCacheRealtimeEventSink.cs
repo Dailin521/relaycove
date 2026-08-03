@@ -9,11 +9,25 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
 {
     private readonly AccountScopedLocalCache cache;
     private readonly Func<Guid, CancellationToken, Task> requestConversationReconciliationAsync;
+    private readonly Func<Guid?> foregroundConversationIdProvider;
     private readonly ILogger<LocalCacheRealtimeEventSink> logger;
 
     public LocalCacheRealtimeEventSink(
         AccountScopedLocalCache cache,
         Func<Guid, CancellationToken, Task> requestConversationReconciliationAsync,
+        ILogger<LocalCacheRealtimeEventSink> logger)
+        : this(
+            cache,
+            requestConversationReconciliationAsync,
+            foregroundConversationIdProvider: null,
+            logger)
+    {
+    }
+
+    internal LocalCacheRealtimeEventSink(
+        AccountScopedLocalCache cache,
+        Func<Guid, CancellationToken, Task> requestConversationReconciliationAsync,
+        Func<Guid?>? foregroundConversationIdProvider,
         ILogger<LocalCacheRealtimeEventSink> logger)
     {
         ArgumentNullException.ThrowIfNull(cache);
@@ -21,6 +35,8 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
         ArgumentNullException.ThrowIfNull(logger);
         this.cache = cache;
         this.requestConversationReconciliationAsync = requestConversationReconciliationAsync;
+        this.foregroundConversationIdProvider = foregroundConversationIdProvider ??
+            (static () => null);
         this.logger = logger;
     }
 
@@ -32,7 +48,12 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
         MessageDto message,
         CancellationToken cancellationToken)
     {
-        var outcome = await cache.MergeIncomingMessageAsync(message, cancellationToken)
+        var outcome = await cache.MergeIncomingMessageAsync(
+                message,
+                new LocalMessageIngestionContext(
+                    IncomingMessageSource.Realtime,
+                    foregroundConversationIdProvider()),
+                cancellationToken)
             .ConfigureAwait(false);
         if (outcome.Status == LocalCacheOperationStatus.UnknownConversation)
         {

@@ -20,4 +20,13 @@ public sealed class LocalMessageEnumContractTests
         Assert.Equal(3, (int)IncomingMessageMergeResult.Duplicate);
         Assert.Equal(4, (int)IncomingMessageMergeResult.Conflict);
     }
+
+    [Fact]
+    public void IncomingMessageSource_HasStableValues()
+    {
+        Assert.Equal(1, (int)IncomingMessageSource.Realtime);
+        Assert.Equal(2, (int)IncomingMessageSource.Sync);
+        Assert.Equal(3, (int)IncomingMessageSource.History);
+        Assert.Equal(4, (int)IncomingMessageSource.SendResponse);
+    }
 }
