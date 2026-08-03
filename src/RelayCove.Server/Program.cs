@@ -65,7 +65,11 @@ builder.Services.AddScoped<MessageQueryService>();
 builder.Services.AddScoped<MessageReadService>();
 builder.Services.AddScoped<MessageSyncService>();
 builder.Services.AddScoped<NewMessagePublisher>();
+builder.Services.AddScoped<ConversationAccessRevokedPublisher>();
 builder.Services.AddSingleton<INewMessageTransport, SignalRNewMessageTransport>();
+builder.Services.AddSingleton<
+    IConversationAccessRevokedTransport,
+    SignalRConversationAccessRevokedTransport>();
 builder.Services.AddScoped<RelayCoveJwtBearerEvents>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();

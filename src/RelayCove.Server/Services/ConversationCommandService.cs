@@ -127,11 +127,22 @@ public sealed class ConversationCommandService(
         Guid actorUserId,
         Guid conversationId,
         Guid targetUserId,
+        CancellationToken cancellationToken) =>
+        (await RemoveMemberWithResultAsync(
+            actorUserId,
+            conversationId,
+            targetUserId,
+            cancellationToken)).Status;
+
+    internal async Task<ConversationMemberRemovalResult> RemoveMemberWithResultAsync(
+        Guid actorUserId,
+        Guid conversationId,
+        Guid targetUserId,
         CancellationToken cancellationToken)
     {
         if (conversationId == Guid.Empty || targetUserId == Guid.Empty)
         {
-            return ConversationOperationStatus.InvalidRequest;
+            return new ConversationMemberRemovalResult(ConversationOperationStatus.InvalidRequest);
         }
 
         await using var transaction = await dbContext.Database.BeginTransactionAsync(
@@ -143,7 +154,7 @@ public sealed class ConversationCommandService(
         if (actor is null)
         {
             await transaction.RollbackAsync(cancellationToken);
-            return ConversationOperationStatus.AccessDenied;
+            return new ConversationMemberRemovalResult(ConversationOperationStatus.AccessDenied);
         }
 
         var conversation = await dbContext.Conversations.SingleOrDefaultAsync(
@@ -161,7 +172,7 @@ public sealed class ConversationCommandService(
         {
             await transaction.RollbackAsync(cancellationToken);
             LogDeniedMemberWrite(actorUserId, conversationId, authorization);
-            return authorization;
+            return new ConversationMemberRemovalResult(authorization);
         }
 
         var member = conversation!.Members.SingleOrDefault(candidate => candidate.UserId == targetUserId);
@@ -179,7 +190,9 @@ public sealed class ConversationCommandService(
             targetUserId,
             conversation.Id,
             member is not null);
-        return ConversationOperationStatus.NoContent;
+        return new ConversationMemberRemovalResult(
+            ConversationOperationStatus.NoContent,
+            member?.UserId);
     }
 
     private async Task<ConversationOperationResult<ConversationDto>> CreateChannelAsync(

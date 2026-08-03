@@ -5,4 +5,6 @@ namespace RelayCove.Server.Hubs;
 public interface IChatClient
 {
     Task NewMessage(MessageDto message);
+
+    Task ConversationAccessRevoked(Guid conversationId);
 }

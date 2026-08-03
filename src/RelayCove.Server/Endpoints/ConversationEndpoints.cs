@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Mvc;
 using RelayCove.Server.Errors;
+using RelayCove.Server.Realtime;
 using RelayCove.Server.Services;
 using RelayCove.Shared.Conversations;
 using RelayCove.Shared.Errors;
@@ -137,6 +138,7 @@ public static class ConversationEndpoints
         Guid userId,
         HttpContext context,
         ConversationCommandService commandService,
+        ConversationAccessRevokedPublisher accessRevokedPublisher,
         CancellationToken cancellationToken)
     {
         if (!TryGetActorUserId(context, out var actorUserId))
@@ -144,14 +146,20 @@ public static class ConversationEndpoints
             return AuthenticationRequired(context);
         }
 
-        var status = await commandService.RemoveMemberAsync(
+        var result = await commandService.RemoveMemberWithResultAsync(
             actorUserId,
             conversationId,
             userId,
             cancellationToken);
-        return status == ConversationOperationStatus.NoContent
+        if (result.Status == ConversationOperationStatus.NoContent &&
+            result.RemovedUserId is Guid removedUserId)
+        {
+            await accessRevokedPublisher.TryPublishAsync(removedUserId, conversationId);
+        }
+
+        return result.Status == ConversationOperationStatus.NoContent
             ? Results.NoContent()
-            : ConversationError(context, status);
+            : ConversationError(context, result.Status);
     }
 
     private static IResult ConversationError(HttpContext context, ConversationOperationStatus status) =>

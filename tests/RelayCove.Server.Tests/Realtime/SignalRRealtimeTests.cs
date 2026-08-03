@@ -379,6 +379,251 @@ public sealed class SignalRRealtimeTests : IClassFixture<RelayCoveWebApplication
                 message.ClientMessageId == request.ClientMessageId));
     }
 
+    [Fact]
+    public async Task ConversationAccessRevoked_WhenPrivateMemberIsRemoved_ReachesTargetConnectionsAndStopsNewMessages()
+    {
+        var adminName = CreateUserName("access-revoked-admin");
+        var memberName = CreateUserName("access-revoked-member");
+        var outsiderName = CreateUserName("access-revoked-outsider");
+        var adminId = await factory.CreateUserAsync(adminName, ExistingPassword, isAdmin: true);
+        var memberId = await factory.CreateUserAsync(memberName, ExistingPassword);
+        await factory.CreateUserAsync(outsiderName, ExistingPassword);
+        using var adminClient = await CreateAuthenticatedClientAsync(factory, adminName);
+        using var memberClient = await CreateAuthenticatedClientAsync(factory, memberName);
+        var adminLogin = await LoginAsync(factory.CreateClient(), adminName);
+        var memberLogin = await LoginAsync(factory.CreateClient(), memberName);
+        var outsiderLogin = await LoginAsync(factory.CreateClient(), outsiderName);
+        var conversation = await CreateChannelAsync(
+            adminClient,
+            ConversationType.PrivateChannel,
+            "Realtime access revoked");
+        await UpsertMemberAsync(adminClient, conversation.Id, memberId);
+        var firstTargetEvents = new ConcurrentQueue<Guid>();
+        var secondTargetEvents = new ConcurrentQueue<Guid>();
+        var adminEvents = new ConcurrentQueue<Guid>();
+        var outsiderEvents = new ConcurrentQueue<Guid>();
+        var firstTargetMessages = new ConcurrentQueue<MessageDto>();
+        var secondTargetMessages = new ConcurrentQueue<MessageDto>();
+        var adminMessages = new ConcurrentQueue<MessageDto>();
+        await using var firstTargetConnection = CreateHubConnection(factory, memberLogin.AccessToken);
+        await using var secondTargetConnection = CreateHubConnection(factory, memberLogin.AccessToken);
+        await using var adminConnection = CreateHubConnection(factory, adminLogin.AccessToken);
+        await using var outsiderConnection = CreateHubConnection(factory, outsiderLogin.AccessToken);
+        firstTargetConnection.On<Guid>(
+            nameof(IChatClient.ConversationAccessRevoked),
+            firstTargetEvents.Enqueue);
+        secondTargetConnection.On<Guid>(
+            nameof(IChatClient.ConversationAccessRevoked),
+            secondTargetEvents.Enqueue);
+        adminConnection.On<Guid>(nameof(IChatClient.ConversationAccessRevoked), adminEvents.Enqueue);
+        outsiderConnection.On<Guid>(nameof(IChatClient.ConversationAccessRevoked), outsiderEvents.Enqueue);
+        firstTargetConnection.On<MessageDto>(nameof(IChatClient.NewMessage), firstTargetMessages.Enqueue);
+        secondTargetConnection.On<MessageDto>(nameof(IChatClient.NewMessage), secondTargetMessages.Enqueue);
+        adminConnection.On<MessageDto>(nameof(IChatClient.NewMessage), adminMessages.Enqueue);
+        await Task.WhenAll(
+            firstTargetConnection.StartAsync(),
+            secondTargetConnection.StartAsync(),
+            adminConnection.StartAsync(),
+            outsiderConnection.StartAsync());
+
+        using (var deleteResponse = await adminClient.DeleteAsync(
+                   $"/api/conversations/{conversation.Id:D}/members/{memberId:D}"))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+        }
+
+        await WaitUntilAsync(() => firstTargetEvents.Count == 1 && secondTargetEvents.Count == 1);
+        Assert.Equal(conversation.Id, firstTargetEvents.Single());
+        Assert.Equal(conversation.Id, secondTargetEvents.Single());
+        Assert.Empty(adminEvents);
+        Assert.Empty(outsiderEvents);
+
+        using (var deniedHistory = await memberClient.GetAsync(
+                   $"/api/conversations/{conversation.Id:D}/messages"))
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, deniedHistory.StatusCode);
+        }
+
+        MessageDto created;
+        using (var nextMessageResponse = await adminClient.PostAsJsonAsync(
+                   "/api/messages",
+                   CreateSendRequest(conversation.Id, "after realtime revocation")))
+        {
+            Assert.Equal(HttpStatusCode.Created, nextMessageResponse.StatusCode);
+            created = (await nextMessageResponse.Content.ReadFromJsonAsync<MessageDto>())!;
+        }
+
+        await WaitUntilAsync(() => adminMessages.Any(message => message.Id == created.Id));
+        var barrier = CreateSyntheticMessage(conversation.Id, adminId, "revoked target barrier");
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<ChatHub, IChatClient>>();
+            await hubContext.Clients.User(memberId.ToString("D")).NewMessage(barrier);
+        }
+
+        await WaitUntilAsync(() =>
+            firstTargetMessages.Any(message => message.Id == barrier.Id) &&
+            secondTargetMessages.Any(message => message.Id == barrier.Id));
+        Assert.DoesNotContain(firstTargetMessages, message => message.Id == created.Id);
+        Assert.DoesNotContain(secondTargetMessages, message => message.Id == created.Id);
+    }
+
+    [Fact]
+    public async Task ConversationAccessRevoked_WhenDeleteIsConcurrentOrRepeated_PublishesOnce()
+    {
+        var adminName = CreateUserName("access-revoked-race-admin");
+        var memberName = CreateUserName("access-revoked-race-member");
+        await factory.CreateUserAsync(adminName, ExistingPassword, isAdmin: true);
+        var memberId = await factory.CreateUserAsync(memberName, ExistingPassword);
+        using var adminClient = await CreateAuthenticatedClientAsync(factory, adminName);
+        var memberLogin = await LoginAsync(factory.CreateClient(), memberName);
+        var conversation = await CreateChannelAsync(
+            adminClient,
+            ConversationType.PrivateChannel,
+            "Realtime access revoked race");
+        await UpsertMemberAsync(adminClient, conversation.Id, memberId);
+        var revokedEvents = new ConcurrentQueue<Guid>();
+        var barrierMessages = new ConcurrentQueue<MessageDto>();
+        await using var connection = CreateHubConnection(factory, memberLogin.AccessToken);
+        connection.On<Guid>(nameof(IChatClient.ConversationAccessRevoked), revokedEvents.Enqueue);
+        connection.On<MessageDto>(nameof(IChatClient.NewMessage), barrierMessages.Enqueue);
+        await connection.StartAsync();
+        var path = $"/api/conversations/{conversation.Id:D}/members/{memberId:D}";
+
+        var firstDeleteTask = adminClient.DeleteAsync(path);
+        var secondDeleteTask = adminClient.DeleteAsync(path);
+        using var firstDeleteResponse = await firstDeleteTask;
+        using var secondDeleteResponse = await secondDeleteTask;
+        Assert.Equal(HttpStatusCode.NoContent, firstDeleteResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, secondDeleteResponse.StatusCode);
+        using (var repeatedDeleteResponse = await adminClient.DeleteAsync(path))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, repeatedDeleteResponse.StatusCode);
+        }
+
+        var barrier = CreateSyntheticMessage(conversation.Id, memberId, "delete race barrier");
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var hubContext = scope.ServiceProvider.GetRequiredService<IHubContext<ChatHub, IChatClient>>();
+            await hubContext.Clients.User(memberId.ToString("D")).NewMessage(barrier);
+        }
+
+        await WaitUntilAsync(() => barrierMessages.Any(message => message.Id == barrier.Id));
+        Assert.Equal([conversation.Id], revokedEvents);
+        await using var verificationScope = factory.Services.CreateAsyncScope();
+        var dbContext = verificationScope.ServiceProvider.GetRequiredService<RelayCoveDbContext>();
+        Assert.False(await dbContext.ConversationMembers.AnyAsync(member =>
+            member.ConversationId == conversation.Id && member.UserId == memberId));
+    }
+
+    [Fact]
+    public async Task ConversationAccessRevoked_WhenTransportFails_PreservesRemovalAndNoReplayPublish()
+    {
+        var adminName = CreateUserName("access-revoked-failure-admin");
+        var memberName = CreateUserName("access-revoked-failure-member");
+        await factory.CreateUserAsync(adminName, ExistingPassword, isAdmin: true);
+        var memberId = await factory.CreateUserAsync(memberName, ExistingPassword);
+        using var setupClient = await CreateAuthenticatedClientAsync(factory, adminName);
+        var conversation = await CreateChannelAsync(
+            setupClient,
+            ConversationType.PrivateChannel,
+            "Realtime access revoked failure");
+        await UpsertMemberAsync(setupClient, conversation.Id, memberId);
+        await factory.SetUserDisabledAsync(memberId, isDisabled: true);
+        var transport = new ThrowingAccessRevokedTransport();
+        using var failingFactory = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IConversationAccessRevokedTransport>();
+                services.AddSingleton<IConversationAccessRevokedTransport>(transport);
+            }));
+        using var client = await CreateAuthenticatedClientAsync(failingFactory, adminName);
+        var path = $"/api/conversations/{conversation.Id:D}/members/{memberId:D}";
+        var logOffset = factory.LogMessages.Count;
+
+        using (var deleteResponse = await client.DeleteAsync(path))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+        }
+
+        using (var replayResponse = await client.DeleteAsync(path))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, replayResponse.StatusCode);
+        }
+
+        Assert.Equal(1, transport.AttemptCount);
+        Assert.Equal(memberId.ToString("D"), transport.RecipientUserId);
+        Assert.Equal(conversation.Id, transport.ConversationId);
+        await using var scope = failingFactory.Services.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<RelayCoveDbContext>();
+        Assert.False(await dbContext.ConversationMembers.AnyAsync(member =>
+            member.ConversationId == conversation.Id && member.UserId == memberId));
+        Assert.DoesNotContain(
+            factory.LogMessages.Skip(logOffset),
+            message =>
+                message.Contains(adminName, StringComparison.Ordinal) ||
+                message.Contains(memberName, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ConversationAccessRevoked_WhenRemovalDoesNotDeleteMember_DoesNotPublish()
+    {
+        var adminName = CreateUserName("access-revoked-negative-admin");
+        var memberName = CreateUserName("access-revoked-negative-member");
+        await factory.CreateUserAsync(adminName, ExistingPassword, isAdmin: true);
+        var memberId = await factory.CreateUserAsync(memberName, ExistingPassword);
+        using var setupClient = await CreateAuthenticatedClientAsync(factory, adminName);
+        var publicConversation = await CreateChannelAsync(
+            setupClient,
+            ConversationType.PublicChannel,
+            "Realtime access revoked public");
+        var privateConversation = await CreateChannelAsync(
+            setupClient,
+            ConversationType.PrivateChannel,
+            "Realtime access revoked absent");
+        var directConversation = await CreateDirectAsync(setupClient, memberId);
+        var transport = new RecordingAccessRevokedTransport();
+        using var recordingFactory = factory.WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IConversationAccessRevokedTransport>();
+                services.AddSingleton<IConversationAccessRevokedTransport>(transport);
+            }));
+        using var client = await CreateAuthenticatedClientAsync(recordingFactory, adminName);
+
+        using (var publicResponse = await client.DeleteAsync(
+                   $"/api/conversations/{publicConversation.Id:D}/members/{memberId:D}"))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, publicResponse.StatusCode);
+        }
+
+        using (var directResponse = await client.DeleteAsync(
+                   $"/api/conversations/{directConversation.Id:D}/members/{memberId:D}"))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, directResponse.StatusCode);
+        }
+
+        using (var unknownResponse = await client.DeleteAsync(
+                   $"/api/conversations/{Guid.NewGuid():D}/members/{memberId:D}"))
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, unknownResponse.StatusCode);
+        }
+
+        using (var absentMemberResponse = await client.DeleteAsync(
+                   $"/api/conversations/{privateConversation.Id:D}/members/{memberId:D}"))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, absentMemberResponse.StatusCode);
+        }
+
+        using (var invalidTargetResponse = await client.DeleteAsync(
+                   $"/api/conversations/{privateConversation.Id:D}/members/{Guid.Empty:D}"))
+        {
+            Assert.Equal(HttpStatusCode.BadRequest, invalidTargetResponse.StatusCode);
+        }
+
+        Assert.Equal(0, transport.AttemptCount);
+    }
+
     private static HubConnection CreateHubConnection(
         RelayCoveWebApplicationFactory applicationFactory,
         string? accessToken) =>
@@ -522,4 +767,42 @@ public sealed class SignalRRealtimeTests : IClassFixture<RelayCoveWebApplication
     private sealed record RecordedDelivery(
         IReadOnlyList<string> RecipientUserIds,
         MessageDto Message);
+
+    private sealed class ThrowingAccessRevokedTransport : IConversationAccessRevokedTransport
+    {
+        private int attemptCount;
+
+        public int AttemptCount => Volatile.Read(ref attemptCount);
+
+        public string? RecipientUserId { get; private set; }
+
+        public Guid ConversationId { get; private set; }
+
+        public Task SendAsync(
+            string recipientUserId,
+            Guid conversationId,
+            CancellationToken cancellationToken)
+        {
+            RecipientUserId = recipientUserId;
+            ConversationId = conversationId;
+            Interlocked.Increment(ref attemptCount);
+            throw new InvalidOperationException("Synthetic access-revoked transport failure.");
+        }
+    }
+
+    private sealed class RecordingAccessRevokedTransport : IConversationAccessRevokedTransport
+    {
+        private int attemptCount;
+
+        public int AttemptCount => Volatile.Read(ref attemptCount);
+
+        public Task SendAsync(
+            string recipientUserId,
+            Guid conversationId,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref attemptCount);
+            return Task.CompletedTask;
+        }
+    }
 }
