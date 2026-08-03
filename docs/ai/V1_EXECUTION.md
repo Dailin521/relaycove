@@ -7,13 +7,13 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M1
-CurrentStage: 阶段 5
-ActiveTask: docs/ai/tasks/2026-08-03-stage-5-client-realtime.md
-TaskStatus: completed
+CurrentStage: 阶段 6
+ActiveTask: docs/ai/tasks/2026-08-03-stage-6-local-access-cache.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: c3717c9455a98cbf9014e8cbd37ef2f635261cc3
-LatestGreenIntegrationCommit: 8c811cfe69e09f919d27114b543d23c683b846b9
-NextAction: 仅快进集成客户端实时绿色提交，然后建立本地缓存与撤权 fail-closed 基础
+LatestGreenIntegrationCommit: f76b95fd80c88a4c3abe39ca84c4d1efebc44d9d
+NextAction: 实现 AccountScopeId、本地 SQLite 消息合并与撤权 tombstone/deny-set
 ClaudeCalls: 29（软上限 24，硬上限 30）
 ClaudeCostUsd: 6.438276 confirmed；另有二十一次失败/中断调用费用 unavailable
 Blocker: none

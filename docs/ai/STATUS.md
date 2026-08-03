@@ -6,7 +6,7 @@
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片，以及阶段 5 服务端/客户端 SignalR 实时边界已完成
-- **最近验证通过的状态：** 客户端 SignalR 接收与连接状态代码 `c3717c9455a98cbf9014e8cbd37ef2f635261cc3`
+- **最近验证通过的状态：** 客户端 SignalR 接收与连接状态集成 `f76b95fd80c88a4c3abe39ca84c4d1efebc44d9d`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — Full、format、220 项测试、服务端 SignalR 认证/分组/用户路由/当前收件人/撤权，客户端真实认证接收/动态 token/FIFO 撤权屏障/重连状态/并发生命周期/故障隔离/日志，以及既有消息/会话/认证回归、model drift、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 客户端实时切片已完成验证，正在交接至 `agent/v1-integration` 并调查阶段 6 本地缓存与撤权 fail-closed 基础。
+- `agent/stage-6-local-access-cache`：实现 AccountScopeId、本地 SQLite 消息合并与撤权 tombstone/deny-set。
 
 ## 已完成
 
@@ -43,7 +43,7 @@
 
 ## 下一任务
 
-建立 AccountScopeId 隔离的本地 SQLite、撤权 tombstone/deny-set 与统一消息合并入口。
+完成 AccountScopeId 隔离的本地 SQLite、撤权 tombstone/deny-set 与 Realtime 唯一合并入口。
 
 ## 阻塞项
 

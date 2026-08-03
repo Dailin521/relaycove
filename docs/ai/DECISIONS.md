@@ -202,3 +202,16 @@
 - **理由：** 动态 token provider 允许 refresh 后的新 HTTP/重连请求取新凭据；显式状态区分初始失败、短暂重连、永久不可用和主动停止，避免 UI 展示虚假在线。单一串行入口为 Realtime、未来 Sync/History/SendResponse 的唯一合并路径提供确定顺序，并封住撤权事件之后迟到消息越过清理的竞争窗口。
 - **影响：** Shared 增加 ConnectionState；Client 增加 SignalR 运行时依赖、实时 sink/连接组件和真实内存 Hub 测试。不实现认证 UI、本地数据库、deny-set、Sync 或 MainWindow 接线；这些后续消费者必须复用该 sink 边界而非旁路注册 Hub handler。改变事件顺序、重连策略或 token 生命周期时必须新增决策重审。
 - **来源：** 工程落地方案第 3.1、10.1、10.3、12.3–12.8、阶段 5；`DEC-003`、`DEC-006`、`DEC-014`、`DEC-015`；`docs/ai/tasks/2026-08-03-stage-5-client-realtime.md`；2026-08-03 ASP.NET Core 10 SignalR .NET client、HubConnection events 与 AccessTokenProvider 官方文档。
+
+### DEC-017：账户作用域本地 SQLite 与撤权 fail-closed 顺序
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** `DEC-016` 已把实时事件串行化，但客户端尚无本地权限状态。若 Realtime 自动创建未知会话、撤权先删库后更新内存，或 tombstone 失败后继续展示缓存，撤权前在途帧就能重新插入敏感内容；若服务器/用户共用数据库，又会造成跨账户数据泄漏。
+- **决策：** 本地稳定作用域严格使用工程方案既定 `AccountScopeId = Base64UrlNoPadding(SHA256(UTF8(CanonicalServerBaseUri + "\n" + CurrentUserId.D-lower)))`。Canonical URI 只接受无 user-info/query/fragment 的绝对 HTTP(S)，规范 scheme/IDN host/default port/dot segments/尾斜杠并保留反向代理子路径。数据库与缓存位于显式绝对 root 下的单一 scope 子目录，不记录用户名或 token。
+- **决策：** 使用 `Microsoft.Data.Sqlite 10.0.10`、每次操作独立 connection、foreign keys、WAL、默认私有 cache、参数化 SQL和有界 timeout；不共享 ADO.NET 对象，不以伪 async API 阻塞 UI。当前 schema/version 只建立实际使用的 LocalConversations、LocalMessages、LocalMessageMentions、RevokedConversations 和 LocalAppState；写入通过进程内 scope gate 与 SQLite 事务串行。
+- **决策：** Realtime 只能向已由权威会话 DTO 显式登记的 conversation 合并，未知 ID 拒绝并请求对账，绝不自动创建。消息以可空唯一 ServerMessageId 和 `(SenderId, ClientMessageId)` 识别 Inserted、PendingPromoted、Duplicate 或 Conflict；不可变载荷与 mentions 必须一致，事务提交后才通知上层。
+- **决策：** 撤权处理第一步同步加入进程 deny-set，再取得 scope gate，以独立最小写事务先 upsert RevokedConversations tombstone、再删除 LocalConversation 并依靠外键清除消息/mentions。消息入口在触库前检查 fatal/deny-set，并在事务内重检 tombstone/会话，所以撤权完成后迟到帧不能复活。首次 tombstone 持久化失败时保留 deny-set并把整个 scope 标记 fatal fail-closed；本进程不得读、展示或合并该 scope，只有后续显式冷启动权威对账流程可恢复。
+- **理由：** 内存先拒绝封住事件与 SQLite 之间的窗口，持久 tombstone 封住重启窗口，scope gate 与事务重检给撤权/消息竞争单一线性化顺序。账户目录隔离和未知会话拒绝防止跨账户或伪造实时事件扩张本地授权。
+- **影响：** Client 增加本地 SQLite 依赖、scope/schema/store/realtime sink 与真实磁盘测试；不实现完整会话 HTTP、Sync、通知、附件或 UI。未来完整权威对账必须先提交后才允许清除 tombstone；数据库加密和离线远程擦除仍是第一版限制。
+- **来源：** 工程落地方案第 11.3、12.3–12.8、阶段 6；`DEC-003`、`DEC-015`、`DEC-016`；`docs/ai/tasks/2026-08-03-stage-6-local-access-cache.md`；2026-08-03 Microsoft.Data.Sqlite connection strings、async limitations、transactions 与 database errors 官方文档。
