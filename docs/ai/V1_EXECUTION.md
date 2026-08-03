@@ -9,13 +9,13 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 7
 ActiveTask: docs/ai/tasks/2026-08-04-stage-7-single-instance-activation.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: bb4ae92dbdc1332ecc7283619b78567b44a62f04
+LatestGreenCodeCommit: b8589669e6015b884f171456cc5d34fd402e4212
 LatestGreenIntegrationCommit: ff9e50f6ec3fb250c32f99a7234c40be4b90c92f
-NextAction: 实现 AppInstance 完整激活转交、成功目标去重和账户/撤权 fail-closed 路由
-ClaudeCalls: 42（全部终态；仅关键用途调用）
-ClaudeCostUsd: 48.7578675 confirmed；另有二十二次失败/中断调用费用 unavailable
+NextAction: 推送完成提交，快进集成并清理任务分支，然后开始声音、任务栏与托盘生命周期切片
+ClaudeCalls: 44（全部终态；仅关键用途调用）
+ClaudeCostUsd: 51.78059725 exact confirmed + 12.06 local CLI displayed；另有二十二次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -64,6 +64,7 @@ RequiredUserGate: none
 - 当前 read-through 安全上传代码检查点 `8384e6166d69467377e36efa549309f891822076` 已通过 Full、447 项测试、会话内真实已读目标/全局 cursor 反例/未读空洞、102 会话分页、receipt 双权威清理、401/状态分类/快照级抑制、稳定撤权、损坏行隔离、busy、single-flight/补跑、重启/取消/Dispose 与 runtime 接线；协调器 31 项 Release 连续 10 轮 310/310，model drift 与八项目漏洞审计通过。Claude #36–#37 的有效发现均由 Codex 复算并在最终代码检查点收敛，实际模型偏差已如实记录。
 - 当前平台无关通知协调器代码检查点 `92b924f2ee3dd45e25ee0c9ff3358b346b38f3a8` 已通过 Full、493 项测试、旧状态原子收养、权威静音、显式候选复核、at-least-once Recovery、generation round gate、所有撤权来源、durable 平台清理确认和 runtime 终止接线；通知/撤权定向集 Release 连续 10 轮 460/460，model drift 与八项目漏洞审计通过。Claude #38–#39 的有效发现均由 Codex 复算并在最终代码检查点收敛，实际模型偏差已如实记录。
 - 当前 Windows 原生通知平台代码检查点 `bb4ae92dbdc1332ecc7283619b78567b44a62f04` 已通过 Full、555 项测试、通知定向集 830/830、最终 host/platform 修复集 320/320、安装态 production builder payload/Register/Show/GetAll/Remove、WPF 非阻塞启停、model drift 与八项目漏洞审计；Claude #40–#42 的有效发现均由 Codex 复算、修正并在本机门禁收敛，三次终态实际模型偏差已如实记录。
+- 当前单实例激活代码检查点 `b8589669e6015b884f171456cc5d34fd402e4212` 已通过 Fast/Full 600 项测试、Client 389/389、activation 60/60 与压力 600/600、真实优雅交接 30 轮×10 竞争者、冷/运行中/交接后原生 COM callback、并发冷启动/继任者/强杀恢复、model drift 与八项目漏洞审计。固定 AppInstance key、单次当前读取、完整 redirect、授权路由和通知注销后释放 key 已冻结为 `DEC-030`；Claude #43–#44 的有效发现经 Codex 复算、修正和本机复验，实际账户/UI 接线保持阶段 8 `未验证`。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 
@@ -113,9 +114,11 @@ RequiredUserGate: none
 | 40 | 2026-08-03 | Windows 原生通知平台 | 全局 0.5 持久 challenge | Opus / XHigh | job `b8d105e8-48c5-434d-9ebe-34f4de55f450`，`workspace=E:\WorkSpace\RelayCove`；实际 `claude-sonnet-5`、`model_mismatch=true`，797500 ms 后返回。有效发现落实为可恢复平台分类、Summary 聚合与清理、同步 Show/设置隔离和有界等待、惰性 manager 与下一单实例切片边界 | `$2.50882625` |
 | 41 | 2026-08-03 | Windows 原生通知平台 | 全局 0.5 最终 review | Opus / XHigh | job `2c9aff25-7dd5-4919-bbdb-fc15af41f5cf`，`workspace=E:\WorkSpace\RelayCove`；实际 `claude-sonnet-5`、`model_mismatch=true`，924598 ms 后 `FIX_REQUIRED`。原生 launch 分隔符、注册就绪、同步移除隔离与不确定提交/撤权竞争经 Codex 复算成立并在 `5c244b0` 修正；其余按既定恢复策略和阶段 11 bootstrap 边界裁定 | `$3.4250045` |
 | 42 | 2026-08-03 | Windows 原生通知平台 | 全局 0.5 窄范围复审 | Opus / XHigh | job `5ed116ad-1250-4422-84bc-30c939da40a6`，`workspace=E:\WorkSpace\RelayCove`；终态实际 `claude-sonnet-5`、`model_mismatch=true`，597806 ms 后确认五个核验点成立且无 P0/P1。迟到精确清理失败后的全局静默 P2 与持锁内联迟到注销 P3 经 Codex 复算成立并在 `bb4ae92` 修正，最终本机门禁通过 | `$1.9133445` |
+| 43 | 2026-08-04 | 单实例激活与授权路由 | 全局 0.5 持久 review | Opus / XHigh | job `9f80d244-9aed-499b-bc4b-a7423cdd7fc1`，`workspace=E:\WorkSpace\RelayCove`；终态实际 `claude-sonnet-5`、`model_mismatch=true`，596834 ms 后 `REVISE`。当前读取者所有权、shutdown handoff、认证/权威快照门、pending 与去重发现经 Codex 复算并在最终代码收敛 | `$3.02272975` |
+| 44 | 2026-08-04 | 单实例激活与授权路由 | 本机 Claude Code 2.1.220 后台最终 review | Opus / XHigh | job `823d9000`、session `823d9000-a8a2-4982-80a7-f1c89f8da371`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；实际 `claude-opus-5`，请求模型无偏差，1942698 ms 后 `REVISE`。实例键早于通知注销释放的有效阻断已在 `b858966` 修正并以顺序测试、30 轮实机交接和交接后 COM callback 复验；冷 marker 已实机确认，账户/UI 建议按冻结阶段 8 边界记录，其他 P2 已补测、修正或显式记录 | `$12.06`（CLI 状态显示值） |
 
-- 调用计数：`42`（全部终态）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
-- 已确认费用合计：`$48.7578675`；其余二十二次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`44`（全部终态）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
+- 已确认精确费用合计：`$51.78059725`；另有 #44 本机 Claude Code 状态显示 `$12.06`（界面两位小数，未伪造更高精度），两者按显示值合计约 `$63.84059725`。其余二十二次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate

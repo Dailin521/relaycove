@@ -2,7 +2,7 @@
 
 ## 状态
 
-- `in_progress`
+- `completed`
 - 分支：`agent/stage-7-single-instance-activation`
 - 基线：`ff9e50f6ec3fb250c32f99a7234c40be4b90c92f`
 
@@ -41,12 +41,12 @@
 
 ## 验收标准
 
-- [ ] 没有现有实例时本进程成为唯一主实例并处理当前 activation；已有实例时次实例不创建窗口/通知 host，完整 activation redirect await 成功后退出。
-- [ ] 主实例普通 Launch 恢复同一个窗口；有效 Message/Unread target 只在当前账户门通过后各调用导航 sink 一次，冷启动、运行中和 redirect 重复来源不重复导航。
-- [ ] 无活动账户、旧 `AccountScopeId`、未知/撤权/fatal 会话、非法 codec、停止期和 redirect 失败均 fail-closed，不显示缓存、不泄漏标识、不形成第二主实例。
-- [ ] AppInstance 与路由并发/取消/异常/重复有自动化；WPF Dispatcher 不同步等待 WinRT redirect 或通知原生调用。
-- [ ] production Client 双进程 smoke、Fast/Full、关键定向压力、model drift、八项目漏洞审计、空白和独立复核通过。
-- [ ] 实际聊天会话定位与未读总览因阶段 8 UI 尚不存在明确保持未验证，但授权导航 sink 的输入与拒绝边界完整可验收。
+- [x] 没有现有实例时本进程成为唯一主实例并处理当前 activation；已有实例时普通次实例不创建窗口/通知 host，完整 activation redirect await 成功后退出。Windows 冷 COM 进程必须先注册以取得当前参数，若不是主实例则只 detach 后退出，不注销共享身份。
+- [x] 主实例普通 Launch 恢复同一个窗口；在显式活动账户 fake 边界中，有效 Message/Unread target 各调用导航 sink 一次，运行中和同进程重复来源不重复导航。跨进程在“旧主已处理但确认前退出”边界保持 at-least-once，不宣称跨进程 exactly-once。
+- [x] 无活动账户、旧 `AccountScopeId`、未认证会话、缺权威快照、未知/撤权/fatal 会话、非法 codec、停止期和 redirect 失败均 fail-closed，不显示缓存、不泄漏标识、不形成第二主实例。
+- [x] AppInstance 与路由并发/取消/异常/重复有自动化；WPF Dispatcher 不同步等待 WinRT redirect 或通知原生调用；通知注销完成前不释放实例键。
+- [x] production Client 双进程/并发/交接/kill/真实 COM smoke、Fast/Full、关键定向压力、model drift、八项目漏洞审计、空白和独立复核通过。
+- [x] 实际活动账户生产接线、聊天会话定位与未读总览因阶段 8 UI/认证组合尚不存在而明确保持 `未验证`；本切片验收的是授权导航命令及拒绝边界，不把 fake sink 冒充真实 UI 导航。
 
 ## 验证命令
 
@@ -67,11 +67,19 @@ dotnet list RelayCove.sln package --vulnerable --include-transitive
 
 ### 修改摘要
 
-- 待完成。
+- `b8589669e6015b884f171456cc5d34fd402e4212` 增加固定 `RelayCove.Client.Primary` AppInstance key、唯一当前激活读取者、64 项早到激活缓冲、原始 `AppActivationArguments` 重定向，以及目标进程退出观察、1 秒重选观察窗和最多三次继任者改向。重定向确认有 10 秒边界；目标在确认前退出时不等满超时而重新选举，仍无法确认则 fail-closed。
+- 冷 COM 命令行只认 Windows 实机给出的独立精确 token `----AppNotificationActivated:`；该路径在读取当前激活前注册通知，冷非主实例只 detach。普通次实例不触发通知 manager。当前激活在第一次选举时捕获一次，后续重选复用同一原始参数。
+- 当前、redirected 与运行中通知统一进入 WPF 异步 dispatcher。路由只保留一个两分钟 pending 目标；活动账户、认证状态、规范 scope 与内存权威会话快照/撤权状态全部通过后才恢复窗口并调用导航 sink。已授权完整目标以 5 秒/64 项窗口去重；重复点击仍恢复窗口但不重复导航，拒绝或导航失败不消费目标。
+- 优雅退出先停止 dispatcher/router，再在后台收敛原生通知注销，最后释放 AppInstance key；异常退出 fallback 也先 detach 通知回调后释放 key，避免旧主注销与继任者注册交叠。Stage 8 仍负责把真实账户 runtime 与聊天/未读 UI 接入现有 lease 和 sink。
 
 ### 验证证据
 
-- 待完成。
+- `已验证`：最终代码提交 `b8589669e6015b884f171456cc5d34fd402e4212`；Client Release 389/389，activation filter 60/60，连续 10 轮压力 600/600。Fast 与 Full 均为 600/600；Debug/Release 构建 0 警告、0 错误，format 与 `git diff --check` 通过。
+- `已验证`：最终 production Release 候选的优雅关闭交接连续 30 轮通过，每轮同时启动 10 个竞争进程且最终仅一个可响应窗口/进程；另有 10 次强杀恢复、20 路冷启动、20 个继任者竞争、10 个普通次实例 redirect 等收敛期实机 smoke 通过。
+- `已验证`：交接后继任者最小化时直接调用真实 Windows `INotificationActivationCallback` 返回 `HRESULT 0`，仍仅同一最小化可响应进程，证明旧主注销没有拆掉继任者注册。无现有进程时同一真实 COM callback 冷启动恰好一个可响应窗口；实机命令行形状为独立精确 marker token，另带 `-Embedding` 参数。运行中无账户 callback 同样返回成功且保持一个最小化进程，验证 fail-closed 而非假装导航。
+- `已验证`：EF `has-pending-model-changes --no-build` 返回无变化；`dotnet list RelayCove.sln package --vulnerable --include-transitive` 的八个项目均无已知漏洞；没有临时探针目录或进程残留。
+- `已验证`：Claude #43 全局 0.5 job 返回 `REVISE`，有效发现已落实为当前读取者所有权、交接/认证/权威快照与去重修正；#44 本机 Claude Code 2.1.220、真实 `claude-opus-5`/XHigh 只读复核对收敛后工作树返回 `REVISE`。其唯一成立代码阻断——通知注销前提前释放实例键——已由退出顺序回归、30 轮交接和交接后真实 COM callback 修正复验；冷 marker 已有实机证据，生产账户/UI 接线按冻结范围保留阶段 8，其余 P2 已补测试、修正一次读取或记为已知边界。
+- `未验证`：系统通知中心视觉点击的鼠标自动化、真实已登录账户导航和聊天定位；本切片以 Windows 实际 COM callback 覆盖同一原生激活入口，视觉/UI 体验留给阶段 8/11 Gate。
 
 ### 下一步
 

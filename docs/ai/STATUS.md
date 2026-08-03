@@ -5,18 +5,18 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认，阶段 7 Windows 原生通知传输、稳定身份和 WPF 注册生命周期已完成
-- **最近验证通过的状态：** Windows 通知平台最终代码检查点 `bb4ae92dbdc1332ecc7283619b78567b44a62f04`，绿色集成头 `ff9e50f6ec3fb250c32f99a7234c40be4b90c92f`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知传输、固定 AppInstance 单实例、完整激活转交和账户/权限 fail-closed 路由已完成
+- **最近验证通过的状态：** 单实例激活最终代码检查点 `b8589669e6015b884f171456cc5d34fd402e4212`，待快进的绿色集成头仍为 `ff9e50f6ec3fb250c32f99a7234c40be4b90c92f`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Fast/Full、format、555 项测试、通知定向集 830/830、最终 host/platform 修复集 320/320、安装态 production builder payload/Register/Show/GetAll/Remove smoke、WPF 非阻塞启停、真实磁盘 AccountScope/SQLite/清理确认、会话 read-through/未读/候选/游标事务、HTTP Sync、客户端认证与 DPAPI、单账户 runtime、客户端与服务端 SignalR、既有消息/会话/认证回归、model drift、八项目漏洞审计与空白检查通过
+- **自动化验证：** `已验证` — Fast/Full、format、600 项测试、Client 389/389、activation filter 60/60 与压力 600/600；真实 Windows 优雅交接 30 轮×10 竞争者、冷/运行中/交接后 COM callback、并发冷启动/继任者/强杀恢复、安装态 production builder payload/Register/Show/GetAll/Remove、WPF 非阻塞生命周期、既有本地缓存/HTTP/认证/SignalR/服务端回归、model drift、八项目漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
-- **最近 Claude 调用：** `已验证` — #42 job `5ed116ad-1250-4422-84bc-30c939da40a6` 请求 Opus/XHigh、终态实际回落 `claude-sonnet-5` 且 `model_mismatch=true`；五个既定修复点成立且无 P0/P1，剩余 P2/P3 经 Codex 复算后在 `bb4ae92` 修正并本机复验。Codex 仍为实现与验收主体
+- **最近 Claude 调用：** `已验证` — #44 本机后台 job `823d9000` 使用 Claude Code 2.1.220、实际 `claude-opus-5`/XHigh、Read/Glob/Grep 只读，1942698 ms 后对收敛中工作树返回 `REVISE`。提前释放实例键的有效阻断已在 `b858966` 修正并以回归、30 轮交接和交接后真实 COM callback 复验；冷 marker 已有实机证据，生产账户/UI 接线明确留待阶段 8。Codex 仍为实现与验收主体
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
-- `agent/stage-7-single-instance-activation`：实现 AppInstance 完整激活转交、唯一窗口/进程、成功目标去重，以及旧账户/撤权/未知/fatal 的 fail-closed 路由；不提前实现阶段 8 聊天 UI。
+- `agent/stage-7-single-instance-activation`：代码、自动化、实机与文档已绿色，正在形成完成提交并仅快进集成；不提前实现阶段 8 账户/UI 接线。
 
 ## 已完成
 
@@ -51,10 +51,11 @@
 - 会话真实消息 read-through、receipt/快照双权威收敛、快照级退避与撤权竞态门禁（`DEC-027`）
 - 旧通知状态收养、权威静音、串行通知协调、generation round gate、durable 平台清理确认与撤权重试（`DEC-028`）
 - Windows App SDK 2.3.1 unpackaged 原生通知、账户隔离 Tag/Group、严格分号激活参数、注册就绪门、有界原生调用与不确定提交精确恢复（`DEC-029`）
+- 固定 AppInstance key、完整 activation redirect、继任者回收、通知注销/key 释放顺序、授权路由与进程内去重（`DEC-030`）
 
 ## 下一任务
 
-完成单实例激活转交和账户/权限 fail-closed 路由，再进入声音、任务栏与托盘生命周期切片。
+快进集成并清理当前任务分支，然后进入声音、任务栏闪烁与托盘生命周期切片。
 
 ## 阻塞项
 
