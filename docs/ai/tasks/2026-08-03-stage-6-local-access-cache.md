@@ -18,10 +18,11 @@
 - `已验证`：工程方案固定撤权顺序为进程 deny-set→独立最小 tombstone 事务→清理；tombstone 首次持久化失败时整个作用域 fatal fail-closed，冷启动须先权威会话对账才可展示私有缓存。
 - `已验证`：Microsoft.Data.Sqlite 官方说明 SQLite 不支持真正异步 I/O，应避免伪 async API；并发访问每次新建 connection、不要跨线程共享 ADO.NET 对象；WAL 改善并发，shared cache 与 WAL 不应混用；写事务为 Serializable，busy/locked 自动重试到 timeout。
 - `已验证`：本机后台无工具 Claude #30 实际使用 `claude-opus-5` 返回 `REVISE`；采纳 durable revocation intent、冷启动默认隐藏旧缓存、读写双门禁、固定唯一键顺序和撤权不可因调用方取消而丢弃，记录为 `DEC-018`。Claude 调用达到 `30/30` 硬上限，不再追加调用。
+- `已验证`：首次 Full 后漏洞审计发现 `Microsoft.Data.Sqlite 10.0.10` 的最低传递解析带入有 High advisory 的 `SQLitePCLRaw.lib.e_sqlite3 2.1.11`；官方 NuGet 显示依赖下限允许升级且 2.1.12 已发布，直接固定同 bundle 家族 2.1.12 作为最小安全覆盖，记录为 `DEC-019`，须重新执行 Full 与漏洞审计。
 
 ## 范围
 
-- Client 增加 `Microsoft.Data.Sqlite 10.0.10`，实现 canonical server base URI 与 AccountScopeId；数据库、缓存目录只接受显式绝对 root 并位于 `<root>/<AccountScopeId>/`。
+- Client 增加 `Microsoft.Data.Sqlite 10.0.10` 并直接固定其原有传递 bundle `SQLitePCLRaw.bundle_e_sqlite3 2.1.12` 以避开 2.1.11 High advisory，实现 canonical server base URI 与 AccountScopeId；数据库、缓存目录只接受显式绝对 root 并位于 `<root>/<AccountScopeId>/`。
 - 建立当前切片实际使用的 schema/version：LocalConversations、LocalMessages、LocalMessageMentions、RevokedConversations 和 LocalAppState；启用 foreign keys、WAL、明确 timeout 和参数化 SQL，不使用 shared cache或跨调用共享 connection。
 - 增加账户作用域 cache/store 与 `IRealtimeEventSink` 实现。只有调用方以权威会话 DTO 显式登记后才接收消息；未知会话触发对账请求并拒绝入库，不自动创建。
 - Realtime 合并按 ServerMessageId 与 `(SenderId, ClientMessageId)` 统一：新建、pending 提升、精确重复或不可变载荷冲突得到确定结果；事务提交后才对上层可见。

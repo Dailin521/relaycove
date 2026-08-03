@@ -318,6 +318,19 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateAsync_UsesNativeSQLiteVersionWithSecurityFix()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+
+        var nativeVersion = Version.Parse(TextScalar(identity, "SELECT sqlite_version();"));
+
+        Assert.True(
+            nativeVersion >= new Version(3, 50, 2),
+            $"Expected SQLite 3.50.2 or newer, but resolved {nativeVersion}.");
+    }
+
+    [Fact]
     public async Task LocalCacheRealtimeEventSink_WhenConflictOrFatal_DoesNotLogSensitiveValues()
     {
         var identity = CreateIdentity(UserId);
@@ -422,6 +435,20 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         using var command = connection.CreateCommand();
         command.CommandText = sql;
         command.ExecuteNonQuery();
+    }
+
+    private static string TextScalar(AccountScopeIdentity identity, string sql)
+    {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = identity.DatabasePath,
+            Mode = SqliteOpenMode.ReadWrite,
+            ForeignKeys = true,
+        }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return Convert.ToString(command.ExecuteScalar())!;
     }
 
     private static void AssertMessage(MessageDto expected, MessageDto actual)

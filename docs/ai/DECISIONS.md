@@ -226,3 +226,13 @@
 - **理由：** durable intent 把“已经收到撤权但尚未完成清理”变成可重放事实；冷启动授权门覆盖 intent 自身尚未提交即崩溃以及离线漏事件窗口，同时不假装本切片已实现 HTTP 对账。取消不可丢、固定事务顺序和读写共用门禁消除关停、竞争与 WAL 旧快照造成的 fail-open。
 - **影响：** 不新增表或外部依赖，复用本切片实际使用的 LocalAppState；当前切片不提供 tombstone 清除/重新加入 API，后续 Complete=true 权威对账必须显式、原子地实现恢复流程。进程崩溃前尚未落盘的数据仍无法远程擦除，但不会在未重新权威登记时展示。
 - **来源：** `DEC-003`、`DEC-016`、`DEC-017`；工程落地方案第 12.3、12.7、12.8；`docs/ai/tasks/2026-08-03-stage-6-local-access-cache.md`；本机 Claude #30 XHigh challenge；真实磁盘故障注入、重启重放、取消、竞争与账户隔离测试。
+
+### DEC-019：客户端 SQLite 原生 bundle 安全版本覆盖
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** `DEC-017` 选用 `Microsoft.Data.Sqlite 10.0.10`，其官方 NuGet 依赖范围允许 `SQLitePCLRaw.bundle_e_sqlite3 >= 2.1.11`，但默认最低解析为 2.1.11；仓库漏洞审计将其内含低于 SQLite 3.50.2 的原生库报告为 High（GHSA-2m69-gcr7-jv3q）。不能把已通过功能测试等同于依赖安全通过。
+- **决策：** 保持 Microsoft.Data.Sqlite 10.0.10 和当前 ADO.NET/schema 设计不变，在 Client 直接固定同一既有传递包 `SQLitePCLRaw.bundle_e_sqlite3 2.1.12`，使 bundle/core/provider/lib 同步解析为 2.1.12；不得只压制 advisory。依赖升级后必须重跑真实磁盘测试、Full 与 `--vulnerable --include-transitive`。
+- **理由：** 2.1.12 是同依赖家族的最小稳定补丁覆盖，满足 Microsoft.Data.Sqlite 的无上限最低版本范围，避免引入 3.x 大版本兼容风险，同时让审计实际解析到不受该 advisory 标记的原生包。
+- **影响：** 增加一个显式 PackageReference 以固定原有传递依赖，不新增运行时能力或架构边界；后续 Microsoft.Data.Sqlite 若提升最低安全 bundle，可删除冗余直接 pin，但必须以当时依赖图和漏洞审计为证据。
+- **来源：** `DEC-017`；`docs/ai/tasks/2026-08-03-stage-6-local-access-cache.md`；2026-08-03 NuGet `Microsoft.Data.Sqlite 10.0.10` 与 `SQLitePCLRaw.bundle_e_sqlite3/lib.e_sqlite3` 包元数据；GitHub Advisory GHSA-2m69-gcr7-jv3q；仓库真实 `dotnet list package --vulnerable --include-transitive` 输出。
