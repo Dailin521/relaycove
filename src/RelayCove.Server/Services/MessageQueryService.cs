@@ -100,7 +100,6 @@ public sealed class MessageQueryService(RelayCoveDbContext dbContext)
         CancellationToken cancellationToken)
     {
         if (actorUserId == Guid.Empty ||
-            conversationId == Guid.Empty ||
             messageId <= 0 ||
             before is < 0 or > MessageRequestValidator.MaximumAroundSideCount ||
             after is < 0 or > MessageRequestValidator.MaximumAroundSideCount)

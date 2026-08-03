@@ -167,9 +167,10 @@ public sealed class MessageAroundEndpointTests(
             await AssertErrorAsync(invalidResponse, HttpStatusCode.BadRequest, ApiErrorCodes.ValidationFailed);
         }
 
-        using (var unknownResponse = await memberClient.GetAsync(
-                   $"/api/conversations/{Guid.NewGuid():D}/messages/around/{firstMessage.Id}"))
+        foreach (var unknownConversationId in new[] { Guid.NewGuid(), Guid.Empty })
         {
+            using var unknownResponse = await memberClient.GetAsync(
+                $"/api/conversations/{unknownConversationId:D}/messages/around/{firstMessage.Id}");
             await AssertErrorAsync(
                 unknownResponse,
                 HttpStatusCode.Forbidden,
