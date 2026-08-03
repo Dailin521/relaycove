@@ -6,7 +6,7 @@ internal interface IClientNotificationPlatform
         ClientNotificationRequest request,
         CancellationToken cancellationToken);
 
-    Task ClearConversationAsync(
+    Task<ClientNotificationPlatformResult> ClearConversationAsync(
         Guid conversationId,
         CancellationToken cancellationToken);
 }

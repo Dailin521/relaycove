@@ -132,7 +132,7 @@ public sealed class NotificationRecoveryTests : IDisposable
     }
 
     [Fact]
-    public async Task AuthoritativeSnapshot_AfterRestart_ReemitsPersistedRevocationForPlatformClear()
+    public async Task AuthoritativeSnapshot_AfterRestart_ReemitsUntilPlatformClearIsAcknowledged()
     {
         var identity = CreateIdentity();
         var conversation = CreateConversation();
@@ -146,17 +146,63 @@ public sealed class NotificationRecoveryTests : IDisposable
                 await cache.RevokeConversationAccessAsync(conversation.Id));
         }
 
+        // Simulate a tombstone written by the previous coordinator version,
+        // before durable platform-cleanup markers existed.
+        Execute(
+            identity,
+            "DELETE FROM LocalAppState WHERE Key LIKE 'NotificationClear%';");
+
         AccountScopedLocalCache.ResetProcessStateForTest(identity);
         await using var restarted = await AccountScopedLocalCache.CreateAsync(
             identity,
             NullLogger<AccountScopedLocalCache>.Instance);
 
-        var outcome = await restarted
+        var first = await restarted
             .ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
                 new ConversationListResponse([], Complete: true));
 
-        Assert.Equal(LocalCacheOperationStatus.Ready, outcome.Status);
-        Assert.Equal([conversation.Id], outcome.RevokedConversationIds);
+        Assert.Equal(LocalCacheOperationStatus.Ready, first.Status);
+        Assert.Equal([conversation.Id], first.RevokedConversationIds);
+
+        var retry = await restarted
+            .ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
+                new ConversationListResponse([], Complete: true));
+        Assert.Equal([conversation.Id], retry.RevokedConversationIds);
+
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await restarted.AcknowledgeNotificationConversationClearedAsync(conversation.Id));
+        var afterAcknowledgement = await restarted
+            .ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
+                new ConversationListResponse([], Complete: true));
+        Assert.Empty(afterAcknowledgement.RevokedConversationIds);
+    }
+
+    [Fact]
+    public async Task AuthoritativeSnapshot_WhenConversationReturnsBeforeClearAcknowledgement_KeepsCleanupPending()
+    {
+        var prepared = await PrepareAsync();
+        await using var cache = prepared.Cache;
+        Assert.Equal(
+            LocalCacheOperationStatus.RevokedConversation,
+            await cache.RevokeConversationAccessAsync(prepared.Conversation.Id));
+
+        var rejoined = await cache.ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
+            new ConversationListResponse([prepared.Conversation], Complete: true));
+        Assert.Equal([prepared.Conversation.Id], rejoined.RevokedConversationIds);
+
+        var retry = await cache.ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
+            new ConversationListResponse([prepared.Conversation], Complete: true));
+        Assert.Equal([prepared.Conversation.Id], retry.RevokedConversationIds);
+
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.AcknowledgeNotificationConversationClearedAsync(
+                prepared.Conversation.Id));
+        var afterAcknowledgement = await cache
+            .ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
+                new ConversationListResponse([prepared.Conversation], Complete: true));
+        Assert.Empty(afterAcknowledgement.RevokedConversationIds);
     }
 
     [Fact]

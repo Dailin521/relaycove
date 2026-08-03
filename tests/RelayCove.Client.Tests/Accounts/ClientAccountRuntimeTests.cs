@@ -1276,9 +1276,10 @@ public sealed class ClientAccountRuntimeTests
             return Task.FromResult(ClientNotificationPlatformResult.Accepted);
         }
 
-        public Task ClearConversationAsync(
+        public Task<ClientNotificationPlatformResult> ClearConversationAsync(
             Guid conversationId,
-            CancellationToken cancellationToken) => Task.CompletedTask;
+            CancellationToken cancellationToken) =>
+            Task.FromResult(ClientNotificationPlatformResult.Accepted);
     }
 
     private sealed class FakeReadThroughCoordinator : IClientAccountReadThroughCoordinator

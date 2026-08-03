@@ -177,11 +177,6 @@ internal sealed class ClientNotificationRoundCoordinator :
             snapshotCommitted = false;
         }
 
-        if (status == ClientSyncRunStatus.Canceled)
-        {
-            return;
-        }
-
         var roundIds = capturedRound.Select(candidate => candidate.Key).ToHashSet();
         var oldRecoveryIds = capturedRecovery
             .Where(messageId => !roundIds.Contains(messageId))
@@ -201,7 +196,8 @@ internal sealed class ClientNotificationRoundCoordinator :
                     .ConfigureAwait(false);
             }
 
-            if (capturedSnapshotCommitted &&
+            if (status != ClientSyncRunStatus.Canceled &&
+                capturedSnapshotCommitted &&
                 token.Reason is SyncReason.Reconnect or SyncReason.Periodic &&
                 !activity.IsMainWindowForeground &&
                 oldRecoveryIds.Length != 0)

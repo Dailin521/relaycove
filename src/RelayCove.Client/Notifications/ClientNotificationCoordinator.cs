@@ -473,7 +473,9 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
             return;
         }
 
-        await ClearPlatformConversationAsync(conversationId, cancellationToken)
+        await ClearAndAcknowledgePlatformConversationAsync(
+                conversationId,
+                cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -490,7 +492,7 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
 
         try
         {
-            await ClearPlatformConversationAsync(
+            await ClearAndAcknowledgePlatformConversationAsync(
                     conversationId,
                     lifetimeCancellation.Token)
                 .ConfigureAwait(false);
@@ -501,17 +503,55 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
         }
     }
 
-    private async Task ClearPlatformConversationAsync(
+    private async Task ClearAndAcknowledgePlatformConversationAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        var result = await ClearPlatformConversationAsync(
+                conversationId,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (result.Status is not ClientNotificationPlatformStatus.Accepted and
+            not ClientNotificationPlatformStatus.PermanentlyUnavailable)
+        {
+            return;
+        }
+
+        var acknowledgeStatus = await localCache
+            .AcknowledgeNotificationConversationClearedAsync(
+                conversationId,
+                CancellationToken.None)
+            .ConfigureAwait(false);
+        if (acknowledgeStatus != LocalCacheOperationStatus.Ready)
+        {
+            logger.LogWarning(
+                "Acknowledging notification platform cleanup did not complete; " +
+                "status={Status}.",
+                acknowledgeStatus);
+        }
+    }
+
+    private async Task<ClientNotificationPlatformResult> ClearPlatformConversationAsync(
         Guid conversationId,
         CancellationToken cancellationToken)
     {
         try
         {
-            await platform.ClearConversationAsync(conversationId, cancellationToken)
+            var result = await platform
+                .ClearConversationAsync(conversationId, cancellationToken)
                 .ConfigureAwait(false);
+            if (!Enum.IsDefined(result.Status))
+            {
+                logger.LogError(
+                    "The notification platform returned an invalid cleanup status.");
+                return ClientNotificationPlatformResult.TransientFailure;
+            }
+
+            return result;
         }
         catch (OperationCanceledException) when (lifetimeCancellation.IsCancellationRequested)
         {
+            return ClientNotificationPlatformResult.TransientFailure;
         }
         catch (Exception exception)
         {
@@ -519,6 +559,7 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
                 "Clearing notification platform state for a conversation failed; " +
                 "errorType={ErrorType}.",
                 exception.GetType().Name);
+            return ClientNotificationPlatformResult.TransientFailure;
         }
     }
 

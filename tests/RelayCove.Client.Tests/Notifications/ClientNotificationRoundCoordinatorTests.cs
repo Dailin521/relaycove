@@ -121,7 +121,7 @@ public sealed class ClientNotificationRoundCoordinatorTests : IDisposable
     }
 
     [Fact]
-    public async Task CanceledRound_DoesNotDispatchAnyCapturedCandidate()
+    public async Task CanceledRound_DispatchesOnlyRealtimeFirstSourceCandidate()
     {
         var prepared = await PrepareAsync(recoveryMessageIds: [1]);
         await using var cache = prepared.Cache;
@@ -134,7 +134,9 @@ public sealed class ClientNotificationRoundCoordinatorTests : IDisposable
 
         await coordinator.CloseRoundAsync(token, ClientSyncRunStatus.Canceled);
 
-        Assert.Empty(sink.Dispatches);
+        var dispatch = Assert.Single(sink.Dispatches);
+        Assert.Equal(ClientNotificationDispatchMode.PerMessage, dispatch.Mode);
+        Assert.Equal([20L], dispatch.MessageIds);
     }
 
     [Fact]

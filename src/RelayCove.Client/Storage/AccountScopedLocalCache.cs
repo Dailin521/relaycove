@@ -11,6 +11,8 @@ namespace RelayCove.Client.Storage;
 public sealed class AccountScopedLocalCache : IAsyncDisposable
 {
     private const string RevocationIntentPrefix = "RevocationIntent/";
+    private const string NotificationClearPendingPrefix = "NotificationClearPending/";
+    private const string NotificationClearCompletedPrefix = "NotificationClearCompleted/";
     private const string NotificationStateVersionKey = "NotificationStateVersion";
     private const int CurrentNotificationStateVersion = 1;
     private const int MaxNotificationCandidateIds = 1000;
@@ -191,6 +193,36 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             return await Task.Run(() => MarkNotificationCandidatesHandled(
                     validatedIds,
                     cancellationToken))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+    }
+
+    internal async Task<LocalCacheOperationStatus>
+        AcknowledgeNotificationConversationClearedAsync(
+            Guid conversationId,
+            CancellationToken cancellationToken = default)
+    {
+        ValidateGuid(conversationId, nameof(conversationId));
+        ThrowIfDisposed();
+        if (IsFatal)
+        {
+            return LocalCacheOperationStatus.FatalScope;
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (IsFatal)
+            {
+                return LocalCacheOperationStatus.FatalScope;
+            }
+
+            return await Task.Run(() =>
+                    AcknowledgeNotificationConversationCleared(conversationId))
                 .ConfigureAwait(false);
         }
         finally
@@ -895,29 +927,74 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
     }
 
+    private LocalCacheOperationStatus AcknowledgeNotificationConversationCleared(
+        Guid conversationId)
+    {
+        try
+        {
+            return ExecuteWriteWithRetry((connection, transaction) =>
+            {
+                DeleteNotificationClearPending(connection, transaction, conversationId);
+                if (HasTombstone(connection, transaction, conversationId))
+                {
+                    WriteNotificationClearCompleted(connection, transaction, conversationId);
+                }
+                else
+                {
+                    DeleteNotificationClearCompleted(connection, transaction, conversationId);
+                }
+
+                return TransactionResult<LocalCacheOperationStatus>.Commit(
+                    LocalCacheOperationStatus.Ready);
+            });
+        }
+        catch (SqliteException exception) when (IsBusy(exception))
+        {
+            logger.LogWarning(
+                "Acknowledging notification platform cleanup remained busy after bounded " +
+                "retries; errorType={ExceptionType}.",
+                exception.GetType().Name);
+            return LocalCacheOperationStatus.TransientFailure;
+        }
+        catch (Exception exception)
+        {
+            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state while acknowledging " +
+                "notification platform cleanup after an error of type {ExceptionType}.",
+                exception.GetType().Name);
+            return LocalCacheOperationStatus.FatalScope;
+        }
+    }
+
     private LocalAuthoritativeConversationSnapshotOutcome ApplyAuthoritativeConversationSnapshot(
         ConversationListResponse snapshot)
     {
         var conversationsById = snapshot.Conversations.ToDictionary(conversation => conversation.Id);
-        Guid[] missingConversationIds = [];
+        Guid[] newlyMissingConversationIds = [];
+        Guid[] notificationClearConversationIds = [];
         try
         {
-            missingConversationIds = LoadLocalConversationIds()
+            newlyMissingConversationIds = LoadLocalConversationIds()
                 .Concat(LoadRevocationIntentIds())
                 .Concat(authorizedConversations.Keys)
-                .Concat(deniedConversations.Keys)
                 .Distinct()
                 .Where(conversationId => !conversationsById.ContainsKey(conversationId))
                 .ToArray();
+            notificationClearConversationIds = newlyMissingConversationIds;
+            notificationClearConversationIds = notificationClearConversationIds
+                .Concat(LoadNotificationClearConversationIds())
+                .Distinct()
+                .ToArray();
 
-            foreach (var conversationId in missingConversationIds)
+            foreach (var conversationId in newlyMissingConversationIds)
             {
                 deniedConversations.TryAdd(conversationId, 0);
                 authorizedConversations.TryRemove(conversationId, out _);
                 authoritativeLastMessageIds.TryRemove(conversationId, out _);
             }
 
-            PersistRevocationIntents(missingConversationIds);
+            PersistRevocationIntents(newlyMissingConversationIds);
             faultInjector?.BeforeAuthoritativeSnapshotCommit();
             ExecuteWriteWithRetry((connection, transaction) =>
             {
@@ -927,10 +1004,15 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                     UpsertConversation(connection, transaction, conversation);
                 }
 
-                foreach (var conversationId in missingConversationIds)
+                foreach (var conversationId in newlyMissingConversationIds)
                 {
                     WriteTombstoneAndDeleteConversation(connection, transaction, conversationId);
                     DeleteRevocationIntent(connection, transaction, conversationId);
+                }
+
+                foreach (var conversationId in notificationClearConversationIds)
+                {
+                    WriteNotificationClearPending(connection, transaction, conversationId);
                 }
 
                 return TransactionResult<bool>.Commit(true);
@@ -959,7 +1041,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             logger.LogInformation("An authoritative conversation snapshot was committed.");
             return new LocalAuthoritativeConversationSnapshotOutcome(
                 LocalCacheOperationStatus.Ready,
-                missingConversationIds);
+                notificationClearConversationIds);
         }
         catch (Exception exception)
         {
@@ -970,7 +1052,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 exception.GetType().Name);
             return new LocalAuthoritativeConversationSnapshotOutcome(
                 LocalCacheOperationStatus.FatalScope,
-                missingConversationIds);
+                notificationClearConversationIds);
         }
     }
 
@@ -2083,7 +2165,38 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private static void WriteRevocationIntent(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        Guid conversationId)
+        Guid conversationId) =>
+        WriteLocalAppState(
+            connection,
+            transaction,
+            RevocationIntentPrefix + FormatGuid(conversationId),
+            "pending");
+
+    private static void WriteNotificationClearPending(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid conversationId) =>
+        WriteLocalAppState(
+            connection,
+            transaction,
+            NotificationClearPendingPrefix + FormatGuid(conversationId),
+            "pending");
+
+    private static void WriteNotificationClearCompleted(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid conversationId) =>
+        WriteLocalAppState(
+            connection,
+            transaction,
+            NotificationClearCompletedPrefix + FormatGuid(conversationId),
+            "completed");
+
+    private static void WriteLocalAppState(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string key,
+        string value)
     {
         using var command = CreateCommand(connection, transaction, """
             INSERT INTO LocalAppState (Key, Value, UpdatedAt)
@@ -2092,8 +2205,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 Value = excluded.Value,
                 UpdatedAt = excluded.UpdatedAt;
             """);
-        AddParameter(command, "$key", RevocationIntentPrefix + FormatGuid(conversationId));
-        AddParameter(command, "$value", "pending");
+        AddParameter(command, "$key", key);
+        AddParameter(command, "$value", value);
         AddParameter(command, "$updatedAt", FormatDateTime(DateTimeOffset.UtcNow));
         command.ExecuteNonQuery();
     }
@@ -2103,6 +2216,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         SqliteTransaction transaction,
         Guid conversationId)
     {
+        DeleteNotificationClearCompleted(connection, transaction, conversationId);
+        WriteNotificationClearPending(connection, transaction, conversationId);
         using (var tombstone = CreateCommand(connection, transaction, """
             INSERT INTO RevokedConversations (ConversationId, RevokedAt)
             VALUES ($conversationId, $revokedAt)
@@ -2125,13 +2240,40 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private static void DeleteRevocationIntent(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        Guid conversationId)
+        Guid conversationId) =>
+        DeleteLocalAppState(
+            connection,
+            transaction,
+            RevocationIntentPrefix + FormatGuid(conversationId));
+
+    private static void DeleteNotificationClearPending(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid conversationId) =>
+        DeleteLocalAppState(
+            connection,
+            transaction,
+            NotificationClearPendingPrefix + FormatGuid(conversationId));
+
+    private static void DeleteNotificationClearCompleted(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid conversationId) =>
+        DeleteLocalAppState(
+            connection,
+            transaction,
+            NotificationClearCompletedPrefix + FormatGuid(conversationId));
+
+    private static void DeleteLocalAppState(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string key)
     {
         using var command = CreateCommand(
             connection,
             transaction,
             "DELETE FROM LocalAppState WHERE Key = $key;");
-        AddParameter(command, "$key", RevocationIntentPrefix + FormatGuid(conversationId));
+        AddParameter(command, "$key", key);
         command.ExecuteNonQuery();
     }
 
@@ -2150,6 +2292,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
 
         DeleteRevocationIntent(connection, transaction, conversationId);
+        DeleteNotificationClearCompleted(connection, transaction, conversationId);
     }
 
     private IReadOnlyList<Guid> LoadLocalConversationIds()
@@ -2172,23 +2315,61 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         return ids;
     }
 
-    private IReadOnlyList<Guid> LoadRevocationIntentIds()
+    private IReadOnlyList<Guid> LoadRevocationIntentIds() =>
+        LoadAppStateConversationIds(
+            RevocationIntentPrefix,
+            "The local cache contains an invalid revocation intent.");
+
+    private IReadOnlyList<Guid> LoadNotificationClearConversationIds()
+    {
+        var ids = new List<Guid>(LoadAppStateConversationIds(
+            NotificationClearPendingPrefix,
+            "The local cache contains an invalid pending notification cleanup."));
+        using var connection = OpenConnection();
+        using var command = CreateCommand(connection, null, """
+            SELECT revoked.ConversationId
+            FROM RevokedConversations AS revoked
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM LocalAppState AS state
+                WHERE state.Key = $completedPrefix || revoked.ConversationId);
+            """);
+        AddParameter(command, "$completedPrefix", NotificationClearCompletedPrefix);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (!Guid.TryParseExact(reader.GetString(0), "D", out var conversationId) ||
+                conversationId == Guid.Empty)
+            {
+                throw new InvalidDataException(
+                    "The local cache contains an invalid notification cleanup tombstone.");
+            }
+
+            ids.Add(conversationId);
+        }
+
+        return ids.Distinct().ToArray();
+    }
+
+    private IReadOnlyList<Guid> LoadAppStateConversationIds(
+        string prefix,
+        string invalidDataMessage)
     {
         using var connection = OpenConnection();
         using var command = CreateCommand(connection, null, """
             SELECT Key FROM LocalAppState
             WHERE Key LIKE $prefix ESCAPE '\';
             """);
-        AddParameter(command, "$prefix", RevocationIntentPrefix + "%");
+        AddParameter(command, "$prefix", prefix + "%");
         var ids = new List<Guid>();
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
             var key = reader.GetString(0);
-            if (!Guid.TryParseExact(key[RevocationIntentPrefix.Length..], "D", out var conversationId) ||
+            if (!Guid.TryParseExact(key[prefix.Length..], "D", out var conversationId) ||
                 conversationId == Guid.Empty)
             {
-                throw new InvalidDataException("The local cache contains an invalid revocation intent.");
+                throw new InvalidDataException(invalidDataMessage);
             }
 
             ids.Add(conversationId);

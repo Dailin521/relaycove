@@ -209,17 +209,17 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
     }
 
     [Fact]
-    public async Task DispatchPerMessage_WhenLaterSubmissionIsTransient_CommitsOnlyAcceptedPrefix()
+    public async Task DispatchPerMessage_WhenOneSubmissionIsTransient_CommitsAcceptedPeers()
     {
-        var prepared = await PrepareAsync(messageCount: 2);
+        var prepared = await PrepareAsync(messageCount: 3);
         await using var cache = prepared.Cache;
         var submissions = 0;
         var platform = new FakeNotificationPlatform
         {
             SubmitAction = (_, _) => Task.FromResult(
-                Interlocked.Increment(ref submissions) == 1
-                    ? ClientNotificationPlatformResult.Accepted
-                    : ClientNotificationPlatformResult.TransientFailure),
+                Interlocked.Increment(ref submissions) == 2
+                    ? ClientNotificationPlatformResult.TransientFailure
+                    : ClientNotificationPlatformResult.Accepted),
         };
         await using var coordinator = CreateCoordinator(prepared, platform);
 
@@ -230,7 +230,8 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
         Assert.Equal(ClientNotificationDispatchStatus.TransientFailure, outcome.Status);
         Assert.True(ReadNotificationHandled(prepared.Identity, 1));
         Assert.False(ReadNotificationHandled(prepared.Identity, 2));
-        Assert.Equal(2, platform.Requests.Count);
+        Assert.True(ReadNotificationHandled(prepared.Identity, 3));
+        Assert.Equal(3, platform.Requests.Count);
     }
 
     [Fact]
@@ -342,6 +343,32 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
         Assert.Equal(
             LocalCacheOperationStatus.RevokedConversation,
             cache.GetNotificationConversationAccessStatus(prepared.Conversation.Id));
+        var afterClear = await cache
+            .ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
+                new ConversationListResponse([], Complete: true));
+        Assert.Empty(afterClear.RevokedConversationIds);
+    }
+
+    [Fact]
+    public async Task Revocation_WhenPlatformClearIsTransient_RemainsPendingForNextSnapshot()
+    {
+        var prepared = await PrepareAsync(messageCount: 0);
+        await using var cache = prepared.Cache;
+        var platform = new FakeNotificationPlatform
+        {
+            ClearResult = ClientNotificationPlatformResult.TransientFailure,
+        };
+        await using var coordinator = CreateCoordinator(prepared, platform);
+
+        Assert.Equal(
+            LocalCacheOperationStatus.RevokedConversation,
+            await cache.RevokeConversationAccessAsync(prepared.Conversation.Id));
+        await coordinator.ConversationRevokedAsync(prepared.Conversation.Id);
+
+        var retry = await cache
+            .ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
+                new ConversationListResponse([], Complete: true));
+        Assert.Equal([prepared.Conversation.Id], retry.RevokedConversationIds);
     }
 
     [Fact]
@@ -520,6 +547,9 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
         public ClientNotificationPlatformResult SubmitResult { get; init; } =
             ClientNotificationPlatformResult.Accepted;
 
+        public ClientNotificationPlatformResult ClearResult { get; init; } =
+            ClientNotificationPlatformResult.Accepted;
+
         public Func<
             ClientNotificationRequest,
             CancellationToken,
@@ -554,13 +584,13 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
             }
         }
 
-        public Task ClearConversationAsync(
+        public Task<ClientNotificationPlatformResult> ClearConversationAsync(
             Guid conversationId,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             clearedConversations.Enqueue(conversationId);
-            return Task.CompletedTask;
+            return Task.FromResult(ClearResult);
         }
 
         private void UpdateMaximum(int candidate)

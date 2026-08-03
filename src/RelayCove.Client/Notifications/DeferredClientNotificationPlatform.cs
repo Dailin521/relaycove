@@ -10,7 +10,8 @@ internal sealed class DeferredClientNotificationPlatform : IClientNotificationPl
         return Task.FromResult(ClientNotificationPlatformResult.TransientFailure);
     }
 
-    public Task ClearConversationAsync(
+    public Task<ClientNotificationPlatformResult> ClearConversationAsync(
         Guid conversationId,
-        CancellationToken cancellationToken) => Task.CompletedTask;
+        CancellationToken cancellationToken) =>
+        Task.FromResult(ClientNotificationPlatformResult.PermanentlyUnavailable);
 }
