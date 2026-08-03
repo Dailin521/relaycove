@@ -2,7 +2,7 @@
 
 ## 状态
 
-- `in_progress`
+- `completed`
 - 分支：`agent/stage-6-client-sync-orchestration`
 - 基线：`104b49a6a84125b538c38b9a396f7590ab1db0f0`
 
@@ -51,11 +51,11 @@
 
 ## 验收标准
 
-- [ ] 真实 HTTP 轮次严格先 Complete 快照、后固定 upper 逐页 Sync，且每页只在本地事务成功后推进。
-- [ ] 同一逻辑请求的网络/timeout/408/429/可重试 5xx 重用原 cursor/upper 并有界退避；`401` 只 refresh 一次，每次尝试使用新 request 和当前 token。
-- [ ] `400`/非法 JSON/响应不变量稳定终止为协议错误；`409 SyncCursorInvalid` 阻塞后续触发且不修改游标或 pending。
-- [ ] 并发触发只有一个 flight，原因优先级确定，一次运行链至多两轮；调用者取消不杀死共享 flight，Dispose 取消账户循环。
-- [ ] Shared/Client 定向、真实磁盘 HTTP 场景、Fast/Full、model drift、八项目漏洞审计、白名单、空白和固定差异复核通过。
+- [x] 真实 HTTP 轮次严格先 Complete 快照、后固定 upper 逐页 Sync，且每页只在本地事务成功后推进。
+- [x] 同一逻辑请求的网络/timeout/408/429/可重试 5xx 重用原 cursor/upper 并有界退避；`401` 只 refresh 一次，每次尝试使用新 request 和当前 token。
+- [x] `400`/非法 JSON/响应不变量稳定终止为协议错误；`409 SyncCursorInvalid` 阻塞后续触发且不修改游标或 pending。
+- [x] 并发触发只有一个 flight，原因优先级确定，一次运行链至多两轮；调用者取消不杀死共享 flight，Dispose 取消账户循环。
+- [x] Shared/Client 定向、真实磁盘 HTTP 场景、Fast/Full、model drift、八项目漏洞审计、白名单、空白和固定差异复核通过。
 
 ## 验证命令
 
@@ -77,14 +77,26 @@ dotnet list RelayCove.sln package --vulnerable --include-transitive
 
 ### 修改摘要
 
-- 进行中。
+- 新增稳定数值 `SyncReason`、脱敏运行结果与最小 `IClientAuthenticationSession` 边界，同步代码不持久化或记录 token。
+- `ClientSyncHttpTransport` 复用外部 HttpClient，为每次尝试新建 GET/Bearer 请求，实现三次瞬态重试、指数抖动、`Retry-After` 30 秒上限、一次 refresh 和精确 `SyncCursorInvalid` 分类。
+- `ClientSyncCoordinator` 每轮先应用 Complete 会话快照，再以磁盘 cursor 和固定 upper 逐页提交；并发触发共享 flight，用锁内先发布 TaskCompletionSource 消除完成/赋值竞态，至多补跑一轮。
+- 代码检查点为 `8f7838baa79f194702cd88d3d4f6134d5f6e9341`；未修改服务端、EF 模型、migration、Client 依赖或已冻结同步协议。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 集成基线 | `agent/v1-integration` 本地/远端均为 `104b49a`，前序 Full/259 项测试、model drift 与漏洞审计通过 |
+| `已验证` | Client/Shared 定向 | Release Client Sync 编排 25/25，Shared `SyncReason` 1/1 |
+| `已验证` | HTTP 与本地事务 | 真实磁盘缓存 + 可控 HttpMessageHandler 覆盖 Complete 快照先行、多页固定 upper、精确 tuple 重试、401 仅 refresh 一次、400/非法 JSON/响应不变量和 409 block |
+| `已验证` | 瞬态故障 | 网络/timeout/408/429/500/502/503/504、`Retry-After` 和 30 秒封顶全部通过；重试耗尽不推进 cursor |
+| `已验证` | 竞态与取消 | 单 flight/最多一次补跑、完成后新 flight、调用者取消、Dispose 取消和 Startup 恢复优先级每轮 5 项，Release 连续 10 轮通过 |
+| `已验证` | Fast/Full | Debug/Release 均 0 警告、0 错误；Client 76 + Shared 33 + Server 175 + Updater 1 = 285 项测试全部通过 |
+| `已验证` | 格式/空白/白名单 | `dotnet format --verify-no-changes`、`git diff --check` 通过；固定差异仅 9 个允许的 Client/Shared/测试文件 |
+| `已验证` | EF model drift | `has-pending-model-changes --no-build` 返回自最新 migration 后模型无变化 |
+| `已验证` | 依赖漏洞审计 | 8 个源/测试项目直接与传递依赖均未报告已知漏洞 |
+| `已验证` | 固定候选 Codex 复核 | 发现并修正 active Task 可能在赋值前完成以及 flight 尾部丢触发竞态；复核 token/header、新 request/固定 tuple、事务提交顺序、409 block 和日志脱敏后无剩余发现；Claude 已达 `30/30` 硬上限 |
 
 ### 下一步
 
-- 实现 Shared 原因契约、HTTP 结果分类、单请求重试和账户级编排。
+- 快进集成本切片，随后实现真实客户端认证会话、refresh rotation 与账户 scope 组合生命周期。

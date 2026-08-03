@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 6
 ActiveTask: docs/ai/tasks/2026-08-03-stage-6-client-sync-orchestration.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: cb7b1ed26dbbb934d92865af829beb159370abcf
+LatestGreenCodeCommit: 8f7838baa79f194702cd88d3d4f6134d5f6e9341
 LatestGreenIntegrationCommit: 104b49a6a84125b538c38b9a396f7590ab1db0f0
-NextAction: 实现会话快照先行的 Sync HTTP 循环、有界重试、一次 refresh 与 single-flight
+NextAction: 快进集成已验证的 Sync HTTP 编排，随后实现客户端认证会话、refresh rotation 与账户 scope 组合
 ClaudeCalls: 30（软上限 24，硬上限 30，已封顶）
 ClaudeCostUsd: 6.710481 confirmed；另有二十一次失败/中断调用费用 unavailable
 Blocker: none
@@ -55,6 +55,7 @@ RequiredUserGate: none
 - 当前客户端 SignalR 代码检查点 `c3717c9455a98cbf9014e8cbd37ef2f635261cc3` 已通过 Full、220 项测试、真实认证 TestServer/LongPolling、反向代理子路径、动态 token、完整 DTO、撤权 FIFO 屏障、初始失败重启、自动重连状态、sink 故障隔离、并发生命周期和回调内 Stop/Dispose；关键竞争测试 Release 连续 5 轮通过，model drift 与漏洞审计无异常，Claude #29 无结论且已降级 Codex 固定差异复核。
 - 当前账户隔离本地缓存代码检查点 `9182c73b79aa9ec6fd09bd681d6e9aa19ccd35f0` 已通过 Full、244 项测试、真实磁盘 scope/合并/重启/撤权/故障/竞争/日志、关键竞争 Release 连续 5 轮、原生 SQLite 安全版本、model drift 与八项目漏洞审计；Claude #30 有效挑战已落实为 `DEC-018`，首次审计发现的 High 依赖已由 `DEC-019` 修复并复验。
 - 当前客户端 Complete 会话快照与 Sync 页原子提交代码检查点 `cb7b1ed26dbbb934d92865af829beb159370abcf` 已通过 Full、259 项测试、真实磁盘快照对账/durable intent/重新加入/整页回滚/游标重启/账户隔离、关键故障与竞态 Release 连续 5 轮、model drift 与八项目漏洞审计；Claude 已达 `30/30` 硬上限，按账本使用 Codex 固定差异复核。
+- 当前客户端 Sync HTTP 编排代码检查点 `8f7838baa79f194702cd88d3d4f6134d5f6e9341` 已通过 Full、285 项测试、真实磁盘 + 可控 HTTP 多页/重试/Retry-After/refresh/409 block/single-flight/取消/日志场景，关键 5 项竞态 Release 连续 10 轮、model drift 与八项目漏洞审计；Claude 已达 `30/30` 硬上限，按账本使用 Codex 固定差异复核。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确授权绿色任务的常规 push、合入集成分支与任务分支清理，无需二次确认；`main`、Tag、Release、真实发布和生产部署仍须满足对应里程碑与发布 Gate，不由该授权自动放宽。
 
