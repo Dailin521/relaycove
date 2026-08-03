@@ -296,6 +296,13 @@ public sealed class ConversationEndpointTests(
         Assert.DoesNotContain(
             (await GetConversationListAsync(memberClient)).Conversations,
             candidate => candidate.Id == conversation.Id);
+        await using (var accessScope = factory.Services.CreateAsyncScope())
+        {
+            var dbContext = accessScope.ServiceProvider.GetRequiredService<RelayCoveDbContext>();
+            Assert.False(await ConversationAccessQuery
+                .VisibleTo(dbContext, memberId)
+                .AnyAsync(candidate => candidate.Id == conversation.Id));
+        }
     }
 
     [Fact]

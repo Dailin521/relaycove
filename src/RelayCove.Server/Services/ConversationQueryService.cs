@@ -127,18 +127,14 @@ public sealed class ConversationQueryService(
         Guid actorUserId,
         Guid? conversationId = null)
     {
-        IQueryable<Conversation> candidates = dbContext.Conversations.AsNoTracking();
+        IQueryable<Conversation> candidates = ConversationAccessQuery.VisibleTo(dbContext, actorUserId);
         if (conversationId.HasValue)
         {
             var requiredId = conversationId.Value;
             candidates = candidates.Where(conversation => conversation.Id == requiredId);
         }
 
-        return candidates.Where(conversation =>
-            dbContext.Users.Any(actor => actor.Id == actorUserId && !actor.IsDisabled) &&
-            !conversation.IsDeleted &&
-                (conversation.Type == ConversationType.PublicChannel ||
-                 conversation.Members.Any(member => member.UserId == actorUserId)));
+        return candidates;
     }
 
     private static IQueryable<ConversationProjection> ProjectConversations(
