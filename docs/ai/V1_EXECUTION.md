@@ -9,13 +9,13 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 5
 ActiveTask: docs/ai/tasks/2026-08-03-stage-5-signalr-access-revoked.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 5556899ca699bab097acae0003983943b4ca92d9
+LatestGreenCodeCommit: 709a2b5a6ccd54f2a293070998c6f98734ae3d93
 LatestGreenIntegrationCommit: 82f0a2f5950b5094fd39e78aa113367b83bf0f45
-NextAction: 实现真实成员删除提交后的 ConversationAccessRevoked 尽力事件
-ClaudeCalls: 27（软上限 24，硬上限 30）
-ClaudeCostUsd: 5.4229485 confirmed；另有二十次失败/中断调用费用 unavailable
+NextAction: 冻结并实现阶段 5 客户端 SignalR 接收、连接生命周期和状态边界
+ClaudeCalls: 28（软上限 24，硬上限 30）
+ClaudeCostUsd: 6.438276 confirmed；另有二十次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -51,6 +51,7 @@ RequiredUserGate: none
 - 当前 around API 代码检查点 `6189e7f3db5536f3ec715fa4243b19cd60f5f6cd` 已通过 Full、181 项测试、专用双侧窗口、目标/mentions、Public/Private/Direct 权限、最终撤权重检、两条有限 SQL、日志、model drift 与漏洞审计；Claude #24 无结论，已如实降级记录 Codex 固定差异复核。
 - 当前固定上界 Sync API 代码检查点 `9d87ac2ee94cc83005e15ca3b095dcc5ea8530dd` 已通过 Full、197 项测试、deferred 只读快照、固定上界/空洞前进、Public/Private/Direct 动态权限、mentions/两条查询、日志、model drift 与漏洞审计；Claude #25 无结论，已如实降级记录 Codex 固定差异复核。
 - 当前 SignalR NewMessage 代码检查点 `5556899ca699bab097acae0003983943b4ca92d9` 已通过 Full、202 项测试、认证/query-token 日志边界、Public/Private/Direct 分组与当前收件人、完整 DTO、撤权旧连接、顺序/并发幂等、transport 故障隔离、model drift 与漏洞审计；Claude #26 无结论，已如实降级记录 Codex 固定差异复核。
+- 当前 SignalR ConversationAccessRevoked 代码检查点 `709a2b5a6ccd54f2a293070998c6f98734ae3d93` 已通过 Full、206 项测试、多连接目标路由、其他用户隔离、撤权后生产 NewMessage 停止、并发/重复一次事件、负向零事件、transport 故障隔离、model drift 与漏洞审计；固定差异复核无剩余发现。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确授权绿色任务的常规 push、合入集成分支与任务分支清理，无需二次确认；`main`、Tag、Release、真实发布和生产部署仍须满足对应里程碑与发布 Gate，不由该授权自动放宽。
 
@@ -85,9 +86,10 @@ RequiredUserGate: none
 | 25 | 2026-08-03 | 固定上界 Sync API | 前置 challenge | Opus / XHigh | `ChallengeHead=0c7c767`；60 秒窗口内因本机认证源优先级禁用 claude.ai connector 而超时，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合冻结协议、本地 Microsoft.Data.Sqlite API 与当前模型证据收敛 `DEC-013` | `unavailable` |
 | 26 | 2026-08-03 | SignalR NewMessage | 前置 challenge | Opus / XHigh | `ChallengeHead=cb5a4d6`；60 秒窗口内因本机认证源优先级禁用 claude.ai connector 而超时；调用前后 HEAD 与干净状态不变，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库事务/权限与 ASP.NET Core 10 官方证据收敛 `DEC-014` | `unavailable` |
 | 27 | 2026-08-03 | SignalR ConversationAccessRevoked | 前置 challenge | Opus / XHigh | `ChallengeHead=ca6fec7`；60 秒窗口内因本机认证源优先级禁用 claude.ai connector 而超时；调用前后 HEAD 与干净状态不变，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库事务/撤权与用户路由证据收敛 `DEC-015` | `unavailable` |
+| 28 | 2026-08-03 | SignalR ConversationAccessRevoked | 本机后台只读 CLI review | Opus / XHigh | 从 `E:\WorkSpace\RelayCove` 启动且工具限于 `Read/Glob/Grep`；实际主要模型 `claude-opus-5`（CLI 含少量 `claude-sonnet-5` 开销），返回未提供 `workspace_root/model_mismatch`；约 `290742 ms` 后 `terminal_reason=budget_exhausted`，未形成 verdict/findings，不能标记通过，固定候选由 Codex 复核 | `$1.0153275` |
 
-- 调用计数：`27 / 24 soft / 30 hard`。
-- 已确认费用合计：`$5.4229485`；其余二十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`28 / 24 soft / 30 hard`。
+- 已确认费用合计：`$6.438276`；其余二十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - Claude 恢复可用后，每次调用必须记录返回的 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；达到调用或费用硬上限时降级为 Codex 独立复核，不停止开发。
 
 ## 阻塞与用户 Gate

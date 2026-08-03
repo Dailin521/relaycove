@@ -2,7 +2,7 @@
 
 ## 状态
 
-- `in_progress`
+- `completed`
 - 分支：`agent/stage-5-signalr-access-revoked`
 - 基线：`82f0a2f5950b5094fd39e78aa113367b83bf0f45`
 
@@ -51,11 +51,11 @@
 
 ## 验收标准
 
-- [ ] 私有成员真实删除提交后，目标用户每条现有连接各收到一次正确 conversation ID；actor、其他成员和 outsider 不收到目标事件。
-- [ ] 重复删除和并发同一目标只有赢得真实删除的命令发布一次；无成员、Public/Direct、无权限/未知会话和验证失败不发布。
-- [ ] 事件到达后，同一旧连接不会再收到删除提交后开始的 NewMessage；事件丢失不改变既有 403/会话全集/Sync 权威补偿。
-- [ ] transport/publisher 异常不回滚成员删除、不改变 204、不重试；日志不含 token、正文、显示名或用户名。
-- [ ] 定向真实连接测试、既有回归、Fast/Full、model drift、漏洞审计、白名单、空白与固定差异复核通过。
+- [x] 私有成员真实删除提交后，目标用户每条现有连接各收到一次正确 conversation ID；actor、其他成员和 outsider 不收到目标事件。
+- [x] 重复删除和并发同一目标只有赢得真实删除的命令发布一次；无成员、Public/Direct、无权限/未知会话和验证失败不发布。
+- [x] 事件到达后，同一旧连接不会再收到删除提交后开始的 NewMessage；事件丢失不改变既有 403/会话全集/Sync 权威补偿。
+- [x] transport/publisher 异常不回滚成员删除、不改变 204、不重试；日志不含 token、正文、显示名或用户名。
+- [x] 定向真实连接测试、既有回归、Fast/Full、model drift、漏洞审计、白名单、空白与固定差异复核通过。
 
 ## 验证命令
 
@@ -78,14 +78,28 @@ dotnet list RelayCove.sln package --vulnerable --include-transitive
 
 ### 修改摘要
 
-- 进行中。
+- `ConversationCommandService` 保留既有公开状态返回，同时新增内部提交结果；只有私有成员真实删除并提交后才携带目标用户 ID。
+- 强类型 Hub 契约新增 `ConversationAccessRevoked(Guid)`，endpoint 在权威事务之后按目标 user ID 向其全部连接尽力发布；失败被隔离且不改变既有 204。
+- 真实 TestServer/SignalR 测试覆盖同一目标多连接、其他用户隔离、旧连接撤权后不再收到生产消息、并发/重复一次事件、全部负向状态零事件以及 transport 故障后的持久撤权。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast`（基线） | Debug 0 警告、0 错误；202 项测试通过 |
+| `已验证` | `dotnet test ... --filter FullyQualifiedName~AccessRevoked` | 4 项定向真实 SignalR/HTTP/SQLite 测试通过 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast` | Debug 0 警告、0 错误；Server 175、Shared 29、Client 1、Updater 1，共 206 项通过 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full` | 首次仅检出 Windows 检出行尾；`dotnet format` 统一且确认无语义 diff 后重跑，Release 0 警告、0 错误、206 项通过，format 与空白检查通过 |
+| `已验证` | EF model drift | `has-pending-model-changes` 返回自上次 migration 后模型无变化 |
+| `已验证` | 依赖漏洞审计 | 8 个源/测试项目均未发现已知易受攻击的直接或传递包 |
+| `已验证` | Codex 固定差异复核 | `ReviewBase=ca6fec770353f5922f057161176d023662826c14`、`ReviewHead=709a2b5a6ccd54f2a293070998c6f98734ae3d93`；15 个预期文件、文件白名单与 `git diff --check` 通过，事务后发布资格、并发幂等、用户路由、异常隔离和兼容性无剩余发现 |
+| `未验证` | Claude 本机后台只读 CLI review #28 | 本机 API 已实际调用 `claude-opus-5`，但约 291 秒后触及 `$1` 预算且未返回 verdict/findings；不计为独立通过，费用 `$1.0153275` 已入账 |
+
+### 已知限制
+
+- 事件仍是尽力加速信号，不提供 outbox、跨实例 backplane、主动断连或旧组移除；丢失和离线继续由 403、权威会话全集与 Sync 收敛。
+- 客户端 deny-set/tombstone、缓存和通知清理尚未实现；撤权前已排队帧的 fail-closed 处理属于后续客户端切片。
 
 ### 下一步
 
-- 冻结 `DEC-015` 后实现真实删除提交结果、目标用户撤权事件与自动化验证。
+- 实现阶段 5 客户端 SignalR 接收/连接状态边界，并在进入本地缓存切片时把撤权事件先接入 deny-set/tombstone。

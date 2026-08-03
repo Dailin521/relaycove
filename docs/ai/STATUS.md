@@ -5,18 +5,18 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 SignalR NewMessage 已合入；ConversationAccessRevoked 事件切片已开始
-- **最近验证通过的状态：** SignalR NewMessage 代码 `5556899ca699bab097acae0003983943b4ca92d9`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 SignalR NewMessage 与服务端 ConversationAccessRevoked 已完成
+- **最近验证通过的状态：** SignalR ConversationAccessRevoked 代码 `709a2b5a6ccd54f2a293070998c6f98734ae3d93`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Full、format、202 项测试、SignalR 认证/分组/用户路由/NewMessage/撤权/并发幂等/故障隔离/日志、既有消息/会话/认证回归、model drift、漏洞审计与空白检查通过
+- **自动化验证：** `已验证` — Full、format、206 项测试、SignalR 认证/分组/用户路由/NewMessage/ConversationAccessRevoked/撤权后当前收件人、并发幂等/故障隔离/日志、既有消息/会话/认证回归、model drift、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
-- **最近 Claude 调用：** `未验证` — SignalR ConversationAccessRevoked XHigh challenge #27 对 `ChallengeHead=ca6fec7` 因本机认证源覆盖 claude.ai 登录在 60 秒内超时；未取得审查结论且按用户要求未重试，`DEC-015` 由 Codex 结合仓库事务/撤权/用户路由证据独立收敛
+- **最近 Claude 调用：** `未验证` — 按用户指引启动的本机只读 CLI review #28 已实际调用 `claude-opus-5`，证明本机 API 可用；约 291 秒后因 `$1` 预算耗尽而未返回 verdict/findings，不能标记为通过，当前候选由 Codex 固定差异与自动化证据收敛
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
-- `agent/stage-5-signalr-access-revoked`：实现真实成员删除提交后的 ConversationAccessRevoked 尽力事件。
+- 当前切片已完成验证，正在交接至 `agent/v1-integration` 并调查阶段 5 客户端 SignalR 接收边界。
 
 ## 已完成
 
@@ -38,11 +38,12 @@
 - 消息 around 专用双侧窗口、目标归属、两侧更多标志与撤权 fail-closed 查询（`DEC-012`）
 - 固定上界 Sync、deferred SQLite 只读快照、动态权限过滤、权限空洞与单调权威游标（`DEC-013`）
 - SignalR 认证 Hub、`sub` 用户标识、每连接权威分组、当前收件人快照和提交后 NewMessage 尽力投递（`DEC-014`）
+- 私有成员真实删除提交结果、目标用户全部连接 ConversationAccessRevoked、并发一次事件与发布失败隔离（`DEC-015`）
 
 ## 下一任务
 
-完成 `ConversationAccessRevoked` 提交后事件与撤权实时收敛切片。
+冻结并实现客户端 SignalR 接收、连接生命周期和状态边界，随后接入本地唯一合并与撤权 deny-set。
 
 ## 阻塞项
 
-- 无。Claude 候选 MCP 当前受本机认证源配置影响，但不阻塞已有本地证据或下一任务的仓库调查。
+- 无。本机 Claude CLI 已确认可调用，但本次候选审查在预算内无结论；Codex 继续以本地证据为主推进下一任务。
