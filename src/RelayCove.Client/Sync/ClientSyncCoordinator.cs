@@ -1,11 +1,12 @@
 using System.Net.Http;
 using Microsoft.Extensions.Logging;
+using RelayCove.Client.Accounts;
 using RelayCove.Client.Storage;
 using RelayCove.Shared.Messages;
 
 namespace RelayCove.Client.Sync;
 
-public sealed class ClientSyncCoordinator : IAsyncDisposable
+public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
 {
     private readonly object stateGate = new();
     private readonly AccountScopedLocalCache localCache;

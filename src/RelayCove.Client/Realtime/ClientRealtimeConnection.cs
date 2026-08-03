@@ -2,12 +2,13 @@ using System.Threading.Channels;
 using Microsoft.AspNetCore.Http.Connections.Client;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
+using RelayCove.Client.Accounts;
 using RelayCove.Shared.Messages;
 using RelayCove.Shared.Realtime;
 
 namespace RelayCove.Client.Realtime;
 
-public sealed class ClientRealtimeConnection : IAsyncDisposable
+public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
 {
     private const string HubPath = "hubs/chat";
     private const string NewMessageMethod = "NewMessage";

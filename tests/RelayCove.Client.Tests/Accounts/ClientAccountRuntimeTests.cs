@@ -1,0 +1,874 @@
+using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Http.Json;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using RelayCove.Client.Accounts;
+using RelayCove.Client.Auth;
+using RelayCove.Client.Realtime;
+using RelayCove.Client.Storage;
+using RelayCove.Client.Sync;
+using RelayCove.Shared.Auth;
+using RelayCove.Shared.Conversations;
+using RelayCove.Shared.Messages;
+using RelayCove.Shared.Realtime;
+
+namespace RelayCove.Client.Tests.Accounts;
+
+public sealed class ClientAccountRuntimeTests
+{
+    private static readonly DateTimeOffset Now = new(
+        2026,
+        8,
+        3,
+        18,
+        0,
+        0,
+        TimeSpan.Zero);
+    private static readonly Guid UserId =
+        Guid.Parse("b1775924-a66e-4d9b-a6f6-e767b084be2f");
+    private static readonly Uri ServerBaseUri = new("https://example.com/proxy/");
+    private const string AccessToken = "runtime.access.token";
+    private const string RefreshToken = "runtime-refresh-token";
+
+    [Fact]
+    public async Task Factory_WhenSessionIsAuthenticated_CreatesMatchingScopeAndRealCache()
+    {
+        using var directory = new TemporaryDirectory();
+        var session = CreateSession();
+        var factory = new ClientAccountRuntimeFactory(
+            new HttpClient(new DelegateHttpHandler((_, _) =>
+                throw new InvalidOperationException("HTTP must not be called during creation."))),
+            directory.Path,
+            NullLoggerFactory.Instance);
+
+        var runtime = await factory.CreateAsync(session);
+        var expectedIdentity = AccountScopeIdentity.Create(
+            ServerBaseUri,
+            UserId,
+            directory.Path);
+
+        Assert.Equal(expectedIdentity.Id, runtime.Identity.Id);
+        Assert.Equal(expectedIdentity.DatabasePath, runtime.Identity.DatabasePath);
+        Assert.True(File.Exists(runtime.Identity.DatabasePath));
+        Assert.DoesNotContain("example.com", runtime.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(UserId.ToString(), runtime.ToString(), StringComparison.OrdinalIgnoreCase);
+
+        await runtime.DisposeAsync();
+        Assert.True(session.IsDisposeCompleted);
+    }
+
+    [Fact]
+    public async Task Factory_WhenSessionIsNotAuthenticated_FailsBeforeCreatingScopeDirectory()
+    {
+        using var directory = new TemporaryDirectory();
+        var accountRoot = System.IO.Path.Combine(directory.Path, "accounts");
+        var session = CreateSession();
+        await session.DisposeAsync();
+        var factory = new ClientAccountRuntimeFactory(
+            new HttpClient(new DelegateHttpHandler((_, _) =>
+                throw new InvalidOperationException("HTTP must not be called."))),
+            accountRoot,
+            NullLoggerFactory.Instance);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => factory.CreateAsync(session));
+
+        Assert.False(Directory.Exists(accountRoot));
+    }
+
+    [Fact]
+    public async Task Factory_WhenComponentCreationFails_ReleasesCreatedCache()
+    {
+        using var directory = new TemporaryDirectory();
+        var accountRoot = System.IO.Path.Combine(directory.Path, "accounts");
+        var session = CreateSession();
+        var factory = new ClientAccountRuntimeFactory(
+            new HttpClient(new DelegateHttpHandler((_, _) =>
+                throw new InvalidOperationException("HTTP must not be called."))),
+            accountRoot,
+            NullLoggerFactory.Instance,
+            (_, _, _, _) => throw new IOException("classified construction failure"));
+
+        var exception = await Assert.ThrowsAsync<IOException>(() =>
+            factory.CreateAsync(session));
+
+        Assert.Equal("classified construction failure", exception.Message);
+        SqliteConnection.ClearAllPools();
+        Directory.Delete(accountRoot, recursive: true);
+        Assert.False(Directory.Exists(accountRoot));
+        Assert.True(session.IsAuthenticated);
+        await session.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task FactoryRuntime_WhenStarted_UsesRealtimeBeforeRealCacheAndHttpSync()
+    {
+        using var directory = new TemporaryDirectory();
+        var order = new ConcurrentQueue<string>();
+        var handler = new DelegateHttpHandler((request, _) =>
+        {
+            Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
+            Assert.Equal(AccessToken, request.Headers.Authorization.Parameter);
+            if (request.RequestUri!.AbsolutePath.EndsWith(
+                    "/api/conversations",
+                    StringComparison.Ordinal))
+            {
+                order.Enqueue("http-conversations");
+                return Task.FromResult(Ok(
+                    new ConversationListResponse([], Complete: true)));
+            }
+
+            Assert.EndsWith("/api/sync", request.RequestUri.AbsolutePath);
+            order.Enqueue("http-sync");
+            return Task.FromResult(Ok(
+                new SyncResponse([], 0, 0, HasMore: false)));
+        });
+        var realtime = new FakeRealtimeConnection
+        {
+            StartAction = _ =>
+            {
+                order.Enqueue("realtime-start");
+                return Task.CompletedTask;
+            },
+        };
+        Uri? capturedServerBaseUri = null;
+        Func<Task<string?>>? capturedAccessTokenProvider = null;
+        var factory = new ClientAccountRuntimeFactory(
+            new HttpClient(handler),
+            directory.Path,
+            NullLoggerFactory.Instance,
+            (serverBaseUri, accessTokenProvider, _, _) =>
+            {
+                capturedServerBaseUri = serverBaseUri;
+                capturedAccessTokenProvider = accessTokenProvider;
+                return realtime;
+            });
+        var session = CreateSession();
+        var runtime = await factory.CreateAsync(session);
+
+        var outcome = await runtime.StartAsync();
+
+        Assert.True(outcome.IsAuthoritativeCacheReady);
+        Assert.Equal(ServerBaseUri, capturedServerBaseUri);
+        Assert.Equal(AccessToken, await capturedAccessTokenProvider!());
+        Assert.Equal(
+            ["realtime-start", "http-conversations", "http-sync"],
+            order);
+        Assert.True(File.Exists(runtime.Identity.DatabasePath));
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenConcurrentAndOneWaiterCancels_StartsRealtimeThenStartupSyncOnce()
+    {
+        using var directory = new TemporaryDirectory();
+        var order = new ConcurrentQueue<string>();
+        var realtimeEntered = NewSignal();
+        var releaseRealtime = NewSignal();
+        var realtime = new FakeRealtimeConnection
+        {
+            StartAction = async cancellationToken =>
+            {
+                order.Enqueue("realtime-start");
+                realtimeEntered.TrySetResult();
+                await releaseRealtime.Task.WaitAsync(cancellationToken);
+            },
+        };
+        var sync = new FakeSyncCoordinator
+        {
+            TriggerAction = (reason, _) =>
+            {
+                order.Enqueue($"sync-{reason}");
+                return Task.FromResult(Completed(reason));
+            },
+        };
+        var session = CreateSession();
+        var runtime = CreateRuntime(directory.Path, session, realtime, sync);
+        using var callerCancellation = new CancellationTokenSource();
+
+        var canceledWaiter = runtime.StartAsync(callerCancellation.Token);
+        var survivingWaiters = Enumerable.Range(0, 19)
+            .Select(_ => runtime.StartAsync())
+            .ToArray();
+        await realtimeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        callerCancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledWaiter);
+        releaseRealtime.TrySetResult();
+
+        var outcomes = await Task.WhenAll(survivingWaiters);
+        Assert.All(outcomes, outcome => Assert.True(outcome.IsAuthoritativeCacheReady));
+        Assert.Equal(1, realtime.StartCount);
+        Assert.Equal(["realtime-start", "sync-Startup"], order);
+        Assert.Equal([SyncReason.Startup], sync.Reasons);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task StartAsync_WhenRealtimeFails_StillRunsStartupSync()
+    {
+        using var directory = new TemporaryDirectory();
+        var order = new ConcurrentQueue<string>();
+        var realtime = new FakeRealtimeConnection
+        {
+            StateValue = ConnectionState.ServerUnavailable,
+            StartAction = _ =>
+            {
+                order.Enqueue("realtime-start");
+                throw new HttpRequestException("classified realtime detail");
+            },
+        };
+        var sync = new FakeSyncCoordinator
+        {
+            TriggerAction = (reason, _) =>
+            {
+                order.Enqueue($"sync-{reason}");
+                return Task.FromResult(Completed(reason));
+            },
+        };
+        var session = CreateSession();
+        var logger = new RecordingLogger<ClientAccountRuntime>();
+        var runtime = CreateRuntime(directory.Path, session, realtime, sync, logger: logger);
+
+        var outcome = await runtime.StartAsync();
+
+        Assert.Equal(ConnectionState.ServerUnavailable, outcome.RealtimeState);
+        Assert.True(outcome.IsAuthoritativeCacheReady);
+        Assert.Equal(["realtime-start", "sync-Startup"], order);
+        var diagnosticText = runtime + " " + outcome + " " + string.Join(' ', logger.Entries);
+        Assert.DoesNotContain("classified realtime detail", diagnosticText, StringComparison.Ordinal);
+        Assert.DoesNotContain("example.com", diagnosticText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(UserId.ToString(), diagnosticText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(AccessToken, diagnosticText, StringComparison.Ordinal);
+        Assert.DoesNotContain(RefreshToken, diagnosticText, StringComparison.Ordinal);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task ExplicitOperations_WhenStartIsInProgress_RejectUntilStartupCompletes()
+    {
+        using var directory = new TemporaryDirectory();
+        var realtimeEntered = NewSignal();
+        var releaseRealtime = NewSignal();
+        var realtime = new FakeRealtimeConnection
+        {
+            StartAction = async cancellationToken =>
+            {
+                realtimeEntered.TrySetResult();
+                await releaseRealtime.Task.WaitAsync(cancellationToken);
+            },
+        };
+        var sync = new FakeSyncCoordinator();
+        var session = CreateSession();
+        var runtime = CreateRuntime(directory.Path, session, realtime, sync);
+
+        var startup = runtime.StartAsync();
+        await realtimeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            runtime.TriggerSyncAsync(SyncReason.WindowActivated));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            runtime.RetryRealtimeAsync());
+        releaseRealtime.TrySetResult();
+        await startup;
+
+        await runtime.TriggerSyncAsync(SyncReason.WindowActivated);
+        await runtime.RetryRealtimeAsync();
+        Assert.Equal(
+            [SyncReason.Startup, SyncReason.WindowActivated, SyncReason.Reconnect],
+            sync.Reasons);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task RealtimeSink_WhenAutomaticReconnect_ReturnsWithoutWaitingForRequestedSync()
+    {
+        var inner = new RecordingRealtimeSink();
+        var syncCompletion = new TaskCompletionSource<ClientSyncRunOutcome>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var sync = new FakeSyncCoordinator
+        {
+            TriggerAction = (_, _) => syncCompletion.Task,
+        };
+        var requestor = new ClientAccountSyncRequestor(
+            sync,
+            NullLogger<ClientAccountSyncRequestor>.Instance);
+        var sink = new ClientAccountRealtimeEventSink(inner, requestor);
+
+        await sink.OnConnectionStateChangedAsync(
+            ConnectionState.Connected,
+            CancellationToken.None);
+        Assert.Empty(sync.Reasons);
+
+        await sink.OnConnectionStateChangedAsync(
+            ConnectionState.Reconnecting,
+            CancellationToken.None);
+        var connected = sink.OnConnectionStateChangedAsync(
+            ConnectionState.Connected,
+            CancellationToken.None);
+
+        await connected.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.Equal([SyncReason.Reconnect], sync.Reasons);
+        Assert.Equal(
+            [
+                ConnectionState.Connected,
+                ConnectionState.Reconnecting,
+                ConnectionState.Connected,
+            ],
+            inner.States);
+        syncCompletion.TrySetResult(Completed(SyncReason.Reconnect));
+        await sync.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task RealtimeSink_WhenConversationIsUnknown_RejectsMessageAndRequestsSyncWithoutWaiting()
+    {
+        using var directory = new TemporaryDirectory();
+        var identity = AccountScopeIdentity.Create(ServerBaseUri, UserId, directory.Path);
+        var cache = await AccountScopedLocalCache.CreateAsync(
+            identity,
+            NullLogger<AccountScopedLocalCache>.Instance);
+        var syncCompletion = new TaskCompletionSource<ClientSyncRunOutcome>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var sync = new FakeSyncCoordinator
+        {
+            TriggerAction = (_, _) => syncCompletion.Task,
+        };
+        var requestor = new ClientAccountSyncRequestor(
+            sync,
+            NullLogger<ClientAccountSyncRequestor>.Instance);
+        var cacheSink = new LocalCacheRealtimeEventSink(
+            cache,
+            (_, _) =>
+            {
+                requestor.Request(SyncReason.Reconnect);
+                return Task.CompletedTask;
+            },
+            NullLogger<LocalCacheRealtimeEventSink>.Instance);
+        var sink = new ClientAccountRealtimeEventSink(cacheSink, requestor);
+
+        var eventHandling = sink.OnNewMessageAsync(
+            CreateMessage(Guid.NewGuid()),
+            CancellationToken.None);
+
+        await eventHandling.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal([SyncReason.Reconnect], sync.Reasons);
+        Assert.False(syncCompletion.Task.IsCompleted);
+        syncCompletion.TrySetResult(Completed(SyncReason.Reconnect));
+        await sync.DisposeAsync();
+        await cache.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task RetryRealtimeAsync_AfterStart_ConnectsThenRequestsReconnectSync()
+    {
+        using var directory = new TemporaryDirectory();
+        var realtime = new FakeRealtimeConnection
+        {
+            StateValue = ConnectionState.ServerUnavailable,
+            StartAction = _ => Task.CompletedTask,
+        };
+        var sync = new FakeSyncCoordinator();
+        var session = CreateSession();
+        var runtime = CreateRuntime(directory.Path, session, realtime, sync);
+        await runtime.StartAsync();
+
+        var outcome = await runtime.RetryRealtimeAsync();
+
+        Assert.Equal(ClientSyncRunStatus.Completed, outcome.Status);
+        Assert.Equal(
+            [SyncReason.Startup, SyncReason.Reconnect],
+            sync.Reasons);
+        Assert.Equal(2, realtime.StartCount);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task DisposeAsync_WhenRuntimeIsActive_StopsProducersBeforeCacheAndSession()
+    {
+        using var directory = new TemporaryDirectory();
+        var order = new ConcurrentQueue<string>();
+        var session = CreateSession();
+        var realtime = new FakeRealtimeConnection
+        {
+            DisposeAction = () =>
+            {
+                Assert.True(session.IsAuthenticated);
+                order.Enqueue("realtime-dispose");
+                return ValueTask.CompletedTask;
+            },
+        };
+        var sync = new FakeSyncCoordinator
+        {
+            DisposeAction = () =>
+            {
+                Assert.True(session.IsAuthenticated);
+                order.Enqueue("sync-dispose");
+                return ValueTask.CompletedTask;
+            },
+        };
+        var cache = new RecordingAsyncDisposable(() =>
+        {
+            Assert.True(session.IsAuthenticated);
+            order.Enqueue("cache-dispose");
+            return ValueTask.CompletedTask;
+        });
+        var runtime = CreateRuntime(directory.Path, session, realtime, sync, cache);
+        await runtime.StartAsync();
+
+        await Task.WhenAll(
+            runtime.DisposeAsync().AsTask(),
+            runtime.DisposeAsync().AsTask());
+
+        Assert.Equal(
+            ["realtime-dispose", "sync-dispose", "cache-dispose"],
+            order);
+        Assert.True(session.IsDisposeCompleted);
+        Assert.False(session.IsAuthenticated);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => runtime.StartAsync());
+    }
+
+    [Fact]
+    public async Task LogoutAsync_WhenWaiterCancels_CompletesCleanupAndRemoteLogoutInOrder()
+    {
+        using var directory = new TemporaryDirectory();
+        var order = new ConcurrentQueue<string>();
+        var remoteLogoutCalled = false;
+        var session = CreateSession(new DelegateHttpHandler((request, _) =>
+        {
+            Assert.EndsWith("/api/auth/logout", request.RequestUri!.AbsolutePath);
+            Assert.Equal(
+                ["realtime-dispose", "sync-dispose", "cache-dispose"],
+                order);
+            remoteLogoutCalled = true;
+            order.Enqueue("session-logout");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        }));
+        var realtimeDisposeEntered = NewSignal();
+        var releaseRealtimeDispose = NewSignal();
+        var realtime = new FakeRealtimeConnection
+        {
+            DisposeAction = async () =>
+            {
+                order.Enqueue("realtime-dispose");
+                realtimeDisposeEntered.TrySetResult();
+                await releaseRealtimeDispose.Task;
+            },
+        };
+        var sync = new FakeSyncCoordinator
+        {
+            DisposeAction = () =>
+            {
+                order.Enqueue("sync-dispose");
+                return ValueTask.CompletedTask;
+            },
+        };
+        var cache = new RecordingAsyncDisposable(() =>
+        {
+            order.Enqueue("cache-dispose");
+            return ValueTask.CompletedTask;
+        });
+        var runtime = CreateRuntime(directory.Path, session, realtime, sync, cache);
+        using var callerCancellation = new CancellationTokenSource();
+
+        var canceledWaiter = runtime.LogoutAsync(callerCancellation.Token);
+        await realtimeDisposeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        callerCancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledWaiter);
+        releaseRealtimeDispose.TrySetResult();
+        var status = await runtime.LogoutAsync();
+
+        Assert.Equal(ClientLogoutStatus.LoggedOut, status);
+        Assert.True(remoteLogoutCalled);
+        Assert.Equal(
+            [
+                "realtime-dispose",
+                "sync-dispose",
+                "cache-dispose",
+                "session-logout",
+            ],
+            order);
+        Assert.True(session.IsDisposeCompleted);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task LogoutAsync_WhenCallerIsAlreadyCanceled_StillCompletesCleanup()
+    {
+        using var directory = new TemporaryDirectory();
+        var realtimeDisposeEntered = NewSignal();
+        var releaseRealtimeDispose = NewSignal();
+        var session = CreateSession();
+        var runtime = CreateRuntime(
+            directory.Path,
+            session,
+            new FakeRealtimeConnection
+            {
+                DisposeAction = async () =>
+                {
+                    realtimeDisposeEntered.TrySetResult();
+                    await releaseRealtimeDispose.Task;
+                },
+            },
+            new FakeSyncCoordinator());
+        using var callerCancellation = new CancellationTokenSource();
+        callerCancellation.Cancel();
+
+        var canceledWaiter = runtime.LogoutAsync(callerCancellation.Token);
+        await realtimeDisposeEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceledWaiter);
+        releaseRealtimeDispose.TrySetResult();
+
+        Assert.Equal(ClientLogoutStatus.LoggedOut, await runtime.LogoutAsync());
+        Assert.True(session.IsDisposeCompleted);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task DisposeAsync_BeforeAccountSwitch_ReleasesPersistentSessionLast()
+    {
+        using var directory = new TemporaryDirectory();
+        var store = new ClientCredentialStore(
+            directory.Path,
+            NullLogger<ClientCredentialStore>.Instance);
+        var handler = new DelegateHttpHandler((request, _) => Task.FromResult(
+            request.RequestUri!.AbsolutePath.EndsWith("/login", StringComparison.Ordinal)
+                ? Ok(CreateLoginResponse())
+                : new HttpResponseMessage(HttpStatusCode.NoContent)));
+        var authentication = new PersistentClientAuthentication(
+            new HttpClient(handler),
+            store,
+            NullLogger<ClientAuthenticationClient>.Instance,
+            NullLogger<PersistentClientAuthentication>.Instance,
+            new FixedTimeProvider(Now));
+        var first = await authentication.LoginAsync(
+            ServerBaseUri,
+            new LoginRequest("runtime-user", "runtime-password", "test-device", "1.0.0"));
+        var order = new ConcurrentQueue<string>();
+        var runtime = CreateRuntime(
+            directory.Path,
+            first.Session!,
+            new FakeRealtimeConnection
+            {
+                DisposeAction = () =>
+                {
+                    order.Enqueue("realtime-dispose");
+                    return ValueTask.CompletedTask;
+                },
+            },
+            new FakeSyncCoordinator
+            {
+                DisposeAction = () =>
+                {
+                    order.Enqueue("sync-dispose");
+                    return ValueTask.CompletedTask;
+                },
+            },
+            new RecordingAsyncDisposable(() =>
+            {
+                order.Enqueue("cache-dispose");
+                return ValueTask.CompletedTask;
+            }));
+
+        var rejected = await authentication.LoginAsync(
+            ServerBaseUri,
+            new LoginRequest("runtime-user", "runtime-password", "test-device", "1.0.0"));
+        Assert.Equal(PersistentClientAuthenticationStatus.SessionAlreadyActive, rejected.Status);
+
+        await runtime.DisposeAsync();
+        var retained = await store.LoadAsync();
+        Assert.Equal(ClientCredentialReadStatus.Loaded, retained.Status);
+        Assert.Equal(RefreshToken, retained.Credential!.RefreshToken);
+        var switched = await authentication.LoginAsync(
+            ServerBaseUri,
+            new LoginRequest("runtime-user", "runtime-password", "test-device", "1.0.0"));
+
+        Assert.Equal(PersistentClientAuthenticationStatus.Authenticated, switched.Status);
+        Assert.Equal(
+            ["realtime-dispose", "sync-dispose", "cache-dispose"],
+            order);
+        Assert.Equal(2, handler.RequestCountFor("/login"));
+        await switched.Session!.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task LogoutAsync_WhenSessionIsPersistent_ClearsCredentialAndRevokesRemotely()
+    {
+        using var directory = new TemporaryDirectory();
+        var store = new ClientCredentialStore(
+            directory.Path,
+            NullLogger<ClientCredentialStore>.Instance);
+        var handler = new DelegateHttpHandler((request, _) => Task.FromResult(
+            request.RequestUri!.AbsolutePath.EndsWith("/login", StringComparison.Ordinal)
+                ? Ok(CreateLoginResponse())
+                : new HttpResponseMessage(HttpStatusCode.NoContent)));
+        var authentication = new PersistentClientAuthentication(
+            new HttpClient(handler),
+            store,
+            NullLogger<ClientAuthenticationClient>.Instance,
+            NullLogger<PersistentClientAuthentication>.Instance,
+            new FixedTimeProvider(Now));
+        var login = await authentication.LoginAsync(
+            ServerBaseUri,
+            new LoginRequest("runtime-user", "runtime-password", "test-device", "1.0.0"));
+        var runtime = CreateRuntime(
+            directory.Path,
+            login.Session!,
+            new FakeRealtimeConnection(),
+            new FakeSyncCoordinator());
+
+        var status = await runtime.LogoutAsync();
+
+        Assert.Equal(ClientLogoutStatus.LoggedOut, status);
+        Assert.Equal(ClientCredentialReadStatus.NotFound, (await store.LoadAsync()).Status);
+        Assert.Equal(1, handler.RequestCountFor("/logout"));
+        Assert.True(login.Session!.IsDisposeCompleted);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task DisposeAsync_WhenResourceCleanupFails_StillDisposesCacheAndSession()
+    {
+        using var directory = new TemporaryDirectory();
+        var cacheDisposed = false;
+        var session = CreateSession();
+        var runtime = CreateRuntime(
+            directory.Path,
+            session,
+            new FakeRealtimeConnection
+            {
+                DisposeAction = () =>
+                    throw new IOException("classified realtime cleanup detail"),
+            },
+            new FakeSyncCoordinator
+            {
+                DisposeAction = () => ValueTask.FromException(
+                    new InvalidOperationException("classified sync cleanup detail")),
+            },
+            new RecordingAsyncDisposable(() =>
+            {
+                cacheDisposed = true;
+                return ValueTask.CompletedTask;
+            }));
+
+        var exception = await Assert.ThrowsAsync<AggregateException>(() =>
+            runtime.DisposeAsync().AsTask());
+
+        Assert.Equal(2, exception.InnerExceptions.Count);
+        Assert.True(cacheDisposed);
+        Assert.True(session.IsDisposeCompleted);
+    }
+
+    private static ClientAccountRuntime CreateRuntime(
+        string rootDirectory,
+        ClientAuthenticationSession session,
+        FakeRealtimeConnection realtime,
+        FakeSyncCoordinator sync,
+        IAsyncDisposable? cache = null,
+        ILogger<ClientAccountRuntime>? logger = null) =>
+        new(
+            AccountScopeIdentity.Create(ServerBaseUri, UserId, rootDirectory),
+            session,
+            realtime,
+            sync,
+            cache ?? new RecordingAsyncDisposable(() => ValueTask.CompletedTask),
+            logger ?? NullLogger<ClientAccountRuntime>.Instance);
+
+    private static ClientAuthenticationSession CreateSession(
+        HttpMessageHandler? handler = null) =>
+        new(
+            ServerBaseUri,
+            new HttpClient(handler ?? new DelegateHttpHandler((_, _) =>
+                Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)))),
+            NullLogger<ClientAuthenticationClient>.Instance,
+            CreateLoginResponse(),
+            new FixedTimeProvider(Now));
+
+    private static LoginResponse CreateLoginResponse() =>
+        new(
+            UserId,
+            "Runtime User",
+            AccessToken,
+            RefreshToken,
+            Now.AddHours(1),
+            "1.0.0",
+            "1.0.0");
+
+    private static HttpResponseMessage Ok<T>(T response) =>
+        new(HttpStatusCode.OK)
+        {
+            Content = JsonContent.Create(response),
+        };
+
+    private static ClientSyncRunOutcome Completed(SyncReason reason) =>
+        new(ClientSyncRunStatus.Completed, reason, RoundsExecuted: 1);
+
+    private static MessageDto CreateMessage(Guid conversationId) =>
+        new(
+            1,
+            Guid.Parse("985191ff-9e5f-4ac2-86ed-8489d47250ca"),
+            conversationId,
+            Guid.Parse("2aba633b-e9a0-4c95-a6f4-8f13a369857f"),
+            "Unknown Sender",
+            MessageType.Text,
+            "classified message body",
+            null,
+            [],
+            [],
+            Now);
+
+    private static TaskCompletionSource NewSignal() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private sealed class FakeRealtimeConnection : IClientAccountRealtimeConnection
+    {
+        private int startCount;
+
+        public Func<CancellationToken, Task>? StartAction { get; init; }
+
+        public Func<ValueTask>? DisposeAction { get; init; }
+
+        public ConnectionState StateValue { get; set; } = ConnectionState.Connected;
+
+        public ConnectionState State => StateValue;
+
+        public int StartCount => Volatile.Read(ref startCount);
+
+        public Task StartAsync(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref startCount);
+            return StartAction?.Invoke(cancellationToken) ?? Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() =>
+            DisposeAction?.Invoke() ?? ValueTask.CompletedTask;
+    }
+
+    private sealed class FakeSyncCoordinator : IClientAccountSyncCoordinator
+    {
+        private readonly ConcurrentQueue<SyncReason> reasons = new();
+
+        public Func<SyncReason, CancellationToken, Task<ClientSyncRunOutcome>>? TriggerAction
+        {
+            get;
+            init;
+        }
+
+        public Func<ValueTask>? DisposeAction { get; init; }
+
+        public IReadOnlyList<SyncReason> Reasons => reasons.ToArray();
+
+        public Task<ClientSyncRunOutcome> TriggerAsync(
+            SyncReason reason,
+            CancellationToken cancellationToken = default)
+        {
+            reasons.Enqueue(reason);
+            return TriggerAction?.Invoke(reason, cancellationToken) ??
+                Task.FromResult(Completed(reason));
+        }
+
+        public ValueTask DisposeAsync() =>
+            DisposeAction?.Invoke() ?? ValueTask.CompletedTask;
+    }
+
+    private sealed class RecordingAsyncDisposable(Func<ValueTask> disposeAsync) : IAsyncDisposable
+    {
+        public ValueTask DisposeAsync() => disposeAsync();
+    }
+
+    private sealed class RecordingRealtimeSink : IRealtimeEventSink
+    {
+        private readonly ConcurrentQueue<ConnectionState> states = new();
+
+        public IReadOnlyList<ConnectionState> States => states.ToArray();
+
+        public Task OnConnectionStateChangedAsync(
+            ConnectionState state,
+            CancellationToken cancellationToken)
+        {
+            states.Enqueue(state);
+            return Task.CompletedTask;
+        }
+
+        public Task OnNewMessageAsync(
+            MessageDto message,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task OnConversationAccessRevokedAsync(
+            Guid conversationId,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class DelegateHttpHandler(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> sendAsync) :
+        HttpMessageHandler
+    {
+        private readonly ConcurrentQueue<string> requestPaths = new();
+
+        public int RequestCountFor(string suffix) =>
+            requestPaths.Count(path => path.EndsWith(suffix, StringComparison.Ordinal));
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            requestPaths.Enqueue(request.RequestUri!.AbsolutePath);
+            return sendAsync(request, cancellationToken);
+        }
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public ConcurrentQueue<string> Entries { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Entries.Enqueue(formatter(state, exception));
+    }
+
+    private sealed class TemporaryDirectory : IDisposable
+    {
+        public TemporaryDirectory()
+        {
+            var testRoot = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                "RelayCove.AccountRuntime.Tests"));
+            Path = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+                testRoot,
+                Guid.NewGuid().ToString("N")));
+            var relativePath = System.IO.Path.GetRelativePath(testRoot, Path);
+            if (System.IO.Path.IsPathFullyQualified(relativePath) ||
+                relativePath.StartsWith("..", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Test directory escaped its root.");
+            }
+
+            Directory.CreateDirectory(Path);
+        }
+
+        public string Path { get; }
+
+        public void Dispose()
+        {
+            SqliteConnection.ClearAllPools();
+            if (Directory.Exists(Path))
+            {
+                Directory.Delete(Path, recursive: true);
+            }
+        }
+    }
+}
