@@ -134,3 +134,14 @@
 - **理由：** AUTOINCREMENT 是 `DEC-003` 固定游标不复用的数据库前提；精确字符串与集合比较给并发重放唯一答案。权限先行和 INSERT 前无副作用封住撤权与失败插入窗口；ID keyset 对不可变消息稳定且有匹配索引，避免 offset 在并发新增下的漂移。
 - **影响：** 新 migration 必须验证旧认证/会话数据升级降级、AUTOINCREMENT 删除后不复用、目标唯一、CHECK、自引用/用户/会话外键与硬删行为。Shared/Server 测试必须固定 201/200/409、相同键并发、撤权旧键、精确正文/mention 集合、keyset 页边界和日志脱敏。允许消息编辑删除、增加写实例或更换数据库时必须新增决策并重审 `DEC-003`。
 - **来源：** 工程落地方案第 7.4、10.1/10.2、11.1/11.2、12.1–12.4、阶段 4；`DEC-002`、`DEC-003`、`DEC-009`；`docs/ai/tasks/2026-08-03-stage-4-text-message-api.md`；2026-08-03 SQLite AUTOINCREMENT、EF Core 10 SQLite value generation/keyset pagination 与 Microsoft.Data.Sqlite transactions 官方文档。
+
+### DEC-011：read-through 目标验证与 Public 个人状态行
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** `DEC-003` 要求已读边界单调推进且不得接受任意极大 ID。Private/Direct 已有成员行可保存水位；Public 对所有正常用户隐式可见，但不会为每位读者预建或公开成员清单，同时权威会话 DTO 已从 actor 的 ConversationMember 读取个人水位。
+- **决策：** `POST /api/conversations/{conversationId}/read` 使用 `MarkConversationReadRequest(MessageId)`，成功返回 `ConversationReadReceipt(ConversationId, LastReadMessageId)`。服务在 SQLite 非 deferred Serializable 写事务内先用 `ConversationAccessQuery` 复核当前权限，再验证正数目标消息真实属于该会话，最后保存并确认 `MAX(old, requested)`；权限失败先于消息目标回读，未知/删除/撤权统一 403，跨会话、不存在或任意过大目标统一 400。
+- **决策：** Private/Direct 只更新当前已有成员。Public 正常用户没有状态行时，在首次有效 read-through 中创建 `ConversationMemberRole.Member` 的内部个人状态行，`JoinedAt` 使用当前服务时间、`LastReadMessageId` 使用已验证目标；已有行只调用单调推进。该行不改变 Public 隐式可见性，Public 成员 list/管理仍返回 `ConversationTypeConflict`，read-through 不触碰 Conversation.UpdatedAt。
+- **理由：** 复用已经承载 actor 水位和生命周期级联的表可避免仅为 Public read state 增加重复 schema；目标存在性验证阻止伪造未来水位；同一立即写事务串行化并发 read、首次 Public 行创建和 Private 撤权，使返回确认具备明确线性化顺序。
+- **影响：** 新增 Shared read 请求/确认、Server read 服务与 endpoint，不新增 migration。around、Sync、SignalR receipt 与客户端 pending read-through 仍由后续切片实现。
+- **来源：** 工程落地方案第 7.4、12.6；`DEC-003`、`DEC-009`、`DEC-010`；`docs/ai/tasks/2026-08-03-stage-4-message-read-api.md`；当前 ConversationAccessQuery、ConversationMember 与 SQLite 写事务实现。

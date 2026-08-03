@@ -1028,6 +1028,8 @@ public sealed record SendMessageRequest(
 
 History 响应使用 `MessageHistoryResponse(Messages, NextBeforeMessageId, HasMore)`；`beforeMessageId` 为排除边界，`limit` 默认 50、范围 1–100。查询按 ID 降序取 `limit+1`，响应按 ID 升序；有更多时下一 before 为本页最旧 ID，否则为 null。
 
+read-through 契约使用 `MarkConversationReadRequest(long MessageId)` 与 `ConversationReadReceipt(Guid ConversationId, long LastReadMessageId)`。`POST /api/conversations/{conversationId}/read` 必须在 Serializable 写事务内先复核当前内容权限，再确认目标消息真实属于该会话，最后保存并返回 `MAX(old, MessageId)`；不存在/跨会话/非正目标稳定 400，不得接受任意极大 ID。Private/Direct 只更新当前成员；Public 正常用户首次成功上报时创建不对成员 API 暴露的个人状态行，Public 的成员管理/list 仍保持类型冲突。
+
 ### AttachmentDto
 
 ```csharp
