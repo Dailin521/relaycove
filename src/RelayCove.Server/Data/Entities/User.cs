@@ -29,7 +29,7 @@ public sealed class User
         SetPasswordHash(passwordHash);
         IsAdmin = isAdmin;
         IsDisabled = isDisabled;
-        CreatedAt = RequireUtc(createdAt, nameof(createdAt));
+        CreatedAt = SqliteValueConverters.NormalizeUtc(createdAt, nameof(createdAt));
         UpdatedAt = CreatedAt;
     }
 
@@ -87,13 +87,4 @@ public sealed class User
         DisplayName = displayName;
     }
 
-    private static DateTime RequireUtc(DateTime value, string parameterName)
-    {
-        if (value.Kind != DateTimeKind.Utc)
-        {
-            throw new ArgumentException("Persistent timestamps must use DateTimeKind.Utc.", parameterName);
-        }
-
-        return value;
-    }
 }

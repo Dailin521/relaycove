@@ -23,6 +23,7 @@ public sealed class UserNameNormalizerTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("ab")]
+    [InlineData("---")]
     [InlineData("alice smith")]
     [InlineData("管理员")]
     [InlineData("ali\u200Bce")]

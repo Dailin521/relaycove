@@ -62,7 +62,9 @@ public sealed class RelayCoveDbContextTests
                 await context.Database.MigrateAsync();
                 var user = CreateUser(userId, "Alice");
                 context.Add(user);
-                context.Add(CreateToken(expiredId, userId, 1, CreatedAt.AddHours(1)));
+                var revokedToken = CreateToken(expiredId, userId, 1, CreatedAt.AddHours(1));
+                revokedToken.Revoke(CreatedAt.AddMinutes(30).AddTicks(9876));
+                context.Add(revokedToken);
                 context.Add(CreateToken(futureId, userId, 2, CreatedAt.AddDays(2)));
                 await context.SaveChangesAsync();
             }
@@ -83,6 +85,10 @@ public sealed class RelayCoveDbContextTests
 
             Assert.Equal(DateTimeKind.Utc, userRoundTrip.CreatedAt.Kind);
             Assert.Equal([expiredId], expiredTokenIds);
+            var revokedAt = (await verificationContext.RefreshTokens.AsNoTracking().SingleAsync(token => token.Id == expiredId)).RevokedAt;
+            Assert.NotNull(revokedAt);
+            Assert.Equal(DateTimeKind.Utc, revokedAt.Value.Kind);
+            Assert.Equal(0, revokedAt.Value.Ticks % TimeSpan.TicksPerMillisecond);
         }
         finally
         {
@@ -115,6 +121,29 @@ public sealed class RelayCoveDbContextTests
     }
 
     [Fact]
+    public async Task SaveChanges_WhenTimestampExceedsMillisecondPrecision_ThrowsBeforeWriting()
+    {
+        var databasePath = CreateDatabasePath();
+        try
+        {
+            await using var context = CreateContext(databasePath);
+            await context.Database.MigrateAsync();
+            var user = CreateUser(Guid.NewGuid(), "alice");
+            context.Add(user);
+            await context.SaveChangesAsync();
+            context.Entry(user).Property(item => item.UpdatedAt).CurrentValue = CreatedAt.AddTicks(1);
+
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => context.SaveChangesAsync());
+
+            Assert.Contains("millisecond precision", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteDatabaseFiles(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task Constraints_WhenIdentityOrTokenDataIsInvalid_RejectDuplicatesAndBadHashes()
     {
         var databasePath = CreateDatabasePath();
@@ -132,13 +161,21 @@ public sealed class RelayCoveDbContextTests
             context.Add(persistedUser);
             await context.SaveChangesAsync();
 
-            var exception = await Assert.ThrowsAsync<SqliteException>(() => context.Database.ExecuteSqlInterpolatedAsync($"""
+            var normalizationException = await Assert.ThrowsAsync<SqliteException>(() => context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO Users (Id, UserName, NormalizedUserName, DisplayName, AvatarAttachmentId, PasswordHash, IsAdmin, IsDisabled, CreatedAt, UpdatedAt, LastLoginAt, LastOnlineAt)
+                VALUES ({Guid.NewGuid().ToString("D").ToLowerInvariant()}, {"dave"}, {"EVE"}, {"Dave"}, NULL, {"password-hash"}, 0, 0, {"2026-08-03T04:00:00.000Z"}, {"2026-08-03T04:00:00.000Z"}, NULL, NULL);
+                """));
+
+            Assert.Equal(19, normalizationException.SqliteErrorCode);
+            Assert.Equal(275, normalizationException.SqliteExtendedErrorCode);
+
+            var tokenHashException = await Assert.ThrowsAsync<SqliteException>(() => context.Database.ExecuteSqlInterpolatedAsync($"""
                 INSERT INTO RefreshTokens (Id, UserId, TokenHash, DeviceName, CreatedAt, ExpiresAt, RevokedAt)
                 VALUES ({Guid.NewGuid().ToString("D").ToLowerInvariant()}, {persistedUser.Id.ToString("D").ToLowerInvariant()}, {"short"}, {"device"}, {"2026-08-03T04:00:00.000Z"}, {"2026-08-04T04:00:00.000Z"}, NULL);
                 """));
 
-            Assert.Equal(19, exception.SqliteErrorCode);
-            Assert.Equal(275, exception.SqliteExtendedErrorCode);
+            Assert.Equal(19, tokenHashException.SqliteErrorCode);
+            Assert.Equal(275, tokenHashException.SqliteExtendedErrorCode);
         }
         finally
         {

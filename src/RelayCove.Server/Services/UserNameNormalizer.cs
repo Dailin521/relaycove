@@ -25,12 +25,22 @@ public sealed class UserNameNormalizer
             return false;
         }
 
+        var hasLetterOrDigit = false;
         foreach (var character in userName)
         {
             if (!IsAllowed(character))
             {
                 return false;
             }
+
+            hasLetterOrDigit |= character is >= 'a' and <= 'z'
+                or >= 'A' and <= 'Z'
+                or >= '0' and <= '9';
+        }
+
+        if (!hasLetterOrDigit)
+        {
+            return false;
         }
 
         normalizedUserName = userName.ToUpperInvariant();

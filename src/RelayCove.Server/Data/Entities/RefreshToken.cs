@@ -37,9 +37,9 @@ public sealed class RefreshToken
             throw new ArgumentOutOfRangeException(nameof(deviceName), "Device names cannot exceed 128 characters.");
         }
 
-        RequireUtc(createdAt, nameof(createdAt));
-        RequireUtc(expiresAt, nameof(expiresAt));
-        if (expiresAt <= createdAt)
+        var normalizedCreatedAt = SqliteValueConverters.NormalizeUtc(createdAt, nameof(createdAt));
+        var normalizedExpiresAt = SqliteValueConverters.NormalizeUtc(expiresAt, nameof(expiresAt));
+        if (normalizedExpiresAt <= normalizedCreatedAt)
         {
             throw new ArgumentOutOfRangeException(nameof(expiresAt), "Refresh tokens must expire after creation.");
         }
@@ -48,8 +48,8 @@ public sealed class RefreshToken
         UserId = userId;
         TokenHash = tokenHash;
         DeviceName = deviceName;
-        CreatedAt = createdAt;
-        ExpiresAt = expiresAt;
+        CreatedAt = normalizedCreatedAt;
+        ExpiresAt = normalizedExpiresAt;
     }
 
     public Guid Id { get; private set; }
@@ -70,20 +70,12 @@ public sealed class RefreshToken
 
     public void Revoke(DateTime revokedAt)
     {
-        RequireUtc(revokedAt, nameof(revokedAt));
-        if (revokedAt < CreatedAt)
+        var normalizedRevokedAt = SqliteValueConverters.NormalizeUtc(revokedAt, nameof(revokedAt));
+        if (normalizedRevokedAt < CreatedAt)
         {
             throw new ArgumentOutOfRangeException(nameof(revokedAt), "Revocation cannot precede token creation.");
         }
 
-        RevokedAt = revokedAt;
-    }
-
-    private static void RequireUtc(DateTime value, string parameterName)
-    {
-        if (value.Kind != DateTimeKind.Utc)
-        {
-            throw new ArgumentException("Persistent timestamps must use DateTimeKind.Utc.", parameterName);
-        }
+        RevokedAt = normalizedRevokedAt;
     }
 }

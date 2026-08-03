@@ -6,6 +6,9 @@ namespace RelayCove.Server.Data;
 
 public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> options) : DbContext(options)
 {
+    private const string GuidGlobPattern = "[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]";
+    private const string UtcGlobPattern = "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z";
+
     public DbSet<User> Users => Set<User>();
 
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
@@ -35,8 +38,9 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
         entity.ToTable("Users", table =>
         {
             table.HasCheckConstraint("CK_Users_Id_Format", GuidTextCheck("Id"));
-            table.HasCheckConstraint("CK_Users_UserName_Format", "length(\"UserName\") BETWEEN 3 AND 64 AND \"UserName\" NOT GLOB '*[^A-Za-z0-9._-]*'");
-            table.HasCheckConstraint("CK_Users_NormalizedUserName_Format", "length(\"NormalizedUserName\") BETWEEN 3 AND 64 AND \"NormalizedUserName\" NOT GLOB '*[^A-Z0-9._-]*' AND upper(\"NormalizedUserName\") = \"NormalizedUserName\"");
+            table.HasCheckConstraint("CK_Users_UserName_Format", "length(\"UserName\") BETWEEN 3 AND 64 AND \"UserName\" NOT GLOB '*[^A-Za-z0-9._-]*' AND \"UserName\" GLOB '*[A-Za-z0-9]*'");
+            table.HasCheckConstraint("CK_Users_NormalizedUserName_Format", "length(\"NormalizedUserName\") BETWEEN 3 AND 64 AND \"NormalizedUserName\" NOT GLOB '*[^A-Z0-9._-]*' AND \"NormalizedUserName\" GLOB '*[A-Z0-9]*' AND upper(\"NormalizedUserName\") = \"NormalizedUserName\"");
+            table.HasCheckConstraint("CK_Users_NameNormalization", "upper(\"UserName\") = \"NormalizedUserName\"");
             table.HasCheckConstraint("CK_Users_DisplayName_Length", "length(\"DisplayName\") BETWEEN 1 AND 100");
             table.HasCheckConstraint("CK_Users_PasswordHash_NotEmpty", "length(\"PasswordHash\") > 0");
             table.HasCheckConstraint("CK_Users_IsAdmin_Boolean", "\"IsAdmin\" IN (0, 1)");
@@ -106,20 +110,21 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
                     throw new InvalidOperationException(
                         $"{entry.Metadata.ClrType.Name}.{property.Metadata.Name} must use DateTimeKind.Utc.");
                 }
+                if (property.CurrentValue is DateTime preciseValue &&
+                    preciseValue.Ticks % TimeSpan.TicksPerMillisecond != 0)
+                {
+                    throw new InvalidOperationException(
+                        $"{entry.Metadata.ClrType.Name}.{property.Metadata.Name} must use millisecond precision.");
+                }
             }
         }
     }
 
     private static string GuidTextCheck(string columnName) =>
-        $"length(\"{columnName}\") = 36 AND lower(\"{columnName}\") = \"{columnName}\" AND " +
-        $"substr(\"{columnName}\", 9, 1) = '-' AND substr(\"{columnName}\", 14, 1) = '-' AND " +
-        $"substr(\"{columnName}\", 19, 1) = '-' AND substr(\"{columnName}\", 24, 1) = '-'";
+        $"\"{columnName}\" GLOB '{GuidGlobPattern}' AND \"{columnName}\" <> '00000000-0000-0000-0000-000000000000'";
 
     private static string UtcTextCheck(string columnName) =>
-        $"length(\"{columnName}\") = 24 AND substr(\"{columnName}\", 5, 1) = '-' AND " +
-        $"substr(\"{columnName}\", 8, 1) = '-' AND substr(\"{columnName}\", 11, 1) = 'T' AND " +
-        $"substr(\"{columnName}\", 14, 1) = ':' AND substr(\"{columnName}\", 17, 1) = ':' AND " +
-        $"substr(\"{columnName}\", 20, 1) = '.' AND substr(\"{columnName}\", 24, 1) = 'Z'";
+        $"\"{columnName}\" GLOB '{UtcGlobPattern}'";
 
     private static string NullableUtcTextCheck(string columnName) =>
         $"\"{columnName}\" IS NULL OR ({UtcTextCheck(columnName)})";
