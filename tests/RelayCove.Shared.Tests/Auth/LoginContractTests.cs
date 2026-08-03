@@ -30,6 +30,9 @@ public sealed class LoginContractTests
 
         Assert.DoesNotContain(password, text, StringComparison.Ordinal);
         Assert.Contains("Password = [REDACTED]", text, StringComparison.Ordinal);
+        Assert.Contains(request.UserName, text, StringComparison.Ordinal);
+        Assert.Contains(request.DeviceName, text, StringComparison.Ordinal);
+        Assert.Contains(request.ClientVersion, text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -45,8 +48,22 @@ public sealed class LoginContractTests
             "1.0.0");
 
         var json = JsonSerializer.Serialize(response, WebJson);
+        using var document = JsonDocument.Parse(json);
+        var propertyNames = document.RootElement.EnumerateObject().Select(property => property.Name).ToArray();
         var roundTripped = JsonSerializer.Deserialize<LoginResponse>(json, WebJson);
 
+        Assert.Equal(
+            [
+                "userId",
+                "displayName",
+                "accessToken",
+                "refreshToken",
+                "expiresAt",
+                "serverVersion",
+                "minimumSupportedClientVersion",
+            ],
+            propertyNames);
+        Assert.Equal("2026-08-03T12:30:00+08:00", document.RootElement.GetProperty("expiresAt").GetString());
         Assert.Equal(response, roundTripped);
         Assert.Equal(TimeSpan.FromHours(8), roundTripped!.ExpiresAt.Offset);
     }
@@ -70,5 +87,33 @@ public sealed class LoginContractTests
         Assert.DoesNotContain(accessToken, text, StringComparison.Ordinal);
         Assert.DoesNotContain(refreshToken, text, StringComparison.Ordinal);
         Assert.Equal(2, text.Split("[REDACTED]", StringSplitOptions.None).Length - 1);
+        Assert.Contains(response.UserId.ToString(), text, StringComparison.Ordinal);
+        Assert.Contains(response.DisplayName, text, StringComparison.Ordinal);
+        Assert.Contains(response.ServerVersion, text, StringComparison.Ordinal);
+        Assert.Contains(response.MinimumSupportedClientVersion, text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void LoginContracts_WhenConstructorParametersChange_RedactionPolicyMustBeReviewed()
+    {
+        var requestParameters = typeof(LoginRequest).GetConstructors().Single().GetParameters();
+        var responseParameters = typeof(LoginResponse).GetConstructors().Single().GetParameters();
+
+        Assert.Equal(
+            ["UserName", "Password", "DeviceName", "ClientVersion"],
+            requestParameters.Select(parameter => parameter.Name),
+            StringComparer.Ordinal);
+        Assert.Equal(
+            [
+                "UserId",
+                "DisplayName",
+                "AccessToken",
+                "RefreshToken",
+                "ExpiresAt",
+                "ServerVersion",
+                "MinimumSupportedClientVersion",
+            ],
+            responseParameters.Select(parameter => parameter.Name),
+            StringComparer.Ordinal);
     }
 }

@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 1 — 冻结登录 DTO 与稳定错误 envelope
-- **状态：** 进行中
+- **状态：** 进行中（候选修正已验证，等待定向复审）
 - **基准提交：** `c1f7020f2eb23867ec089d3328ab3cd6645fd5df`
 - **工作分支：** `agent/stage-1-auth-contracts`
 - **相关方案章节：** `RelayCove_工程落地方案.md` 第 7.1、8.2、10.2 节与阶段 1/2；`DEC-003`
@@ -54,14 +54,14 @@
 
 ### 验收标准
 
-- [ ] 四个公共类型各自独立文件，字段与工程方案一致，Shared 仍无 PackageReference。
-- [ ] Web JSON 属性名和 round-trip 测试通过；`ExpiresAt` 保持带 offset 的 `DateTimeOffset`。
-- [ ] `LoginRequest.ToString()` 不包含输入密码，`LoginResponse.ToString()` 不包含任一 Token，且明确含 `[REDACTED]`。
-- [ ] 7 个错误码值唯一，三个 `DEC-003` 码拼写与规范一致。
-- [ ] `ApiErrorResponse` JSON 可表达字段级多个错误，客户端不得按 `Message` 分支。
-- [ ] `DEC-004` 记录字符串码、认证枚举防护和敏感 record 日志边界。
+- [x] 四个公共类型各自独立文件，字段与工程方案一致，Shared 仍无 PackageReference。
+- [x] Web JSON 属性名和 round-trip 测试通过；`ExpiresAt` 保持带 offset 的 `DateTimeOffset`。
+- [x] `LoginRequest.ToString()` 不包含输入密码，`LoginResponse.ToString()` 不包含任一 Token，且明确含 `[REDACTED]`。
+- [x] 7 个错误码值唯一，三个 `DEC-003` 码拼写与规范一致。
+- [x] `ApiErrorResponse` JSON 可表达字段级多个错误，客户端不得按 `Message` 分支。
+- [x] `DEC-004` 记录字符串码、认证枚举防护和敏感 record 日志边界。
 - [ ] Claude challenge 与候选 review 若不可用，完整记录 HEAD/status/返回元数据缺失并降级 Codex 复核。
-- [ ] Fast、Full、文件白名单、无漏洞新增与 `git diff --check` 通过。
+- [x] Fast、Full、文件白名单、无漏洞新增与 `git diff --check` 通过。
 
 ### 验证命令
 
@@ -93,21 +93,27 @@ git diff --check 'c1f7020f2eb23867ec089d3328ab3cd6645fd5df..HEAD'
 
 ### 修改摘要
 
-- 待实施后填写。
+- 新增 BCL-only 登录请求/响应与统一 API 错误契约，覆盖密码和 Token 的 `ToString()` 脱敏。
+- 以显式字符串字面量冻结 7 个公共错误码，并在 `DEC-004` 与工程方案中固定客户端分支、认证枚举防护和日志边界。
+- 用 Web JSON 精确属性名、offset 往返、错误 details、错误码全集、账号状态禁词和构造参数漂移测试锁定公共协议。
+- 第一轮 Claude 候选审查指出 `nameof` 绑定和测试自指缺口；修正后 Fast、Full、范围、依赖与漏洞检查均通过，等待一次定向复审。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `未验证` | Claude challenge | 调用因本机认证源优先禁用组织连接器而失败；调用前后 `ChallengeHead=6d60f9ae22a392adb75970763f260b10e53ebdbc` 与干净状态一致，未返回模型、workspace、mismatch 或费用，已降级 Codex 反证 |
-| `未验证` | Fast / Full | 待运行 |
-| `未验证` | 敏感字段与 JSON 测试 | 待运行 |
-| `未验证` | Claude/Codex 候选复核 | 待执行 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast` | 修正后 Debug 构建 0 警告、0 错误；Shared 9 项测试通过，Client/Server/Updater 各 1 项通过 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full` | 修正后 format、Release 构建、全部 12 项测试与 `git diff --check` 通过；0 警告、0 错误 |
+| `已验证` | 敏感字段与 JSON 测试 | 精确 request/response/error 属性名、`ExpiresAt=2026-08-03T12:30:00+08:00`、密码/Token 脱敏、构造参数漂移和账号状态禁词均通过 |
+| `已验证` | 文件白名单、Shared 依赖、漏洞审计 | Base 起 12 个文件全部在任务范围；Shared 无 `PackageReference`；8 个项目均无已知易受攻击包 |
+| `已验证` | Claude CLI 候选复核（MCP 回退） | MCP 仍被旧认证环境阻断；等价只读 CLI 限定 `Read/Glob/Grep`，`ReviewHead=9a867323095c9753c96cf55985396229d9088059`、workspace=`E:\WorkSpace\RelayCove`、实际模型 `claude-opus-5`、mismatch=`false`、费用 `$0.666895`，结论 `FIX_REQUIRED`；P1/P2/P3 已在本候选修正 |
+| `未验证` | Claude 定向复审 | 等修正提交后锁定新 `ReviewHead` 执行 |
 
 ### 文件范围
 
-- 新增：待填写。
-- 修改：待填写。
+- 新增：`src/RelayCove.Shared/Auth/LoginRequest.cs`、`LoginResponse.cs`，`src/RelayCove.Shared/Errors/ApiErrorCodes.cs`、`ApiErrorResponse.cs`，两个对应测试文件及本任务文件。
+- 修改：`RelayCove_工程落地方案.md`、`docs/ai/DECISIONS.md`、`docs/ai/STATUS.md`、`docs/ai/V1_EXECUTION.md`、`CLAUDE.md`。
 - 删除：无。
 
 ### 决策与限制

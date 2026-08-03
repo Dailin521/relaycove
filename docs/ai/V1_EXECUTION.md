@@ -13,9 +13,9 @@ TaskStatus: running
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: b1da3ea38678ed85a6e59cd9566879d3f7b0ee92
 LatestGreenIntegrationCommit: c1f7020f2eb23867ec089d3328ab3cd6645fd5df
-NextAction: 实现并验证 Login DTO、稳定 API 错误 envelope、敏感字段脱敏与 DEC-004
-ClaudeCalls: 3（软上限 24，硬上限 30）
-ClaudeCostUsd: unavailable（三次失败调用均未返回 cost_usd，不能推定为 0）
+NextAction: 提交候选审查修正并对固定 ReviewHead 做一次定向复审
+ClaudeCalls: 7（软上限 24，硬上限 30）
+ClaudeCostUsd: 1.1856935 confirmed；另有五次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -54,9 +54,13 @@ RequiredUserGate: none
 | 1 | 2026-08-03 | 同步契约 | 前置 challenge | Opus / XHigh | CLI 认证源冲突，未返回 `workspace_root`、实际模型或 `model_mismatch`；调用前后仓库状态一致 | `unavailable` |
 | 2 | 2026-08-03 | 同步契约 | 候选 review | Opus / XHigh | 同一认证错误；固定 `ReviewHead` 未变化，降级 Codex 复核通过 | `unavailable` |
 | 3 | 2026-08-03 | 认证共享契约 | 前置 challenge | Opus / XHigh | 同一认证错误；`ChallengeHead=6d60f9ae22a392adb75970763f260b10e53ebdbc` 与干净状态未变化，降级 Codex 反证 | `unavailable` |
+| 4 | 2026-08-03 | 认证共享契约 | 候选 review | Opus / XHigh | 会话在返回前中断，无结果元数据；固定 `ReviewHead=9a867323095c9753c96cf55985396229d9088059` 未变化 | `unavailable` |
+| 5 | 2026-08-03 | 认证共享契约 | 候选 review 重试 | Opus / XHigh | `claude_second_brain` MCP 仍因旧认证环境失败；未返回模型、workspace、mismatch 或费用 | `unavailable` |
+| 6 | 2026-08-03 | 认证共享契约 | 只读 CLI 回退 | Opus / XHigh | 实际 `claude-opus-5`；在形成结论前触及预算，`terminal_reason=budget_exhausted` | `$0.5187985` |
+| 7 | 2026-08-03 | 认证共享契约 | 只读 CLI 候选 review | Opus / XHigh | `workspace=E:\WorkSpace\RelayCove`（CLI 限域）、实际 `claude-opus-5`、mismatch=`false`、固定 ReviewHead 不变；`FIX_REQUIRED`，发现已修正 | `$0.666895` |
 
-- 调用计数：`3 / 24 soft / 30 hard`。
-- 已确认费用合计：工具没有返回任何可核对的费用值，因此记为 `unavailable`，不得伪造 `$0`。
+- 调用计数：`7 / 24 soft / 30 hard`。
+- 已确认费用合计：`$1.1856935`；其余五次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - Claude 恢复可用后，每次调用必须记录返回的 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；达到调用或费用硬上限时降级为 Codex 独立复核，不停止开发。
 
 ## 阻塞与用户 Gate

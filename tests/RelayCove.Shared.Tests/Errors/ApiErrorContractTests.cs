@@ -7,6 +7,16 @@ namespace RelayCove.Shared.Tests.Errors;
 public sealed class ApiErrorContractTests
 {
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
+    private static readonly string[] ExpectedCodes =
+    [
+        "ValidationFailed",
+        "AuthenticationFailed",
+        "AuthenticationRequired",
+        "AccessDenied",
+        "SyncCursorInvalid",
+        "IdempotencyKeyReuse",
+        "ConversationAccessRevoked",
+    ];
 
     [Fact]
     public void ApiErrorCodes_WhenReflected_AreUniqueStableStrings()
@@ -16,11 +26,9 @@ public sealed class ApiErrorContractTests
             .Select(field => Assert.IsType<string>(field.GetRawConstantValue()))
             .ToArray();
 
-        Assert.Equal(7, values.Length);
+        Assert.Equal(ExpectedCodes.Length, values.Length);
         Assert.Equal(values.Length, values.Distinct(StringComparer.Ordinal).Count());
-        Assert.Contains(ApiErrorCodes.SyncCursorInvalid, values);
-        Assert.Contains(ApiErrorCodes.IdempotencyKeyReuse, values);
-        Assert.Contains(ApiErrorCodes.ConversationAccessRevoked, values);
+        Assert.Equal(ExpectedCodes.Order(StringComparer.Ordinal), values.Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -36,8 +44,11 @@ public sealed class ApiErrorContractTests
             });
 
         var json = JsonSerializer.Serialize(response, WebJson);
+        using var document = JsonDocument.Parse(json);
+        var propertyNames = document.RootElement.EnumerateObject().Select(property => property.Name).ToArray();
         var roundTripped = JsonSerializer.Deserialize<ApiErrorResponse>(json, WebJson);
 
+        Assert.Equal(["code", "message", "traceId", "details"], propertyNames);
         Assert.Equal(response.Code, roundTripped!.Code);
         Assert.Equal(response.Message, roundTripped.Message);
         Assert.Equal(response.TraceId, roundTripped.TraceId);
@@ -45,11 +56,29 @@ public sealed class ApiErrorContractTests
     }
 
     [Fact]
-    public void AuthenticationFailed_WhenUsed_IsSingleGenericPublicCode()
+    public void ApiErrorCodes_WhenReflected_DoNotExposeAuthenticationState()
     {
-        Assert.Equal("AuthenticationFailed", ApiErrorCodes.AuthenticationFailed);
-        Assert.DoesNotContain("Disabled", ApiErrorCodes.AuthenticationFailed, StringComparison.Ordinal);
-        Assert.DoesNotContain("Password", ApiErrorCodes.AuthenticationFailed, StringComparison.Ordinal);
-        Assert.DoesNotContain("UserNotFound", ApiErrorCodes.AuthenticationFailed, StringComparison.Ordinal);
+        var values = typeof(ApiErrorCodes)
+            .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Select(field => Assert.IsType<string>(field.GetRawConstantValue()))
+            .ToArray();
+        string[] forbiddenAuthenticationStateFragments =
+        [
+            "UserNotFound",
+            "AccountNotFound",
+            "Disabled",
+            "Locked",
+            "InvalidPassword",
+            "WrongPassword",
+            "PasswordIncorrect",
+        ];
+
+        foreach (var value in values)
+        {
+            foreach (var fragment in forbiddenAuthenticationStateFragments)
+            {
+                Assert.DoesNotContain(fragment, value, StringComparison.OrdinalIgnoreCase);
+            }
+        }
     }
 }
