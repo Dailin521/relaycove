@@ -5,18 +5,18 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 8 — production 账户组合与聊天 UI
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读和双栏壳已完成
-- **最近验证通过的状态：** 会话列表最终代码与完成记录已仅快进到绿色集成提交 `a477d68d8477b6d3bee938b29ff22a3cfcb7fa05`；当前消息列表分支以同一提交为干净基线，Fast 673/673 通过
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around 与渲染后 read-through 已完成
+- **最近验证通过的状态：** 消息列表最终代码检查点 `46a59f6482263cdbf9a1d12a1470aa79bdff6960` 已通过完整门禁；绿色集成仍为 `a477d68d8477b6d3bee938b29ff22a3cfcb7fa05`，等待当前完成记录提交后仅快进
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — 最终 Full、format、673 项测试、Client 462/462；会话列表/状态/runtime/coordinator 定向 41/41、连续 10 轮 410/410，完整 Client 连续 5 轮 2,310 次；真实 Release WPF 启动/响应窗口/单实例/进程清理、既有原生通知/attention/托盘/激活证据、model drift、八项目漏洞审计与空白检查通过；交互式窗口内容捕获因桌面辅助 HWND 不稳定保持未验证
+- **自动化验证：** `已验证` — 最终 Fast/Full、format、704 项测试、Client 493/493；cache/History/Around/coordinator/滚动关键集 81/81、连续 10 轮 810/810；真实 Release WPF 可见 `RelayCove` 窗口/响应/单实例/进程清理、既有原生通知/attention/托盘/激活证据、model drift、八项目漏洞审计与空白检查通过；真实登录后的消息视觉与 Narrator 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
-- **最近 Claude 调用：** `已验证` — #53 0.5 持久 job `959dba5e-1361-4938-8b5a-a0fa2d7fec4e` 请求 Opus/XHigh，终态实际 `claude-sonnet-5`、`model_mismatch=true`，1,034,424 ms 后对原子未读、损坏行/只读集合、跨账户清理和死锁/迟到发布返回 `PASS`；#51–#52 成立项已在 `ea83e7b`/`DEC-033` 收敛并本机复验，三次模型偏差均如实记录且 Claude 只作第二意见
+- **最近 Claude 调用：** `已验证` — #54 job `b0d5a420-dafa-4ed3-9d03-15bd2971df62` 完成挑战，实际 `claude-sonnet-5` 且 `model_mismatch=true`；#55 因错误 workspace 主动取消；#56 job `090a3bc5-29fc-4cf6-a349-3da279083645` 在订阅额度 403 后失败、无正式答案。#54 成立项及 #56 失败前两条部分意见均由 Codex 独立复算并在 `46a59f6`/`DEC-034` 收敛，失败任务未冒充通过
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
-- `agent/stage-8-message-list-shell`：实现当前会话的有界虚拟化消息列表、本地首屏、History/Around 懒加载、通知目标定位，以及消息真实应用到 UI 后的安全 read-through。
+- `agent/stage-8-message-list-shell`：代码与验证已完成，正在提交完成记录并仅快进到 `agent/v1-integration`；随后进入消息输入与 Text 发送闭环。
 
 ## 已完成
 
@@ -55,6 +55,7 @@
 - Toast 后同步轮共享 attention gate、静音原生 Toast、MessageBeep/FlashWindowEx STOP 所有权、NotifyIcon 状态与关闭隐藏/彻底退出（`DEC-031`）
 - production 单账户组合、自动恢复/登录/重试/注销、权威缓存后 activation lease、真实 activity/托盘边界状态、最小 WPF 账户壳、凭据清理 barrier 与无障碍 live region（`DEC-032`）
 - 权威门控会话列表、提交后状态信号、持续连接/总未读、版本化旧 runtime 隔离和虚拟化双栏壳（`DEC-033`）
+- 有界消息 cache 页面、History/Around 原子 merge、稳定撤权、版本化消息选择、虚拟化滚动和已应用视口后的 read-through（`DEC-034`）
 
 ## 下一任务
 

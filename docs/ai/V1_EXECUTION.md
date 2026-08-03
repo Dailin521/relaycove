@@ -9,13 +9,13 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 8
 ActiveTask: docs/ai/tasks/2026-08-04-stage-8-message-list-shell.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: a477d68d8477b6d3bee938b29ff22a3cfcb7fa05
+LatestGreenCodeCommit: 46a59f6482263cdbf9a1d12a1470aa79bdff6960
 LatestGreenIntegrationCommit: a477d68d8477b6d3bee938b29ff22a3cfcb7fa05
-NextAction: 完成有界消息列表、本地首屏、History/Around 懒加载和渲染后 read-through 切片
-ClaudeCalls: 53（全部终态；仅关键用途调用）
-ClaudeCostUsd: 66.15776975 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 112.12776975；另有二十二次失败/中断调用费用 unavailable
+NextAction: 仅快进集成消息列表切片，然后开始消息输入与 Text 发送闭环
+ClaudeCalls: 56（全部终态；#55 已取消、#56 失败；仅关键用途调用）
+ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有二十三次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -68,6 +68,7 @@ RequiredUserGate: none
 - 当前桌面 attention 与托盘生命周期最终代码检查点 `93e4740e69049d97d4f9d0871862d80fecb8e740` 已通过 Fast/Full 629 项测试、Client 418/418、桌面/通知定向 Release 280/280、复审补丁定向 39/39、安装态静音 Toast payload/Register/Show/GetAll/Remove、极早 WM_CLOSE 隐藏、次实例同 HWND 恢复、NotifyIcon 真实 Exit、MessageBeep/FlashWindowEx Start/STOP、model drift 与八项目漏洞审计。同步轮共享 gate、Toast 静音、STOP 所有权和 tray → notification unregister → AppInstance key 顺序冻结为 `DEC-031`；Claude #45 的有效发现均由 Codex 复算修正，#46 固定提交复审 `PASS` 且四项非阻断 P2 已在最终检查点收敛。真实账户/UI 接线、隐藏托盘时不可见的任务栏闪烁与系统注销/关机实机探针保持明确限制。
 - 当前 production 账户壳最终代码检查点 `93d8fd5883a45ef154ef4612da7e7fcb8b9f6dc7` 已通过最终 Fast/Full 658 项、Client 447/447、review-fix 定向 71/71 与 60/60 重复、Client 完整套件 SQLite 隔离检查点 2,205 次及 review-fix 检查点 2,230 次、真实 Release WPF 登录/不可达失败/密码清空/关闭隐藏/同 HWND 恢复、model drift 与八项目漏洞审计。单一账户所有权、权威缓存后 activation lease、detach 依赖、凭据 clear barrier、清理失败可见文案与 WPF live region 冻结为 `DEC-032`；Claude #47–#50 有效发现均由 Codex 复算、修正和本机复验。真实服务器双客户端、持续连接/总未读、Narrator 播报、目录整体只读/ACL deny、隐藏托盘闪烁与系统注销/关机仍保持明确限制。
 - 当前账户隔离会话列表最终代码检查点 `ea83e7bf37e83f03c678bf0f82375bfb8a4166af` 已通过最终 Full 673 项、Client 462/462、会话列表/状态/runtime/coordinator 定向 41/41 与 410/410 重复、完整 Client 2,310 次、真实 Release WPF 响应窗口/单实例/进程清理、model drift 与八项目漏洞审计。权威门控读取、精确预览 join、提交后信号、dirty single-flight、版本化旧 runtime 隔离、真实总未读/持续连接和选择不提前推进已读冻结为 `DEC-033`；Claude #51–#53 的成立意见均由 Codex 复算并在最终代码收敛，三次终态模型偏差如实记录。真实登录列表视觉、SignalR/通知点击/托盘数字与 Narrator 保持后续 UI/M5 Gate。
+- 当前有界消息列表最终代码检查点 `46a59f6482263cdbf9a1d12a1470aa79bdff6960` 已通过最终 Fast/Full 704 项、Client 493/493、cache/History/Around/coordinator/滚动关键集 81/81 与 810/810 重复、真实 Release WPF 响应窗口/单实例/进程清理、model drift 与八项目漏洞审计。有界只读页面、History/Around 原子 merge、稳定撤权、版本化选择、虚拟化滚动和已应用视口后的精确 read-through 冻结为 `DEC-034`；Claude #54 的成立意见与 #56 额度失败前两条部分意见均由 Codex 独立复算并在最终代码收敛，失败任务未冒充终局审查。真实登录消息、双客户端、通知定位与 Narrator 保持后续 UI/M5 Gate。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 
@@ -128,9 +129,12 @@ RequiredUserGate: none
 | 51 | 2026-08-04 | 账户隔离会话列表 | 0.5 持久前置 challenge | Opus / XHigh | job `a478573d-fa39-415d-ab3e-50ffd0c7e60b`，`workspace=E:\WorkSpace\RelayCove`；649,211 ms 后终态实际 `claude-sonnet-5`、`model_mismatch=true`。同步事件必须非阻塞并先退订、迟到读取需当前 runtime/phase 原子门、托盘单一组合快照、精确预览 join、post-filter、busy/损坏行和 selection 不推进 activity 等成立项由 Codex 复算并在 `3f6bfff/a853580` 收敛 | `$2.9937885` |
 | 52 | 2026-08-04 | 会话列表固定提交复核 | 0.5 持久 review | Opus / XHigh | job `c26a051c-e97e-4182-a465-e2d96e723d22`，`workspace=E:\WorkSpace\RelayCove`；804,441 ms 后终态实际 `claude-sonnet-5`、`model_mismatch=true`。指出 Ready 列表缺失的待选通知 ID 会压制用户选择，以及空态/标题 live region 缺属性；Codex 在 `ea83e7b` 加入失效回退、三条回归和 Polite live region，其他权威门/撤权/竞态结论与本地复算一致 | `$4.33353075` |
 | 53 | 2026-08-04 | 会话列表 review-fix | 0.5 持久窄复审 | Opus / XHigh | job `959dba5e-1361-4938-8b5a-a0fa2d7fec4e`，`workspace=E:\WorkSpace\RelayCove`；1,034,424 ms 后终态实际 `claude-sonnet-5`、`model_mismatch=true`，对原子未读发布、损坏行不计总数/只读集合、跨账户待选清理和死锁/迟到发布返回 `PASS`。运行中读到的随后选择/live region 收紧也未提出新阻断；最终本机 Full 673 项与重复回归通过 | `$7.04985325` |
+| 54 | 2026-08-04 | 有界消息列表 | 0.5 持久 challenge | Opus / XHigh | job `b0d5a420-dafa-4ed3-9d03-15bd2971df62`，`workspace=E:\WorkSpace\RelayCove`；673,773 ms 后终态实际 `claude-sonnet-5`、`model_mismatch=true`。History 首次新行未读、渲染边界不得污染预览、历史中段 activity 与分页校验发现经 Codex 复算成立并修正；索引建议因本任务明确禁止 schema 变化而不采纳 | `$2.8707420000000003` |
+| 55 | 2026-08-04 | 消息列表固定提交复核 | 0.5 持久 review | Opus / XHigh | job `ea0628ef-5c14-47a7-9f1c-d4cf251d1d8b` 错误落在 MCP 包 workspace 而非仓库；主代理识别后主动取消，终态 `SIGTERM`、实际 `claude-opus-5`、`model_mismatch=false`，无答案、用量或费用元数据，不作为审查证据 | `unavailable` |
+| 56 | 2026-08-04 | 消息列表固定提交复核 | 0.5 持久 review | Opus / XHigh | job `090a3bc5-29fc-4cf6-a349-3da279083645`，`workspace=E:\WorkSpace\RelayCove`，固定 `ReviewHead=51b6502`；1,666,134 ms 后 CLI code 1，终态实际 `claude-sonnet-5`，因订阅额度 403 无正式答案。失败前指出等价 `ItemsSource` 重发滚动丢失与未应用 revision 被滚动回执越过，Codex 独立复算后在 `46a59f6` 修正并回归；不得记为 Claude 终局结论 | `$11.044499750000004` |
 
-- 调用计数：`53`（全部终态）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
-- 已确认精确费用合计：`$66.15776975`；另有 #44–#50 本机 Claude Code 状态显示值合计 `$45.97`（界面两位小数，未伪造更高精度），按显示值总计约 `$112.12776975`。其余二十二次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`56`（全部终态；#55 已取消，#56 失败）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
+- 已确认精确费用合计：`$80.07301150`；另有 #44–#50 本机 Claude Code 状态显示值合计 `$45.97`（界面两位小数，未伪造更高精度），按显示值总计约 `$126.04301150`。其余二十三次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate

@@ -408,3 +408,15 @@
 - **理由：** 权威门、精确 join 和双层撤权过滤把列表可见性绑定到当前账户真实授权；提交后轻量信号与单飞重读避免把存储锁或消息 payload 带入 UI。运行时引用校验解决“这是哪个账户”的安全问题，revision 只解决同一发布流的迟到顺序，两者不可互相替代。选择与已读分离避免下一消息切片落地前产生不可逆的未读丢失。
 - **影响：** Client 增加无 schema 的会话列表 facade、runtime 状态 hub、版本化 coordinator 快照和虚拟化 WPF 双栏列表；不改 Shared/Server 协议、SQLite schema/migration、DPAPI、通知编码或依赖。消息 History/Around、真实消息视图、发送与会话打开后的 read-through 留在下一独立切片；真实服务器双客户端、通知点击与托盘数字视觉仍属于后续 UI/M5 Gate。
 - **来源：** 工程落地方案第 9.2–9.4、12.5–12.8、阶段 8；`DEC-017`、`DEC-020`、`DEC-025`、`DEC-026`、`DEC-028`、`DEC-032`；`docs/ai/tasks/2026-08-04-stage-8-conversation-list-shell.md`；最终 Fast/Full 673 项、定向 410/410、完整 Client 2,310 次、真实 Release WPF 进程/单实例 smoke、model drift 与八项目漏洞审计；Claude #51–#53 只读第二意见中经 Codex 复算并本机验证的退订、版本、损坏行、选择过期与 live region 发现。
+
+### DEC-034：有界消息窗口、原子历史合并与已应用视口读穿
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-026/027/033` 已提供本地未读、read-through、权威会话列表和版本化 UI 发布，但 production UI 尚不能有界读取消息、加载 History/Around 或证明某条消息已实际渲染。直接复用全量读取会让历史无界进入 UI；把“已选择”或“已发布”当作“已看到”会不可逆推进已读；History 先到、Realtime 先到、撤权和 Dispatcher 排队还会造成局部提交、旧快照复活或未应用消息被误读。
+- **决策：** cache 在账户 scope/权威 allow/deny gate 内以 deferred 只读事务提供最多 50 条的排除式 keyset 页面，结果严格升序、去重且真正只读；busy 为 transient，损坏、fatal、未权威和撤权均 fail-closed。History/Around 传输严格校验 URI、会话/目标归属、顺序、数量、边界和 has-more 组合；整个页面通过单一 SQLite 事务复用唯一 merge 裁决，任一冲突或错误整页回滚。History 不推进 Sync cursor、不更新会话预览，也不产生通知候选或声音；首次拉到且尚未渲染的他人新行保持未读，只有既有已读边界内行保持已读。稳定 `ConversationAccessRevoked` 收敛到既有 tombstone/通知清理。
+- **决策：** 每个当前选择独占 generation、取消源和方向 single-flight/dirty 合流；发布前核对 selection、runtime subscription 与 dispose 所有权。非 `Ready` 快照必须隐藏全部消息、分页标志和目标，并立即清除 rendered activity；旧账户、旧会话、迟到读取和撤权不能恢复视图。WPF 仅在 Dispatcher 应用不可变快照，启用 recycling virtualization；相同窗口重发不替换等价 `ItemsSource` 并保留 offset，旧页前插按 extent 差补偿，Realtime 只在用户位于最新区域时跟随，否则显示新消息提示。
+- **决策：** Dispatcher 应用回执与后续视口滚动回执分离。应用回执只有仍为当前 `Ready` 发布 revision 且目标消息属于当前选择时才登记 `AppliedRevision`；滚动回执还必须等于该已应用 revision，不能读取 coordinator 中尚未应用的新快照。只有当前窗口前台、当前已应用视口位于最新区域时才设置 `OpenConversationId` 并单调提交精确渲染边界；离开最新区域、非 Ready、切换、注销或撤权立即清除 activity。写入 transient 不紧循环，认证失效结束账户会话。
+- **理由：** 有界页面和原子 merge 把网络分页、SQLite 状态与 UI 可见性放在同一可证明边界；把 published、applied 和 viewport 三种状态分开，防止 Dispatcher 排队或无关状态重发把不可见消息误判为已读。非 Ready 空快照与 activity 清除延续私有数据 fail-closed 约束。
+- **影响：** Client 增加无 schema 的有界 cache 页面、History/Around HTTP coordinator、消息选择状态机、虚拟化 WPF 列表和渲染后回执；不改 Shared/Server 协议、SQLite schema/migration、通知编码或依赖。当前只显示服务端已确认消息；输入、Text 发送、pending/失败重试、回复、搜索、附件和周期 Sync 留给后续切片。真实账户、VPS、第二客户端、通知点击后的端到端定位和 Narrator 仍属后续 UI/M5 Gate。
+- **来源：** 工程落地方案第 9.2–9.4、10.4、12.3、12.6–12.8、阶段 8；`DEC-017`、`DEC-020`、`DEC-026`、`DEC-027`、`DEC-030`、`DEC-033`；`docs/ai/tasks/2026-08-04-stage-8-message-list-shell.md`；最终 Fast/Full 704 项、Client 493 项、关键集 810/810、真实 Release WPF 窗口/单实例 smoke、model drift 与八项目漏洞审计；Claude #54 完成挑战及 #56 额度失败前部分意见中经 Codex 独立复算并本机验证的 History 未读、渲染边界、协议校验、fail-closed 可见性、已应用 revision 与滚动保持发现。
