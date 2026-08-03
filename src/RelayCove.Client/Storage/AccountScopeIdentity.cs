@@ -37,7 +37,7 @@ public sealed record AccountScopeIdentity
     public string DatabasePath { get; }
 
     public override string ToString() =>
-        $"{nameof(AccountScopeIdentity)} {{ Id = {Id}, " +
+        $"{nameof(AccountScopeIdentity)} {{ Id = [REDACTED], " +
         "CanonicalServerBaseUri = [REDACTED], UserId = [REDACTED], " +
         "RootDirectory = [REDACTED], ScopeDirectory = [REDACTED], DatabasePath = [REDACTED] }";
 

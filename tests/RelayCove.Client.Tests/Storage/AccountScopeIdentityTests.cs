@@ -34,6 +34,7 @@ public sealed class AccountScopeIdentityTests
         Assert.Equal(Path.Combine(Path.GetFullPath(root), first.Id), first.ScopeDirectory);
         Assert.Equal(Path.Combine(first.ScopeDirectory, "relaycove.db"), first.DatabasePath);
         Assert.DoesNotContain("=", first.Id, StringComparison.Ordinal);
+        Assert.DoesNotContain(first.Id, first.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain(UserId.ToString(), first.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(root, first.ToString(), StringComparison.OrdinalIgnoreCase);
     }

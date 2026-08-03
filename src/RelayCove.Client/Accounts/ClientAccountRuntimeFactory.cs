@@ -9,7 +9,7 @@ using RelayCove.Shared.Messages;
 
 namespace RelayCove.Client.Accounts;
 
-internal sealed class ClientAccountRuntimeFactory
+internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
 {
     private readonly HttpClient httpClient;
     private readonly string accountDataRootDirectory;
@@ -248,6 +248,11 @@ internal sealed class ClientAccountRuntimeFactory
             throw;
         }
     }
+
+    async Task<IClientAccountRuntime> IClientAccountRuntimeFactory.CreateAsync(
+        ClientAuthenticationSession authenticationSession,
+        CancellationToken cancellationToken) =>
+        await CreateAsync(authenticationSession, cancellationToken).ConfigureAwait(false);
 
     private static IClientAccountRealtimeConnection CreateDefaultRealtimeConnection(
         Uri serverBaseUri,

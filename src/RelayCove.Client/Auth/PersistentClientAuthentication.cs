@@ -4,7 +4,7 @@ using RelayCove.Shared.Auth;
 
 namespace RelayCove.Client.Auth;
 
-internal sealed class PersistentClientAuthentication
+internal sealed class PersistentClientAuthentication : IClientPersistentAuthentication
 {
     private readonly SemaphoreSlim operationGate = new(1, 1);
     private readonly HttpClient httpClient;

@@ -8,7 +8,7 @@ using RelayCove.Shared.Realtime;
 
 namespace RelayCove.Client.Accounts;
 
-internal sealed class ClientAccountRuntime : IAsyncDisposable
+internal sealed class ClientAccountRuntime : IClientAccountRuntime
 {
     private readonly object stateGate = new();
     private readonly ClientAuthenticationSession authenticationSession;
@@ -72,7 +72,7 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
         $"{nameof(ClientAccountRuntime)} {{ Identity = [REDACTED], " +
         $"ConnectionState = {ConnectionState} }}";
 
-    internal bool TryAuthorizeNotificationTarget(ClientNotificationActivationTarget target)
+    public bool TryAuthorizeNotificationTarget(ClientNotificationActivationTarget target)
     {
         ArgumentNullException.ThrowIfNull(target);
         lock (stateGate)

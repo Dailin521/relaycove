@@ -1,7 +1,9 @@
 using System.ComponentModel;
+using System.IO;
 using System.Windows;
 using System.Windows.Interop;
 using Microsoft.Extensions.Logging;
+using RelayCove.Client.Accounts;
 using RelayCove.Client.Activation;
 using RelayCove.Client.Desktop;
 using RelayCove.Client.Notifications;
@@ -19,6 +21,8 @@ public partial class App : System.Windows.Application
     private WindowsMainWindowState? mainWindowState;
     private WindowsDesktopNotificationAttention? notificationAttention;
     private ClientTrayHost? trayHost;
+    private ClientAccountComposition? accountComposition;
+    private bool? notificationRegistrationReady;
     private int lifecycleStopping;
     private int explicitExitRequested;
 
@@ -32,9 +36,9 @@ public partial class App : System.Windows.Application
             mainWindowState,
             loggerFactory.CreateLogger<WindowsDesktopNotificationAttention>());
         notificationActivationRouter = new ClientNotificationActivationRouter(
-            NavigateNotificationTarget,
+            QueueAuthorizedNotificationNavigation,
             loggerFactory.CreateLogger<ClientNotificationActivationRouter>(),
-            windowActivationSink: RestoreMainWindow);
+            windowActivationSink: QueueAuthorizedNotificationWindowActivation);
         activationDispatcher = new ClientActivationDispatcher(
             notificationActivationRouter,
             RestoreMainWindow,
@@ -61,12 +65,33 @@ public partial class App : System.Windows.Application
                 Shutdown();
                 return;
             }
+
+            notificationRegistrationReady = true;
         }
 
         var instanceStatus = await singleInstanceHost.StartAsync();
         if (instanceStatus != WindowsSingleInstanceStartStatus.Primary)
         {
             Interlocked.Exchange(ref lifecycleStopping, 1);
+            notificationHost?.DetachForProcessExit();
+            activationDispatcher.Dispose();
+            notificationActivationRouter.Dispose();
+            singleInstanceHost.Dispose();
+            Shutdown();
+            return;
+        }
+
+        try
+        {
+            accountComposition = CreateAccountComposition();
+            accountComposition.Coordinator.SnapshotChanged += OnAccountShellSnapshotChanged;
+        }
+        catch (Exception exception)
+        {
+            Interlocked.Exchange(ref lifecycleStopping, 1);
+            loggerFactory.CreateLogger<App>().LogCritical(
+                "Creating the production account composition failed; errorType={ErrorType}.",
+                exception.GetType().Name);
             notificationHost?.DetachForProcessExit();
             activationDispatcher.Dispose();
             notificationActivationRouter.Dispose();
@@ -83,7 +108,27 @@ public partial class App : System.Windows.Application
         if (notificationHost is null)
         {
             notificationHost = CreateNotificationHost();
-            _ = await RunNotificationHostStartAsync(notificationHost);
+            notificationRegistrationReady = await RunNotificationHostStartAsync(
+                notificationHost);
+            if (MainWindow is MainWindow window)
+            {
+                window.SetNotificationAvailability(notificationRegistrationReady);
+            }
+
+            if (notificationRegistrationReady != true)
+            {
+                loggerFactory.CreateLogger<App>().LogWarning(
+                    "Windows system notifications are unavailable; " +
+                    "the account shell remains operational.");
+            }
+        }
+
+        try
+        {
+            await accountComposition.Coordinator.RestoreAsync();
+        }
+        catch (ObjectDisposedException) when (Volatile.Read(ref lifecycleStopping) != 0)
+        {
         }
     }
 
@@ -93,6 +138,7 @@ public partial class App : System.Windows.Application
         trayHost?.Dispose();
         notificationAttention?.StopFlashing();
         mainWindowState?.Update(nint.Zero, isForeground: false);
+        accountComposition?.DetachForProcessExit();
         activationDispatcher?.Dispose();
         notificationActivationRouter?.Dispose();
         notificationHost?.DetachForProcessExit();
@@ -118,11 +164,57 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private static void NavigateNotificationTarget(
+    private void NavigateNotificationTarget(
         ClientNotificationActivationTarget target)
     {
-        // Stage 8 binds this validated target to the conversation/overview navigation shell.
-        _ = target;
+        if (Volatile.Read(ref lifecycleStopping) != 0)
+        {
+            return;
+        }
+
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(() => NavigateNotificationTarget(target));
+            return;
+        }
+
+        var window = EnsureMainWindow();
+        window.ShowAuthorizedNotificationTarget(target);
+        notificationAttention?.StopFlashing();
+    }
+
+    private void QueueAuthorizedNotificationWindowActivation()
+    {
+        if (Volatile.Read(ref lifecycleStopping) == 0)
+        {
+            _ = Dispatcher.BeginInvoke(RestoreMainWindow);
+        }
+    }
+
+    private void QueueAuthorizedNotificationNavigation(
+        ClientNotificationActivationTarget target)
+    {
+        if (Volatile.Read(ref lifecycleStopping) == 0)
+        {
+            _ = Dispatcher.BeginInvoke(() => NavigateNotificationTarget(target));
+        }
+    }
+
+    private ClientAccountComposition CreateAccountComposition()
+    {
+        var localAppData = Environment.GetFolderPath(
+            Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(localAppData))
+        {
+            throw new InvalidOperationException(
+                "The current Windows user does not expose a LocalAppData directory.");
+        }
+
+        return ClientAccountComposition.Create(
+            Path.GetFullPath(Path.Combine(localAppData, "RelayCove")),
+            notificationActivationRouter!,
+            notificationAttention!,
+            loggerFactory!);
     }
 
     private WindowsClientNotificationHost CreateNotificationHost() =>
@@ -226,6 +318,13 @@ public partial class App : System.Windows.Application
         }
 
         var window = new MainWindow();
+        if (accountComposition is not null)
+        {
+            window.BindAccountShell(accountComposition.Coordinator);
+        }
+
+        window.SetNotificationAvailability(notificationRegistrationReady);
+
         window.SourceInitialized += OnMainWindowStateChanged;
         window.Activated += OnMainWindowStateChanged;
         window.Deactivated += OnMainWindowStateChanged;
@@ -256,6 +355,12 @@ public partial class App : System.Windows.Application
         {
             notificationAttention?.StopFlashing();
         }
+
+        accountComposition?.Coordinator.UpdateActivity(new ClientActivitySnapshot(
+            window.IsVisible,
+            window.WindowState == WindowState.Minimized,
+            window.IsActive,
+            OpenConversationId: null));
     }
 
     private void OnMainWindowVisibilityChanged(
@@ -281,6 +386,11 @@ public partial class App : System.Windows.Application
         mainWindowState?.Update(
             new WindowInteropHelper(window).Handle,
             isForeground: false);
+        accountComposition?.Coordinator.UpdateActivity(new ClientActivitySnapshot(
+            IsMainWindowVisible: false,
+            IsMainWindowMinimized: false,
+            HasForegroundFocus: false,
+            OpenConversationId: null));
         loggerFactory?.CreateLogger<App>().LogInformation(
             "The main window was hidden to the notification area.");
     }
@@ -313,6 +423,22 @@ public partial class App : System.Windows.Application
     private async Task StopPrimaryAndShutdownAsync()
     {
         var host = notificationHost;
+        if (accountComposition is not null)
+        {
+            accountComposition.Coordinator.SnapshotChanged -= OnAccountShellSnapshotChanged;
+            try
+            {
+                await accountComposition.DisposeAsync();
+            }
+            catch (Exception exception)
+            {
+                loggerFactory?.CreateLogger<App>().LogWarning(
+                    "Stopping the production account composition failed; " +
+                    "errorType={ErrorType}.",
+                    exception.GetType().Name);
+            }
+        }
+
         await ClientApplicationShutdown.StopPrimaryAsync(
             () => activationDispatcher?.Dispose(),
             () => notificationActivationRouter?.Dispose(),
@@ -329,6 +455,35 @@ public partial class App : System.Windows.Application
             },
             () => singleInstanceHost?.Dispose());
         Shutdown();
+    }
+
+    private void OnAccountShellSnapshotChanged(ClientAccountShellSnapshot snapshot)
+    {
+        if (Volatile.Read(ref lifecycleStopping) != 0)
+        {
+            return;
+        }
+
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(() => OnAccountShellSnapshotChanged(snapshot));
+            return;
+        }
+
+        if (MainWindow is MainWindow window)
+        {
+            window.ApplyAccountShellSnapshot(snapshot);
+        }
+
+        try
+        {
+            trayHost?.UpdateStatus(new ClientTrayStatus(
+                totalUnreadCount: 0,
+                snapshot.ConnectionState));
+        }
+        catch (ObjectDisposedException) when (Volatile.Read(ref lifecycleStopping) != 0)
+        {
+        }
     }
 
     private void TryStartTrayHost()

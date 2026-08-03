@@ -2,7 +2,261 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="RelayCove"
-        Height="450"
-        Width="800">
-    <Grid />
+        Height="680"
+        Width="1060"
+        MinHeight="520"
+        MinWidth="820"
+        WindowStartupLocation="CenterScreen"
+        Background="#FFF4F7FB"
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="18,9" />
+            <Setter Property="MinHeight" Value="38" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style TargetType="PasswordBox">
+            <Setter Property="MinHeight" Value="40" />
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="270" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0" Background="#FF10243E">
+            <Grid Margin="28,32,28,26">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <StackPanel>
+                    <TextBlock Text="RelayCove"
+                               Foreground="White"
+                               FontWeight="SemiBold"
+                               FontSize="27" />
+                    <TextBlock Text="团队消息，安全抵达"
+                               Margin="0,5,0,0"
+                               Foreground="#FF9FB3C8"
+                               FontSize="13" />
+                </StackPanel>
+
+                <Border Grid.Row="1"
+                        Margin="0,32,0,0"
+                        Padding="13,11"
+                        Background="#FF19334F"
+                        CornerRadius="8">
+                    <StackPanel>
+                        <TextBlock x:Name="SidebarConnectionText"
+                                   Text="实时连接：未连接"
+                                   Foreground="#FFE7F0F8"
+                                   FontWeight="SemiBold" />
+                        <TextBlock x:Name="SidebarSyncText"
+                                   Text="同步：尚未完成"
+                                   Margin="0,5,0,0"
+                                   Foreground="#FF9FB3C8"
+                                   TextWrapping="Wrap" />
+                        <TextBlock x:Name="SidebarNotificationText"
+                                   Text="系统通知：初始化中"
+                                   Margin="0,5,0,0"
+                                   Foreground="#FF9FB3C8"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <StackPanel Grid.Row="2" Margin="0,34,0,0">
+                    <TextBlock Text="当前账户"
+                               Foreground="#FF7891AA"
+                               FontWeight="SemiBold"
+                               FontSize="12" />
+                    <TextBlock x:Name="SidebarDisplayNameText"
+                               Margin="0,8,0,0"
+                               Text="尚未登录"
+                               Foreground="White"
+                               FontSize="16"
+                               TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="SidebarServerText"
+                               Margin="0,5,0,0"
+                               Text="—"
+                               Foreground="#FF9FB3C8"
+                               TextWrapping="Wrap"
+                               TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+
+                <TextBlock Grid.Row="3"
+                           Text="未读计数：0（尚未接线）"
+                           Foreground="#FF7891AA"
+                           FontSize="12" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Column="1" Margin="42,34">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <StackPanel>
+                <TextBlock x:Name="HeadingText"
+                           Text="正在启动 RelayCove"
+                           Foreground="#FF17263A"
+                           FontSize="28"
+                           FontWeight="SemiBold" />
+                <TextBlock x:Name="DetailText"
+                           Margin="0,8,0,0"
+                           MaxWidth="680"
+                           HorizontalAlignment="Left"
+                           Text="正在准备本地账户环境。"
+                           Foreground="#FF5C6F82"
+                           FontSize="14"
+                           TextWrapping="Wrap" />
+            </StackPanel>
+
+            <Grid Grid.Row="1" Margin="0,30,0,24">
+                <Border x:Name="LoginPanel"
+                        Width="500"
+                        Padding="34"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Background="White"
+                        BorderBrush="#FFDCE5EF"
+                        BorderThickness="1"
+                        CornerRadius="12">
+                    <StackPanel>
+                        <TextBlock Text="服务器地址"
+                                   Foreground="#FF31465B"
+                                   FontWeight="SemiBold" />
+                        <TextBox x:Name="ServerAddressTextBox"
+                                 Margin="0,7,0,18"
+                                 AutomationProperties.Name="服务器地址"
+                                 ToolTip="例如 https://relay.example.com/" />
+                        <TextBlock Text="用户名"
+                                   Foreground="#FF31465B"
+                                   FontWeight="SemiBold" />
+                        <TextBox x:Name="UserNameTextBox"
+                                 Margin="0,7,0,18"
+                                 AutomationProperties.Name="用户名" />
+                        <TextBlock Text="密码"
+                                   Foreground="#FF31465B"
+                                   FontWeight="SemiBold" />
+                        <PasswordBox x:Name="PasswordInput"
+                                     Margin="0,7,0,24"
+                                     AutomationProperties.Name="密码" />
+                        <Button x:Name="LoginButton"
+                                Content="登录"
+                                IsDefault="True"
+                                Background="#FF1677D2"
+                                Foreground="White"
+                                BorderBrush="#FF0F69BD"
+                                FontWeight="SemiBold"
+                                Click="OnLoginClicked" />
+                    </StackPanel>
+                </Border>
+
+                <Grid x:Name="AccountPanel" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="250" />
+                        <ColumnDefinition Width="18" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Padding="22"
+                            Background="White"
+                            BorderBrush="#FFDCE5EF"
+                            BorderThickness="1"
+                            CornerRadius="10">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Top"
+                                       Text="会话"
+                                       Foreground="#FF25394D"
+                                       FontSize="18"
+                                       FontWeight="SemiBold" />
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="暂无会话数据"
+                                           HorizontalAlignment="Center"
+                                           Foreground="#FF52677B"
+                                           FontWeight="SemiBold" />
+                                <TextBlock Margin="18,8,18,0"
+                                           Text="账户隔离的会话列表将在下一切片接入。"
+                                           Foreground="#FF8796A5"
+                                           TextAlignment="Center"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+
+                    <Border Grid.Column="2"
+                            Padding="32"
+                            Background="White"
+                            BorderBrush="#FFDCE5EF"
+                            BorderThickness="1"
+                            CornerRadius="10">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                                <Border Width="64"
+                                        Height="64"
+                                        HorizontalAlignment="Center"
+                                        Background="#FFE5F1FC"
+                                        CornerRadius="32">
+                                    <TextBlock Text="✓"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               Foreground="#FF1677D2"
+                                               FontSize="30"
+                                               FontWeight="Bold" />
+                                </Border>
+                                <TextBlock Margin="0,18,0,0"
+                                           Text="账户运行环境已建立"
+                                           HorizontalAlignment="Center"
+                                           Foreground="#FF25394D"
+                                           FontSize="18"
+                                           FontWeight="SemiBold" />
+                                <TextBlock x:Name="NavigationNoticeText"
+                                           Margin="20,9,20,0"
+                                           Text="消息视图尚未接入；此页面不会展示伪造的聊天内容。"
+                                           HorizontalAlignment="Center"
+                                           Foreground="#FF718396"
+                                           TextAlignment="Center"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="1"
+                                        HorizontalAlignment="Center"
+                                        Orientation="Horizontal">
+                                <Button x:Name="RetryButton"
+                                        Content="重试连接"
+                                        Margin="0,0,10,0"
+                                        Click="OnRetryClicked" />
+                                <Button x:Name="LogoutButton"
+                                        Content="退出账户"
+                                        Click="OnLogoutClicked" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Grid>
+
+            <ProgressBar x:Name="BusyIndicator"
+                         Grid.Row="2"
+                         Height="3"
+                         IsIndeterminate="True"
+                         Visibility="Collapsed" />
+        </Grid>
+    </Grid>
 </Window>
