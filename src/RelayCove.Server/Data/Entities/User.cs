@@ -74,7 +74,37 @@ public sealed class User
         PasswordHash = passwordHash;
     }
 
+    public void SetPasswordHash(string passwordHash, DateTime updatedAt)
+    {
+        SetPasswordHash(passwordHash);
+        AdvanceUpdatedAt(updatedAt);
+    }
+
+    public void RecordLogin(DateTime loggedInAt)
+    {
+        var effectiveTime = AdvanceUpdatedAt(loggedInAt);
+        LastLoginAt = effectiveTime;
+        LastOnlineAt = effectiveTime;
+    }
+
+    public void RecordActivity(DateTime activityAt)
+    {
+        LastOnlineAt = AdvanceUpdatedAt(activityAt);
+    }
+
     internal static User CreatePasswordHashSubject() => new();
+
+    private DateTime AdvanceUpdatedAt(DateTime value)
+    {
+        var normalizedValue = SqliteValueConverters.NormalizeUtc(value, nameof(value));
+        if (normalizedValue < CreatedAt)
+        {
+            throw new ArgumentOutOfRangeException(nameof(value), "User activity cannot precede creation.");
+        }
+
+        UpdatedAt = normalizedValue < UpdatedAt ? UpdatedAt : normalizedValue;
+        return UpdatedAt;
+    }
 
     private void SetDisplayName(string displayName)
     {

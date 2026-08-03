@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Identity;
-using Microsoft.Extensions.Options;
 using RelayCove.Server.Data.Entities;
 using RelayCove.Server.Services;
 
@@ -61,7 +60,7 @@ public sealed class PasswordServiceTests
 
     private static PasswordService CreateService(int iterationCount)
     {
-        var options = Options.Create(new PasswordHasherOptions
+        var options = Microsoft.Extensions.Options.Options.Create(new PasswordHasherOptions
         {
             CompatibilityMode = PasswordHasherCompatibilityMode.IdentityV3,
             IterationCount = iterationCount,

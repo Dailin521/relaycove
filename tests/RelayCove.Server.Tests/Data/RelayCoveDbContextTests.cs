@@ -231,7 +231,8 @@ public sealed class RelayCoveDbContextTests
         var bytes = Enumerable.Repeat(seed, RefreshTokenHasher.RawTokenByteLength).ToArray();
         var rawToken = Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(bytes);
 
-        return new RefreshToken(id, userId, refreshTokenHasher.HashToken(rawToken), "workstation", CreatedAt, expiresAt);
+        Assert.True(refreshTokenHasher.TryHashToken(rawToken, out var tokenHash));
+        return new RefreshToken(id, userId, tokenHash, "workstation", CreatedAt, expiresAt);
     }
 
     private static RelayCoveDbContext CreateContext(string databasePath)

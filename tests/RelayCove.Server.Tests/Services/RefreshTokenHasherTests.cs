@@ -17,27 +17,40 @@ public sealed class RefreshTokenHasherTests
         var rawToken = WebEncoders.Base64UrlEncode(rawBytes);
         var expected = WebEncoders.Base64UrlEncode(SHA256.HashData(rawBytes));
 
-        var first = hasher.HashToken(rawToken);
-        var second = hasher.HashToken(rawToken);
+        var firstParsed = hasher.TryHashToken(rawToken, out var first);
+        var secondParsed = hasher.TryHashToken(rawToken, out var second);
 
-        Assert.Equal(expected, first);
+        Assert.True(firstParsed);
+        Assert.True(secondParsed);
+        Assert.Equal(expected, first.Value);
         Assert.Equal(first, second);
-        Assert.Equal(RefreshTokenHasher.EncodedHashLength, first.Length);
-        Assert.True(RefreshTokenHasher.IsValidHash(first));
-        Assert.DoesNotContain(rawToken, first, StringComparison.Ordinal);
+        Assert.Equal(RefreshTokenHasher.EncodedHashLength, first.Value.Length);
+        Assert.True(RefreshTokenHasher.IsValidHash(first.Value));
+        Assert.DoesNotContain(rawToken, first.ToString(), StringComparison.Ordinal);
+        Assert.Equal("[REDACTED]", first.ToString());
     }
 
     [Theory]
     [InlineData("")]
     [InlineData("not-base64url")]
     [InlineData("___________________________________________=")]
-    public void HashToken_WhenTokenIsInvalid_ThrowsWithoutEchoingToken(string rawToken)
+    public void TryHashToken_WhenTokenIsInvalid_ReturnsFalseWithoutThrowing(string rawToken)
     {
-        var exception = Assert.Throws<ArgumentException>(() => hasher.HashToken(rawToken));
+        var parsed = hasher.TryHashToken(rawToken, out var tokenHash);
 
-        if (rawToken.Length > 0)
-        {
-            Assert.DoesNotContain(rawToken, exception.Message, StringComparison.Ordinal);
-        }
+        Assert.False(parsed);
+        Assert.Equal(default, tokenHash);
+    }
+
+    [Fact]
+    public void GenerateToken_WhenCalled_ReturnsDistinctRedactedValidTokens()
+    {
+        var first = hasher.GenerateToken();
+        var second = hasher.GenerateToken();
+
+        Assert.NotEqual(first, second);
+        Assert.Equal("[REDACTED]", first.ToString());
+        Assert.True(hasher.TryHashToken(first.Reveal(), out _));
+        Assert.True(hasher.TryHashToken(second.Reveal(), out _));
     }
 }

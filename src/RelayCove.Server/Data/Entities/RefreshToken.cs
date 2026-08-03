@@ -11,7 +11,7 @@ public sealed class RefreshToken
     public RefreshToken(
         Guid id,
         Guid userId,
-        string tokenHash,
+        RefreshTokenHash tokenHash,
         string deviceName,
         DateTime createdAt,
         DateTime expiresAt)
@@ -26,7 +26,7 @@ public sealed class RefreshToken
             throw new ArgumentException("User IDs cannot be empty.", nameof(userId));
         }
 
-        if (!RefreshTokenHasher.IsValidHash(tokenHash))
+        if (!RefreshTokenHasher.IsValidHash(tokenHash.Value))
         {
             throw new ArgumentException("Refresh token hashes must be 43-character Base64Url values.", nameof(tokenHash));
         }
@@ -46,7 +46,7 @@ public sealed class RefreshToken
 
         Id = id;
         UserId = userId;
-        TokenHash = tokenHash;
+        TokenHash = tokenHash.Value;
         DeviceName = deviceName;
         CreatedAt = normalizedCreatedAt;
         ExpiresAt = normalizedExpiresAt;
@@ -70,6 +70,11 @@ public sealed class RefreshToken
 
     public void Revoke(DateTime revokedAt)
     {
+        if (RevokedAt is not null)
+        {
+            return;
+        }
+
         var normalizedRevokedAt = SqliteValueConverters.NormalizeUtc(revokedAt, nameof(revokedAt));
         if (normalizedRevokedAt < CreatedAt)
         {
