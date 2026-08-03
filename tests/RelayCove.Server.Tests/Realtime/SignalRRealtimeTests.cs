@@ -306,6 +306,7 @@ public sealed class SignalRRealtimeTests : IClassFixture<RelayCoveWebApplication
                 services.AddSingleton<INewMessageTransport>(transport);
             }));
         _ = recordingFactory.CreateClient();
+        var logOffset = factory.LogMessages.Count;
 
         await using (var scope = recordingFactory.Services.CreateAsyncScope())
         {
@@ -331,6 +332,13 @@ public sealed class SignalRRealtimeTests : IClassFixture<RelayCoveWebApplication
         Assert.Equal(
             new[] { adminId.ToString("D"), memberId.ToString("D") }.Order(),
             deliveries[2].RecipientUserIds.Order());
+        var recipientSelects = factory.LogMessages
+            .Skip(logOffset)
+            .Where(message =>
+                message.Contains("Executed DbCommand", StringComparison.Ordinal) &&
+                message.Contains("SELECT", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(3, recipientSelects.Length);
     }
 
     [Fact]
