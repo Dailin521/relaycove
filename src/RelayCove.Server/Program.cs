@@ -43,6 +43,7 @@ builder.Services.Configure<PasswordHasherOptions>(options =>
 builder.Services.AddSingleton<UserNameNormalizer>();
 builder.Services.AddSingleton<PasswordPolicy>();
 builder.Services.AddSingleton<NewUserValidator>();
+builder.Services.AddSingleton<ConversationRequestValidator>();
 builder.Services.AddSingleton<RefreshTokenHasher>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ServerClock>();
@@ -51,6 +52,8 @@ builder.Services.AddSingleton<PasswordService>();
 builder.Services.AddSingleton<AccessTokenService>();
 builder.Services.AddScoped<AuthenticationSessionService>();
 builder.Services.AddScoped<AdminUserService>();
+builder.Services.AddScoped<ConversationCommandService>();
+builder.Services.AddScoped<ConversationQueryService>();
 builder.Services.AddScoped<RelayCoveJwtBearerEvents>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();
@@ -79,6 +82,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapAuthenticationEndpoints();
 app.MapAdminUserEndpoints();
+app.MapConversationEndpoints();
 
 app.Run();
 

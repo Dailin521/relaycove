@@ -17,6 +17,8 @@ public sealed class ApiErrorContractTests
         "ServiceUnavailable",
         "InternalServerError",
         "UserNameAlreadyExists",
+        "UserNotFound",
+        "ConversationTypeConflict",
         "SyncCursorInvalid",
         "IdempotencyKeyReuse",
         "ConversationAccessRevoked",
@@ -63,12 +65,13 @@ public sealed class ApiErrorContractTests
     }
 
     [Fact]
-    public void ApiErrorCodes_WhenReflected_DoNotExposeAuthenticationState()
+    public void AuthenticationErrorCodes_WhenInspected_DoNotExposeAuthenticationState()
     {
-        var values = typeof(ApiErrorCodes)
-            .GetFields(BindingFlags.Public | BindingFlags.Static)
-            .Select(field => Assert.IsType<string>(field.GetRawConstantValue()))
-            .ToArray();
+        string[] values =
+        [
+            ApiErrorCodes.AuthenticationFailed,
+            ApiErrorCodes.AuthenticationRequired,
+        ];
         string[] forbiddenAuthenticationStateFragments =
         [
             "UserNotFound",

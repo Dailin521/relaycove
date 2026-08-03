@@ -144,6 +144,11 @@ public sealed class Conversation
         UpdatedAt = normalizedUpdatedAt;
     }
 
+    public void Touch(DateTime updatedAt)
+    {
+        UpdatedAt = NormalizeUpdatedAt(updatedAt);
+    }
+
     internal static string CreateDirectParticipantKey(Guid firstParticipantUserId, Guid secondParticipantUserId)
     {
         if (firstParticipantUserId == Guid.Empty)

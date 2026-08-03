@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using RelayCove.Server.Services;
 using RelayCove.Shared.Errors;
 
@@ -55,6 +56,18 @@ public sealed class ErrorHandlingMiddleware(
                 "The service is temporarily unavailable.",
                 cancellationToken: context.RequestAborted);
         }
+        catch (DbUpdateException exception) when (ContainsBusyOrLockedSqlite(exception))
+        {
+            logger.LogWarning(exception, "SQLite storage is temporarily unavailable for {Method} {Path}.",
+                context.Request.Method,
+                context.Request.Path);
+            await ApiErrorWriter.WriteAsync(
+                context,
+                StatusCodes.Status503ServiceUnavailable,
+                ApiErrorCodes.ServiceUnavailable,
+                "The service is temporarily unavailable.",
+                cancellationToken: context.RequestAborted);
+        }
         catch (Exception exception)
         {
             logger.LogError(exception, "Unhandled server error for {Method} {Path}.", context.Request.Method, context.Request.Path);
@@ -65,5 +78,18 @@ public sealed class ErrorHandlingMiddleware(
                 "An internal server error occurred.",
                 cancellationToken: context.RequestAborted);
         }
+    }
+
+    private static bool ContainsBusyOrLockedSqlite(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is SqliteException { SqliteErrorCode: 5 or 6 })
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
