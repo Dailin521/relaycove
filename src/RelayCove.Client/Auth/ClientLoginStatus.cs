@@ -9,4 +9,5 @@ public enum ClientLoginStatus
     ServiceUnavailable = 5,
     ProtocolError = 6,
     RemoteFailure = 7,
+    StoredIdentityMismatch = 8,
 }

@@ -16,6 +16,7 @@ public sealed class ClientAuthenticationClient
     private readonly ILogger<ClientAuthenticationClient> logger;
     private readonly TimeProvider timeProvider;
     private readonly Uri loginUri;
+    private readonly Uri refreshUri;
 
     public ClientAuthenticationClient(
         Uri serverBaseUri,
@@ -28,6 +29,7 @@ public sealed class ClientAuthenticationClient
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.timeProvider = timeProvider ?? TimeProvider.System;
         loginUri = new Uri(ServerBaseUri, "api/auth/login");
+        refreshUri = new Uri(ServerBaseUri, "api/auth/refresh");
     }
 
     public Uri ServerBaseUri { get; }
@@ -35,16 +37,58 @@ public sealed class ClientAuthenticationClient
     public override string ToString() =>
         $"{nameof(ClientAuthenticationClient)} {{ ServerBaseUri = [REDACTED] }}";
 
-    public async Task<ClientLoginOutcome> LoginAsync(
+    public Task<ClientLoginOutcome> LoginAsync(
         LoginRequest request,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        return SendAsync(
+            request,
+            loginUri,
+            operation: "Login",
+            badRequestStatus: ClientLoginStatus.ValidationFailed,
+            expectedUserId: null,
+            invalidateCanceledSuccess: false,
+            cancellationToken);
+    }
+
+    internal Task<ClientLoginOutcome> RestoreAsync(
+        StoredClientCredential credential,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(credential);
+        if (!Equals(ServerBaseUri, credential.ServerBaseUri))
+        {
+            throw new ArgumentException(
+                "Stored credential server does not match this client.",
+                nameof(credential));
+        }
+
+        return SendAsync(
+            new RefreshTokenRequest(credential.RefreshToken),
+            refreshUri,
+            operation: "Restore",
+            badRequestStatus: ClientLoginStatus.ProtocolError,
+            expectedUserId: credential.UserId,
+            invalidateCanceledSuccess: true,
+            cancellationToken);
+    }
+
+    private async Task<ClientLoginOutcome> SendAsync<TRequest>(
+        TRequest request,
+        Uri requestUri,
+        string operation,
+        ClientLoginStatus badRequestStatus,
+        Guid? expectedUserId,
+        bool invalidateCanceledSuccess,
+        CancellationToken cancellationToken)
+        where TRequest : class
+    {
         cancellationToken.ThrowIfCancellationRequested();
 
         try
         {
-            using var message = new HttpRequestMessage(HttpMethod.Post, loginUri)
+            using var message = new HttpRequestMessage(HttpMethod.Post, requestUri)
             {
                 Content = JsonContent.Create(request, options: JsonOptions),
             };
@@ -57,14 +101,17 @@ public sealed class ClientAuthenticationClient
 
             if (response.IsSuccessStatusCode)
             {
-                return await CreateAuthenticatedOutcomeAsync(response, cancellationToken)
+                return await CreateAuthenticatedOutcomeAsync(
+                        response,
+                        expectedUserId,
+                        invalidateCanceledSuccess,
+                        cancellationToken)
                     .ConfigureAwait(false);
             }
 
             return response.StatusCode switch
             {
-                HttpStatusCode.BadRequest => ClientLoginOutcome.Failure(
-                    ClientLoginStatus.ValidationFailed),
+                HttpStatusCode.BadRequest => ClientLoginOutcome.Failure(badRequestStatus),
                 HttpStatusCode.Unauthorized => ClientLoginOutcome.Failure(
                     ClientLoginStatus.AuthenticationFailed),
                 HttpStatusCode.TooManyRequests => ClientLoginOutcome.Failure(
@@ -85,7 +132,7 @@ public sealed class ClientAuthenticationClient
         {
             logger.LogWarning(
                 "Authentication HTTP request failed; operation={Operation}; errorType={ErrorType}.",
-                "Login",
+                operation,
                 exception.GetType().Name);
             return ClientLoginOutcome.Failure(ClientLoginStatus.ServiceUnavailable);
         }
@@ -93,6 +140,8 @@ public sealed class ClientAuthenticationClient
 
     private async Task<ClientLoginOutcome> CreateAuthenticatedOutcomeAsync(
         HttpResponseMessage response,
+        Guid? expectedUserId,
+        bool invalidateCanceledSuccess,
         CancellationToken cancellationToken)
     {
         LoginResponse? loginResponse;
@@ -107,12 +156,21 @@ public sealed class ClientAuthenticationClient
         {
             return ClientLoginOutcome.Failure(ClientLoginStatus.ProtocolError);
         }
+        catch (OperationCanceledException) when (invalidateCanceledSuccess)
+        {
+            return ClientLoginOutcome.Failure(ClientLoginStatus.ProtocolError);
+        }
 
         if (!ClientAuthenticationResponseValidator.IsValid(
                 loginResponse,
                 timeProvider.GetUtcNow()))
         {
             return ClientLoginOutcome.Failure(ClientLoginStatus.ProtocolError);
+        }
+
+        if (expectedUserId.HasValue && loginResponse!.UserId != expectedUserId.Value)
+        {
+            return ClientLoginOutcome.Failure(ClientLoginStatus.StoredIdentityMismatch);
         }
 
         return ClientLoginOutcome.Authenticated(

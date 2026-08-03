@@ -286,7 +286,7 @@ public sealed class ClientAuthenticationClientTests
     }
 
     [Fact]
-    public async Task TryRefreshAccessTokenAsync_WhenSuccessPayloadIsMalformed_KeepsCurrentState()
+    public async Task TryRefreshAccessTokenAsync_WhenSuccessPayloadIsMalformed_ClearsCurrentState()
     {
         var handler = CreateLoginThenResponseHandler(
             new HttpResponseMessage(HttpStatusCode.OK)
@@ -298,8 +298,8 @@ public sealed class ClientAuthenticationClientTests
         var refreshed = await session.TryRefreshAccessTokenAsync(InitialAccessToken);
 
         Assert.False(refreshed);
-        Assert.True(session.IsAuthenticated);
-        Assert.Equal(InitialAccessToken, await session.GetAccessTokenAsync());
+        Assert.False(session.IsAuthenticated);
+        Assert.Null(await session.GetAccessTokenAsync());
         Assert.Equal(1, handler.RequestCountFor("/refresh"));
         await session.DisposeAsync();
     }

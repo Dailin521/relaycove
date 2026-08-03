@@ -25,6 +25,8 @@ public sealed class ClientAuthenticationSession : IClientAuthenticationSession, 
     private readonly TimeProvider timeProvider;
     private SessionState? state;
     private TaskCompletionSource<bool>? activeRefresh;
+    private ClientCredentialStore? credentialStore;
+    private bool credentialPersisted;
     private int disposeStarted;
 
     internal ClientAuthenticationSession(
@@ -112,10 +114,70 @@ public sealed class ClientAuthenticationSession : IClientAuthenticationSession, 
         }
     }
 
+    public bool IsCredentialPersisted
+    {
+        get
+        {
+            lock (stateGate)
+            {
+                return state is not null &&
+                    credentialStore is not null &&
+                    credentialPersisted &&
+                    Volatile.Read(ref disposeStarted) == 0;
+            }
+        }
+    }
+
+    internal bool IsDisposeCompleted => disposeCompletion.Task.IsCompleted;
+
     public override string ToString() =>
         $"{nameof(ClientAuthenticationSession)} {{ IsAuthenticated = {IsAuthenticated}, " +
         "UserId = [REDACTED], DisplayName = [REDACTED], ServerBaseUri = [REDACTED], " +
         "AccessToken = [REDACTED], RefreshToken = [REDACTED] }";
+
+    internal async Task<bool> AttachCredentialStoreAsync(ClientCredentialStore store)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        SessionState current;
+        lock (stateGate)
+        {
+            if (Volatile.Read(ref disposeStarted) != 0 || state is null)
+            {
+                return false;
+            }
+
+            if (credentialStore is not null && !ReferenceEquals(credentialStore, store))
+            {
+                throw new InvalidOperationException(
+                    "The authentication session already has a different credential store.");
+            }
+
+            current = state;
+        }
+
+        var persisted = await store.SaveAsync(
+                ServerBaseUri,
+                current.UserId,
+                current.RefreshToken,
+                CancellationToken.None)
+            .ConfigureAwait(false);
+        if (!persisted)
+        {
+            _ = await store.ClearAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        lock (stateGate)
+        {
+            if (Volatile.Read(ref disposeStarted) != 0 || state is null)
+            {
+                return false;
+            }
+
+            credentialStore = store;
+            credentialPersisted = persisted;
+            return persisted;
+        }
+    }
 
     public ValueTask<string?> GetAccessTokenAsync(
         CancellationToken cancellationToken = default)
@@ -181,29 +243,72 @@ public sealed class ClientAuthenticationSession : IClientAuthenticationSession, 
         }
 
         await operationGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        var credentialCleared = true;
         try
         {
             string? refreshToken;
+            ClientCredentialStore? store;
             lock (stateGate)
             {
                 refreshToken = state?.RefreshToken;
+                store = credentialStore;
                 state = null;
+                credentialPersisted = false;
             }
 
+            credentialCleared = store is null ||
+                await store.ClearAsync(CancellationToken.None).ConfigureAwait(false);
             if (refreshToken is null)
             {
-                return ClientLogoutStatus.LoggedOut;
+                return credentialCleared
+                    ? ClientLogoutStatus.LoggedOut
+                    : ClientLogoutStatus.CredentialClearFailed;
             }
 
-            cancellationToken.ThrowIfCancellationRequested();
-            using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken,
-                lifetimeCancellation.Token);
-            return await SendLogoutAsync(refreshToken, linkedCancellation.Token)
-                .ConfigureAwait(false);
+            ClientLogoutStatus remoteStatus;
+            if (credentialCleared)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken,
+                    lifetimeCancellation.Token);
+                remoteStatus = await SendLogoutAsync(refreshToken, linkedCancellation.Token)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                remoteStatus = await SendLogoutAsync(
+                        refreshToken,
+                        lifetimeCancellation.Token)
+                    .ConfigureAwait(false);
+            }
+
+            if (!credentialCleared && remoteStatus != ClientLogoutStatus.LoggedOut)
+            {
+                logger.LogWarning(
+                    "Remote logout did not complete after credential cleanup failed; " +
+                    "remoteStatus={RemoteStatus}.",
+                    remoteStatus);
+            }
+
+            return credentialCleared
+                ? remoteStatus
+                : ClientLogoutStatus.CredentialClearFailed;
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
+            if (!credentialCleared)
+            {
+                logger.LogWarning(
+                    "Remote logout was canceled after credential cleanup failed.");
+                return ClientLogoutStatus.CredentialClearFailed;
+            }
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+
             return ClientLogoutStatus.ServiceUnavailable;
         }
         finally
@@ -233,9 +338,11 @@ public sealed class ClientAuthenticationSession : IClientAuthenticationSession, 
             try
             {
                 SessionState? expected;
+                ClientCredentialStore? persistenceStore;
                 lock (stateGate)
                 {
                     expected = state;
+                    persistenceStore = credentialStore;
                     if (Volatile.Read(ref disposeStarted) != 0 || expected is null)
                     {
                         return;
@@ -257,26 +364,40 @@ public sealed class ClientAuthenticationSession : IClientAuthenticationSession, 
                     .ConfigureAwait(false);
                 if (response.StatusCode == HttpStatusCode.Unauthorized)
                 {
-                    ClearIfCurrent(rejectedAccessToken);
+                    await ClearIfCurrentAsync(rejectedAccessToken).ConfigureAwait(false);
                     return;
                 }
 
-                if (!response.IsSuccessStatusCode || response.LoginResponse is null)
+                if (!response.IsSuccessStatusCode)
                 {
                     return;
                 }
 
-                if (response.LoginResponse.UserId != expected.UserId)
-                {
-                    ClearIfCurrent(rejectedAccessToken);
-                    return;
-                }
-
-                if (!ClientAuthenticationResponseValidator.IsValid(
+                if (response.LoginResponse is null ||
+                    response.LoginResponse.UserId != expected.UserId ||
+                    !ClientAuthenticationResponseValidator.IsValid(
                         response.LoginResponse,
                         timeProvider.GetUtcNow()))
                 {
+                    await ClearIfCurrentAsync(rejectedAccessToken).ConfigureAwait(false);
                     return;
+                }
+
+                var persisted = false;
+                if (persistenceStore is not null)
+                {
+                    persisted = await persistenceStore.SaveAsync(
+                            ServerBaseUri,
+                            expected.UserId,
+                            response.LoginResponse.RefreshToken,
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+                    if (!persisted)
+                    {
+                        _ = await persistenceStore
+                            .ClearAsync(CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
                 }
 
                 lock (stateGate)
@@ -296,6 +417,7 @@ public sealed class ClientAuthenticationSession : IClientAuthenticationSession, 
                     }
 
                     state = SessionState.From(response.LoginResponse);
+                    credentialPersisted = persistenceStore is not null && persisted;
                     refreshed = true;
                 }
             }
@@ -365,6 +487,10 @@ public sealed class ClientAuthenticationSession : IClientAuthenticationSession, 
         {
             return new RefreshHttpResult(response.StatusCode, loginResponse: null);
         }
+        catch (OperationCanceledException)
+        {
+            return new RefreshHttpResult(response.StatusCode, loginResponse: null);
+        }
     }
 
     private async Task<ClientLogoutStatus> SendLogoutAsync(
@@ -406,8 +532,9 @@ public sealed class ClientAuthenticationSession : IClientAuthenticationSession, 
         }
     }
 
-    private void ClearIfCurrent(string rejectedAccessToken)
+    private async Task ClearIfCurrentAsync(string rejectedAccessToken)
     {
+        ClientCredentialStore? store = null;
         lock (stateGate)
         {
             if (state is not null &&
@@ -417,7 +544,14 @@ public sealed class ClientAuthenticationSession : IClientAuthenticationSession, 
                     StringComparison.Ordinal))
             {
                 state = null;
+                credentialPersisted = false;
+                store = credentialStore;
             }
+        }
+
+        if (store is not null)
+        {
+            _ = await store.ClearAsync(CancellationToken.None).ConfigureAwait(false);
         }
     }
 
