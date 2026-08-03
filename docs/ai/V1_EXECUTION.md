@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 2
-ActiveTask: docs/ai/tasks/2026-08-03-stage-2-auth-endpoints.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-2-admin-bootstrap.md
+TaskStatus: running
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: b72194a168ba99a5268661df8f8cac7c48578fc4
-LatestGreenIntegrationCommit: cd8f33afafe4956658792b0036cd229c29277412
-NextAction: 将认证端点完成提交仅快进合入 agent/v1-integration，并启动默认管理员与用户生命周期切片
+LatestGreenIntegrationCommit: 80bb74270e5b15a47fb4bbc7ae19deacd47f22ec
+NextAction: 固定 admin bootstrap ChallengeHead，反证凭据、密码策略、动态授权与并发边界
 ClaudeCalls: 18（软上限 24，硬上限 30）
 ClaudeCostUsd: 5.4229485 confirmed；另有十一次失败/中断调用费用 unavailable
 Blocker: none
