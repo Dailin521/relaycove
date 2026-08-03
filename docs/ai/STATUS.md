@@ -5,18 +5,18 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储和持久会话恢复已完成
-- **最近验证通过的状态：** 持久 refresh 会话恢复与自动登录代码检查点 `5dece6b577734649ef75f36c68ea25ec82b08703`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复和单账户 runtime 已完成
+- **最近验证通过的状态：** 单账户 runtime 与账户切换生命周期代码检查点 `e2195cd6835b9d858c00f1757e7fc7d640ea1021`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Fast/Full、format、362 项测试、真实磁盘 AccountScope/SQLite 合并/pending/重启/撤权/fatal/竞争/快照对账/Sync 整页回滚/游标、HTTP 多页/重试/refresh/single-flight/取消/日志、客户端登录/启动恢复/持久轮换/logout、真实 Windows DPAPI/原子凭据文件、客户端与服务端 SignalR、既有消息/会话/认证回归、原生 SQLite 安全版本、model drift、八项目漏洞审计与空白检查通过
+- **自动化验证：** `已验证` — Fast/Full、format、382 项测试、真实磁盘 AccountScope/SQLite、HTTP Sync、客户端登录/启动恢复/持久轮换/logout、真实 Windows DPAPI、单账户 runtime 启动/重连/在飞行终止/切换所有权、客户端与服务端 SignalR、既有消息/会话/认证回归、model drift、八项目漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
-- **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
-- **最近 Claude 调用：** `已验证` — 本机后台无工具 CLI #30 实际调用 `claude-opus-5` 并返回 `REVISE`，有效发现已纳入阶段 6 durable revocation intent、冷启动授权门和竞争测试；调用数达到 `30/30` 硬上限，后续降级 Codex 固定差异复核
+- **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
+- **最近 Claude 调用：** `已验证` — #32 持久审查请求 Opus/XHigh，实际 `claude-sonnet-5` 且 `model_mismatch=true`；有效发现已落实为 retry 补拉、显式 flight 线性化和在飞行终止测试。用户已取消固定调用上限，后续仅关键用途调用，Codex 仍为主
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
-- `agent/stage-6-account-runtime`：组合认证 session、AccountScopeIdentity、本地 cache、Realtime 与 Sync，并冻结启动、重连、logout、Dispose 和账户切换顺序。
+- `agent/stage-6-account-runtime`：单账户 runtime、启动/重连、logout、Dispose 和账户切换顺序已完成并验证，待快进集成。
 
 ## 已完成
 
@@ -46,6 +46,7 @@
 - 客户端真实登录、内存认证会话、refresh rotation 与 logout 线性化（`DEC-022`）
 - Windows CurrentUser DPAPI 单一 refresh 凭据文件与原子发布（`DEC-023`）
 - 持久 refresh 会话恢复、可信轮换提交边界、凭据清理与单会话所有权门（`DEC-024`）
+- 单账户 runtime、Realtime→Startup Sync、显式 flight 线性化与账户切换终止所有权（`DEC-025`）
 
 ## 下一任务
 
@@ -53,4 +54,4 @@
 
 ## 阻塞项
 
-- 无。本机 Claude CLI 已确认可调用且 #30 返回有效挑战；调用数已达硬上限，Codex 继续以仓库和自动化证据为主推进。
+- 无。本机 Claude MCP 0.5.0 已完成持久只读审查；不设固定次数上限但只用于关键审查，Codex 继续以仓库和自动化证据为主推进。

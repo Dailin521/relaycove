@@ -299,8 +299,8 @@
 - **日期：** 2026-08-03
 - **背景：** 客户端已有认证会话、稳定 `AccountScopeIdentity`、fail-closed 本地缓存、Realtime FIFO sink 和账户内 Sync single-flight，但尚无单一所有者保证这些组件使用同一服务器/用户作用域。若先同步后连接 SignalR，会在同步结束到连接建立之间留下消息空窗；若切换账户时先释放认证会话或缓存，旧 Realtime/Sync 仍可能迟到写入或错误复用单一持久凭据。
 - **决策：** 一个 `ClientAccountRuntime` 只拥有一个已认证 session 及由其 canonical server URI/user ID 派生的一个 AccountScope，并独占该 scope 的 cache、Sync coordinator 与 Realtime connection。并发 Start 共享一次启动；调用者取消只取消等待。启动先尝试建立 Realtime，再执行一次 `Startup` 权威同步；初始 Realtime 失败不得跳过可独立成功的 HTTP 同步，也不在运行时隐藏无限重连。
-- **决策：** 自动重连从 `Reconnecting` 回到 `Connected` 时异步触发一次 `Reconnect` Sync；未知会话的 Realtime 消息沿同一请求器触发权威对账，不能阻塞 FIFO 事件分发。显式窗口激活、周期和 Realtime 重试只复用既有 Sync single-flight。终止后拒绝新触发。
-- **决策：** 账户切换或应用停止按 Realtime Dispose → Sync Dispose/取消并等待 → 启动 flight 收敛 → cache Dispose → session Dispose 的顺序执行；显式 logout 在 cache 收口后调用 session logout，再 Dispose session。普通 Dispose 保留 DPAPI 凭据，logout 清除凭据并远端撤销。session 最后释放，使持久认证入口在旧账户全部作用域工作停止前继续拒绝新 Login/Restore。
+- **决策：** 自动重连从 `Reconnecting` 回到 `Connected` 时异步触发一次 `Reconnect` Sync；未知会话的 Realtime 消息沿同一请求器触发权威对账，不能阻塞 FIFO 事件分发。显式窗口激活、周期和 Realtime 重试只复用既有 Sync single-flight；Realtime retry 失败只记录异常类型并仍尝试独立的 HTTP Reconnect Sync。终止后拒绝新触发。
+- **决策：** 账户切换或应用停止按 Realtime Dispose → Sync Dispose/取消并等待 → 启动与已登记显式 flight 收敛 → cache Dispose → session Dispose 的顺序执行；显式 sync/retry 必须在状态门内登记，使检查通过的操作要么完成/取消，要么被终止链等待。显式 logout 在 cache 收口后调用 session logout，再 Dispose session。普通 Dispose 保留 DPAPI 凭据，logout 清除凭据并远端撤销。session 最后释放，使持久认证入口在旧账户全部作用域工作停止前继续拒绝新 Login/Restore；factory 只有成功返回 runtime 后才取得 session 所有权，构造失败时 session 仍归调用方释放。
 - **理由：** 先连接再补拉以 Realtime 捕获同步窗口内的新提交，未知会话仍 fail-closed 并请求权威对账；终止顺序先关闭所有生产者和共享循环，再关闭存储与认证，避免 use-after-dispose、跨账户迟到写入和凭据所有者重叠。
 - **影响：** Client 增加内部账户 runtime/factory、轻量组件生命周期接口和组合 sink；现有 Realtime、Sync、cache、认证协议与存储语义不变。周期 timer、窗口/UI 状态、通知策略、Toast、托盘和多账户凭据历史仍属后续切片。
 - **来源：** 工程落地方案第 9.3、12.5、12.7、阶段 6；`DEC-016`、`DEC-017`、`DEC-018`、`DEC-021`、`DEC-024`；`docs/ai/tasks/2026-08-03-stage-6-account-runtime.md`；当前 ClientRealtimeConnection、ClientSyncCoordinator、AccountScopedLocalCache 与 PersistentClientAuthentication 实现。
