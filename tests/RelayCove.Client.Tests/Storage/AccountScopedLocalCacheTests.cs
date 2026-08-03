@@ -10,6 +10,7 @@ using RelayCove.Shared.Messages;
 
 namespace RelayCove.Client.Tests.Storage;
 
+[Collection(SqliteTestCollection.Name)]
 public sealed class AccountScopedLocalCacheTests : IDisposable
 {
     private static readonly Guid UserId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");

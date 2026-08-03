@@ -8,6 +8,7 @@ using RelayCove.Shared.Conversations;
 
 namespace RelayCove.Client.Tests.Activation;
 
+[Collection(SqliteTestCollection.Name)]
 public sealed class ClientActivationDispatcherTests : IDisposable
 {
     private const string AccountScopeId =

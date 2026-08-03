@@ -14,6 +14,7 @@ using RelayCove.Shared.Messages;
 
 namespace RelayCove.Client.Tests.Sync;
 
+[Collection(SqliteTestCollection.Name)]
 public sealed class ClientSyncCoordinatorTests : IDisposable
 {
     private static readonly Guid UserId = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");

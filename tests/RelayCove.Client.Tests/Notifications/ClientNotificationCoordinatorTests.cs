@@ -9,6 +9,7 @@ using RelayCove.Shared.Messages;
 
 namespace RelayCove.Client.Tests.Notifications;
 
+[Collection(SqliteTestCollection.Name)]
 public sealed class ClientNotificationCoordinatorTests : IDisposable
 {
     private static readonly Guid UserId =

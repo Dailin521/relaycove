@@ -17,6 +17,7 @@ using RelayCove.Shared.Realtime;
 
 namespace RelayCove.Client.Tests.Accounts;
 
+[Collection(SqliteTestCollection.Name)]
 public sealed class ClientAccountRuntimeTests
 {
     private static readonly DateTimeOffset Now = new(

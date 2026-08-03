@@ -6,6 +6,7 @@ using RelayCove.Shared.Messages;
 
 namespace RelayCove.Client.Tests.Storage;
 
+[Collection(SqliteTestCollection.Name)]
 public sealed class NotificationRecoveryTests : IDisposable
 {
     private static readonly Guid UserId =
