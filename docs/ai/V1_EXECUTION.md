@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 6
-ActiveTask: docs/ai/tasks/2026-08-03-stage-6-local-unread.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-6-read-through-upload.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: c6955cb649d16b8a6d488dd228f99747a8c8c64c
-LatestGreenIntegrationCommit: 17329105102dce610f373c8eade813a7d128bb83
-NextAction: 提交本地未读切片文档交接，推送并仅快进集成，再启动下一纵向切片
+LatestGreenIntegrationCommit: 902456efa3e108a3159a86eaaa88a96271b9cafb
+NextAction: 实现并验证会话真实消息目标、持久 single-flight 与 read-through HTTP 上传
 ClaudeCalls: 35（全部终态；仅关键用途调用）
 ClaudeCostUsd: 19.54815225 confirmed；另有二十二次失败/中断调用费用 unavailable
 Blocker: none
