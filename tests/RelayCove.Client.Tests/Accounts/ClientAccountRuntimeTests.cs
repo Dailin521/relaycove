@@ -78,7 +78,7 @@ public sealed class ClientAccountRuntimeTests
     }
 
     [Fact]
-    public async Task Factory_WhenComponentCreationFails_ReleasesCreatedCache()
+    public async Task Factory_WhenComponentCreationFails_ReleasesCacheAndLeavesSessionCallerOwned()
     {
         using var directory = new TemporaryDirectory();
         var accountRoot = System.IO.Path.Combine(directory.Path, "accounts");
@@ -384,6 +384,172 @@ public sealed class ClientAccountRuntimeTests
     }
 
     [Fact]
+    public async Task RetryRealtimeAsync_WhenRealtimeFails_StillRequestsSyncAndRedactsFailure()
+    {
+        using var directory = new TemporaryDirectory();
+        var attempts = 0;
+        var realtime = new FakeRealtimeConnection
+        {
+            StateValue = ConnectionState.ServerUnavailable,
+            StartAction = _ =>
+            {
+                if (Interlocked.Increment(ref attempts) == 1)
+                {
+                    return Task.CompletedTask;
+                }
+
+                throw new HttpRequestException(
+                    "classified retry failure at https://private.example.test");
+            },
+        };
+        var sync = new FakeSyncCoordinator();
+        var session = CreateSession();
+        var logger = new RecordingLogger<ClientAccountRuntime>();
+        var runtime = CreateRuntime(directory.Path, session, realtime, sync, logger: logger);
+        await runtime.StartAsync();
+
+        var outcome = await runtime.RetryRealtimeAsync();
+
+        Assert.Equal(ClientSyncRunStatus.Completed, outcome.Status);
+        Assert.Equal(
+            [SyncReason.Startup, SyncReason.Reconnect],
+            sync.Reasons);
+        var diagnosticText = string.Join(' ', logger.Entries);
+        Assert.DoesNotContain("classified retry failure", diagnosticText, StringComparison.Ordinal);
+        Assert.DoesNotContain("private.example.test", diagnosticText, StringComparison.Ordinal);
+        Assert.Contains(nameof(HttpRequestException), diagnosticText, StringComparison.Ordinal);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task DisposeAsync_WhenRetryIsInFlight_WaitsBeforeCacheAndSession()
+    {
+        using var directory = new TemporaryDirectory();
+        var attempts = 0;
+        var retryEntered = NewSignal();
+        var releaseRetry = NewSignal();
+        var terminalReachedExplicitWait = NewSignal();
+        var order = new ConcurrentQueue<string>();
+        var cacheDisposed = false;
+        var session = CreateSession();
+        var realtime = new FakeRealtimeConnection
+        {
+            StartAction = async _ =>
+            {
+                if (Interlocked.Increment(ref attempts) == 1)
+                {
+                    return;
+                }
+
+                retryEntered.TrySetResult();
+                await releaseRetry.Task;
+            },
+            DisposeAction = () =>
+            {
+                order.Enqueue("realtime-dispose");
+                return ValueTask.CompletedTask;
+            },
+        };
+        var sync = new FakeSyncCoordinator
+        {
+            DisposeAction = () =>
+            {
+                order.Enqueue("sync-dispose");
+                terminalReachedExplicitWait.TrySetResult();
+                return ValueTask.CompletedTask;
+            },
+        };
+        var runtime = CreateRuntime(
+            directory.Path,
+            session,
+            realtime,
+            sync,
+            new RecordingAsyncDisposable(() =>
+            {
+                cacheDisposed = true;
+                order.Enqueue("cache-dispose");
+                return ValueTask.CompletedTask;
+            }));
+        await runtime.StartAsync();
+
+        var retry = runtime.RetryRealtimeAsync();
+        await retryEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var disposal = runtime.DisposeAsync().AsTask();
+        await terminalReachedExplicitWait.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(cacheDisposed);
+        Assert.True(session.IsAuthenticated);
+        Assert.False(disposal.IsCompleted);
+        releaseRetry.TrySetResult();
+        var retryOutcome = await retry;
+        await disposal;
+
+        Assert.Equal(ClientSyncRunStatus.Canceled, retryOutcome.Status);
+        Assert.Equal(SyncReason.Reconnect, retryOutcome.Reason);
+        Assert.Equal(
+            ["realtime-dispose", "sync-dispose", "cache-dispose"],
+            order);
+        Assert.True(session.IsDisposeCompleted);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_WhenExplicitSyncIsInFlight_WaitsBeforeCacheAndSession()
+    {
+        using var directory = new TemporaryDirectory();
+        var syncEntered = NewSignal();
+        var releaseSync = NewSignal();
+        var coordinatorDisposeCalled = NewSignal();
+        var cacheDisposed = false;
+        var session = CreateSession();
+        var sync = new FakeSyncCoordinator
+        {
+            TriggerAction = async (reason, _) =>
+            {
+                if (reason == SyncReason.Startup)
+                {
+                    return Completed(reason);
+                }
+
+                syncEntered.TrySetResult();
+                await releaseSync.Task;
+                return Completed(reason);
+            },
+            DisposeAction = () =>
+            {
+                coordinatorDisposeCalled.TrySetResult();
+                return ValueTask.CompletedTask;
+            },
+        };
+        var runtime = CreateRuntime(
+            directory.Path,
+            session,
+            new FakeRealtimeConnection(),
+            sync,
+            new RecordingAsyncDisposable(() =>
+            {
+                cacheDisposed = true;
+                return ValueTask.CompletedTask;
+            }));
+        await runtime.StartAsync();
+
+        var explicitSync = runtime.TriggerSyncAsync(SyncReason.WindowActivated);
+        await syncEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var disposal = runtime.DisposeAsync().AsTask();
+        await coordinatorDisposeCalled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(cacheDisposed);
+        Assert.True(session.IsAuthenticated);
+        Assert.False(disposal.IsCompleted);
+        releaseSync.TrySetResult();
+        var syncOutcome = await explicitSync;
+        await disposal;
+
+        Assert.Equal(ClientSyncRunStatus.Completed, syncOutcome.Status);
+        Assert.True(cacheDisposed);
+        Assert.True(session.IsDisposeCompleted);
+    }
+
+    [Fact]
     public async Task DisposeAsync_WhenRuntimeIsActive_StopsProducersBeforeCacheAndSession()
     {
         using var directory = new TemporaryDirectory();
@@ -426,6 +592,59 @@ public sealed class ClientAccountRuntimeTests
         Assert.True(session.IsDisposeCompleted);
         Assert.False(session.IsAuthenticated);
         await Assert.ThrowsAsync<ObjectDisposedException>(() => runtime.StartAsync());
+    }
+
+    [Fact]
+    public async Task DisposeAsync_WhenStartupIsInFlight_WaitsForCanceledStartBeforeCache()
+    {
+        using var directory = new TemporaryDirectory();
+        var startEntered = NewSignal();
+        var releaseStart = NewSignal();
+        var terminalReachedStartupWait = NewSignal();
+        var cacheDisposed = false;
+        var session = CreateSession();
+        var realtime = new FakeRealtimeConnection
+        {
+            StartAction = async _ =>
+            {
+                startEntered.TrySetResult();
+                await releaseStart.Task;
+            },
+        };
+        var sync = new FakeSyncCoordinator
+        {
+            DisposeAction = () =>
+            {
+                terminalReachedStartupWait.TrySetResult();
+                return ValueTask.CompletedTask;
+            },
+        };
+        var runtime = CreateRuntime(
+            directory.Path,
+            session,
+            realtime,
+            sync,
+            new RecordingAsyncDisposable(() =>
+            {
+                cacheDisposed = true;
+                return ValueTask.CompletedTask;
+            }));
+
+        var startup = runtime.StartAsync();
+        await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var disposal = runtime.DisposeAsync().AsTask();
+        await terminalReachedStartupWait.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(cacheDisposed);
+        Assert.True(session.IsAuthenticated);
+        Assert.False(disposal.IsCompleted);
+        releaseStart.TrySetResult();
+        var startOutcome = await startup;
+        await disposal;
+
+        Assert.Equal(ClientSyncRunStatus.Canceled, startOutcome.StartupSyncOutcome.Status);
+        Assert.True(cacheDisposed);
+        Assert.True(session.IsDisposeCompleted);
     }
 
     [Fact]

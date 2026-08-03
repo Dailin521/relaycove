@@ -16,6 +16,7 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
     private readonly IAsyncDisposable localCache;
     private readonly ILogger<ClientAccountRuntime> logger;
     private readonly CancellationTokenSource lifetimeCancellation = new();
+    private readonly HashSet<Task> explicitFlights = [];
     private Task<ClientAccountRuntimeStartOutcome>? startTask;
     private Task<ClientLogoutStatus>? terminalTask;
     private TerminalMode terminalMode;
@@ -90,6 +91,8 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
                 "Only window-activation and periodic sync may be triggered explicitly.");
         }
 
+        TaskCompletionSource<ClientSyncRunOutcome> completion;
+        CancellationToken lifetimeToken;
         lock (stateGate)
         {
             ThrowIfTerminating();
@@ -98,16 +101,25 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
                 throw new InvalidOperationException(
                     "The account runtime must finish starting before sync is triggered.");
             }
+
+            completion = new TaskCompletionSource<ClientSyncRunOutcome>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            lifetimeToken = lifetimeCancellation.Token;
+            TrackExplicitFlight(completion.Task);
         }
 
-        return syncCoordinator.TriggerAsync(reason, cancellationToken);
+        _ = CompleteExplicitSyncAsync(reason, lifetimeToken, completion);
+        return cancellationToken.CanBeCanceled
+            ? completion.Task.WaitAsync(cancellationToken)
+            : completion.Task;
     }
 
     public Task<ClientSyncRunOutcome> RetryRealtimeAsync(
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        Task<ClientSyncRunOutcome> retry;
+        TaskCompletionSource<ClientSyncRunOutcome> completion;
+        CancellationToken lifetimeToken;
         lock (stateGate)
         {
             ThrowIfTerminating();
@@ -117,12 +129,16 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
                     "The account runtime must finish starting before realtime is retried.");
             }
 
-            retry = RetryRealtimeCoreAsync();
+            completion = new TaskCompletionSource<ClientSyncRunOutcome>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            lifetimeToken = lifetimeCancellation.Token;
+            TrackExplicitFlight(completion.Task);
         }
 
+        _ = CompleteRetryAsync(lifetimeToken, completion);
         return cancellationToken.CanBeCanceled
-            ? retry.WaitAsync(cancellationToken)
-            : retry;
+            ? completion.Task.WaitAsync(cancellationToken)
+            : completion.Task;
     }
 
     public Task<ClientLogoutStatus> LogoutAsync(
@@ -234,11 +250,11 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
         }
         catch (ObjectDisposedException) when (lifetimeCancellation.IsCancellationRequested)
         {
-            syncOutcome = CanceledSyncOutcome();
+            syncOutcome = CanceledSyncOutcome(SyncReason.Startup);
         }
         catch (OperationCanceledException) when (lifetimeCancellation.IsCancellationRequested)
         {
-            syncOutcome = CanceledSyncOutcome();
+            syncOutcome = CanceledSyncOutcome(SyncReason.Startup);
         }
         catch (Exception exception)
         {
@@ -262,14 +278,97 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
         return outcome;
     }
 
-    private async Task<ClientSyncRunOutcome> RetryRealtimeCoreAsync()
+    private async Task CompleteExplicitSyncAsync(
+        SyncReason reason,
+        CancellationToken lifetimeToken,
+        TaskCompletionSource<ClientSyncRunOutcome> completion)
     {
-        await realtimeConnection.StartAsync(lifetimeCancellation.Token)
+        try
+        {
+            completion.TrySetResult(await RunExplicitSyncAsync(reason, lifetimeToken)
+                .ConfigureAwait(false));
+        }
+        catch (Exception exception)
+        {
+            completion.TrySetException(exception);
+        }
+    }
+
+    private async Task CompleteRetryAsync(
+        CancellationToken lifetimeToken,
+        TaskCompletionSource<ClientSyncRunOutcome> completion)
+    {
+        try
+        {
+            completion.TrySetResult(await RetryRealtimeCoreAsync(lifetimeToken)
+                .ConfigureAwait(false));
+        }
+        catch (Exception exception)
+        {
+            completion.TrySetException(exception);
+        }
+    }
+
+    private async Task<ClientSyncRunOutcome> RetryRealtimeCoreAsync(
+        CancellationToken lifetimeToken)
+    {
+        if (lifetimeToken.IsCancellationRequested)
+        {
+            return CanceledSyncOutcome(SyncReason.Reconnect);
+        }
+
+        try
+        {
+            await realtimeConnection.StartAsync(lifetimeToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (lifetimeToken.IsCancellationRequested)
+        {
+            return CanceledSyncOutcome(SyncReason.Reconnect);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Realtime retry failed; errorType={ErrorType}; continuing with reconnect sync.",
+                exception.GetType().Name);
+        }
+
+        return await RunExplicitSyncAsync(SyncReason.Reconnect, lifetimeToken)
             .ConfigureAwait(false);
-        lifetimeCancellation.Token.ThrowIfCancellationRequested();
-        return await syncCoordinator
-            .TriggerAsync(SyncReason.Reconnect, CancellationToken.None)
-            .ConfigureAwait(false);
+    }
+
+    private async Task<ClientSyncRunOutcome> RunExplicitSyncAsync(
+        SyncReason reason,
+        CancellationToken lifetimeToken)
+    {
+        if (lifetimeToken.IsCancellationRequested)
+        {
+            return CanceledSyncOutcome(reason);
+        }
+
+        try
+        {
+            return await syncCoordinator.TriggerAsync(reason, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException) when (lifetimeToken.IsCancellationRequested)
+        {
+            return CanceledSyncOutcome(reason);
+        }
+        catch (OperationCanceledException) when (lifetimeToken.IsCancellationRequested)
+        {
+            return CanceledSyncOutcome(reason);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                "Explicit account sync failed unexpectedly; reason={Reason}; errorType={ErrorType}.",
+                reason,
+                exception.GetType().Name);
+            return new ClientSyncRunOutcome(
+                ClientSyncRunStatus.LocalCacheFailure,
+                reason,
+                RoundsExecuted: 0);
+        }
     }
 
     private async Task<ClientLogoutStatus> TerminateAsync(bool logout)
@@ -290,14 +389,22 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
             .ConfigureAwait(false);
 
         Task<ClientAccountRuntimeStartOutcome>? startup;
+        Task[] explicitOperations;
         lock (stateGate)
         {
             startup = startTask;
+            explicitOperations = [.. explicitFlights];
         }
 
         if (startup is not null)
         {
             await CaptureFailureAsync(() => new ValueTask(startup), failures)
+                .ConfigureAwait(false);
+        }
+
+        foreach (var explicitOperation in explicitOperations)
+        {
+            await CaptureFailureAsync(() => new ValueTask(explicitOperation), failures)
                 .ConfigureAwait(false);
         }
 
@@ -353,10 +460,30 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
     }
 
     private ClientAccountRuntimeStartOutcome CanceledStartOutcome() =>
-        new(realtimeConnection.State, CanceledSyncOutcome());
+        new(realtimeConnection.State, CanceledSyncOutcome(SyncReason.Startup));
 
-    private static ClientSyncRunOutcome CanceledSyncOutcome() =>
-        new(ClientSyncRunStatus.Canceled, SyncReason.Startup, RoundsExecuted: 0);
+    private static ClientSyncRunOutcome CanceledSyncOutcome(SyncReason reason) =>
+        new(ClientSyncRunStatus.Canceled, reason, RoundsExecuted: 0);
+
+    private void TrackExplicitFlight(Task flight)
+    {
+        explicitFlights.Add(flight);
+        _ = flight.ContinueWith(
+            static (completed, state) =>
+                ((ClientAccountRuntime)state!).RemoveExplicitFlight(completed),
+            this,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private void RemoveExplicitFlight(Task flight)
+    {
+        lock (stateGate)
+        {
+            explicitFlights.Remove(flight);
+        }
+    }
 
     private void ThrowIfTerminating()
     {

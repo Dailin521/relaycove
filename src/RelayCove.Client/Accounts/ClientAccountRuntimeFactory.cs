@@ -55,6 +55,8 @@ internal sealed class ClientAccountRuntimeFactory
         ClientAuthenticationSession authenticationSession,
         CancellationToken cancellationToken = default)
     {
+        // Ownership transfers to the returned runtime only after construction succeeds.
+        // On failure the authenticated session remains owned by the caller.
         ArgumentNullException.ThrowIfNull(authenticationSession);
         cancellationToken.ThrowIfCancellationRequested();
         var userId = authenticationSession.UserId;
