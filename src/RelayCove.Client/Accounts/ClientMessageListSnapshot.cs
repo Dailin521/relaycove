@@ -28,7 +28,9 @@ internal sealed record ClientMessageListSnapshot(
         !IsLoading &&
         HasMoreBefore;
 
-    public long? LatestMessageId => Messages.Count == 0 ? null : Messages[^1].Id;
+    public long? LatestMessageId => Messages
+        .Select(message => message.ServerMessageId)
+        .LastOrDefault(messageId => messageId.HasValue);
 
     public override string ToString() =>
         $"{nameof(ClientMessageListSnapshot)} {{ Status = {Status}, " +

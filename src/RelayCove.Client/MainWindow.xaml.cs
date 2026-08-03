@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using RelayCove.Client.Accounts;
 using RelayCove.Client.Notifications;
@@ -20,6 +21,8 @@ public partial class MainWindow : Window
     private ClientMessageListSnapshot? displayedMessageSnapshot;
     private bool suppressSelectionRequest;
     private bool applyingMessageSnapshot;
+    private bool composerAvailable;
+    private bool composerSubmissionRunning;
 
     public MainWindow()
     {
@@ -42,6 +45,9 @@ public partial class MainWindow : Window
         if (!snapshot.HasActiveAccount)
         {
             pendingConversationSelectionId = null;
+            composerAvailable = false;
+            MessageComposerTextBox.IsEnabled = false;
+            UpdateComposerState();
         }
 
         var presentation = ClientAccountShellPresenter.Present(snapshot);
@@ -182,15 +188,26 @@ public partial class MainWindow : Window
         var previousItems = MessageList.ItemsSource?
             .OfType<ClientMessageListItemPresentation>()
             .ToArray() ?? Array.Empty<ClientMessageListItemPresentation>();
-        var previousOldest = previousItems.Length == 0 ? (long?)null : previousItems[0].Id;
-        var previousLatest = previousItems.Length == 0 ? (long?)null : previousItems[^1].Id;
-        var nextOldest = snapshot.Messages.Count == 0 ? (long?)null : snapshot.Messages[0].Id;
+        var previousOldest = previousItems
+            .Select(item => item.ServerMessageId)
+            .FirstOrDefault(messageId => messageId.HasValue);
+        var previousLatest = previousItems
+            .Select(item => item.ServerMessageId)
+            .LastOrDefault(messageId => messageId.HasValue);
+        var nextOldest = snapshot.Messages
+            .Select(item => item.ServerMessageId)
+            .FirstOrDefault(messageId => messageId.HasValue);
         var nextLatest = snapshot.LatestMessageId;
+        var sameConversation = displayedMessageConversationId == snapshot.ConversationId;
+        var contentAppended = sameConversation &&
+            snapshot.Messages.Count != 0 &&
+            (previousItems.Length == 0 ||
+             !previousItems.Any(item =>
+                 item.ClientMessageId == snapshot.Messages[^1].ClientMessageId));
         var scrollViewer = FindVisualChild<ScrollViewer>(MessageList);
         var oldOffset = scrollViewer?.VerticalOffset ?? 0;
         var oldExtent = scrollViewer?.ExtentHeight ?? 0;
         var wasNearBottom = IsNearBottom(scrollViewer);
-        var sameConversation = displayedMessageConversationId == snapshot.ConversationId;
         var targetChanged = snapshot.TargetMessageId.HasValue &&
             (!sameConversation || displayedTargetMessageId != snapshot.TargetMessageId);
         var decision = ClientMessageScrollPolicy.Decide(
@@ -201,7 +218,9 @@ public partial class MainWindow : Window
             nextLatest,
             wasNearBottom,
             snapshot.TargetMessageId,
-            targetChanged);
+            targetChanged,
+            contentAppended,
+            snapshot.Messages.Count != 0);
 
         applyingMessageSnapshot = true;
         try
@@ -227,6 +246,10 @@ public partial class MainWindow : Window
             MessageLoadingBar.Visibility = snapshot.IsLoading
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            composerAvailable = snapshot.Status == ClientMessageListStatus.Ready &&
+                snapshot.ConversationId.HasValue;
+            MessageComposerTextBox.IsEnabled = composerAvailable;
+            UpdateComposerState();
 
             UpdateLayout();
             scrollViewer ??= FindVisualChild<ScrollViewer>(MessageList);
@@ -237,11 +260,16 @@ public partial class MainWindow : Window
             }
             else if (decision.ScrollToMessageId is { } scrollTarget)
             {
-                var targetItem = snapshot.Messages.FirstOrDefault(item => item.Id == scrollTarget);
+                var targetItem = snapshot.Messages.FirstOrDefault(
+                    item => item.ServerMessageId == scrollTarget);
                 if (targetItem is not null)
                 {
                     MessageList.ScrollIntoView(targetItem);
                 }
+            }
+            else if (decision.ScrollToEnd && snapshot.Messages.Count != 0)
+            {
+                MessageList.ScrollIntoView(snapshot.Messages[^1]);
             }
 
             NewMessageIndicatorButton.Visibility = decision.ShowNewMessageIndicator
@@ -439,6 +467,131 @@ public partial class MainWindow : Window
         {
         }
     }
+
+    private void OnMessageComposerTextChanged(object sender, TextChangedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        UpdateComposerState();
+    }
+
+    private async void OnMessageComposerPreviewKeyDown(
+        object sender,
+        System.Windows.Input.KeyEventArgs e)
+    {
+        _ = sender;
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if ((Keyboard.Modifiers & ModifierKeys.Control) != 0)
+        {
+            var start = MessageComposerTextBox.SelectionStart;
+            MessageComposerTextBox.SelectedText = Environment.NewLine;
+            MessageComposerTextBox.SelectionStart = start + Environment.NewLine.Length;
+            MessageComposerTextBox.SelectionLength = 0;
+            return;
+        }
+
+        await SendComposedMessageAsync();
+    }
+
+    private async void OnSendMessageClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        await SendComposedMessageAsync();
+    }
+
+    private async void OnRetryPendingMessageClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button { Tag: Guid clientMessageId } ||
+            accountShell is null)
+        {
+            return;
+        }
+
+        SetLiveText(MessageComposerStatusText, "正在重试失败消息…");
+        var outcome = await accountShell.RetryPendingMessageAsync(clientMessageId);
+        SetLiveText(MessageComposerStatusText, DescribeSendOutcome(outcome, isRetry: true));
+    }
+
+    private async Task SendComposedMessageAsync()
+    {
+        if (accountShell is null ||
+            composerSubmissionRunning ||
+            !composerAvailable ||
+            !ClientTextMessageContentValidator.IsValid(MessageComposerTextBox.Text))
+        {
+            UpdateComposerState();
+            return;
+        }
+
+        var submittedContent = MessageComposerTextBox.Text;
+        composerSubmissionRunning = true;
+        UpdateComposerState();
+        SetLiveText(MessageComposerStatusText, "正在持久化并发送…");
+        try
+        {
+            var outcome = await accountShell.SendTextMessageAsync(submittedContent);
+            if (outcome.PendingCommitted &&
+                string.Equals(
+                    MessageComposerTextBox.Text,
+                    submittedContent,
+                    StringComparison.Ordinal))
+            {
+                MessageComposerTextBox.Clear();
+            }
+
+            SetLiveText(MessageComposerStatusText, DescribeSendOutcome(outcome, isRetry: false));
+        }
+        catch (OperationCanceledException)
+        {
+            SetLiveText(MessageComposerStatusText, "发送已取消；已落盘消息会保留当前状态。");
+        }
+        catch (ObjectDisposedException)
+        {
+            SetLiveText(MessageComposerStatusText, "账户已结束，无法继续发送。");
+        }
+        finally
+        {
+            composerSubmissionRunning = false;
+            UpdateComposerState();
+        }
+    }
+
+    private void UpdateComposerState()
+    {
+        SendMessageButton.IsEnabled = composerAvailable &&
+            !composerSubmissionRunning &&
+            ClientTextMessageContentValidator.IsValid(MessageComposerTextBox.Text);
+    }
+
+    private static string DescribeSendOutcome(
+        ClientMessageSendOutcome outcome,
+        bool isRetry) =>
+        outcome.Status switch
+        {
+            ClientMessageSendStatus.Completed => isRetry ? "重试发送成功。" : "发送成功。",
+            ClientMessageSendStatus.ValidationFailed =>
+                "消息需包含 1–4000 个 Unicode 字符，且不能只有空白或含不支持的控制字符。",
+            ClientMessageSendStatus.AuthenticationRequired => "登录已失效，请重新登录。",
+            ClientMessageSendStatus.AccessRevoked => "会话访问已撤销。",
+            ClientMessageSendStatus.AccessDenied => "当前账户无权发送到此会话。",
+            ClientMessageSendStatus.IdempotencyConflict or
+                ClientMessageSendStatus.ProtocolError => "消息状态冲突；已保留失败行供检查。",
+            ClientMessageSendStatus.TransientFailure =>
+                "网络结果不确定；未自动重发，请点击失败行的“重试”。",
+            ClientMessageSendStatus.CapacityExceeded =>
+                "此会话已有 50 条待处理消息，请先处理失败项。",
+            ClientMessageSendStatus.NotRetryable => "该消息当前不可重试。",
+            ClientMessageSendStatus.Unavailable => "请先选择可用会话。",
+            ClientMessageSendStatus.Canceled => "发送已取消；已落盘消息会保留当前状态。",
+            _ => "发送失败；已落盘消息会显示为失败并可重试。",
+        };
 
     private void OnMessageScrollChanged(object sender, ScrollChangedEventArgs e)
     {

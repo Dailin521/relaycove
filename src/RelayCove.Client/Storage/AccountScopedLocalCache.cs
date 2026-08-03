@@ -17,6 +17,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private const string NotificationStateVersionKey = "NotificationStateVersion";
     private const int CurrentNotificationStateVersion = 1;
     private const int MaxNotificationCandidateIds = 1000;
+    private const int MaxOutstandingPendingMessages = 50;
     private const int WriteRetryCount = 4;
     private static readonly IReadOnlyList<MessageDto> NoMessages = Array.Empty<MessageDto>();
     private static readonly ConcurrentDictionary<string, ScopeAccessState> ProcessScopeStates =
@@ -451,6 +452,18 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         PendingMessage message,
         CancellationToken cancellationToken = default)
     {
+        var outcome = await CreatePendingMessageAsync(message, cancellationToken)
+            .ConfigureAwait(false);
+        return outcome.Result is LocalPendingMessageMutationResult.CapacityExceeded or
+            LocalPendingMessageMutationResult.Conflict
+                ? LocalCacheOperationStatus.Conflict
+                : outcome.Status;
+    }
+
+    internal async Task<LocalPendingMessageMutationOutcome> CreatePendingMessageAsync(
+        PendingMessage message,
+        CancellationToken cancellationToken = default)
+    {
         ValidatePendingMessage(message);
         if (message.SenderId != identity.UserId)
         {
@@ -464,18 +477,101 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         var initialStatus = GetAccessStatus(message.ConversationId);
         if (initialStatus != LocalCacheOperationStatus.Ready)
         {
-            return initialStatus;
+            return LocalPendingMessageMutationOutcome.Failure(initialStatus);
         }
 
         await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        LocalPendingMessageMutationOutcome outcome;
         try
         {
-            return await Task.Run(() => AddPendingMessage(message)).ConfigureAwait(false);
+            outcome = await Task.Run(() => CreatePendingMessage(message)).ConfigureAwait(false);
         }
         finally
         {
             operationGate.Release();
         }
+
+        if (outcome.Status == LocalCacheOperationStatus.Ready &&
+            outcome.Result == LocalPendingMessageMutationResult.Created)
+        {
+            PublishConversationStateChanged();
+        }
+
+        return outcome;
+    }
+
+    internal async Task<LocalPendingMessageMutationOutcome> PreparePendingMessageRetryAsync(
+        Guid conversationId,
+        Guid clientMessageId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateGuid(conversationId, nameof(conversationId));
+        ValidateGuid(clientMessageId, nameof(clientMessageId));
+        ThrowIfDisposed();
+        var initialStatus = GetAccessStatus(conversationId);
+        if (initialStatus != LocalCacheOperationStatus.Ready)
+        {
+            return LocalPendingMessageMutationOutcome.Failure(initialStatus);
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        LocalPendingMessageMutationOutcome outcome;
+        try
+        {
+            outcome = await Task.Run(() => PreparePendingMessageRetry(
+                    conversationId,
+                    clientMessageId))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+
+        if (outcome.Status == LocalCacheOperationStatus.Ready &&
+            outcome.Result == LocalPendingMessageMutationResult.PreparedRetry)
+        {
+            PublishConversationStateChanged();
+        }
+
+        return outcome;
+    }
+
+    internal async Task<LocalPendingMessageMutationOutcome> MarkPendingMessageFailedAsync(
+        Guid conversationId,
+        Guid clientMessageId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateGuid(conversationId, nameof(conversationId));
+        ValidateGuid(clientMessageId, nameof(clientMessageId));
+        ThrowIfDisposed();
+        var initialStatus = GetAccessStatus(conversationId);
+        if (initialStatus != LocalCacheOperationStatus.Ready)
+        {
+            return LocalPendingMessageMutationOutcome.Failure(initialStatus);
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        LocalPendingMessageMutationOutcome outcome;
+        try
+        {
+            outcome = await Task.Run(() => MarkPendingMessageFailed(
+                    conversationId,
+                    clientMessageId))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+
+        if (outcome.Status == LocalCacheOperationStatus.Ready &&
+            outcome.Result == LocalPendingMessageMutationResult.MarkedFailed)
+        {
+            PublishConversationStateChanged();
+        }
+
+        return outcome;
     }
 
     public Task<LocalCacheMergeOutcome> MergeIncomingMessageAsync(
@@ -868,22 +964,62 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private void Initialize()
     {
         Directory.CreateDirectory(identity.ScopeDirectory);
-        using (var connection = OpenConnection())
+        operationGate.Wait();
+        try
         {
-            ExecuteNonQuery(connection, null, "PRAGMA journal_mode=WAL;");
-            ExecuteNonQuery(connection, null, "PRAGMA synchronous=NORMAL;");
-            using var versionCommand = CreateCommand(connection, null, "PRAGMA user_version;");
-            var schemaVersion = Convert.ToInt32(versionCommand.ExecuteScalar(), CultureInfo.InvariantCulture);
-            if (schemaVersion is not 0 and not 1)
+            using (var connection = OpenConnection())
             {
-                throw new InvalidDataException("The local cache schema version is not supported.");
+                ExecuteNonQuery(connection, null, "PRAGMA journal_mode=WAL;");
+                ExecuteNonQuery(connection, null, "PRAGMA synchronous=NORMAL;");
+                using var versionCommand = CreateCommand(connection, null, "PRAGMA user_version;");
+                var schemaVersion = Convert.ToInt32(
+                    versionCommand.ExecuteScalar(),
+                    CultureInfo.InvariantCulture);
+                if (schemaVersion is not 0 and not 1)
+                {
+                    throw new InvalidDataException(
+                        "The local cache schema version is not supported.");
+                }
+
+                ExecuteNonQuery(connection, null, SchemaSql);
+                if (Interlocked.CompareExchange(
+                        ref scopeState.PendingRecoveryCompleted,
+                        1,
+                        0) == 0)
+                {
+                    try
+                    {
+                        using var recoverPending = CreateCommand(connection, null, """
+                            UPDATE LocalMessages
+                            SET LocalSendStatus = $failed
+                            WHERE ServerMessageId IS NULL
+                              AND LocalSendStatus = $sending;
+                            """);
+                        AddParameter(
+                            recoverPending,
+                            "$failed",
+                            (int)MessageSendStatus.Failed);
+                        AddParameter(
+                            recoverPending,
+                            "$sending",
+                            (int)MessageSendStatus.Sending);
+                        recoverPending.ExecuteNonQuery();
+                    }
+                    catch
+                    {
+                        Volatile.Write(ref scopeState.PendingRecoveryCompleted, 0);
+                        throw;
+                    }
+                }
             }
 
-            ExecuteNonQuery(connection, null, SchemaSql);
+            ReplayRevocationIntents();
+            LoadPersistedTombstones();
         }
-
-        ReplayRevocationIntents();
-        LoadPersistedTombstones();
+        finally
+        {
+            operationGate.Release();
+        }
     }
 
     private bool AdoptNotificationState()
@@ -1726,12 +1862,12 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         return LocalCacheOperationStatus.Ready;
     }
 
-    private LocalCacheOperationStatus AddPendingMessage(PendingMessage message)
+    private LocalPendingMessageMutationOutcome CreatePendingMessage(PendingMessage message)
     {
         var status = GetAccessStatus(message.ConversationId);
         if (status != LocalCacheOperationStatus.Ready)
         {
-            return status;
+            return LocalPendingMessageMutationOutcome.Failure(status);
         }
 
         return ExecuteWriteWithRetry((connection, transaction) =>
@@ -1739,7 +1875,58 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             var databaseStatus = GetDatabaseAccessStatus(connection, transaction, message.ConversationId);
             if (databaseStatus != LocalCacheOperationStatus.Ready)
             {
-                return TransactionResult<LocalCacheOperationStatus>.Rollback(databaseStatus);
+                return TransactionResult<LocalPendingMessageMutationOutcome>.Rollback(
+                    LocalPendingMessageMutationOutcome.Failure(databaseStatus));
+            }
+
+            var existing = LoadMessageByClientKey(
+                connection,
+                transaction,
+                identity.UserId,
+                message.ClientMessageId);
+            if (existing is not null)
+            {
+                if (!IsPendingRequestCompatible(connection, transaction, existing, message))
+                {
+                    return TransactionResult<LocalPendingMessageMutationOutcome>.Rollback(
+                        new LocalPendingMessageMutationOutcome(
+                            LocalCacheOperationStatus.Ready,
+                            LocalPendingMessageMutationResult.Conflict));
+                }
+
+                var result = existing.ServerMessageId is null
+                    ? LocalPendingMessageMutationResult.AlreadyExists
+                    : LocalPendingMessageMutationResult.AlreadySent;
+                var pending = existing.ServerMessageId is null
+                    ? ToLocalPendingMessage(connection, transaction, existing)
+                    : null;
+                return TransactionResult<LocalPendingMessageMutationOutcome>.Rollback(
+                    new LocalPendingMessageMutationOutcome(
+                        LocalCacheOperationStatus.Ready,
+                        result,
+                        pending));
+            }
+
+            using (var count = CreateCommand(connection, transaction, """
+                SELECT COUNT(*)
+                FROM LocalMessages
+                WHERE ConversationId = $conversationId
+                  AND SenderId = $senderId
+                  AND ServerMessageId IS NULL;
+                """))
+            {
+                AddParameter(count, "$conversationId", FormatGuid(message.ConversationId));
+                AddParameter(count, "$senderId", FormatGuid(identity.UserId));
+                var outstanding = Convert.ToInt32(
+                    count.ExecuteScalar(),
+                    CultureInfo.InvariantCulture);
+                if (outstanding >= MaxOutstandingPendingMessages)
+                {
+                    return TransactionResult<LocalPendingMessageMutationOutcome>.Rollback(
+                        new LocalPendingMessageMutationOutcome(
+                            LocalCacheOperationStatus.Ready,
+                            LocalPendingMessageMutationResult.CapacityExceeded));
+                }
             }
 
             using var command = CreateCommand(connection, transaction, """
@@ -1751,17 +1938,132 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                     NULL, $clientMessageId, $conversationId, $senderId,
                     $senderDisplayName, $type, $content, $replyToMessageId, $createdAt,
                     1, 1, $sendStatus)
-                ON CONFLICT(SenderId, ClientMessageId) DO NOTHING;
                 """);
             AddMessageParameters(command, message);
-            var inserted = command.ExecuteNonQuery() == 1;
-            if (inserted)
+            if (command.ExecuteNonQuery() != 1)
             {
-                var localId = GetLastInsertRowId(connection, transaction);
-                InsertMentions(connection, transaction, localId, message.MentionUserIds);
+                throw new InvalidOperationException(
+                    "Creating a pending message did not insert exactly one row.");
             }
 
-            return TransactionResult<LocalCacheOperationStatus>.Commit(LocalCacheOperationStatus.Ready);
+            var localId = GetLastInsertRowId(connection, transaction);
+            InsertMentions(connection, transaction, localId, message.MentionUserIds);
+            return TransactionResult<LocalPendingMessageMutationOutcome>.Commit(
+                new LocalPendingMessageMutationOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    LocalPendingMessageMutationResult.Created,
+                    new LocalPendingMessage(
+                        localId,
+                        message.ClientMessageId,
+                        message.ConversationId,
+                        message.SenderId,
+                        message.SenderDisplayName,
+                        message.Type,
+                        message.Content,
+                        message.ReplyToMessageId,
+                        message.MentionUserIds.ToArray(),
+                        message.CreatedAt,
+                        MessageSendStatus.Sending)));
+        });
+    }
+
+    private LocalPendingMessageMutationOutcome PreparePendingMessageRetry(
+        Guid conversationId,
+        Guid clientMessageId) =>
+        MutatePendingMessage(
+            conversationId,
+            clientMessageId,
+            MessageSendStatus.Failed,
+            MessageSendStatus.Sending,
+            LocalPendingMessageMutationResult.PreparedRetry);
+
+    private LocalPendingMessageMutationOutcome MarkPendingMessageFailed(
+        Guid conversationId,
+        Guid clientMessageId) =>
+        MutatePendingMessage(
+            conversationId,
+            clientMessageId,
+            MessageSendStatus.Sending,
+            MessageSendStatus.Failed,
+            LocalPendingMessageMutationResult.MarkedFailed);
+
+    private LocalPendingMessageMutationOutcome MutatePendingMessage(
+        Guid conversationId,
+        Guid clientMessageId,
+        MessageSendStatus expectedStatus,
+        MessageSendStatus nextStatus,
+        LocalPendingMessageMutationResult successResult)
+    {
+        var status = GetAccessStatus(conversationId);
+        if (status != LocalCacheOperationStatus.Ready)
+        {
+            return LocalPendingMessageMutationOutcome.Failure(status);
+        }
+
+        return ExecuteWriteWithRetry((connection, transaction) =>
+        {
+            var databaseStatus = GetDatabaseAccessStatus(connection, transaction, conversationId);
+            if (databaseStatus != LocalCacheOperationStatus.Ready)
+            {
+                return TransactionResult<LocalPendingMessageMutationOutcome>.Rollback(
+                    LocalPendingMessageMutationOutcome.Failure(databaseStatus));
+            }
+
+            var existing = LoadMessageByClientKey(
+                connection,
+                transaction,
+                identity.UserId,
+                clientMessageId);
+            if (existing is null || existing.ConversationId != conversationId)
+            {
+                return TransactionResult<LocalPendingMessageMutationOutcome>.Rollback(
+                    new LocalPendingMessageMutationOutcome(
+                        LocalCacheOperationStatus.Ready,
+                        LocalPendingMessageMutationResult.NotFound));
+            }
+
+            if (existing.ServerMessageId is not null ||
+                existing.SendStatus == MessageSendStatus.Sent)
+            {
+                return TransactionResult<LocalPendingMessageMutationOutcome>.Rollback(
+                    new LocalPendingMessageMutationOutcome(
+                        LocalCacheOperationStatus.Ready,
+                        LocalPendingMessageMutationResult.AlreadySent));
+            }
+
+            if (existing.SendStatus != expectedStatus)
+            {
+                return TransactionResult<LocalPendingMessageMutationOutcome>.Rollback(
+                    new LocalPendingMessageMutationOutcome(
+                        LocalCacheOperationStatus.Ready,
+                        LocalPendingMessageMutationResult.NotRetryable,
+                        ToLocalPendingMessage(connection, transaction, existing)));
+            }
+
+            using var update = CreateCommand(connection, transaction, """
+                UPDATE LocalMessages
+                SET LocalSendStatus = $nextStatus
+                WHERE LocalId = $localId
+                  AND ServerMessageId IS NULL
+                  AND LocalSendStatus = $expectedStatus;
+                """);
+            AddParameter(update, "$nextStatus", (int)nextStatus);
+            AddParameter(update, "$localId", existing.LocalId);
+            AddParameter(update, "$expectedStatus", (int)expectedStatus);
+            if (update.ExecuteNonQuery() != 1)
+            {
+                throw new InvalidOperationException(
+                    "Changing a pending message state did not update exactly one row.");
+            }
+
+            return TransactionResult<LocalPendingMessageMutationOutcome>.Commit(
+                new LocalPendingMessageMutationOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    successResult,
+                    ToLocalPendingMessage(
+                        connection,
+                        transaction,
+                        existing with { SendStatus = nextStatus })));
         });
     }
 
@@ -2452,12 +2754,16 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 .Select(record => ToMessageDto(connection, record, transaction))
                 .ToList()
                 .AsReadOnly();
+            var pendingMessages = beforeMessageId.HasValue
+                ? Array.Empty<LocalPendingMessage>()
+                : ReadPendingMessages(connection, transaction, conversationId);
             return new LocalMessagePageReadOutcome(
                 LocalCacheOperationStatus.Ready,
                 conversationId,
                 messages,
                 hasMoreBefore && messages.Count != 0 ? messages[0].Id : null,
-                hasMoreBefore);
+                hasMoreBefore,
+                pendingMessages);
         }
         catch (SqliteException exception) when (IsBusy(exception))
         {
@@ -3452,6 +3758,40 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         return reader.Read() ? ReadMessageRecord(reader) : null;
     }
 
+    private static IReadOnlyList<LocalPendingMessage> ReadPendingMessages(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid conversationId)
+    {
+        using var command = CreateCommand(connection, transaction, MessageSelectSql + """
+             WHERE ConversationId = $conversationId
+               AND ServerMessageId IS NULL
+             ORDER BY LocalId
+             LIMIT $limitPlusOne;
+            """);
+        AddParameter(command, "$conversationId", FormatGuid(conversationId));
+        AddParameter(command, "$limitPlusOne", MaxOutstandingPendingMessages + 1);
+        var records = new List<LocalMessageRecord>(MaxOutstandingPendingMessages + 1);
+        using (var reader = command.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                records.Add(ReadMessageRecord(reader));
+            }
+        }
+
+        if (records.Count > MaxOutstandingPendingMessages)
+        {
+            throw new InvalidDataException(
+                "The local cache contains too many outstanding pending messages.");
+        }
+
+        return records
+            .Select(record => ToLocalPendingMessage(connection, transaction, record))
+            .ToList()
+            .AsReadOnly();
+    }
+
     private static LocalMessageRecord ReadMessageRecord(SqliteDataReader reader) => new(
         reader.GetInt64(0),
         reader.IsDBNull(1) ? null : reader.GetInt64(1),
@@ -3480,6 +3820,47 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         Array.Empty<AttachmentDto>(),
         LoadMentions(connection, transaction, record.LocalId),
         record.CreatedAt);
+
+    private static LocalPendingMessage ToLocalPendingMessage(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        LocalMessageRecord record)
+    {
+        if (record.ServerMessageId is not null ||
+            record.SendStatus is not MessageSendStatus.Sending and not MessageSendStatus.Failed)
+        {
+            throw new InvalidDataException(
+                "The local cache contains an invalid pending message row.");
+        }
+
+        return new LocalPendingMessage(
+            record.LocalId,
+            record.ClientMessageId,
+            record.ConversationId,
+            record.SenderId,
+            record.SenderDisplayName,
+            record.Type,
+            record.Content,
+            record.ReplyToMessageId,
+            LoadMentions(connection, transaction, record.LocalId),
+            record.CreatedAt,
+            record.SendStatus);
+    }
+
+    private static bool IsPendingRequestCompatible(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        LocalMessageRecord record,
+        PendingMessage message) =>
+        record.ClientMessageId == message.ClientMessageId &&
+        record.ConversationId == message.ConversationId &&
+        record.SenderId == message.SenderId &&
+        record.Type == message.Type &&
+        string.Equals(record.Content, message.Content, StringComparison.Ordinal) &&
+        record.ReplyToMessageId == message.ReplyToMessageId &&
+        MentionSetsEqual(
+            LoadMentions(connection, transaction, record.LocalId),
+            message.MentionUserIds);
 
     private static bool IsScalarExactMatch(LocalMessageRecord record, MessageDto message) =>
         record.ServerMessageId == message.Id &&
@@ -3844,7 +4225,13 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         ValidateGuid(message.SenderId, nameof(message));
         ArgumentNullException.ThrowIfNull(message.SenderDisplayName);
         ArgumentNullException.ThrowIfNull(message.MentionUserIds);
-        if (!Enum.IsDefined(message.Type) || message.MentionUserIds.Any(id => id == Guid.Empty))
+        if (!Enum.IsDefined(message.Type) ||
+            message.MentionUserIds.Count > 20 ||
+            message.MentionUserIds.Any(id => id == Guid.Empty) ||
+            message.MentionUserIds.Distinct().Count() != message.MentionUserIds.Count ||
+            message.ReplyToMessageId is <= 0 ||
+            (message.Type == MessageType.Text &&
+             !ClientTextMessageContentValidator.IsValid(message.Content)))
         {
             throw new ArgumentException("Pending message contains invalid values.", nameof(message));
         }
@@ -3930,6 +4317,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         public ConcurrentDictionary<Guid, byte> DeniedConversations { get; } = new();
 
         public int FatalScope;
+
+        public int PendingRecoveryCompleted;
     }
 
     private readonly record struct TransactionResult<T>(T Value, bool ShouldCommit)

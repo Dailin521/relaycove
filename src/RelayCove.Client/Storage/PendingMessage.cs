@@ -14,8 +14,9 @@ public sealed record PendingMessage(
     DateTimeOffset CreatedAt)
 {
     public override string ToString() =>
-        $"{nameof(PendingMessage)} {{ ClientMessageId = {ClientMessageId}, " +
-        $"ConversationId = {ConversationId}, SenderId = {SenderId}, Type = {Type}, " +
+        $"{nameof(PendingMessage)} {{ ClientMessageId = [REDACTED], " +
+        "ConversationId = [REDACTED], SenderId = [REDACTED], " +
+        $"Type = {Type}, " +
         "SenderDisplayName = [REDACTED], Content = [REDACTED], " +
         "ReplyToMessageId = [REDACTED], MentionUserIds = [REDACTED] }";
 }

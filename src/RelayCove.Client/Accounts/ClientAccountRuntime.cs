@@ -16,6 +16,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
     private readonly IClientAccountSyncCoordinator syncCoordinator;
     private readonly IClientAccountReadThroughCoordinator readThroughCoordinator;
     private readonly ClientMessageHistoryCoordinator? messageHistoryCoordinator;
+    private readonly ClientMessageSendCoordinator? messageSendCoordinator;
     private readonly IAsyncDisposable notificationCoordinator;
     private readonly IAsyncDisposable localCache;
     private readonly AccountScopedLocalCache? conversationSource;
@@ -43,7 +44,8 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         Func<ClientNotificationActivationTarget, bool>? notificationTargetAuthorizer = null,
         AccountScopedLocalCache? conversationSource = null,
         ClientAccountRuntimeStateHub? stateHub = null,
-        ClientMessageHistoryCoordinator? messageHistoryCoordinator = null)
+        ClientMessageHistoryCoordinator? messageHistoryCoordinator = null,
+        ClientMessageSendCoordinator? messageSendCoordinator = null)
     {
         Identity = identity ?? throw new ArgumentNullException(nameof(identity));
         this.authenticationSession = authenticationSession ??
@@ -59,6 +61,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
         this.conversationSource = conversationSource;
         this.messageHistoryCoordinator = messageHistoryCoordinator;
+        this.messageSendCoordinator = messageSendCoordinator;
         this.activityState = activityState ?? throw new ArgumentNullException(nameof(activityState));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.stateHub = stateHub ?? new ClientAccountRuntimeStateHub(logger);
@@ -192,6 +195,34 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
                     messageId,
                     before,
                     after,
+                    token),
+            cancellationToken);
+
+    public Task<ClientMessageSendOutcome> SendTextMessageAsync(
+        Guid conversationId,
+        string? content,
+        CancellationToken cancellationToken = default) =>
+        TrackRuntimeOperation(
+            token => messageSendCoordinator is null
+                ? Task.FromResult(ClientMessageSendOutcome.Failure(
+                    ClientMessageSendStatus.LocalCacheFailure))
+                : messageSendCoordinator.SendTextAsync(
+                    conversationId,
+                    content,
+                    token),
+            cancellationToken);
+
+    public Task<ClientMessageSendOutcome> RetryPendingMessageAsync(
+        Guid conversationId,
+        Guid clientMessageId,
+        CancellationToken cancellationToken = default) =>
+        TrackRuntimeOperation(
+            token => messageSendCoordinator is null
+                ? Task.FromResult(ClientMessageSendOutcome.Failure(
+                    ClientMessageSendStatus.LocalCacheFailure))
+                : messageSendCoordinator.RetryAsync(
+                    conversationId,
+                    clientMessageId,
                     token),
             cancellationToken);
 
@@ -560,6 +591,13 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         {
             await CaptureFailureAsync(
                     () => messageHistoryCoordinator.DisposeAsync(),
+                    failures)
+                .ConfigureAwait(false);
+        }
+        if (messageSendCoordinator is not null)
+        {
+            await CaptureFailureAsync(
+                    () => messageSendCoordinator.DisposeAsync(),
                     failures)
                 .ConfigureAwait(false);
         }

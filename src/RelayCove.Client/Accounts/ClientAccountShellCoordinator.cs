@@ -329,6 +329,131 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         return LoadOlderMessagesCoreAsync(selection);
     }
 
+    public async Task<ClientMessageSendOutcome> SendTextMessageAsync(
+        string? content,
+        CancellationToken cancellationToken = default)
+    {
+        IClientAccountRuntime? activeRuntime;
+        Guid conversationId;
+        lock (stateGate)
+        {
+            if (messageSelection is not { } selection ||
+                !IsCurrentMessageSelectionLocked(selection) ||
+                messageList.Status != ClientMessageListStatus.Ready)
+            {
+                return ClientMessageSendOutcome.Failure(
+                    ClientMessageSendStatus.Unavailable);
+            }
+
+            activeRuntime = runtime;
+            conversationId = selection.ConversationId;
+        }
+
+        if (activeRuntime is null)
+        {
+            return ClientMessageSendOutcome.Failure(ClientMessageSendStatus.Unavailable);
+        }
+
+        try
+        {
+            var outcome = await activeRuntime
+                .SendTextMessageAsync(conversationId, content, cancellationToken)
+                .ConfigureAwait(false);
+            if (outcome.Status == ClientMessageSendStatus.AuthenticationRequired)
+            {
+                await EndAuthenticationRequiredSessionAsync(activeRuntime)
+                    .ConfigureAwait(false);
+            }
+
+            return outcome;
+        }
+        catch (OperationCanceledException)
+        {
+            return ClientMessageSendOutcome.Failure(ClientMessageSendStatus.Canceled);
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientMessageSendOutcome.Failure(ClientMessageSendStatus.Canceled);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Sending a Text message through the active account failed; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.LocalCacheFailure);
+        }
+    }
+
+    public async Task<ClientMessageSendOutcome> RetryPendingMessageAsync(
+        Guid clientMessageId,
+        CancellationToken cancellationToken = default)
+    {
+        if (clientMessageId == Guid.Empty)
+        {
+            return ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.ValidationFailed);
+        }
+
+        IClientAccountRuntime? activeRuntime;
+        Guid conversationId;
+        lock (stateGate)
+        {
+            if (messageSelection is not { } selection ||
+                !IsCurrentMessageSelectionLocked(selection) ||
+                messageList.Status != ClientMessageListStatus.Ready ||
+                !messageList.Messages.Any(message =>
+                    message.ClientMessageId == clientMessageId && message.CanRetry))
+            {
+                return ClientMessageSendOutcome.Failure(
+                    ClientMessageSendStatus.NotRetryable);
+            }
+
+            activeRuntime = runtime;
+            conversationId = selection.ConversationId;
+        }
+
+        if (activeRuntime is null)
+        {
+            return ClientMessageSendOutcome.Failure(ClientMessageSendStatus.Unavailable);
+        }
+
+        try
+        {
+            var outcome = await activeRuntime
+                .RetryPendingMessageAsync(
+                    conversationId,
+                    clientMessageId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (outcome.Status == ClientMessageSendStatus.AuthenticationRequired)
+            {
+                await EndAuthenticationRequiredSessionAsync(activeRuntime)
+                    .ConfigureAwait(false);
+            }
+
+            return outcome;
+        }
+        catch (OperationCanceledException)
+        {
+            return ClientMessageSendOutcome.Failure(ClientMessageSendStatus.Canceled);
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientMessageSendOutcome.Failure(ClientMessageSendStatus.Canceled);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Retrying a pending message through the active account failed; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.LocalCacheFailure);
+        }
+    }
+
     public void AcknowledgeMessageSnapshotApplied(
         Guid conversationId,
         long revision,
@@ -1002,7 +1127,11 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                     limit: 50,
                     selection.Token)
                 .ConfigureAwait(false);
-            if (!TryApplyLocalPage(selection, local, replacePagingState: true))
+            if (!TryApplyLocalPage(
+                    selection,
+                    local,
+                    replacePagingState: true,
+                    replacePendingMessages: true))
             {
                 return;
             }
@@ -1141,7 +1270,11 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                     limit: 50,
                     selection.Token)
                 .ConfigureAwait(false);
-            if (!TryApplyLocalPage(selection, local, replacePagingState: false))
+            if (!TryApplyLocalPage(
+                    selection,
+                    local,
+                    replacePagingState: false,
+                    replacePendingMessages: false))
             {
                 return;
             }
@@ -1221,7 +1354,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
     private bool TryApplyLocalPage(
         MessageSelection selection,
         LocalMessagePageReadOutcome outcome,
-        bool replacePagingState)
+        bool replacePagingState,
+        bool replacePendingMessages)
     {
         lock (stateGate)
         {
@@ -1234,6 +1368,14 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             if (outcome.Status == LocalCacheOperationStatus.Ready)
             {
                 MergeMessagesLocked(selection, outcome.Messages);
+                if (replacePendingMessages)
+                {
+                    selection.PendingMessages.Clear();
+                    foreach (var pending in outcome.PendingMessages)
+                    {
+                        selection.PendingMessages[pending.ClientMessageId] = pending;
+                    }
+                }
                 if (replacePagingState || outcome.HasMoreBefore)
                 {
                     selection.HasMoreBefore = outcome.HasMoreBefore;
@@ -1375,7 +1517,11 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                         limit: 50,
                         selection.Token)
                     .ConfigureAwait(false);
-                if (!TryApplyLocalPage(selection, local, replacePagingState: false))
+                if (!TryApplyLocalPage(
+                        selection,
+                        local,
+                        replacePagingState: false,
+                        replacePendingMessages: true))
                 {
                     return;
                 }
@@ -1586,6 +1732,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             isReady
                 ? ClientMessageListPresenter.Present(
                     selection.Messages.Values,
+                    selection.PendingMessages.Values,
                     selection.Subscription.Runtime.Identity.UserId)
                 : Array.Empty<ClientMessageListItemPresentation>(),
             isLoading,
@@ -1947,6 +2094,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         public CancellationToken Token { get; }
 
         public SortedDictionary<long, MessageDto> Messages { get; } = [];
+
+        public Dictionary<Guid, LocalPendingMessage> PendingMessages { get; } = [];
 
         public long? NextBeforeMessageId { get; set; }
 

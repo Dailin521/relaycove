@@ -967,7 +967,7 @@ public sealed class ClientAccountShellCoordinatorTests
         await Task.Delay(50);
 
         Assert.Equal(secondConversationId, coordinator.MessageList.ConversationId);
-        Assert.Equal(2, Assert.Single(coordinator.MessageList.Messages).Id);
+        Assert.Equal(2, Assert.Single(coordinator.MessageList.Messages).ServerMessageId);
     }
 
     [Fact]
@@ -1034,9 +1034,130 @@ public sealed class ClientAccountShellCoordinatorTests
         await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(100, coordinator.MessageList.Messages.Count);
-        Assert.Equal(1, coordinator.MessageList.Messages[0].Id);
-        Assert.Equal(100, coordinator.MessageList.Messages[^1].Id);
+        Assert.Equal(1, coordinator.MessageList.Messages[0].ServerMessageId);
+        Assert.Equal(100, coordinator.MessageList.Messages[^1].ServerMessageId);
         Assert.False(coordinator.MessageList.HasMoreBefore);
+    }
+
+    [Fact]
+    public async Task SendTextMessageAsync_WhenSelectionChanges_KeepsCapturedConversationFlight()
+    {
+        var session = CreateSession();
+        var firstConversationId = Guid.NewGuid();
+        var secondConversationId = Guid.NewGuid();
+        var sendEntered = NewSignal();
+        var releaseSend = NewSignal();
+        Guid? sentConversationId = null;
+        CancellationToken sentToken = default;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(
+                firstConversationId,
+                secondConversationId),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    Array.Empty<MessageDto>(),
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            MessageSendAction = async (conversationId, _, token) =>
+            {
+                sentConversationId = conversationId;
+                sentToken = token;
+                sendEntered.TrySetResult();
+                await releaseSend.Task;
+                return new ClientMessageSendOutcome(
+                    ClientMessageSendStatus.Completed,
+                    PendingCommitted: true);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(firstConversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        var send = coordinator.SendTextMessageAsync("persist across selection");
+        await sendEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        coordinator.SelectConversation(secondConversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready &&
+            coordinator.MessageList.ConversationId == secondConversationId);
+
+        Assert.False(sentToken.IsCancellationRequested);
+        releaseSend.TrySetResult();
+        var outcome = await send;
+
+        Assert.Equal(firstConversationId, sentConversationId);
+        Assert.Equal(ClientMessageSendStatus.Completed, outcome.Status);
+        Assert.Equal(secondConversationId, coordinator.MessageList.ConversationId);
+    }
+
+    [Fact]
+    public async Task RetryPendingMessageAsync_WhenFailedRowIsVisible_UsesOriginalClientKey()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var clientMessageId = Guid.NewGuid();
+        Guid? retriedConversationId = null;
+        Guid? retriedClientMessageId = null;
+        var pending = new LocalPendingMessage(
+            LocalId: 1,
+            ClientMessageId: clientMessageId,
+            ConversationId: conversationId,
+            SenderId: session.UserId!.Value,
+            SenderDisplayName: "Sender",
+            Type: MessageType.Text,
+            Content: "failed",
+            ReplyToMessageId: null,
+            MentionUserIds: Array.Empty<Guid>(),
+            CreatedAt: DateTimeOffset.Parse("2026-08-03T03:00:00Z"),
+            SendStatus: MessageSendStatus.Failed);
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    Array.Empty<MessageDto>(),
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false,
+                    PendingMessages: [pending])),
+            MessageRetryAction = (conversation, clientMessage, _) =>
+            {
+                retriedConversationId = conversation;
+                retriedClientMessageId = clientMessage;
+                return Task.FromResult(new ClientMessageSendOutcome(
+                    ClientMessageSendStatus.Completed,
+                    PendingCommitted: true));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready &&
+            coordinator.MessageList.Messages.Count == 1);
+
+        var outcome = await coordinator.RetryPendingMessageAsync(clientMessageId);
+
+        Assert.Equal(ClientMessageSendStatus.Completed, outcome.Status);
+        Assert.Equal(conversationId, retriedConversationId);
+        Assert.Equal(clientMessageId, retriedClientMessageId);
     }
 
     [Fact]
@@ -1503,6 +1624,20 @@ public sealed class ClientAccountShellCoordinatorTests
             set;
         }
 
+        public Func<Guid, string?, CancellationToken, Task<ClientMessageSendOutcome>>?
+            MessageSendAction
+        {
+            get;
+            set;
+        }
+
+        public Func<Guid, Guid, CancellationToken, Task<ClientMessageSendOutcome>>?
+            MessageRetryAction
+        {
+            get;
+            set;
+        }
+
         public Func<Guid, long, CancellationToken, Task<LocalCacheOperationStatus>>?
             MarkRenderedAction
         {
@@ -1600,6 +1735,25 @@ public sealed class ClientAccountShellCoordinatorTests
                 cancellationToken) ??
             Task.FromResult(ClientMessageAroundOutcome.Failure(
                 ClientMessageLoadStatus.RemoteFailure));
+
+        public Task<ClientMessageSendOutcome> SendTextMessageAsync(
+            Guid conversationId,
+            string? content,
+            CancellationToken cancellationToken = default) =>
+            MessageSendAction?.Invoke(conversationId, content, cancellationToken) ??
+            Task.FromResult(ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.RemoteFailure));
+
+        public Task<ClientMessageSendOutcome> RetryPendingMessageAsync(
+            Guid conversationId,
+            Guid clientMessageId,
+            CancellationToken cancellationToken = default) =>
+            MessageRetryAction?.Invoke(
+                conversationId,
+                clientMessageId,
+                cancellationToken) ??
+            Task.FromResult(ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.RemoteFailure));
 
         public Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(
             Guid conversationId,

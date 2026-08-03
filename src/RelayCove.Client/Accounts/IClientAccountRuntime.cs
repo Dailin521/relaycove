@@ -42,6 +42,16 @@ internal interface IClientAccountRuntime : IAsyncDisposable
         int after,
         CancellationToken cancellationToken = default);
 
+    Task<ClientMessageSendOutcome> SendTextMessageAsync(
+        Guid conversationId,
+        string? content,
+        CancellationToken cancellationToken = default);
+
+    Task<ClientMessageSendOutcome> RetryPendingMessageAsync(
+        Guid conversationId,
+        Guid clientMessageId,
+        CancellationToken cancellationToken = default);
+
     Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(
         Guid conversationId,
         long messageId,

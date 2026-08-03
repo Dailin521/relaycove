@@ -10,13 +10,16 @@ internal static class ClientMessageScrollPolicy
         long? nextLatestMessageId,
         bool wasNearBottom,
         long? targetMessageId,
-        bool targetChanged)
+        bool targetChanged,
+        bool contentAppended = false,
+        bool hasNextItems = true)
     {
         if (targetMessageId is { } target && targetChanged)
         {
             return new ClientMessageScrollDecision(
                 PreservePrependOffset: false,
                 ScrollToMessageId: target,
+                ScrollToEnd: false,
                 ShowNewMessageIndicator: false,
                 ObservedThroughMessageId: target);
         }
@@ -26,6 +29,7 @@ internal static class ClientMessageScrollPolicy
             return new ClientMessageScrollDecision(
                 PreservePrependOffset: false,
                 ScrollToMessageId: nextLatestMessageId,
+                ScrollToEnd: nextLatestMessageId is null && hasNextItems,
                 ShowNewMessageIndicator: false,
                 ObservedThroughMessageId: nextLatestMessageId);
         }
@@ -33,16 +37,19 @@ internal static class ClientMessageScrollPolicy
         var prepended = nextOldestMessageId is { } nextOldest &&
             previousOldestMessageId is { } previousOldest &&
             nextOldest < previousOldest;
-        var appended = nextLatestMessageId is { } nextLatest &&
+        var appended = contentAppended ||
+            (nextLatestMessageId is { } nextLatest &&
             previousLatestMessageId is { } previousLatest &&
-            nextLatest > previousLatest;
+            nextLatest > previousLatest);
         var sameWindow = previousOldestMessageId == nextOldestMessageId &&
-            previousLatestMessageId == nextLatestMessageId;
+            previousLatestMessageId == nextLatestMessageId &&
+            !contentAppended;
         if (sameWindow)
         {
             return new ClientMessageScrollDecision(
                 PreservePrependOffset: true,
                 ScrollToMessageId: null,
+                ScrollToEnd: false,
                 ShowNewMessageIndicator: false,
                 ObservedThroughMessageId: null);
         }
@@ -52,6 +59,7 @@ internal static class ClientMessageScrollPolicy
             return new ClientMessageScrollDecision(
                 PreservePrependOffset: true,
                 ScrollToMessageId: null,
+                ScrollToEnd: false,
                 ShowNewMessageIndicator: appended,
                 ObservedThroughMessageId: null);
         }
@@ -61,6 +69,7 @@ internal static class ClientMessageScrollPolicy
             return new ClientMessageScrollDecision(
                 PreservePrependOffset: false,
                 ScrollToMessageId: nextLatestMessageId,
+                ScrollToEnd: contentAppended,
                 ShowNewMessageIndicator: false,
                 ObservedThroughMessageId: nextLatestMessageId);
         }
@@ -68,6 +77,7 @@ internal static class ClientMessageScrollPolicy
         return new ClientMessageScrollDecision(
             PreservePrependOffset: false,
             ScrollToMessageId: null,
+            ScrollToEnd: false,
             ShowNewMessageIndicator: appended,
             ObservedThroughMessageId: null);
     }

@@ -79,6 +79,147 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task PendingMessage_WhenCreatedFailedAndRetried_RemainsOneBoundedLocalRow()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        await ApplyCompleteSnapshotAsync(cache, conversation);
+        var pending = CreatePendingMessage(conversation.Id);
+        var changes = 0;
+        cache.ConversationStateChanged += _ => Interlocked.Increment(ref changes);
+
+        var created = await cache.CreatePendingMessageAsync(pending);
+        var firstPage = await cache.ReadMessagePageAsync(conversation.Id, null, 50);
+        var failed = await cache.MarkPendingMessageFailedAsync(
+            conversation.Id,
+            pending.ClientMessageId);
+        var retried = await cache.PreparePendingMessageRetryAsync(
+            conversation.Id,
+            pending.ClientMessageId);
+        var duplicateRetry = await cache.PreparePendingMessageRetryAsync(
+            conversation.Id,
+            pending.ClientMessageId);
+
+        Assert.Equal(LocalPendingMessageMutationResult.Created, created.Result);
+        Assert.Equal(LocalCacheOperationStatus.Ready, firstPage.Status);
+        Assert.Empty(firstPage.Messages);
+        var visiblePending = Assert.Single(firstPage.PendingMessages);
+        Assert.Equal(pending.ClientMessageId, visiblePending.ClientMessageId);
+        Assert.Equal(MessageSendStatus.Sending, visiblePending.SendStatus);
+        Assert.Equal(LocalPendingMessageMutationResult.MarkedFailed, failed.Result);
+        Assert.Equal(MessageSendStatus.Failed, failed.Message!.SendStatus);
+        Assert.Equal(LocalPendingMessageMutationResult.PreparedRetry, retried.Result);
+        Assert.Equal(MessageSendStatus.Sending, retried.Message!.SendStatus);
+        Assert.Equal(LocalPendingMessageMutationResult.NotRetryable, duplicateRetry.Result);
+        Assert.Equal(3, Volatile.Read(ref changes));
+        Assert.Equal(1, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+    }
+
+    [Fact]
+    public async Task PendingMessage_WhenResponseWins_LateFailureCannotDowngradeSentRow()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        await ApplyCompleteSnapshotAsync(cache, conversation);
+        var pending = CreatePendingMessage(conversation.Id);
+        await cache.CreatePendingMessageAsync(pending);
+        var response = CreateMessage(conversation.Id) with
+        {
+            ClientMessageId = pending.ClientMessageId,
+            SenderId = pending.SenderId,
+            Content = pending.Content,
+            ReplyToMessageId = pending.ReplyToMessageId,
+            MentionUserIds = pending.MentionUserIds,
+        };
+
+        var promoted = await cache.MergeIncomingMessageAsync(
+            response,
+            LocalMessageIngestionContext.Background(IncomingMessageSource.SendResponse));
+        var lateFailure = await cache.MarkPendingMessageFailedAsync(
+            conversation.Id,
+            pending.ClientMessageId);
+        var page = await cache.ReadMessagePageAsync(conversation.Id, null, 50);
+
+        Assert.Equal(IncomingMessageMergeResult.PendingPromoted, promoted.Result);
+        Assert.Equal(LocalCacheOperationStatus.Ready, page.Status);
+        Assert.Equal(LocalPendingMessageMutationResult.AlreadySent, lateFailure.Result);
+        Assert.Empty(page.PendingMessages);
+        Assert.Equal(response.Id, Assert.Single(page.Messages).Id);
+        Assert.Equal((long)MessageSendStatus.Sent, Scalar(
+            identity,
+            "SELECT LocalSendStatus FROM LocalMessages LIMIT 1;"));
+    }
+
+    [Fact]
+    public async Task PendingMessage_WhenCacheRestarts_InterruptedSendingBecomesFailed()
+    {
+        var identity = CreateIdentity(UserId);
+        var conversation = CreateConversation();
+        var pending = CreatePendingMessage(conversation.Id);
+        await using (var cache = await CreateCacheAsync(identity))
+        {
+            await ApplyCompleteSnapshotAsync(cache, conversation);
+            await cache.CreatePendingMessageAsync(pending);
+        }
+
+        AccountScopedLocalCache.ResetProcessStateForTest(identity);
+        await using var restarted = await CreateCacheAsync(identity);
+        await ApplyCompleteSnapshotAsync(restarted, conversation);
+        var page = await restarted.ReadMessagePageAsync(conversation.Id, null, 50);
+
+        Assert.Equal(LocalCacheOperationStatus.Ready, page.Status);
+        Assert.Equal(MessageSendStatus.Failed, Assert.Single(page.PendingMessages).SendStatus);
+    }
+
+    [Fact]
+    public async Task PendingMessage_WhenSecondCacheOpensInProcess_RemainsSending()
+    {
+        var identity = CreateIdentity(UserId);
+        var conversation = CreateConversation();
+        var pending = CreatePendingMessage(conversation.Id);
+        await using var first = await CreateCacheAsync(identity);
+        await ApplyCompleteSnapshotAsync(first, conversation);
+        await first.CreatePendingMessageAsync(pending);
+
+        await using var second = await CreateCacheAsync(identity);
+        await ApplyCompleteSnapshotAsync(second, conversation);
+        var page = await second.ReadMessagePageAsync(conversation.Id, null, 50);
+
+        Assert.Equal(LocalCacheOperationStatus.Ready, page.Status);
+        Assert.Equal(MessageSendStatus.Sending, Assert.Single(page.PendingMessages).SendStatus);
+    }
+
+    [Fact]
+    public async Task PendingMessage_WhenOutstandingLimitIsReached_RejectsBeforeInsert()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        await ApplyCompleteSnapshotAsync(cache, conversation);
+        for (var index = 0; index < 50; index++)
+        {
+            var outcome = await cache.CreatePendingMessageAsync(
+                CreatePendingMessage(conversation.Id) with
+                {
+                    ClientMessageId = Guid.NewGuid(),
+                    Content = $"pending-{index}",
+                });
+            Assert.Equal(LocalPendingMessageMutationResult.Created, outcome.Result);
+        }
+
+        var rejected = await cache.CreatePendingMessageAsync(
+            CreatePendingMessage(conversation.Id) with { ClientMessageId = Guid.NewGuid() });
+        var page = await cache.ReadMessagePageAsync(conversation.Id, null, 50);
+
+        Assert.Equal(LocalPendingMessageMutationResult.CapacityExceeded, rejected.Result);
+        Assert.Equal(LocalCacheOperationStatus.Ready, page.Status);
+        Assert.Equal(50, page.PendingMessages.Count);
+        Assert.Equal(50, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+    }
+
+    [Fact]
     public async Task MergeIncomingMessage_WhenConcurrentDuplicates_InsertsOneRow()
     {
         var identity = CreateIdentity(UserId);
@@ -967,6 +1108,14 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
             LocalCacheOperationStatus.Ready,
             await cache.RegisterAuthoritativeConversationAsync(conversation));
 
+    private static async Task ApplyCompleteSnapshotAsync(
+        AccountScopedLocalCache cache,
+        ConversationDto conversation) =>
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([conversation], Complete: true)));
+
     private static ConversationDto CreateConversation() => new(
         Guid.NewGuid(),
         ConversationType.PrivateChannel,
@@ -989,6 +1138,17 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         null,
         Array.Empty<AttachmentDto>(),
         new[] { Guid.NewGuid(), Guid.NewGuid() },
+        DateTimeOffset.Parse("2026-08-03T03:00:00Z"));
+
+    private static PendingMessage CreatePendingMessage(Guid conversationId) => new(
+        Guid.NewGuid(),
+        conversationId,
+        UserId,
+        "Current user",
+        MessageType.Text,
+        "pending text",
+        ReplyToMessageId: null,
+        Array.Empty<Guid>(),
         DateTimeOffset.Parse("2026-08-03T03:00:00Z"));
 
     private static long Scalar(AccountScopeIdentity identity, string sql)

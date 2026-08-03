@@ -100,4 +100,29 @@ public sealed class ClientMessageScrollPolicyTests
         Assert.Equal(expectedIndicator, decision.ShowNewMessageIndicator);
         Assert.Equal(expectedObservedThrough, decision.ObservedThroughMessageId);
     }
+
+    [Theory]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    public void Decide_WhenPendingRowAppends_FollowsOnlyUserAtLatest(
+        bool wasNearBottom,
+        bool expectedScrollToEnd,
+        bool expectedIndicator)
+    {
+        var decision = ClientMessageScrollPolicy.Decide(
+            sameConversation: true,
+            previousOldestMessageId: 51,
+            previousLatestMessageId: 100,
+            nextOldestMessageId: 51,
+            nextLatestMessageId: 100,
+            wasNearBottom,
+            targetMessageId: null,
+            targetChanged: false,
+            contentAppended: true,
+            hasNextItems: true);
+
+        Assert.Equal(expectedScrollToEnd, decision.ScrollToEnd);
+        Assert.Equal(expectedIndicator, decision.ShowNewMessageIndicator);
+        Assert.Equal(wasNearBottom ? 100 : null, decision.ObservedThroughMessageId);
+    }
 }
