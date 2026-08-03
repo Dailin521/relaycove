@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 3 — Conversations/ConversationMembers 最小持久化与迁移
-- **状态：** 进行中
+- **状态：** 已完成
 - **基准提交：** `db92a5b0ac307d6d221a5880d64eee87082b348e`
 - **工作分支：** `agent/stage-3-conversation-storage`
 - **相关方案章节：** `RelayCove_工程落地方案.md` 第 7.2、7.3、10.1、10.2、11.1、11.2、阶段 3；`DEC-003`、`DEC-005`
@@ -56,12 +56,12 @@
 
 ### 验收标准
 
-- [ ] 新 migration 在真实 SQLite 上创建字段、CHECK、索引和外键，能回滚且 `HasPendingModelChanges()` 为 false。
-- [ ] Conversation 三种类型、频道名称、Direct 参与者键、角色、非空 GUID、毫秒 UTC、布尔值及非负已读边界同时受领域与数据库约束保护。
-- [ ] ConversationMembers 使用 `(ConversationId, UserId)` 复合主键；重复成员、非法外键/枚举/已读值失败，按约定验证会话硬删除级联、用户成员级联和创建者删除限制。
-- [ ] 两个参与者无序等价的 Direct key 在并发持久化边界永久只能存在一个会话（含软删除行）；非 Direct 不得携带该键。
-- [ ] 已读边界只允许单调推进；Direct `Name`/频道名称及软删除 `UpdatedAt` round-trip 行为有自动化测试。
-- [ ] Fast、Full、漏洞审计、文件白名单、`git diff --check` 与固定差异独立复核通过或按规则如实记录。
+- [x] 新 migration 在真实 SQLite 上创建字段、CHECK、索引和外键，能回滚且 `HasPendingModelChanges()` 为 false。
+- [x] Conversation 三种类型、频道名称、Direct 参与者键、角色、非空 GUID、毫秒 UTC、布尔值及非负已读边界同时受领域与数据库约束保护。
+- [x] ConversationMembers 使用 `(ConversationId, UserId)` 复合主键；重复成员、非法外键/枚举/已读值失败，按约定验证会话硬删除级联、用户成员级联和创建者删除限制。
+- [x] 两个参与者无序等价的 Direct key 在并发持久化边界永久只能存在一个会话（含软删除行）；非 Direct 不得携带该键。
+- [x] 已读边界只允许单调推进；Direct `Name`/频道名称及软删除 `UpdatedAt` round-trip 行为有自动化测试。
+- [x] Fast、Full、漏洞审计、文件白名单、`git diff --check` 与固定差异独立复核通过或按规则如实记录。
 
 ### 验证命令
 
@@ -92,25 +92,38 @@ Fast 后形成代码检查点，Full 后固定 ReviewHead；绿色后按用户�
 
 ### 修改摘要
 
-- 进行中。
+- 新增 Shared `ConversationType` / `ConversationMemberRole` 固定数值枚举，以及 Server `Conversation` / `ConversationMember` 实体；频道名称按 Unicode scalar 校验，Direct 使用无序等价 canonical pair key，已读边界只能单调推进，会话更新采用毫秒 UTC。
+- 新增 Conversations/ConversationMembers EF 映射与 `AddConversationStorage` migration：类型/名称/Direct key、GUID、时间、布尔、角色和非负水位均有 SQLite CHECK；复合主键、类型/用户/创建者/永久 Direct 唯一索引及 Restrict/Cascade 外键明确落库。
+- 工程方案与 `DEC-008` 冻结 Direct 动态名称、软删除后恢复同一线程、成员角色、创建者限制删除和跨表服务事务边界；未提前实现 API、Messages 或 SignalR。
+- 真实 SQLite 测试覆盖 migration up/down/model drift、旧认证数据升级/降级保留、round-trip、NULL 三值逻辑、非法枚举/布尔/UTC/外键/复合主键、永久 Direct 唯一和删除行为。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 基准 Fast | Debug 0 警告、0 错误；100 项测试通过 |
+| `未验证` | Claude challenge #20 | `ChallengeHead=cd90023`；本机认证源优先级禁用 claude.ai connector，120 秒窗口内失败，无模型、workspace、费用或结论；按用户要求未重试 |
+| `已验证` | Server 定向测试 | `98/98` 通过；其中 DbContext migration/约束定向 `10/10`，含旧 Users/RefreshTokens 在升级与降级中的保留 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast` | Debug 构建 0 警告、0 错误；Server 98、Shared 16、Client/Updater 各 1，共 116 项测试通过 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full` | format、Release 构建、116 项测试和 `git diff --check` 全部通过；构建 0 警告、0 错误 |
+| `已验证` | `dotnet ef migrations has-pending-model-changes ...` | 构建成功并返回“自上次 migration 后模型无变化” |
+| `已验证` | `dotnet list RelayCove.sln package --vulnerable --include-transitive` | 8 个源/测试项目的直接与传递依赖均未报告已知漏洞 |
+| `已验证` | 基准差异文件白名单 | `cd90023..1a3c492` 共 17 个文件，0 个超出任务允许范围；`git diff --check` 通过 |
+| `已验证` | Codex 固定差异复核 | 按 `REVIEW_TEMPLATE.md` 审查 `cd90023..1a3c492`；发现旧认证数据升级/降级保留证据缺口并在 `1a3c492` 补齐，复核后未发现剩余可操作问题 |
+| `未验证` | Claude 候选 review | 用户要求 Claude 仅作参考且避免长耗时；前置 #20 已因 connector 配置失败，故未重复候选调用，由 Codex 固定差异复核、真实 migration 测试与 Full 降级覆盖 |
 
 ### 文件范围
 
-- 新增：本任务文件。
-- 修改：进行中。
+- 新增：Shared 会话枚举；Server 会话/成员实体及 migration；对应 Shared/Server 测试；本任务文件。
+- 修改：Server User 导航与 DbContext/model snapshot；工程方案、`DECISIONS.md`、`STATUS.md` 与 `V1_EXECUTION.md`。
 - 删除：无。
 
 ### 决策与限制
 
-- 决策：进行中。
-- 已知限制：进行中。
+- 决策：Direct canonical pair key 对软删除行永久唯一，重新发起时恢复同一会话；Direct 名称按请求用户动态派生；创建者硬删除 Restrict，成员随会话或成员用户硬删除级联；详见 `DEC-008`。
+- 已知限制：Direct 恰好两名 Member、成员与 key 对应、加入/重新加入时读取当前 Messages 最大 ID 是跨表不变量，留给下一阶段 3 服务事务；当前 schema 尚无 Messages，初始水位只能是 0。频道名控制字符/Unicode 空白由唯一写入实体完整防守，SQLite CHECK 负责类型对应、1–100 长度和非空 ASCII trim，不声称数据库内建完整 Unicode 分类器。
+- 独立复核限制：Claude #20 和候选 review 均无结论，不能标记为通过；已由固定候选 Codex 复核、116 项测试、Full、model drift 和漏洞审计如实降级覆盖。
 
 ### 下一步
 
-- 冻结数据库语义并实现实体、EF 映射、migration 与真实 SQLite 验证。
+- 将完成提交仅快进合入 `agent/v1-integration`；下一切片实现阶段 3 会话创建、成员管理、权威列表、Direct 获取/恢复和动态访问校验。

@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 3
 ActiveTask: docs/ai/tasks/2026-08-03-stage-3-conversation-storage.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 419ef00069c86c85b097a7961cebe95a16730cc5
+LatestGreenCodeCommit: 1a3c49289940d625182237fddcd1954fc40983e9
 LatestGreenIntegrationCommit: db92a5b0ac307d6d221a5880d64eee87082b348e
-NextAction: 冻结 Conversations/ConversationMembers 数据库语义并实现实体、SQLite migration 与真实约束测试
+NextAction: 将会话存储完成提交仅快进合入 agent/v1-integration，并启动阶段 3 会话访问与管理 API 切片
 ClaudeCalls: 20（软上限 24，硬上限 30）
 ClaudeCostUsd: 5.4229485 confirmed；另有十三次失败/中断调用费用 unavailable
 Blocker: none
@@ -44,6 +44,7 @@ RequiredUserGate: none
 
 - `agent/v1-integration` 是本地最新绿色集成头；任务分支只有完成验证和交接提交后，才允许仅快进该分支。
 - 当前管理员引导代码检查点 `419ef00069c86c85b097a7961cebe95a16730cc5` 已通过 Fast、Full、100 项测试、真实 bootstrap/动态管理员授权/同名并发、密码与日志边界及依赖漏洞审计；Claude 无候选结论，已如实降级记录 Codex 固定差异自审。
+- 当前会话存储代码检查点 `1a3c49289940d625182237fddcd1954fc40983e9` 已通过 Fast、Full、116 项测试、真实 migration up/down/旧认证数据保留、约束/唯一/外键、model drift 与漏洞审计；Claude #20 无结论，已如实降级记录 Codex 固定差异复核。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确授权绿色任务的常规 push、合入集成分支与任务分支清理，无需二次确认；`main`、Tag、Release、真实发布和生产部署仍须满足对应里程碑与发布 Gate，不由该授权自动放宽。
 

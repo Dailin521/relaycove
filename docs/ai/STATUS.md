@@ -5,10 +5,10 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环已完成并合入绿色集成头；阶段 3 会话/成员存储切片已开始
-- **最近验证通过的状态：** 管理员引导与创建用户代码 `419ef00069c86c85b097a7961cebe95a16730cc5`
+- **当前分支成果：** 阶段 2 认证与管理员闭环已合入；阶段 3 会话/成员实体、SQLite 约束与 migration 已完成
+- **最近验证通过的状态：** 会话与成员存储代码 `1a3c49289940d625182237fddcd1954fc40983e9`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Fast/Full、format、100 项测试、真实 SQLite migration/认证轮换/bootstrap/管理员并发、JWT 负向、限流、日志泄漏、发布依赖、漏洞审计与空白检查通过
+- **自动化验证：** `已验证` — Fast/Full、format、116 项测试、真实 SQLite migration up/down/旧认证数据保留/会话约束、认证轮换/bootstrap/管理员并发、JWT 负向、限流、日志泄漏、发布依赖、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
 - **最近 Claude 调用：** `未验证` — 会话存储 XHigh challenge #20 对 `ChallengeHead=cd90023` 因本机认证源覆盖 claude.ai 登录在 120 秒内失败；未取得审查结论且按用户要求未重试，`DEC-008` 由 Codex 结合仓库与 Microsoft 官方证据独立收敛
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-3-conversation-storage`：冻结并实现 Conversations/ConversationMembers 最小持久化、约束与 migration。
+- 无；会话与成员存储切片等待仅快进合入 `agent/v1-integration`。
 
 ## 已完成
 
@@ -31,10 +31,11 @@
 - Users/RefreshTokens、首个真实 SQLite 迁移、ASCII 用户名规范化、IdentityV3 密码服务、refresh-token hash-only 存储与 `DEC-005`
 - 严格 typed HS256 access JWT、login/refresh/logout/me、原子 refresh rotation、动态禁用检查、认证限流、统一错误 envelope 与 `DEC-006`
 - 默认关闭的空库管理员 bootstrap、15–128 Unicode scalar 密码策略、动态数据库管理员授权、管理员创建用户与 `DEC-007`
+- Conversations/ConversationMembers 实体、Direct 永久唯一身份、成员角色/单调已读、SQLite 约束与 migration（`DEC-008`）
 
 ## 下一任务
 
-完成 Conversations/ConversationMembers 的实体、SQLite 约束、migration 与真实 up/down/外键/唯一性验证。
+实现阶段 3 会话创建、成员管理、`Complete=true` 权威列表、Direct 获取/恢复和动态访问校验。
 
 ## 阻塞项
 
