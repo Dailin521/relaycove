@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 8 当前消息安全复制与本地日期分组
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `b1bf9c33a9c58afba89ecc0d874228cd5b89bb29`
 - **工作分支：** `agent/stage-8-copy-date-separators`
 - **相关方案章节：** 9.2–9.4、18.4、阶段 8；`DEC-034`、`DEC-035`、`DEC-037`
@@ -38,10 +38,10 @@
 
 ### 验收标准
 
-- [ ] 第一条及本地日期变化处显示一个日期标签；同日连续行不重复，确认到 pending 的日期边界正确。
-- [ ] 当前 Ready snapshot 中确认/pending 行可逐字复制展示正文；旧 snapshot、非 Ready、撤权或已切换行不写剪贴板。
-- [ ] Clipboard 暂时不可用时 UI 如实提示且不崩溃；正文、发送者、ID 与路径不进入日志或 `ToString()`。
-- [ ] Fast/Full、presenter/WPF 定向与重复、model drift、八项目漏洞审计、空白检查及真实 Windows WPF smoke 通过；不把真实剪贴板内容纳入自动化副作用。
+- [x] 第一条及本地日期变化处显示一个日期标签；同日连续行不重复，确认到 pending 的日期边界正确。
+- [x] 当前 Ready snapshot 中确认/pending 行可逐字复制展示正文；旧 snapshot、非 Ready、撤权或已切换行不写剪贴板。
+- [x] Clipboard 暂时不可用时 UI 如实提示且不崩溃；正文、发送者、ID 与路径不进入日志或 `ToString()`。
+- [x] Fast/Full、presenter/WPF 定向与重复、model drift、八项目漏洞审计、空白检查及真实 Windows WPF smoke 通过；不把真实剪贴板内容纳入自动化副作用。
 
 ### 验证命令
 
@@ -73,25 +73,32 @@ git diff --check
 
 ### 修改摘要
 
-- 待完成。
+- presentation 在确认消息与 pending 的既有显示顺序上按 `CreatedAt.ToLocalTime().Date` 推进边界，第一行和日期变化行显示固定 `yyyy-MM-dd` 标签；日期标签在 `ToString()` 中脱敏。
+- 当前 Ready snapshot 的值相等成员门决定 Copy 资格；旧行、篡改内容、非 Ready/撤权快照与空内容 fail-closed。确认和 pending 均只复制实际展示正文，不附加身份、时间或 Reply 摘要。
+- WPF 消息行增加“复制”和日期 pill。无状态 Clipboard writer 逐字传递 Unicode 内容，只把 `ExternalException` 归为可恢复占用并显示脱敏状态；其他未知异常不被静默吞掉。
+- 自动化通过注入 writer 验证成功、占用和未知异常，不读取或覆盖用户真实 Clipboard；无协议、schema、排序、read-through、依赖或日志变化。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
-| `未验证` | 实现与最终门禁 | 任务进行中。 |
+| `已验证` | Fast / Full | 最终 Fast 与代码提交 `ab56431` 前后等价树上的两次 Full 通过；Release 0 警告、0 错误，Shared 35 + Server 175 + Client 555 + Updater 1 = 766/766。 |
+| `已验证` | presentation / Copy 定向 | 日期、当前快照门与 Clipboard writer 每轮 8 项；Release 连续 10 轮 80/80，覆盖首行、同日、跨日、confirmed→pending、精确换行/空白、旧/撤权行、Clipboard 占用与未知异常。 |
+| `已验证` | EF / NuGet / 空白 | EF Core 无 pending model changes；8 个 source/test 项目无已知 vulnerable package；`git diff --check` 与 format 通过。 |
+| `已验证` | 真实 Windows WPF smoke | 最终 Release 主进程 PID 46156 取得非零句柄 91295132 且响应；第二实例 PID 49028 退出码 0、同路径仅 1 个进程；精确 PID 清理后残留 0。XAML Release 编译覆盖日期、Copy 事件及状态文本。 |
+| `未验证` | 真实 Clipboard 内容 / 登录视觉 | 自动化刻意不改用户 Clipboard；真实登录消息列表的日期/Copy 视觉、VPS、双客户端与 Narrator 保留 M5 Gate。 |
 
 ### 文件范围
 
-- 新增：待完成。
-- 修改：待完成。
+- 新增：`ClientMessageCopyPolicy.cs`、`ClientClipboardWriter.cs` 及两组测试。
+- 修改：消息项 presentation/presenter、`MainWindow.xaml(.cs)`、presenter 测试及本任务/状态账本。
 - 删除：无。
 
 ### 决策与限制
 
-- 决策：待完成。
+- 决策：复制只使用当前 Ready 不可变快照中的实际展示正文；日期使用绝对本地日历标签，不引入午夜刷新或相对日期状态。
 - 已知限制：链接、`@用户` 与新消息分割线继续独立切片；真实剪贴板不由自动化覆盖。
 
 ### 下一步
 
-- 完成复制/日期分割闭环、门禁和绿色集成。
+- 仅快进代码提交 `ab56431` 及本完成记录，然后继续阶段 8 链接识别或新消息分割的独立边界。

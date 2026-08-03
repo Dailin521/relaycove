@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 8
 ActiveTask: docs/ai/tasks/2026-08-04-stage-8-copy-date-separators.md
-TaskStatus: in_progress
+TaskStatus: complete
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 239d1ceccf0c532cffddee1a4d8dcd376195803d
+LatestGreenCodeCommit: ab564319aa39a160f63de54fc03e8dce23f339d5
 LatestGreenIntegrationCommit: b1bf9c33a9c58afba89ecc0d874228cd5b89bb29
-NextAction: 实现并验证当前消息复制与本地日期分割线
+NextAction: 仅快进集成消息复制/日期分割完成记录并继续阶段 8 下一独立切片
 ClaudeCalls: 64（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64 失败；仅关键用途调用）
 ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有三十一次失败/中断调用费用 unavailable
 Blocker: none
@@ -71,6 +71,7 @@ RequiredUserGate: none
 - 当前有界消息列表最终代码检查点 `46a59f6482263cdbf9a1d12a1470aa79bdff6960` 已通过最终 Fast/Full 704 项、Client 493/493、cache/History/Around/coordinator/滚动关键集 81/81 与 810/810 重复、真实 Release WPF 响应窗口/单实例/进程清理、model drift 与八项目漏洞审计。有界只读页面、History/Around 原子 merge、稳定撤权、版本化选择、虚拟化滚动和已应用视口后的精确 read-through 冻结为 `DEC-034`；Claude #54 的成立意见与 #56 额度失败前两条部分意见均由 Codex 独立复算并在最终代码收敛，失败任务未冒充终局审查。真实登录消息、双客户端、通知定位与 Narrator 保持后续 UI/M5 Gate。
 - 当前 Text 发送最终代码检查点 `4cad2b3769eb555f009f3f3eaf1e93b2c642a0c6` 已通过最终 Fast/Full 743 项、Client 532/532、发送/pending/回声/coordinator/选择关键集 250/250 重复、真实 Release WPF 非零窗口句柄/响应/单实例/进程清理、model drift 与八项目漏洞审计。严格 Text 验证、durable pending、单次幂等 POST、一次 401 refresh、稳定撤权、响应/回声同一行提升、显式原键重试和 nullable 服务端身份冻结为 `DEC-035`；Claude #57–#60 均未形成审查结论，Codex 固定差异自审补出的发送者校验和同进程恢复竞态已在最终代码收敛。真实账户/VPS/双客户端发送视觉与 Narrator 保持 M5 Gate。
 - 当前 WindowActivated / Periodic Sync 最终代码检查点 `64f6985a48f1aaeec48af36bd64f17d87b0f8341` 已通过最终 Fast/Full 751 项、Client 540/540、scheduler/runtime/既有 Sync coordinator 关键集 670/670 重复、真实 Release WPF 非零窗口句柄/响应/单实例/进程清理、model drift 与八项目漏洞审计。Startup 后前台上升沿、五分钟完成后节拍、既有 single-flight 复用和旧 scope 终止顺序冻结为 `DEC-036`；Claude #61–#62 均未读取代码或形成结论，Codex 固定提交自审无剩余发现。真实丢推送、五分钟壁钟与 VPS/双客户端保持 M5 Gate。
+- 当前消息复制与日期分割最终代码检查点 `ab564319aa39a160f63de54fc03e8dce23f339d5` 已通过最终 Fast/两次 Full 766 项、Client 555/555、presentation/Copy/Clipboard writer 关键集 80/80、真实 Release WPF 响应窗口/单实例/清理、model drift 与八项目漏洞审计。当前 Ready 快照成员门、逐字 Unicode Copy、Clipboard 占用可恢复分类及绝对本地日期分组已收敛；自动化刻意不覆盖用户真实 Clipboard。链接、`@用户`、新消息分割线与真实登录视觉保持后续/M5 Gate。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 
