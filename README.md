@@ -4,7 +4,7 @@
 
 ### 面向小团队的轻量级、自托管 Windows 私域聊天工具
 
-[![Status](https://img.shields.io/badge/status-planning-orange.svg)](#项目状态)
+[![Status](https://img.shields.io/badge/status-scaffold-yellow.svg)](#项目状态)
 [![.NET](https://img.shields.io/badge/.NET-10-512BD4.svg)](https://dotnet.microsoft.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -27,9 +27,20 @@ RelayCove 为拥有自有 VPS 的小团队提供一套简单、可维护的私�
 ## 项目状态
 
 > [!IMPORTANT]
-> RelayCove 当前处于工程设计与早期开发阶段，仓库暂不包含可运行的客户端或服务端。
+> RelayCove 当前处于工程骨架阶段。仓库已包含可构建的 WPF 客户端、ASP.NET Core 服务端、Updater、共享项目和测试基线，但尚未实现登录、聊天或其他业务功能。
 
-现阶段已完成第一版的范围定义、架构选择、协议草案、数据库设计、可靠性方案、部署方案、开发阶段与验收标准。详细内容请阅读 [RelayCove 工程落地方案](./RelayCove_工程落地方案.md)。
+现阶段已完成第一版范围、架构与关键可靠性契约，并建立 .NET 10 解决方案。详细内容请阅读 [RelayCove 工程落地方案](./RelayCove_工程落地方案.md)；实时执行状态见 [v1 外层执行状态](./docs/ai/V1_EXECUTION.md)。
+
+## 构建与验证
+
+需要 Windows 和 .NET SDK 10.0.101 或同一功能带的更高 patch。仓库统一使用：
+
+```powershell
+pwsh ./scripts/verify.ps1 -Mode Fast
+pwsh ./scripts/verify.ps1 -Mode Full
+```
+
+`Fast` 执行还原、Debug 构建和全部测试；`Full` 额外验证格式，执行 Release 构建、全部测试和 Git 空白检查。脚本任一底层命令失败都会非零退出。
 
 ## 计划功能
 
@@ -86,6 +97,10 @@ relaycove/
 │   ├── RelayCove.Shared/
 │   └── RelayCove.Updater/
 ├── tests/
+│   ├── RelayCove.Client.Tests/
+│   ├── RelayCove.Server.Tests/
+│   ├── RelayCove.Shared.Tests/
+│   └── RelayCove.Updater.Tests/
 ├── docs/
 ├── scripts/
 ├── installer/
@@ -96,7 +111,7 @@ relaycove/
 
 - [x] 明确产品边界、技术栈和可靠性原则
 - [x] 完成工程落地方案
-- [ ] 初始化 .NET 解决方案与基础项目
+- [x] 初始化 .NET 解决方案、基础项目与真实验证脚本
 - [ ] 定义共享协议、服务端数据库与认证
 - [ ] 实现会话、消息入库与历史消息
 - [ ] 打通 SignalR、本地缓存、断线补拉与去重
@@ -109,6 +124,7 @@ relaycove/
 ## 设计文档
 
 - [工程落地方案](./RelayCove_工程落地方案.md)：第一版范围、总体架构、协议、数据库、可靠性、部署、阶段拆分和验收标准
+- [v1 外层执行状态](./docs/ai/V1_EXECUTION.md)：当前里程碑、活动任务、绿色集成头、阻塞和用户 Gate
 
 后续实现过程中将逐步拆分独立的架构、API、数据库、部署和更新文档。
 
