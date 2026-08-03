@@ -396,3 +396,15 @@
 - **理由：** 单一协调器把认证与账户资源的所有权转移、授权建立和终止顺序收敛在可测试边界；权威缓存就绪门延续私有数据 fail-closed 语义，异步 UI sink 避免 WPF 消息泵重入。可见通知降级和明确边界快照让最小壳如实呈现当前能力，不以占位数据冒充聊天已接通。
 - **影响：** Client 增加 production account composition/coordinator/presenter、最小登录/账户 WPF 壳与无 schema 的凭据 clear barrier。barrier 使 `LoadAsync` 在显式待清理状态下可删除正式文件；保存发布后、barrier 删除前崩溃会牺牲一次持久登录以换取 fail-closed。不改 Shared/Server 协议、DPAPI payload、SQLite schema/migration 或依赖。总未读仍显式为 `0（未接线）`，通知导航只进入受控占位入口；真实会话列表、持续连接/总未读、消息列表/发送、周期 Sync、真实服务器双客户端登录恢复、隐藏托盘闪烁和系统注销/关机实机仍属后续切片或 M5 Gate。
 - **来源：** 工程落地方案第 9.2–9.4、12.5–12.8、阶段 8；`DEC-022`、`DEC-023`、`DEC-024`、`DEC-025`、`DEC-028`、`DEC-030`、`DEC-031`；`docs/ai/tasks/2026-08-04-stage-8-production-account-shell.md`；账户壳状态机/并发/取消/授权/activity/脱敏自动化、跨 store 凭据 barrier/文件锁/双失败回归、真实 Release WPF 登录/失败/托盘/单实例 smoke、SQLite 隔离重复回归与 Claude #47–#50 只读 challenge/review 中经 Codex 复算的发现。
+
+### DEC-033：权威门控会话列表与版本化持续发布
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-017/020/025/026/032` 已提供账户隔离缓存、Complete 权威对账、单账户 runtime、未读派生和 production 账户壳，但 UI 没有安全的会话列表读取或持续状态源。直接读取磁盘会泄露尚未由当前进程权威确认的旧行；把缓存回调直接绑定 WPF 会让 SQLite gate、SignalR FIFO 和 UI Dispatcher 相互阻塞；注销/换号期间的迟到读取或事件还可能以更新的 UI 投递覆盖新账户。
+- **决策：** 会话列表只在当前 `AccountScopedLocalCache` 已提交本轮 `Complete=true` 权威快照且 scope 非 fatal 时读取。读取与既有写入共享 operation gate 和 deferred 事务；SQL 同时排除撤权 tombstone 与 durable intent，最后消息必须以 `ConversationId + LastMessageId` 精确连接，读循环再应用当前内存 allow/deny 集。列表按 `UpdatedAt DESC, Id ASC` 确定排序；损坏行单独排除且不得计入总未读，busy 返回 transient，其他未知读取错误令 scope fatal。成功结果以不可变只读视图返回，真实总未读使用 `long` 中间值并饱和到 `int.MaxValue`，静音只影响提醒而不抹去未读。
+- **决策：** 只有既有状态操作完成数据库提交并释放 operation gate 后才发布无 payload 的单调变更信号；fatal 只在首次转换时异步发信号。production runtime 用可停止 state hub 转发连接/会话状态；账户 coordinator 在当前 runtime subscription 内用 dirty single-flight 合流重读，并在发布前后核对 subscription、runtime 和 dispose 所有权。logout、认证失效、切换和 Dispose 固定先置空所有权并退订，再终止 runtime；列表和账户壳各自分配单调 revision，WPF 在 Dispatcher 上丢弃低 revision，handler 在锁外调用且异常隔离。
+- **决策：** App 的托盘状态只消费同一账户壳快照中的持续连接与真实总未读，不从独立回调拼接。主窗口完整替换不可变列表后按 ID 恢复选择；通知待选目标只有在当前授权列表出现时选择，Ready 快照确认缺失时必须过期并回退用户原选择，账户进入非活动 phase 时清空，不能只凭跨 scope 可复用的 conversation GUID 导航。会话消息尚未真实渲染前，选择只改变 UI 高亮与空详情，`ClientActivitySnapshot.OpenConversationId` 保持 `null`，不得提前标已读或上传 read-through。
+- **理由：** 权威门、精确 join 和双层撤权过滤把列表可见性绑定到当前账户真实授权；提交后轻量信号与单飞重读避免把存储锁或消息 payload 带入 UI。运行时引用校验解决“这是哪个账户”的安全问题，revision 只解决同一发布流的迟到顺序，两者不可互相替代。选择与已读分离避免下一消息切片落地前产生不可逆的未读丢失。
+- **影响：** Client 增加无 schema 的会话列表 facade、runtime 状态 hub、版本化 coordinator 快照和虚拟化 WPF 双栏列表；不改 Shared/Server 协议、SQLite schema/migration、DPAPI、通知编码或依赖。消息 History/Around、真实消息视图、发送与会话打开后的 read-through 留在下一独立切片；真实服务器双客户端、通知点击与托盘数字视觉仍属于后续 UI/M5 Gate。
+- **来源：** 工程落地方案第 9.2–9.4、12.5–12.8、阶段 8；`DEC-017`、`DEC-020`、`DEC-025`、`DEC-026`、`DEC-028`、`DEC-032`；`docs/ai/tasks/2026-08-04-stage-8-conversation-list-shell.md`；最终 Fast/Full 673 项、定向 410/410、完整 Client 2,310 次、真实 Release WPF 进程/单实例 smoke、model drift 与八项目漏洞审计；Claude #51–#53 只读第二意见中经 Codex 复算并本机验证的退订、版本、损坏行、选择过期与 live region 发现。
