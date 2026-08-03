@@ -9,10 +9,13 @@ internal sealed record ClientActivitySnapshot(
     public static ClientActivitySnapshot Inactive { get; } =
         new(false, false, false, OpenConversationId: null);
 
-    public Guid? ForegroundConversationId =>
+    public bool IsMainWindowForeground =>
         IsMainWindowVisible &&
         !IsMainWindowMinimized &&
-        HasForegroundFocus &&
+        HasForegroundFocus;
+
+    public Guid? ForegroundConversationId =>
+        IsMainWindowForeground &&
         OpenConversationId is { } conversationId &&
         conversationId != Guid.Empty
             ? conversationId

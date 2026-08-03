@@ -1,6 +1,7 @@
 using System.Net.Http;
 using Microsoft.Extensions.Logging;
 using RelayCove.Client.Auth;
+using RelayCove.Client.Notifications;
 using RelayCove.Client.Realtime;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
@@ -19,6 +20,8 @@ internal sealed class ClientAccountRuntimeFactory
         IRealtimeEventSink,
         ILogger<ClientRealtimeConnection>,
         IClientAccountRealtimeConnection> createRealtimeConnection;
+    private readonly IClientNotificationPlatform notificationPlatform;
+    private readonly Func<ClientNotificationSettingsSnapshot> notificationSettingsProvider;
 
     public ClientAccountRuntimeFactory(
         HttpClient httpClient,
@@ -28,7 +31,9 @@ internal sealed class ClientAccountRuntimeFactory
             httpClient,
             accountDataRootDirectory,
             loggerFactory,
-            createRealtimeConnection: null)
+            createRealtimeConnection: null,
+            notificationPlatform: null,
+            notificationSettingsProvider: null)
     {
     }
 
@@ -41,7 +46,9 @@ internal sealed class ClientAccountRuntimeFactory
             Func<Task<string?>>,
             IRealtimeEventSink,
             ILogger<ClientRealtimeConnection>,
-            IClientAccountRealtimeConnection>? createRealtimeConnection)
+            IClientAccountRealtimeConnection>? createRealtimeConnection,
+        IClientNotificationPlatform? notificationPlatform = null,
+        Func<ClientNotificationSettingsSnapshot>? notificationSettingsProvider = null)
     {
         this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         ArgumentException.ThrowIfNullOrWhiteSpace(accountDataRootDirectory);
@@ -49,6 +56,10 @@ internal sealed class ClientAccountRuntimeFactory
         this.loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
         this.createRealtimeConnection = createRealtimeConnection ??
             CreateDefaultRealtimeConnection;
+        this.notificationPlatform = notificationPlatform ??
+            new DeferredClientNotificationPlatform();
+        this.notificationSettingsProvider = notificationSettingsProvider ??
+            (static () => ClientNotificationSettingsSnapshot.Unavailable);
     }
 
     public async Task<ClientAccountRuntime> CreateAsync(
@@ -75,6 +86,7 @@ internal sealed class ClientAccountRuntimeFactory
         AccountScopedLocalCache? cache = null;
         ClientReadThroughCoordinator? readThroughCoordinator = null;
         ClientSyncCoordinator? syncCoordinator = null;
+        IClientNotificationRoundCoordinator? unownedNotificationRoundCoordinator = null;
         IClientAccountRealtimeConnection? realtimeConnection = null;
         try
         {
@@ -84,6 +96,7 @@ internal sealed class ClientAccountRuntimeFactory
                     loggerFactory.CreateLogger<AccountScopedLocalCache>(),
                     cancellationToken)
                 .ConfigureAwait(false);
+            await cache.AdoptNotificationStateAsync(cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             readThroughCoordinator = new ClientReadThroughCoordinator(
                 identity,
@@ -94,6 +107,19 @@ internal sealed class ClientAccountRuntimeFactory
             var readThroughRequestor = new ClientReadThroughRequestor(
                 readThroughCoordinator,
                 loggerFactory.CreateLogger<ClientReadThroughRequestor>());
+            var notificationCoordinator = new ClientNotificationCoordinator(
+                identity,
+                cache,
+                notificationPlatform,
+                notificationSettingsProvider,
+                activityState.GetForegroundConversationId,
+                loggerFactory.CreateLogger<ClientNotificationCoordinator>());
+            var notificationRoundCoordinator = new ClientNotificationRoundCoordinator(
+                cache,
+                notificationCoordinator,
+                activityState,
+                loggerFactory.CreateLogger<ClientNotificationRoundCoordinator>());
+            unownedNotificationRoundCoordinator = notificationRoundCoordinator;
             syncCoordinator = new ClientSyncCoordinator(
                 identity,
                 httpClient,
@@ -101,7 +127,9 @@ internal sealed class ClientAccountRuntimeFactory
                 cache,
                 loggerFactory.CreateLogger<ClientSyncCoordinator>(),
                 activityState.GetForegroundConversationId,
-                readThroughRequestor.Request);
+                readThroughRequestor.Request,
+                notificationRoundCoordinator);
+            unownedNotificationRoundCoordinator = null;
             var syncRequestor = new ClientAccountSyncRequestor(
                 syncCoordinator,
                 loggerFactory.CreateLogger<ClientAccountSyncRequestor>());
@@ -114,7 +142,8 @@ internal sealed class ClientAccountRuntimeFactory
                 },
                 activityState.GetForegroundConversationId,
                 loggerFactory.CreateLogger<LocalCacheRealtimeEventSink>(),
-                readThroughRequestor.Request);
+                readThroughRequestor.Request,
+                notificationRoundCoordinator);
             var realtimeSink = new ClientAccountRealtimeEventSink(cacheSink, syncRequestor);
             realtimeConnection = createRealtimeConnection(
                 identity.CanonicalServerBaseUri,
@@ -148,6 +177,13 @@ internal sealed class ClientAccountRuntimeFactory
             {
                 await CaptureCleanupFailureAsync(
                         () => syncCoordinator.DisposeAsync(),
+                        cleanupFailures)
+                    .ConfigureAwait(false);
+            }
+            else if (unownedNotificationRoundCoordinator is not null)
+            {
+                await CaptureCleanupFailureAsync(
+                        () => unownedNotificationRoundCoordinator.DisposeAsync(),
                         cleanupFailures)
                     .ConfigureAwait(false);
             }

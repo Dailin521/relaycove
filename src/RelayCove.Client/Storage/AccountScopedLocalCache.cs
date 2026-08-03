@@ -11,6 +11,9 @@ namespace RelayCove.Client.Storage;
 public sealed class AccountScopedLocalCache : IAsyncDisposable
 {
     private const string RevocationIntentPrefix = "RevocationIntent/";
+    private const string NotificationStateVersionKey = "NotificationStateVersion";
+    private const int CurrentNotificationStateVersion = 1;
+    private const int MaxNotificationCandidateIds = 1000;
     private const int WriteRetryCount = 4;
     private static readonly IReadOnlyList<MessageDto> NoMessages = Array.Empty<MessageDto>();
     private static readonly ConcurrentDictionary<string, ScopeAccessState> ProcessScopeStates =
@@ -75,6 +78,133 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(identity);
         ProcessScopeStates.TryRemove(identity.DatabasePath, out _);
+    }
+
+    internal async Task<bool> AdoptNotificationStateAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(AdoptNotificationState).ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+    }
+
+    internal async Task<LocalNotificationCandidateBatchOutcome> EvaluateNotificationCandidatesAsync(
+        IReadOnlyCollection<long> messageIds,
+        Guid? foregroundConversationId,
+        bool suppressAll,
+        CancellationToken cancellationToken = default)
+    {
+        var validatedIds = ValidateNotificationMessageIds(messageIds, enforceBatchLimit: true);
+        if (foregroundConversationId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "A foreground conversation ID cannot be empty.",
+                nameof(foregroundConversationId));
+        }
+
+        ThrowIfDisposed();
+        var status = GetSyncStatus();
+        if (status != LocalCacheOperationStatus.Ready)
+        {
+            return LocalNotificationCandidateBatchOutcome.Failure(status);
+        }
+
+        if (validatedIds.Length == 0)
+        {
+            return new LocalNotificationCandidateBatchOutcome(
+                LocalCacheOperationStatus.Ready,
+                Array.Empty<LocalNotificationCandidate>(),
+                HandledWithoutPlatformCount: 0);
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(() => EvaluateNotificationCandidates(
+                    validatedIds,
+                    foregroundConversationId,
+                    suppressAll,
+                    cancellationToken))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+    }
+
+    internal async Task<LocalNotificationRecoveryBatchOutcome> ReadNotificationRecoveryBatchAsync(
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        if (limit is < 1 or > 200)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit));
+        }
+
+        ThrowIfDisposed();
+        var status = GetSyncStatus();
+        if (status != LocalCacheOperationStatus.Ready)
+        {
+            return LocalNotificationRecoveryBatchOutcome.Failure(status);
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(() => ReadNotificationRecoveryBatch(limit, cancellationToken))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+    }
+
+    internal async Task<LocalCacheOperationStatus> MarkNotificationCandidatesHandledAsync(
+        IReadOnlyCollection<long> messageIds,
+        CancellationToken cancellationToken = default)
+    {
+        var validatedIds = ValidateNotificationMessageIds(messageIds, enforceBatchLimit: false);
+        ThrowIfDisposed();
+        var status = GetSyncStatus();
+        if (status != LocalCacheOperationStatus.Ready)
+        {
+            return status;
+        }
+
+        if (validatedIds.Length == 0)
+        {
+            return LocalCacheOperationStatus.Ready;
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(() => MarkNotificationCandidatesHandled(
+                    validatedIds,
+                    cancellationToken))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+    }
+
+    internal LocalCacheOperationStatus GetNotificationConversationAccessStatus(
+        Guid conversationId)
+    {
+        ValidateGuid(conversationId, nameof(conversationId));
+        ThrowIfDisposed();
+        return GetAccessStatus(conversationId);
     }
 
     public async Task<LocalCacheOperationStatus> RegisterAuthoritativeConversationAsync(
@@ -418,6 +548,341 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
 
         ReplayRevocationIntents();
         LoadPersistedTombstones();
+    }
+
+    private bool AdoptNotificationState()
+    {
+        return ExecuteWriteWithRetry((connection, transaction) =>
+        {
+            using var readVersion = CreateCommand(connection, transaction, """
+                SELECT Value
+                FROM LocalAppState
+                WHERE Key = $key
+                LIMIT 1;
+                """);
+            AddParameter(readVersion, "$key", NotificationStateVersionKey);
+            var storedValue = readVersion.ExecuteScalar() as string;
+            if (storedValue is not null)
+            {
+                if (!int.TryParse(
+                        storedValue,
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out var storedVersion) ||
+                    storedVersion is < 0 or > CurrentNotificationStateVersion)
+                {
+                    throw new InvalidDataException(
+                        "The local notification state version is not supported.");
+                }
+
+                if (storedVersion == CurrentNotificationStateVersion)
+                {
+                    return TransactionResult<bool>.Rollback(false);
+                }
+            }
+
+            ExecuteNonQuery(
+                connection,
+                transaction,
+                "UPDATE LocalMessages SET IsNotificationHandled = 1 " +
+                "WHERE IsNotificationHandled = 0;");
+            using var writeVersion = CreateCommand(connection, transaction, """
+                INSERT INTO LocalAppState (Key, Value, UpdatedAt)
+                VALUES ($key, $value, $updatedAt)
+                ON CONFLICT(Key) DO UPDATE SET
+                    Value = excluded.Value,
+                    UpdatedAt = excluded.UpdatedAt;
+                """);
+            AddParameter(writeVersion, "$key", NotificationStateVersionKey);
+            AddParameter(
+                writeVersion,
+                "$value",
+                CurrentNotificationStateVersion.ToString(CultureInfo.InvariantCulture));
+            AddParameter(writeVersion, "$updatedAt", FormatDateTime(DateTimeOffset.UtcNow));
+            writeVersion.ExecuteNonQuery();
+            faultInjector?.BeforeNotificationAdoptionCommit();
+            return TransactionResult<bool>.Commit(true);
+        });
+    }
+
+    private LocalNotificationCandidateBatchOutcome EvaluateNotificationCandidates(
+        IReadOnlyList<long> messageIds,
+        Guid? foregroundConversationId,
+        bool suppressAll,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return ExecuteWriteWithRetry((connection, transaction) =>
+            {
+                if (!IsNotificationStateAdopted(connection, transaction))
+                {
+                    return TransactionResult<LocalNotificationCandidateBatchOutcome>.Rollback(
+                        LocalNotificationCandidateBatchOutcome.Failure(
+                            LocalCacheOperationStatus.NotificationStateNotAdopted));
+                }
+
+                var candidates = new List<LocalNotificationCandidate>(messageIds.Count);
+                var handledWithoutPlatformCount = 0;
+                foreach (var messageId in messageIds)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    using var command = CreateCommand(connection, transaction, """
+                        SELECT m.ServerMessageId,
+                               m.ConversationId,
+                               c.Type,
+                               c.Name,
+                               m.SenderId,
+                               m.SenderDisplayName,
+                               m.Type,
+                               m.Content,
+                               m.CreatedAt,
+                               m.IsRead,
+                               m.IsNotificationHandled,
+                               c.IsMuted
+                        FROM LocalMessages AS m
+                        INNER JOIN LocalConversations AS c ON c.Id = m.ConversationId
+                        WHERE m.ServerMessageId = $messageId
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM RevokedConversations AS revoked
+                              WHERE revoked.ConversationId = c.Id)
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM LocalAppState AS state
+                              WHERE state.Key = $revocationIntentPrefix || c.Id)
+                        LIMIT 1;
+                        """);
+                    AddParameter(command, "$messageId", messageId);
+                    AddParameter(command, "$revocationIntentPrefix", RevocationIntentPrefix);
+                    using var reader = command.ExecuteReader();
+                    if (!reader.Read() || reader.GetInt64(10) != 0)
+                    {
+                        continue;
+                    }
+
+                    if (!Guid.TryParseExact(reader.GetString(1), "D", out var conversationId) ||
+                        conversationId == Guid.Empty)
+                    {
+                        MarkNotificationHandled(connection, transaction, messageId);
+                        handledWithoutPlatformCount++;
+                        logger.LogError(
+                            "A notification candidate was suppressed because its conversation identity is invalid.");
+                        continue;
+                    }
+
+                    var shouldHandle = reader.GetInt64(9) != 0 ||
+                        string.Equals(
+                            reader.GetString(4),
+                            FormatGuid(identity.UserId),
+                            StringComparison.Ordinal) ||
+                        reader.GetInt64(11) != 0 ||
+                        foregroundConversationId == conversationId ||
+                        suppressAll ||
+                        deniedConversations.ContainsKey(conversationId);
+                    if (shouldHandle)
+                    {
+                        MarkNotificationHandled(connection, transaction, messageId);
+                        handledWithoutPlatformCount++;
+                        continue;
+                    }
+
+                    if (!Guid.TryParseExact(reader.GetString(4), "D", out var senderId) ||
+                        senderId == Guid.Empty ||
+                        !Enum.IsDefined((ConversationType)reader.GetInt32(2)) ||
+                        !Enum.IsDefined((MessageType)reader.GetInt32(6)) ||
+                        !DateTimeOffset.TryParse(
+                            reader.GetString(8),
+                            CultureInfo.InvariantCulture,
+                            DateTimeStyles.RoundtripKind,
+                            out var createdAt))
+                    {
+                        MarkNotificationHandled(connection, transaction, messageId);
+                        handledWithoutPlatformCount++;
+                        logger.LogError(
+                            "A notification candidate was suppressed because its local payload is invalid.");
+                        continue;
+                    }
+
+                    candidates.Add(new LocalNotificationCandidate(
+                        reader.GetInt64(0),
+                        conversationId,
+                        (ConversationType)reader.GetInt32(2),
+                        reader.GetString(3),
+                        senderId,
+                        reader.GetString(5),
+                        (MessageType)reader.GetInt32(6),
+                        reader.IsDBNull(7) ? null : reader.GetString(7),
+                        createdAt));
+                }
+
+                return TransactionResult<LocalNotificationCandidateBatchOutcome>.Commit(
+                    new LocalNotificationCandidateBatchOutcome(
+                        LocalCacheOperationStatus.Ready,
+                        candidates,
+                        handledWithoutPlatformCount));
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SqliteException exception) when (IsBusy(exception))
+        {
+            logger.LogWarning(
+                "Evaluating notification candidates remained busy after bounded retries; " +
+                "errorType={ExceptionType}.",
+                exception.GetType().Name);
+            return LocalNotificationCandidateBatchOutcome.Failure(
+                LocalCacheOperationStatus.TransientFailure);
+        }
+        catch (Exception exception)
+        {
+            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state while evaluating notification candidates after an error of type {ExceptionType}.",
+                exception.GetType().Name);
+            return LocalNotificationCandidateBatchOutcome.Failure(
+                LocalCacheOperationStatus.FatalScope);
+        }
+    }
+
+    private LocalNotificationRecoveryBatchOutcome ReadNotificationRecoveryBatch(
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction(deferred: true);
+            if (!IsNotificationStateAdopted(connection, transaction))
+            {
+                return LocalNotificationRecoveryBatchOutcome.Failure(
+                    LocalCacheOperationStatus.NotificationStateNotAdopted);
+            }
+
+            using var command = CreateCommand(connection, transaction, """
+                SELECT m.ServerMessageId, m.ConversationId
+                FROM LocalMessages AS m
+                INNER JOIN LocalConversations AS c ON c.Id = m.ConversationId
+                WHERE m.ServerMessageId IS NOT NULL
+                  AND m.IsNotificationHandled = 0
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM RevokedConversations AS revoked
+                      WHERE revoked.ConversationId = c.Id)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM LocalAppState AS state
+                      WHERE state.Key = $revocationIntentPrefix || c.Id)
+                ORDER BY m.ServerMessageId
+                LIMIT $limitPlusOne;
+                """);
+            AddParameter(command, "$revocationIntentPrefix", RevocationIntentPrefix);
+            AddParameter(command, "$limitPlusOne", limit + 1);
+            var rows = new List<(long MessageId, Guid ConversationId)>(limit + 1);
+            using (var reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!Guid.TryParseExact(reader.GetString(1), "D", out var conversationId) ||
+                        conversationId == Guid.Empty)
+                    {
+                        throw new InvalidDataException(
+                            "The local notification recovery state contains an invalid conversation identity.");
+                    }
+
+                    rows.Add((reader.GetInt64(0), conversationId));
+                }
+            }
+
+            var hasMore = rows.Count > limit;
+            if (hasMore)
+            {
+                rows.RemoveAt(limit);
+            }
+
+            var messageIds = rows
+                .Where(row => !deniedConversations.ContainsKey(row.ConversationId))
+                .Select(row => row.MessageId)
+                .ToArray();
+            transaction.Commit();
+            return new LocalNotificationRecoveryBatchOutcome(
+                LocalCacheOperationStatus.Ready,
+                messageIds,
+                hasMore);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SqliteException exception) when (IsBusy(exception))
+        {
+            logger.LogWarning(
+                "Reading notification recovery candidates remained busy; " +
+                "errorType={ExceptionType}.",
+                exception.GetType().Name);
+            return LocalNotificationRecoveryBatchOutcome.Failure(
+                LocalCacheOperationStatus.TransientFailure);
+        }
+        catch (Exception exception)
+        {
+            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state while reading notification recovery candidates after an error of type {ExceptionType}.",
+                exception.GetType().Name);
+            return LocalNotificationRecoveryBatchOutcome.Failure(
+                LocalCacheOperationStatus.FatalScope);
+        }
+    }
+
+    private LocalCacheOperationStatus MarkNotificationCandidatesHandled(
+        IReadOnlyList<long> messageIds,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return ExecuteWriteWithRetry((connection, transaction) =>
+            {
+                if (!IsNotificationStateAdopted(connection, transaction))
+                {
+                    return TransactionResult<LocalCacheOperationStatus>.Rollback(
+                        LocalCacheOperationStatus.NotificationStateNotAdopted);
+                }
+
+                foreach (var messageId in messageIds)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    MarkNotificationHandled(connection, transaction, messageId);
+                }
+
+                faultInjector?.BeforeNotificationHandledCommit();
+                return TransactionResult<LocalCacheOperationStatus>.Commit(
+                    LocalCacheOperationStatus.Ready);
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SqliteException exception) when (IsBusy(exception))
+        {
+            logger.LogWarning(
+                "Marking notification candidates handled remained busy after bounded retries; " +
+                "errorType={ExceptionType}.",
+                exception.GetType().Name);
+            return LocalCacheOperationStatus.TransientFailure;
+        }
+        catch (Exception exception)
+        {
+            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state while marking notification candidates handled after an error of type {ExceptionType}.",
+                exception.GetType().Name);
+            return LocalCacheOperationStatus.FatalScope;
+        }
     }
 
     private LocalCacheOperationStatus ApplyAuthoritativeConversationSnapshot(
@@ -894,6 +1359,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             context.IsForegroundConversation(message.ConversationId);
         var suppressNotification = ownMessage ||
             atOrBelowReadBoundary ||
+            conversationState.IsMuted ||
             foregroundLiveMessage ||
             context.Source is IncomingMessageSource.History or
                 IncomingMessageSource.SendResponse ||
@@ -979,7 +1445,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         long authoritativeLastMessageId)
     {
         using var command = CreateCommand(connection, transaction, """
-            SELECT LastMessageId, LastReadMessageId
+            SELECT LastMessageId, LastReadMessageId, IsMuted
             FROM LocalConversations
             WHERE Id = $conversationId;
             """);
@@ -994,7 +1460,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         return new ConversationAttentionState(
             reader.GetInt64(0),
             reader.GetInt64(1),
-            authoritativeLastMessageId);
+            authoritativeLastMessageId,
+            reader.GetBoolean(2));
     }
 
     private long GetAuthoritativeLastMessageId(Guid conversationId)
@@ -1542,10 +2009,10 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         using var command = CreateCommand(connection, transaction, """
             INSERT INTO LocalConversations (
                 Id, Type, Name, AvatarUrl, LastMessageId, LastReadMessageId,
-                UnreadCount, UpdatedAt)
+                UnreadCount, IsMuted, UpdatedAt)
             VALUES (
                 $id, $type, $name, $avatarUrl, $lastMessageId, $lastReadMessageId,
-                $unreadCount, $updatedAt)
+                $unreadCount, $isMuted, $updatedAt)
             ON CONFLICT(Id) DO UPDATE SET
                 Type = excluded.Type,
                 Name = excluded.Name,
@@ -1577,6 +2044,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                           AND ServerMessageId > excluded.LastMessageId
                           AND SenderId <> $currentUserId
                           AND IsRead = 0),
+                IsMuted = excluded.IsMuted,
                 UpdatedAt = CASE
                     WHEN LocalConversations.LastMessageId > excluded.LastMessageId
                         THEN LocalConversations.UpdatedAt
@@ -1590,6 +2058,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         AddParameter(command, "$lastMessageId", conversation.LastMessageId);
         AddParameter(command, "$lastReadMessageId", conversation.LastReadMessageId);
         AddParameter(command, "$unreadCount", conversation.UnreadCount);
+        AddParameter(command, "$isMuted", conversation.IsMuted ? 1 : 0);
         AddParameter(command, "$updatedAt", FormatDateTime(conversation.UpdatedAt));
         AddParameter(command, "$currentUserId", FormatGuid(identity.UserId));
         command.ExecuteNonQuery();
@@ -1919,6 +2388,57 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 Thread.Sleep(TimeSpan.FromMilliseconds(25 * attempt));
             }
         }
+    }
+
+    private static void MarkNotificationHandled(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long messageId)
+    {
+        using var command = CreateCommand(connection, transaction, """
+            UPDATE LocalMessages
+            SET IsNotificationHandled = 1
+            WHERE ServerMessageId = $messageId
+              AND IsNotificationHandled = 0;
+            """);
+        AddParameter(command, "$messageId", messageId);
+        command.ExecuteNonQuery();
+    }
+
+    private static bool IsNotificationStateAdopted(
+        SqliteConnection connection,
+        SqliteTransaction transaction)
+    {
+        using var command = CreateCommand(connection, transaction, """
+            SELECT Value
+            FROM LocalAppState
+            WHERE Key = $key
+            LIMIT 1;
+            """);
+        AddParameter(command, "$key", NotificationStateVersionKey);
+        return string.Equals(
+            command.ExecuteScalar() as string,
+            CurrentNotificationStateVersion.ToString(CultureInfo.InvariantCulture),
+            StringComparison.Ordinal);
+    }
+
+    private static long[] ValidateNotificationMessageIds(
+        IReadOnlyCollection<long> messageIds,
+        bool enforceBatchLimit)
+    {
+        ArgumentNullException.ThrowIfNull(messageIds);
+        if (enforceBatchLimit && messageIds.Count > MaxNotificationCandidateIds)
+        {
+            throw new ArgumentOutOfRangeException(nameof(messageIds));
+        }
+
+        var validatedIds = messageIds.Distinct().ToArray();
+        if (validatedIds.Any(messageId => messageId <= 0))
+        {
+            throw new ArgumentOutOfRangeException(nameof(messageIds));
+        }
+
+        return validatedIds;
     }
 
     private SqliteConnection OpenConnection()
@@ -2362,7 +2882,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private sealed record ConversationAttentionState(
         long LastMessageId,
         long LastReadMessageId,
-        long AuthoritativeLastMessageId);
+        long AuthoritativeLastMessageId,
+        bool IsMuted);
 
     private sealed class ForegroundReadThroughAccumulator
     {

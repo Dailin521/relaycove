@@ -66,6 +66,15 @@ public sealed class ConversationEndpointTests(
             adminClient,
             ConversationType.PrivateChannel,
             $"Private {Guid.NewGuid():N}");
+        await using (var muteScope = factory.Services.CreateAsyncScope())
+        {
+            var muteContext = muteScope.ServiceProvider.GetRequiredService<RelayCoveDbContext>();
+            var publicMembership = await muteContext.ConversationMembers.SingleAsync(member =>
+                member.UserId == adminId &&
+                member.ConversationId == publicConversation.Id);
+            publicMembership.SetMuted(true);
+            await muteContext.SaveChangesAsync();
+        }
 
         var adminList = await GetConversationListAsync(adminClient);
         var normalList = await GetConversationListAsync(normalClient);
@@ -75,6 +84,12 @@ public sealed class ConversationEndpointTests(
         Assert.Contains(adminList.Conversations, conversation => conversation.Id == privateConversation.Id);
         Assert.Contains(normalList.Conversations, conversation => conversation.Id == publicConversation.Id);
         Assert.DoesNotContain(normalList.Conversations, conversation => conversation.Id == privateConversation.Id);
+        Assert.True(adminList.Conversations.Single(conversation =>
+            conversation.Id == publicConversation.Id).IsMuted);
+        Assert.False(adminList.Conversations.Single(conversation =>
+            conversation.Id == privateConversation.Id).IsMuted);
+        Assert.False(normalList.Conversations.Single(conversation =>
+            conversation.Id == publicConversation.Id).IsMuted);
         Assert.All(adminList.Conversations, conversation =>
         {
             Assert.Equal(0, conversation.LastMessageId);

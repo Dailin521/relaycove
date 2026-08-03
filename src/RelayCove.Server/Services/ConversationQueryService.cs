@@ -188,7 +188,11 @@ public sealed class ConversationQueryService(
                     message.Id > (conversation.Members
                         .Where(member => member.UserId == actorUserId)
                         .Select(member => (long?)member.LastReadMessageId)
-                        .FirstOrDefault() ?? 0L))));
+                        .FirstOrDefault() ?? 0L)),
+                conversation.Members
+                    .Where(member => member.UserId == actorUserId)
+                    .Select(member => (bool?)member.IsMuted)
+                    .FirstOrDefault() ?? false));
 
     private static ConversationDto ToConversationDto(ConversationProjection conversation) =>
         new(
@@ -202,7 +206,8 @@ public sealed class ConversationQueryService(
             new DateTimeOffset(conversation.UpdatedAt),
             conversation.LastMessageId,
             conversation.LastReadMessageId,
-            conversation.UnreadCount);
+            conversation.UnreadCount,
+            conversation.IsMuted);
 
     private sealed record ConversationProjection(
         Guid Id,
@@ -213,7 +218,8 @@ public sealed class ConversationQueryService(
         DateTime UpdatedAt,
         long LastReadMessageId,
         long LastMessageId,
-        int UnreadCount);
+        int UnreadCount,
+        bool IsMuted);
 
     private sealed record ConversationMemberProjection(
         Guid ConversationId,

@@ -9,4 +9,5 @@ public sealed record ConversationDto(
     DateTimeOffset UpdatedAt,
     long LastMessageId,
     long LastReadMessageId,
-    int UnreadCount);
+    int UnreadCount,
+    bool IsMuted = false);

@@ -37,7 +37,8 @@ public sealed class ConversationContractTests
             new DateTimeOffset(2026, 8, 3, 8, 1, 0, TimeSpan.Zero),
             0,
             0,
-            0);
+            0,
+            IsMuted: true);
         var response = new ConversationListResponse([conversation], Complete: true);
 
         var json = JsonSerializer.Serialize(response, WebJson);
@@ -46,10 +47,52 @@ public sealed class ConversationContractTests
 
         Assert.Equal(["conversations", "complete"], document.RootElement.EnumerateObject().Select(property => property.Name));
         Assert.True(roundTripped!.Complete);
-        Assert.Equal(conversation, Assert.Single(roundTripped.Conversations));
+        var roundTrippedConversation = Assert.Single(roundTripped.Conversations);
+        Assert.Equal(conversation, roundTrippedConversation);
+        Assert.True(roundTrippedConversation.IsMuted);
+        Assert.Equal(
+            [
+                "id",
+                "type",
+                "name",
+                "avatarUrl",
+                "createdAt",
+                "updatedAt",
+                "lastMessageId",
+                "lastReadMessageId",
+                "unreadCount",
+                "isMuted",
+            ],
+            document.RootElement
+                .GetProperty("conversations")[0]
+                .EnumerateObject()
+                .Select(property => property.Name));
         Assert.DoesNotContain(conversation.Name, response.ToString(), StringComparison.Ordinal);
         Assert.Contains("Conversations = [REDACTED]", response.ToString(), StringComparison.Ordinal);
         Assert.Contains("Complete = True", response.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConversationDto_WhenLegacyJsonOmitsIsMuted_DefaultsToFalse()
+    {
+        const string json = """
+            {
+              "id": "11111111-1111-1111-1111-111111111111",
+              "type": 1,
+              "name": "Legacy conversation",
+              "avatarUrl": null,
+              "createdAt": "2026-08-03T08:00:00+00:00",
+              "updatedAt": "2026-08-03T08:01:00+00:00",
+              "lastMessageId": 0,
+              "lastReadMessageId": 0,
+              "unreadCount": 0
+            }
+            """;
+
+        var conversation = JsonSerializer.Deserialize<ConversationDto>(json, WebJson);
+
+        Assert.NotNull(conversation);
+        Assert.False(conversation.IsMuted);
     }
 
     [Fact]

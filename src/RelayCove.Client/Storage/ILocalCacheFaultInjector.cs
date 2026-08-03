@@ -11,4 +11,12 @@ internal interface ILocalCacheFaultInjector
     void BeforeReadPendingReadThroughBatch()
     {
     }
+
+    void BeforeNotificationAdoptionCommit()
+    {
+    }
+
+    void BeforeNotificationHandledCommit()
+    {
+    }
 }

@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using RelayCove.Client.Notifications;
 using RelayCove.Client.Storage;
+using RelayCove.Client.Sync;
 using RelayCove.Shared.Conversations;
 using RelayCove.Shared.Messages;
 
@@ -144,6 +146,48 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
             Scalar(
                 identity,
                 "SELECT COUNT(*) FROM LocalConversations WHERE PendingReadThroughMessageId IS NOT NULL;"));
+    }
+
+    [Fact]
+    public async Task LocalCacheRealtimeEventSink_WhenCandidateCommits_ForwardsExplicitId()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        await RegisterAsync(cache, conversation);
+        var notifications = new RecordingNotificationRoundCoordinator();
+        var sink = new LocalCacheRealtimeEventSink(
+            cache,
+            (_, _) => Task.CompletedTask,
+            foregroundConversationIdProvider: null,
+            NullLogger<LocalCacheRealtimeEventSink>.Instance,
+            requestReadThroughUpload: null,
+            notifications);
+
+        await sink.OnNewMessageAsync(CreateMessage(conversation.Id), CancellationToken.None);
+
+        Assert.Equal([101L], notifications.RealtimeCandidates);
+    }
+
+    [Fact]
+    public async Task LocalCacheRealtimeEventSink_WhenRevocationCommits_ForwardsPlatformClear()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        await RegisterAsync(cache, conversation);
+        var notifications = new RecordingNotificationRoundCoordinator();
+        var sink = new LocalCacheRealtimeEventSink(
+            cache,
+            (_, _) => Task.CompletedTask,
+            foregroundConversationIdProvider: null,
+            NullLogger<LocalCacheRealtimeEventSink>.Instance,
+            requestReadThroughUpload: null,
+            notifications);
+
+        await sink.OnConversationAccessRevokedAsync(conversation.Id, CancellationToken.None);
+
+        Assert.Equal([conversation.Id], notifications.RevokedConversations);
     }
 
     [Fact]
@@ -511,6 +555,49 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
                 throw new TimeoutException("The revocation test gate timed out.");
             }
         }
+    }
+
+    private sealed class RecordingNotificationRoundCoordinator :
+        IClientNotificationRoundCoordinator
+    {
+        public List<long> RealtimeCandidates { get; } = [];
+
+        public List<Guid> RevokedConversations { get; } = [];
+
+        public ClientNotificationRoundToken OpenRound(SyncReason reason) =>
+            new(1, reason);
+
+        public Task SnapshotCommittedAsync(
+            ClientNotificationRoundToken token,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public void SubmitSyncCandidates(
+            ClientNotificationRoundToken token,
+            IReadOnlyCollection<long> messageIds)
+        {
+        }
+
+        public Task SubmitRealtimeCandidateAsync(
+            long messageId,
+            CancellationToken cancellationToken)
+        {
+            RealtimeCandidates.Add(messageId);
+            return Task.CompletedTask;
+        }
+
+        public Task CloseRoundAsync(
+            ClientNotificationRoundToken token,
+            ClientSyncRunStatus status) => Task.CompletedTask;
+
+        public Task ConversationRevokedAsync(
+            Guid conversationId,
+            CancellationToken cancellationToken)
+        {
+            RevokedConversations.Add(conversationId);
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class RecordingLogger<T> : ILogger<T>

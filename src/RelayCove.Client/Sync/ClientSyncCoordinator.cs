@@ -1,6 +1,7 @@
 using System.Net.Http;
 using Microsoft.Extensions.Logging;
 using RelayCove.Client.Accounts;
+using RelayCove.Client.Notifications;
 using RelayCove.Client.Storage;
 using RelayCove.Shared.Messages;
 
@@ -13,6 +14,7 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
     private readonly ClientSyncHttpTransport transport;
     private readonly Func<Guid?> foregroundConversationIdProvider;
     private readonly Action requestReadThroughUpload;
+    private readonly IClientNotificationRoundCoordinator notificationRoundCoordinator;
     private readonly ILogger<ClientSyncCoordinator> logger;
     private readonly CancellationTokenSource lifetimeCancellation = new();
     private Task<ClientSyncRunOutcome>? activeFlight;
@@ -38,7 +40,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
             nextJitter: null,
             timeProvider: null,
             foregroundConversationIdProvider: null,
-            requestReadThroughUpload: null)
+            requestReadThroughUpload: null,
+            notificationRoundCoordinator: null)
     {
     }
 
@@ -49,7 +52,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
         AccountScopedLocalCache localCache,
         ILogger<ClientSyncCoordinator> logger,
         Func<Guid?> foregroundConversationIdProvider,
-        Action? requestReadThroughUpload = null)
+        Action? requestReadThroughUpload = null,
+        IClientNotificationRoundCoordinator? notificationRoundCoordinator = null)
         : this(
             identity,
             httpClient,
@@ -60,7 +64,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
             nextJitter: null,
             timeProvider: null,
             foregroundConversationIdProvider,
-            requestReadThroughUpload)
+            requestReadThroughUpload,
+            notificationRoundCoordinator)
     {
     }
 
@@ -74,7 +79,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
         Func<double>? nextJitter,
         TimeProvider? timeProvider,
         Func<Guid?>? foregroundConversationIdProvider = null,
-        Action? requestReadThroughUpload = null)
+        Action? requestReadThroughUpload = null,
+        IClientNotificationRoundCoordinator? notificationRoundCoordinator = null)
     {
         ArgumentNullException.ThrowIfNull(identity);
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
@@ -82,6 +88,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
         this.foregroundConversationIdProvider = foregroundConversationIdProvider ??
             (static () => null);
         this.requestReadThroughUpload = requestReadThroughUpload ?? (static () => { });
+        this.notificationRoundCoordinator = notificationRoundCoordinator ??
+            new NoOpClientNotificationRoundCoordinator();
         if (!string.Equals(identity.Id, localCache.Identity.Id, StringComparison.Ordinal))
         {
             throw new ArgumentException(
@@ -166,6 +174,7 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
             await flight.ConfigureAwait(false);
         }
 
+        await notificationRoundCoordinator.DisposeAsync().ConfigureAwait(false);
         lifetimeCancellation.Dispose();
     }
 
@@ -253,6 +262,32 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
         SyncReason reason,
         CancellationToken cancellationToken)
     {
+        var notificationToken = notificationRoundCoordinator.OpenRound(reason);
+        var status = ClientSyncRunStatus.LocalCacheFailure;
+        try
+        {
+            status = await RunRoundCoreAsync(reason, notificationToken, cancellationToken)
+                .ConfigureAwait(false);
+            return status;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            status = ClientSyncRunStatus.Canceled;
+            throw;
+        }
+        finally
+        {
+            await notificationRoundCoordinator
+                .CloseRoundAsync(notificationToken, status)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private async Task<ClientSyncRunStatus> RunRoundCoreAsync(
+        SyncReason reason,
+        ClientNotificationRoundToken notificationToken,
+        CancellationToken cancellationToken)
+    {
         var snapshotResult = await transport
             .GetConversationSnapshotAsync(cancellationToken)
             .ConfigureAwait(false);
@@ -270,6 +305,10 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
         {
             return MapLocalStatus(snapshotStatus);
         }
+
+        await notificationRoundCoordinator
+            .SnapshotCommittedAsync(notificationToken, cancellationToken)
+            .ConfigureAwait(false);
 
         var cursorOutcome = await localCache
             .ReadLastSyncCursorAsync(cancellationToken)
@@ -317,6 +356,9 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
                 return MapLocalStatus(commitOutcome.Status);
             }
 
+            notificationRoundCoordinator.SubmitSyncCandidates(
+                notificationToken,
+                commitOutcome.NotificationCandidateMessageIds);
             RequestReadThroughUpload();
 
             snapshotUpperBound ??= page.SnapshotUpperBound;

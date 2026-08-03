@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RelayCove.Client.Accounts;
 using RelayCove.Client.Auth;
+using RelayCove.Client.Notifications;
 using RelayCove.Client.Realtime;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
@@ -156,6 +157,87 @@ public sealed class ClientAccountRuntimeTests
             ["realtime-start", "http-conversations", "http-sync"],
             order);
         Assert.True(File.Exists(runtime.Identity.DatabasePath));
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task FactoryRuntime_WhenNotificationPlatformAccepts_WiresStartupSummaryAndPersistsHandling()
+    {
+        using var directory = new TemporaryDirectory();
+        var conversation = new ConversationDto(
+            Guid.NewGuid(),
+            ConversationType.PrivateChannel,
+            "Notification conversation",
+            null,
+            Now.AddHours(-2),
+            Now.AddHours(-1),
+            0,
+            0,
+            0);
+        var handler = new DelegateHttpHandler((request, _) =>
+            Task.FromResult(request.RequestUri!.AbsolutePath.EndsWith(
+                "/api/conversations",
+                StringComparison.Ordinal)
+                    ? Ok(new ConversationListResponse([conversation], Complete: true))
+                    : Ok(new SyncResponse(
+                        [CreateMessage(conversation.Id)],
+                        1,
+                        1,
+                        HasMore: false))));
+        var platform = new RecordingNotificationPlatform();
+        var factory = new ClientAccountRuntimeFactory(
+            new HttpClient(handler),
+            directory.Path,
+            NullLoggerFactory.Instance,
+            (_, _, _, _) => new FakeRealtimeConnection(),
+            platform,
+            static () => ClientNotificationSettingsSnapshot.Enabled);
+        var runtime = await factory.CreateAsync(CreateSession());
+
+        var outcome = await runtime.StartAsync();
+
+        Assert.True(outcome.IsAuthoritativeCacheReady);
+        var request = Assert.Single(platform.Requests);
+        Assert.Equal(NotificationPolicy.Summary, request.Policy);
+        Assert.Equal(1, Scalar(runtime.Identity, "SELECT IsNotificationHandled FROM LocalMessages;"));
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task FactoryRuntime_WhenDefaultPlatformIsUnavailable_LeavesCandidateForRecovery()
+    {
+        using var directory = new TemporaryDirectory();
+        var conversation = new ConversationDto(
+            Guid.NewGuid(),
+            ConversationType.PrivateChannel,
+            "Deferred notification conversation",
+            null,
+            Now.AddHours(-2),
+            Now.AddHours(-1),
+            0,
+            0,
+            0);
+        var handler = new DelegateHttpHandler((request, _) =>
+            Task.FromResult(request.RequestUri!.AbsolutePath.EndsWith(
+                "/api/conversations",
+                StringComparison.Ordinal)
+                    ? Ok(new ConversationListResponse([conversation], Complete: true))
+                    : Ok(new SyncResponse(
+                        [CreateMessage(conversation.Id)],
+                        1,
+                        1,
+                        HasMore: false))));
+        var factory = new ClientAccountRuntimeFactory(
+            new HttpClient(handler),
+            directory.Path,
+            NullLoggerFactory.Instance,
+            (_, _, _, _) => new FakeRealtimeConnection());
+        var runtime = await factory.CreateAsync(CreateSession());
+
+        var outcome = await runtime.StartAsync();
+
+        Assert.True(outcome.IsAuthoritativeCacheReady);
+        Assert.Equal(0, Scalar(runtime.Identity, "SELECT IsNotificationHandled FROM LocalMessages;"));
         await runtime.DisposeAsync();
     }
 
@@ -1102,6 +1184,14 @@ public sealed class ClientAccountRuntimeTests
         return connection;
     }
 
+    private static long Scalar(AccountScopeIdentity identity, string sql)
+    {
+        using var connection = OpenCache(identity);
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return Convert.ToInt64(command.ExecuteScalar());
+    }
+
     private static TaskCompletionSource NewSignal() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -1154,6 +1244,26 @@ public sealed class ClientAccountRuntimeTests
 
         public ValueTask DisposeAsync() =>
             DisposeAction?.Invoke() ?? ValueTask.CompletedTask;
+    }
+
+    private sealed class RecordingNotificationPlatform : IClientNotificationPlatform
+    {
+        private readonly ConcurrentQueue<ClientNotificationRequest> requests = new();
+
+        public IReadOnlyCollection<ClientNotificationRequest> Requests => requests.ToArray();
+
+        public Task<ClientNotificationPlatformResult> SubmitAsync(
+            ClientNotificationRequest request,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            requests.Enqueue(request);
+            return Task.FromResult(ClientNotificationPlatformResult.Accepted);
+        }
+
+        public Task ClearConversationAsync(
+            Guid conversationId,
+            CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class FakeReadThroughCoordinator : IClientAccountReadThroughCoordinator

@@ -11,4 +11,5 @@ public enum LocalCacheOperationStatus
     StaleCursor = 7,
     Conflict = 8,
     TransientFailure = 9,
+    NotificationStateNotAdopted = 10,
 }

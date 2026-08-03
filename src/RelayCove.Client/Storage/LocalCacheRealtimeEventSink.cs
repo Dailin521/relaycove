@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using RelayCove.Client.Notifications;
 using RelayCove.Client.Realtime;
 using RelayCove.Shared.Messages;
 using RelayCove.Shared.Realtime;
@@ -11,6 +12,7 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
     private readonly Func<Guid, CancellationToken, Task> requestConversationReconciliationAsync;
     private readonly Func<Guid?> foregroundConversationIdProvider;
     private readonly Action requestReadThroughUpload;
+    private readonly IClientNotificationRoundCoordinator notificationRoundCoordinator;
     private readonly ILogger<LocalCacheRealtimeEventSink> logger;
 
     public LocalCacheRealtimeEventSink(
@@ -22,7 +24,8 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
             requestConversationReconciliationAsync,
             foregroundConversationIdProvider: null,
             logger,
-            requestReadThroughUpload: null)
+            requestReadThroughUpload: null,
+            notificationRoundCoordinator: null)
     {
     }
 
@@ -31,7 +34,8 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
         Func<Guid, CancellationToken, Task> requestConversationReconciliationAsync,
         Func<Guid?>? foregroundConversationIdProvider,
         ILogger<LocalCacheRealtimeEventSink> logger,
-        Action? requestReadThroughUpload = null)
+        Action? requestReadThroughUpload = null,
+        IClientNotificationRoundCoordinator? notificationRoundCoordinator = null)
     {
         ArgumentNullException.ThrowIfNull(cache);
         ArgumentNullException.ThrowIfNull(requestConversationReconciliationAsync);
@@ -41,6 +45,8 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
         this.foregroundConversationIdProvider = foregroundConversationIdProvider ??
             (static () => null);
         this.requestReadThroughUpload = requestReadThroughUpload ?? (static () => { });
+        this.notificationRoundCoordinator = notificationRoundCoordinator ??
+            new NoOpClientNotificationRoundCoordinator();
         this.logger = logger;
     }
 
@@ -76,6 +82,15 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
             RequestReadThroughUpload();
         }
 
+        if (outcome.Status == LocalCacheOperationStatus.Ready &&
+            outcome.NotificationCandidateMessageId is { } notificationCandidateMessageId)
+        {
+            await SubmitNotificationCandidateAsync(
+                    notificationCandidateMessageId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         if (outcome.Status is LocalCacheOperationStatus.RevokedConversation or
             LocalCacheOperationStatus.FatalScope)
         {
@@ -95,6 +110,47 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
         {
             logger.LogCritical(
                 "A realtime access revocation caused the local cache scope to enter fatal fail-closed state.");
+        }
+
+        if (status == LocalCacheOperationStatus.RevokedConversation)
+        {
+            try
+            {
+                await notificationRoundCoordinator
+                    .ConversationRevokedAsync(conversationId, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    "Clearing notification state after realtime revocation failed; " +
+                    "errorType={ErrorType}.",
+                    exception.GetType().Name);
+            }
+        }
+    }
+
+    private async Task SubmitNotificationCandidateAsync(
+        long notificationCandidateMessageId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await notificationRoundCoordinator
+                .SubmitRealtimeCandidateAsync(
+                    notificationCandidateMessageId,
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Submitting a realtime notification candidate failed; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
         }
     }
 

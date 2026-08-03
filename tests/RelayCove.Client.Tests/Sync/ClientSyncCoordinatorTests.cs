@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using RelayCove.Client.Notifications;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
 using RelayCove.Shared.Conversations;
@@ -20,6 +21,60 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
         Path.GetTempPath(),
         "RelayCove.Client.SyncCoordinatorTests",
         Guid.NewGuid().ToString("N"));
+
+    [Fact]
+    public async Task ClientSync_WhenPageCompletes_PairsRoundAndForwardsCommittedCandidates()
+    {
+        var identity = CreateIdentity();
+        var conversation = CreateConversation("Notification round");
+        var handler = new ScriptedHttpHandler();
+        handler.EnqueueResponse(Ok(new ConversationListResponse([conversation], Complete: true)));
+        handler.EnqueueResponse(Ok(new SyncResponse(
+            [CreateMessage(1, conversation.Id)],
+            1,
+            1,
+            HasMore: false)));
+        var notificationRounds = new RecordingNotificationRoundCoordinator();
+        await using var cache = await CreateCacheAsync(identity);
+        var coordinator = CreateCoordinator(
+            identity,
+            handler,
+            new RecordingAuthenticationSession("current-token"),
+            cache,
+            notificationRoundCoordinator: notificationRounds);
+
+        var outcome = await coordinator.TriggerAsync(SyncReason.Startup);
+        await coordinator.DisposeAsync();
+
+        Assert.Equal(ClientSyncRunStatus.Completed, outcome.Status);
+        Assert.Equal(
+            ["open:Startup", "snapshot:1", "candidates:1", "close:1:Completed", "dispose"],
+            notificationRounds.Events);
+    }
+
+    [Fact]
+    public async Task ClientSync_WhenSnapshotRequestFails_StillClosesNotificationRound()
+    {
+        var identity = CreateIdentity();
+        var handler = new ScriptedHttpHandler();
+        handler.EnqueueResponse(new HttpResponseMessage(HttpStatusCode.BadRequest));
+        var notificationRounds = new RecordingNotificationRoundCoordinator();
+        await using var cache = await CreateCacheAsync(identity);
+        var coordinator = CreateCoordinator(
+            identity,
+            handler,
+            new RecordingAuthenticationSession("current-token"),
+            cache,
+            notificationRoundCoordinator: notificationRounds);
+
+        var outcome = await coordinator.TriggerAsync(SyncReason.Periodic);
+        await coordinator.DisposeAsync();
+
+        Assert.Equal(ClientSyncRunStatus.ProtocolError, outcome.Status);
+        Assert.Equal(
+            ["open:Periodic", "close:1:ProtocolError", "dispose"],
+            notificationRounds.Events);
+    }
 
     [Fact]
     public async Task ClientSync_WhenTwoPagesComplete_AppliesSnapshotAndKeepsUpperBound()
@@ -687,7 +742,8 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
         AccountScopedLocalCache cache,
         List<TimeSpan>? delays = null,
         ILogger<ClientSyncCoordinator>? logger = null,
-        Action? requestReadThroughUpload = null)
+        Action? requestReadThroughUpload = null,
+        IClientNotificationRoundCoordinator? notificationRoundCoordinator = null)
     {
         var httpClient = new HttpClient(handler, disposeHandler: false);
         return new ClientSyncCoordinator(
@@ -703,7 +759,8 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
             },
             nextJitter: () => 0,
             timeProvider: TimeProvider.System,
-            requestReadThroughUpload: requestReadThroughUpload);
+            requestReadThroughUpload: requestReadThroughUpload,
+            notificationRoundCoordinator: notificationRoundCoordinator);
     }
 
     private static ConversationDto CreateConversation(string name) => new(
@@ -859,6 +916,56 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
     }
 
     private sealed record RequestRecord(string PathAndQuery, string? BearerToken);
+
+    private sealed class RecordingNotificationRoundCoordinator :
+        IClientNotificationRoundCoordinator
+    {
+        private long generation;
+
+        public List<string> Events { get; } = [];
+
+        public ClientNotificationRoundToken OpenRound(SyncReason reason)
+        {
+            var token = new ClientNotificationRoundToken(++generation, reason);
+            Events.Add($"open:{reason}");
+            return token;
+        }
+
+        public Task SnapshotCommittedAsync(
+            ClientNotificationRoundToken token,
+            CancellationToken cancellationToken)
+        {
+            Events.Add($"snapshot:{token.Generation}");
+            return Task.CompletedTask;
+        }
+
+        public void SubmitSyncCandidates(
+            ClientNotificationRoundToken token,
+            IReadOnlyCollection<long> messageIds) =>
+            Events.Add($"candidates:{string.Join(',', messageIds)}");
+
+        public Task SubmitRealtimeCandidateAsync(
+            long messageId,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task CloseRoundAsync(
+            ClientNotificationRoundToken token,
+            ClientSyncRunStatus status)
+        {
+            Events.Add($"close:{token.Generation}:{status}");
+            return Task.CompletedTask;
+        }
+
+        public Task ConversationRevokedAsync(
+            Guid conversationId,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public ValueTask DisposeAsync()
+        {
+            Events.Add("dispose");
+            return ValueTask.CompletedTask;
+        }
+    }
 
     private sealed class RecordingLogger<T> : ILogger<T>
     {

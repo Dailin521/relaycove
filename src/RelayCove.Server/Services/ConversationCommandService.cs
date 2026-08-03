@@ -255,7 +255,11 @@ public sealed class ConversationCommandService(
             type);
         return new ConversationOperationResult<ConversationDto>(
             ConversationOperationStatus.Created,
-            ToConversationDto(conversation, conversation.Name, creator.LastReadMessageId));
+            ToConversationDto(
+                conversation,
+                conversation.Name,
+                creator.LastReadMessageId,
+                creator.IsMuted));
     }
 
     private async Task<ConversationOperationResult<ConversationDto>> CreateDirectAsync(
@@ -320,7 +324,11 @@ public sealed class ConversationCommandService(
             var actorMember = existing.Members.Single(member => member.UserId == actorUserId);
             return new ConversationOperationResult<ConversationDto>(
                 ConversationOperationStatus.Success,
-                ToConversationDto(existing, participant.DisplayName, actorMember.LastReadMessageId));
+                ToConversationDto(
+                    existing,
+                    participant.DisplayName,
+                    actorMember.LastReadMessageId,
+                    actorMember.IsMuted));
         }
 
         var now = clock.UtcNow;
@@ -353,7 +361,11 @@ public sealed class ConversationCommandService(
             participant.Id);
         return new ConversationOperationResult<ConversationDto>(
             ConversationOperationStatus.Created,
-            ToConversationDto(conversation, participant.DisplayName, actorMembership.LastReadMessageId));
+            ToConversationDto(
+                conversation,
+                participant.DisplayName,
+                actorMembership.LastReadMessageId,
+                actorMembership.IsMuted));
     }
 
     private static ConversationOperationStatus GetMemberWriteAuthorization(
@@ -400,7 +412,8 @@ public sealed class ConversationCommandService(
     private static ConversationDto ToConversationDto(
         Conversation conversation,
         string displayName,
-        long lastReadMessageId) =>
+        long lastReadMessageId,
+        bool isMuted) =>
         new(
             conversation.Id,
             conversation.Type,
@@ -412,7 +425,8 @@ public sealed class ConversationCommandService(
             new DateTimeOffset(conversation.UpdatedAt),
             LastMessageId: 0,
             lastReadMessageId,
-            UnreadCount: 0);
+            UnreadCount: 0,
+            isMuted);
 
     private static ConversationMemberDto ToMemberDto(
         ConversationMember member,
