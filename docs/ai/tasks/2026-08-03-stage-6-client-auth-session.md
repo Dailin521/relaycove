@@ -2,7 +2,7 @@
 
 ## 状态
 
-- `in_progress`
+- `completed`
 - 分支：`agent/stage-6-client-auth-session`
 - 基线：`b8d5955ccacb96c4024b3fbdfcdfbe43ee88af96`
 
@@ -49,10 +49,10 @@
 
 ## 验收标准
 
-- [ ] 真实登录建立经过完整验证且日志脱敏的内存会话，所有失败状态稳定可测。
-- [ ] 并发 refresh 单飞且只轮换一次；成功原子替换 token，401/用户错配清空，响应不确定失败不重试、不部分覆盖。
-- [ ] logout 与 refresh 串行，使用最新 refresh token 并先本地退出；失败、取消和 Dispose 均不恢复敏感状态。
-- [ ] Client 定向测试、Fast/Full、model drift、八项目漏洞审计、白名单、空白和固定差异复核通过。
+- [x] 真实登录建立经过完整验证且日志脱敏的内存会话，所有失败状态稳定可测。
+- [x] 并发 refresh 单飞且只轮换一次；成功原子替换 token，401/用户错配清空，响应不确定失败不重试、不部分覆盖。
+- [x] logout 与 refresh 串行，使用最新 refresh token 并先本地退出；失败、取消和 Dispose 均不恢复敏感状态。
+- [x] Client 定向测试、Fast/Full、model drift、八项目漏洞审计、白名单、空白和固定差异复核通过。
 
 ## 验证命令
 
@@ -73,12 +73,26 @@ dotnet list RelayCove.sln package --vulnerable --include-transitive
 
 ### 修改摘要
 
-- 待完成。
+- 新增严格 URI 规范化、真实 login POST、稳定失败分类与脱敏 `ClientLoginOutcome`；成功响应需通过身份、长度、过期时间、版本与真实 Bearer header 校验才建立会话。
+- `ClientAuthenticationSession` 只在锁内保存 token，直接实现 Sync 认证边界；refresh 使用锁内先发布的 TaskCompletionSource single-flight，不受单个等待者取消影响，成功原子替换两枚 token，401/用户错配 fail-closed。
+- refresh/logout 共用操作门；logout 等待轮换并使用最新 refresh token，在 HTTP 前清空本地状态，失败或取消不恢复；Dispose 取消共享 HTTP、等待操作并清空。
+- 代码检查点为 `821d8598c8936376ba31e586bd8cfd4d23beda40`；未修改 Shared/服务端协议、数据库、migration、依赖、DPAPI 或 UI。
 
 ### 验证证据
 
-- 待完成。
+| 状态 | 命令或场景 | 结果 |
+| --- | --- | --- |
+| `已验证` | 集成基线 | `agent/v1-integration` 本地/远端均为 `b8d5955`；前序 Full/285 项测试、model drift 与漏洞审计通过 |
+| `已验证` | Client 认证定向 | Release 37/37；覆盖真实 POST/body/反向代理路径、400/401/408/429/5xx/其他状态、Retry-After、网络/JSON/响应不变量与日志脱敏 |
+| `已验证` | refresh rotation | 20 个并发等待者仅一次请求；成功替换 access/refresh token，单个等待取消不取消共享请求，401/用户错配清空，网络/429/5xx/非法响应不重试且不部分覆盖 |
+| `已验证` | logout/Dispose | logout 等待 refresh 后使用最新 token 且进入 handler 前已本地退出；调用者取消、传输失败和 Dispose 都不恢复 token |
+| `已验证` | 关键竞态 | refresh 单飞/调用者取消、refresh→logout、取消 logout、Dispose 5 项 Release 连续 10 轮通过 |
+| `已验证` | Fast/Full | Debug/Release 均 0 警告、0 错误；Client 113 + Shared 33 + Server 175 + Updater 1 = 322 项测试全部通过 |
+| `已验证` | 格式/空白/白名单 | `dotnet format --verify-no-changes`、`git diff --check` 通过；候选代码只含 7 个 Client Auth 文件与 1 个认证测试文件 |
+| `已验证` | EF model drift | `has-pending-model-changes --no-build` 返回自最新 migration 后模型无变化 |
+| `已验证` | 依赖漏洞审计 | 8 个源/测试项目直接与传递依赖均未报告已知漏洞 |
+| `已验证` | 固定候选 Codex 复核 | 发现并修正私有敏感 record 自动展开风险、成功响应长度边界与无效 Bearer token 接受；复核单飞发布/完成、logout 线性化、不确定轮换无重试及日志后无剩余发现；Claude 已达 `30/30` 硬上限 |
 
 ### 下一步
 
-- 实现 DPAPI 凭据存储、自动登录与账户运行时组合。
+- 快进集成本切片，随后实现 DPAPI 凭据存储与安全恢复，再单独组合账户运行时。
