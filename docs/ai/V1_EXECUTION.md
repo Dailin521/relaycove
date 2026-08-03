@@ -7,13 +7,13 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M1
-CurrentStage: 阶段 6
-ActiveTask: docs/ai/tasks/2026-08-03-stage-6-notification-coordinator.md
-TaskStatus: completed
+CurrentStage: 阶段 7
+ActiveTask: docs/ai/tasks/2026-08-03-stage-7-windows-notification-platform.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 92b924f2ee3dd45e25ee0c9ff3358b346b38f3a8
-LatestGreenIntegrationCommit: 47d442223916e0da1651d9ee9669af372c37817d
-NextAction: 快进集成已验证通知协调器后进入阶段 7 Windows 通知、激活与 WPF activity
+LatestGreenIntegrationCommit: 7cf908eb127ddf8551853d3ce9897c90b554e78c
+NextAction: 实现 Windows App SDK 2.3.1 通知平台、账户隔离稳定身份与严格激活目标
 ClaudeCalls: 39（全部终态；仅关键用途调用）
 ClaudeCostUsd: 40.91069225 confirmed；另有二十二次失败/中断调用费用 unavailable
 Blocker: none
