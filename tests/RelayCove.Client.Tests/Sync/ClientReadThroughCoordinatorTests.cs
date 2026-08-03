@@ -431,6 +431,7 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
     public async Task TriggerAsync_WhenForbiddenCodeConfirmsRevocation_PurgesConversation()
     {
         var prepared = await CreatePendingAsync(rawPendingMessageId: 50);
+        var clearedConversations = new List<Guid>();
         using var httpClient = new HttpClient(new DelegateHttpHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden)
             {
@@ -441,7 +442,12 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
         await using var coordinator = CreateCoordinator(
             prepared,
             httpClient,
-            new FakeAuthenticationSession("access-token"));
+            new FakeAuthenticationSession("access-token"),
+            (conversationId, _) =>
+            {
+                clearedConversations.Add(conversationId);
+                return Task.CompletedTask;
+            });
 
         var outcome = await coordinator.TriggerAsync();
 
@@ -450,6 +456,7 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
         Assert.Equal(
             LocalCacheOperationStatus.RevokedConversation,
             (await prepared.Cache.ReadMessagesAsync(prepared.Conversation.Id)).Status);
+        Assert.Equal([prepared.Conversation.Id], clearedConversations);
     }
 
     [Fact]
@@ -1020,13 +1027,15 @@ public sealed class ClientReadThroughCoordinatorTests : IDisposable
     private static ClientReadThroughCoordinator CreateCoordinator(
         PreparedReadThrough prepared,
         HttpClient httpClient,
-        IClientAuthenticationSession authenticationSession) =>
+        IClientAuthenticationSession authenticationSession,
+        Func<Guid, CancellationToken, Task>? conversationRevokedAsync = null) =>
         new(
             prepared.Identity,
             httpClient,
             authenticationSession,
             prepared.Cache,
-            NullLogger<ClientReadThroughCoordinator>.Instance);
+            NullLogger<ClientReadThroughCoordinator>.Instance,
+            conversationRevokedAsync);
 
     private static ConversationDto CreateConversation(
         long lastMessageId,

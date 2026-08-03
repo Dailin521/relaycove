@@ -801,13 +801,20 @@ public sealed class ClientAccountRuntimeTests
                 return ValueTask.CompletedTask;
             },
         };
+        var notificationCoordinator = new RecordingAsyncDisposable(() =>
+        {
+            Assert.True(session.IsAuthenticated);
+            order.Enqueue("notification-dispose");
+            return ValueTask.CompletedTask;
+        });
         var runtime = CreateRuntime(
             directory.Path,
             session,
             realtime,
             sync,
             cache,
-            readThrough);
+            readThrough,
+            notificationCoordinator: notificationCoordinator);
         await runtime.StartAsync();
 
         await Task.WhenAll(
@@ -815,7 +822,13 @@ public sealed class ClientAccountRuntimeTests
             runtime.DisposeAsync().AsTask());
 
         Assert.Equal(
-            ["realtime-dispose", "sync-dispose", "read-through-dispose", "cache-dispose"],
+            [
+                "realtime-dispose",
+                "sync-dispose",
+                "read-through-dispose",
+                "notification-dispose",
+                "cache-dispose",
+            ],
             order);
         Assert.True(session.IsDisposeCompleted);
         Assert.False(session.IsAuthenticated);
@@ -1118,13 +1131,15 @@ public sealed class ClientAccountRuntimeTests
         FakeSyncCoordinator sync,
         IAsyncDisposable? cache = null,
         FakeReadThroughCoordinator? readThrough = null,
-        ILogger<ClientAccountRuntime>? logger = null) =>
+        ILogger<ClientAccountRuntime>? logger = null,
+        IAsyncDisposable? notificationCoordinator = null) =>
         new(
             AccountScopeIdentity.Create(ServerBaseUri, UserId, rootDirectory),
             session,
             realtime,
             sync,
             readThrough ?? new FakeReadThroughCoordinator(),
+            notificationCoordinator,
             cache ?? new RecordingAsyncDisposable(() => ValueTask.CompletedTask),
             new ClientActivityState(),
             logger ?? NullLogger<ClientAccountRuntime>.Instance);

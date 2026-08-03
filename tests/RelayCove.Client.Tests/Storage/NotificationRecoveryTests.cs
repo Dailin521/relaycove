@@ -107,6 +107,78 @@ public sealed class NotificationRecoveryTests : IDisposable
         Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages WHERE IsNotificationHandled = 1;"));
     }
 
+    [Fact]
+    public async Task EvaluateCandidates_WhenOnePayloadIsMalformed_IsolatesItAndReturnsValidPeer()
+    {
+        var prepared = await PrepareAsync();
+        await using var cache = prepared.Cache;
+        await cache.MergeIncomingMessageAsync(CreateMessage(1, prepared.Conversation.Id));
+        await cache.MergeIncomingMessageAsync(CreateMessage(2, prepared.Conversation.Id));
+        Execute(
+            prepared.Identity,
+            "UPDATE LocalMessages SET CreatedAt = 'invalid-date' WHERE ServerMessageId = 1;");
+
+        var outcome = await cache.EvaluateNotificationCandidatesAsync(
+            [1, 2],
+            foregroundConversationId: null,
+            suppressAll: false);
+
+        Assert.Equal(LocalCacheOperationStatus.Ready, outcome.Status);
+        Assert.Equal(1, outcome.HandledWithoutPlatformCount);
+        Assert.Equal(2, Assert.Single(outcome.Candidates).MessageId);
+        Assert.Equal(1, Scalar(
+            prepared.Identity,
+            "SELECT IsNotificationHandled FROM LocalMessages WHERE ServerMessageId = 1;"));
+    }
+
+    [Fact]
+    public async Task AuthoritativeSnapshot_AfterRestart_ReemitsPersistedRevocationForPlatformClear()
+    {
+        var identity = CreateIdentity();
+        var conversation = CreateConversation();
+        await using (var cache = await AccountScopedLocalCache.CreateAsync(
+                         identity,
+                         NullLogger<AccountScopedLocalCache>.Instance))
+        {
+            await ApplySnapshotAsync(cache, conversation);
+            Assert.Equal(
+                LocalCacheOperationStatus.RevokedConversation,
+                await cache.RevokeConversationAccessAsync(conversation.Id));
+        }
+
+        AccountScopedLocalCache.ResetProcessStateForTest(identity);
+        await using var restarted = await AccountScopedLocalCache.CreateAsync(
+            identity,
+            NullLogger<AccountScopedLocalCache>.Instance);
+
+        var outcome = await restarted
+            .ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
+                new ConversationListResponse([], Complete: true));
+
+        Assert.Equal(LocalCacheOperationStatus.Ready, outcome.Status);
+        Assert.Equal([conversation.Id], outcome.RevokedConversationIds);
+    }
+
+    [Fact]
+    public async Task AuthoritativeSnapshot_WhenPersistenceFails_StillReturnsDeniedIdForPlatformClear()
+    {
+        var identity = CreateIdentity();
+        var conversation = CreateConversation();
+        await using var cache = await AccountScopedLocalCache.CreateAsync(
+            identity,
+            NullLogger<AccountScopedLocalCache>.Instance,
+            new SnapshotCommitFaultInjector());
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.RegisterAuthoritativeConversationAsync(conversation));
+
+        var outcome = await cache.ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
+            new ConversationListResponse([], Complete: true));
+
+        Assert.Equal(LocalCacheOperationStatus.FatalScope, outcome.Status);
+        Assert.Equal([conversation.Id], outcome.RevokedConversationIds);
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();
@@ -175,6 +247,20 @@ public sealed class NotificationRecoveryTests : IDisposable
         return Convert.ToInt32(command.ExecuteScalar());
     }
 
+    private static void Execute(AccountScopeIdentity identity, string sql)
+    {
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = identity.DatabasePath,
+            Mode = SqliteOpenMode.ReadWrite,
+            ForeignKeys = true,
+        }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
+    }
+
     private sealed record PreparedCache(
         AccountScopeIdentity Identity,
         AccountScopedLocalCache Cache,
@@ -188,5 +274,15 @@ public sealed class NotificationRecoveryTests : IDisposable
 
         public void BeforeNotificationHandledCommit() =>
             throw new InvalidOperationException("Injected notification handled commit failure.");
+    }
+
+    private sealed class SnapshotCommitFaultInjector : ILocalCacheFaultInjector
+    {
+        public void BeforeRevocationTombstone(Guid conversationId)
+        {
+        }
+
+        public void BeforeAuthoritativeSnapshotCommit() =>
+            throw new InvalidOperationException("Injected snapshot commit failure.");
     }
 }

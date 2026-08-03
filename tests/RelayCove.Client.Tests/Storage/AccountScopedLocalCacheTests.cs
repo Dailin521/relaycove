@@ -413,10 +413,14 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         var message = CreateMessage(conversation.Id) with { Content = "token-secret-content" };
         await RegisterAsync(cache, conversation);
         await cache.MergeIncomingMessageAsync(message);
+        var notifications = new RecordingNotificationRoundCoordinator();
         var sink = new LocalCacheRealtimeEventSink(
             cache,
             (_, _) => Task.CompletedTask,
-            sinkLogger);
+            foregroundConversationIdProvider: null,
+            sinkLogger,
+            requestReadThroughUpload: null,
+            notifications);
 
         await sink.OnNewMessageAsync(message with { Content = "conflicting-token-secret" }, CancellationToken.None);
         await sink.OnConversationAccessRevokedAsync(conversation.Id, CancellationToken.None);
@@ -426,6 +430,7 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         Assert.DoesNotContain(conversation.Id.ToString(), logs, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(message.Id.ToString(), logs, StringComparison.Ordinal);
         Assert.DoesNotContain(identity.DatabasePath, logs, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal([conversation.Id], notifications.RevokedConversations);
     }
 
     public void Dispose()

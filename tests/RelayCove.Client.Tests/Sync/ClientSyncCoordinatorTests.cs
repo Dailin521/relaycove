@@ -77,6 +77,43 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task ClientSync_WhenSnapshotRevokesConversation_ClearsNotificationAfterCommit()
+    {
+        var identity = CreateIdentity();
+        var revokedConversation = CreateConversation("Revoked notification");
+        var handler = new ScriptedHttpHandler();
+        handler.EnqueueResponse(Ok(new ConversationListResponse([], Complete: true)));
+        handler.EnqueueResponse(Ok(new SyncResponse([], 0, 0, HasMore: false)));
+        var notificationRounds = new RecordingNotificationRoundCoordinator();
+        await using var cache = await CreateCacheAsync(identity);
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([revokedConversation], Complete: true)));
+        var coordinator = CreateCoordinator(
+            identity,
+            handler,
+            new RecordingAuthenticationSession("current-token"),
+            cache,
+            notificationRoundCoordinator: notificationRounds);
+
+        var outcome = await coordinator.TriggerAsync(SyncReason.Reconnect);
+        await coordinator.DisposeAsync();
+
+        Assert.Equal(ClientSyncRunStatus.Completed, outcome.Status);
+        Assert.Equal(
+            [
+                "open:Reconnect",
+                $"revoke:{revokedConversation.Id:D}",
+                "snapshot:1",
+                "candidates:",
+                "close:1:Completed",
+                "dispose",
+            ],
+            notificationRounds.Events);
+    }
+
+    [Fact]
     public async Task ClientSync_WhenTwoPagesComplete_AppliesSnapshotAndKeepsUpperBound()
     {
         var identity = CreateIdentity();
@@ -958,7 +995,11 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
 
         public Task ConversationRevokedAsync(
             Guid conversationId,
-            CancellationToken cancellationToken) => Task.CompletedTask;
+            CancellationToken cancellationToken)
+        {
+            Events.Add($"revoke:{conversationId:D}");
+            return Task.CompletedTask;
+        }
 
         public ValueTask DisposeAsync()
         {

@@ -112,7 +112,8 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
                 "A realtime access revocation caused the local cache scope to enter fatal fail-closed state.");
         }
 
-        if (status == LocalCacheOperationStatus.RevokedConversation)
+        if (status is LocalCacheOperationStatus.RevokedConversation or
+            LocalCacheOperationStatus.FatalScope)
         {
             try
             {

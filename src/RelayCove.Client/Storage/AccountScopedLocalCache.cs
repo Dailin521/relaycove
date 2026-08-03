@@ -233,13 +233,23 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
 
     public async Task<LocalCacheOperationStatus> ApplyAuthoritativeConversationSnapshotAsync(
         ConversationListResponse snapshot,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        (await ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
+                snapshot,
+                cancellationToken)
+            .ConfigureAwait(false)).Status;
+
+    internal async Task<LocalAuthoritativeConversationSnapshotOutcome>
+        ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
+            ConversationListResponse snapshot,
+            CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         if (!TryValidateConversationSnapshot(snapshot))
         {
             logger.LogWarning("An authoritative conversation snapshot failed protocol validation.");
-            return LocalCacheOperationStatus.ProtocolError;
+            return LocalAuthoritativeConversationSnapshotOutcome.Failure(
+                LocalCacheOperationStatus.ProtocolError);
         }
 
         await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -885,15 +895,17 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
     }
 
-    private LocalCacheOperationStatus ApplyAuthoritativeConversationSnapshot(
+    private LocalAuthoritativeConversationSnapshotOutcome ApplyAuthoritativeConversationSnapshot(
         ConversationListResponse snapshot)
     {
         var conversationsById = snapshot.Conversations.ToDictionary(conversation => conversation.Id);
+        Guid[] missingConversationIds = [];
         try
         {
-            var missingConversationIds = LoadLocalConversationIds()
+            missingConversationIds = LoadLocalConversationIds()
                 .Concat(LoadRevocationIntentIds())
                 .Concat(authorizedConversations.Keys)
+                .Concat(deniedConversations.Keys)
                 .Distinct()
                 .Where(conversationId => !conversationsById.ContainsKey(conversationId))
                 .ToArray();
@@ -945,7 +957,9 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             Interlocked.Increment(ref authoritativeSnapshotRevision);
             invalidReadThroughConversations.Clear();
             logger.LogInformation("An authoritative conversation snapshot was committed.");
-            return LocalCacheOperationStatus.Ready;
+            return new LocalAuthoritativeConversationSnapshotOutcome(
+                LocalCacheOperationStatus.Ready,
+                missingConversationIds);
         }
         catch (Exception exception)
         {
@@ -954,7 +968,9 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             logger.LogCritical(
                 "Local cache scope entered fatal fail-closed state after an authoritative snapshot failure of type {ExceptionType}.",
                 exception.GetType().Name);
-            return LocalCacheOperationStatus.FatalScope;
+            return new LocalAuthoritativeConversationSnapshotOutcome(
+                LocalCacheOperationStatus.FatalScope,
+                missingConversationIds);
         }
     }
 

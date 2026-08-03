@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RelayCove.Client.Notifications;
 using RelayCove.Client.Storage;
@@ -192,6 +193,45 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task DisposeAsync_WhenPlatformFlightIsActive_CancelsFlightAndLeavesCandidate()
+    {
+        var prepared = await PrepareAsync(messageCount: 1);
+        await using var cache = prepared.Cache;
+        var entered = NewSignal();
+        var platformCanceled = false;
+        var platform = new FakeNotificationPlatform
+        {
+            SubmitAction = async (_, cancellationToken) =>
+            {
+                entered.TrySetResult();
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    platformCanceled = true;
+                    throw;
+                }
+
+                throw new InvalidOperationException("Unreachable.");
+            },
+        };
+        var coordinator = CreateCoordinator(prepared, platform);
+        var dispatch = coordinator.DispatchAsync(
+            prepared.MessageIds,
+            ClientNotificationDispatchMode.PerMessage);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await coordinator.DisposeAsync();
+        var outcome = await dispatch;
+
+        Assert.True(platformCanceled);
+        Assert.Equal(ClientNotificationDispatchStatus.Canceled, outcome.Status);
+        Assert.False(ReadNotificationHandled(prepared.Identity, 1));
+    }
+
+    [Fact]
     public async Task Revocation_DuringAcceptedSubmission_ClearsAfterAccessIsDenied()
     {
         var prepared = await PrepareAsync(messageCount: 1);
@@ -252,6 +292,36 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
         Assert.Equal(2, platform.Requests.Count);
     }
 
+    [Fact]
+    public async Task Dispatch_WhenPlatformThrows_DoesNotLogPayloadOrIdentity()
+    {
+        const string secret = "platform-secret-payload";
+        var prepared = await PrepareAsync(messageCount: 1);
+        await using var cache = prepared.Cache;
+        var logger = new RecordingLogger<ClientNotificationCoordinator>();
+        var platform = new FakeNotificationPlatform
+        {
+            SubmitAction = (_, _) => throw new InvalidOperationException(secret),
+        };
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            platform,
+            logger: logger);
+
+        var outcome = await coordinator.DispatchAsync(
+            prepared.MessageIds,
+            ClientNotificationDispatchMode.PerMessage);
+
+        Assert.Equal(ClientNotificationDispatchStatus.TransientFailure, outcome.Status);
+        var logs = string.Join(Environment.NewLine, logger.Entries);
+        Assert.DoesNotContain(secret, logs, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            prepared.Conversation.Id.ToString(),
+            logs,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("message 1", logs, StringComparison.Ordinal);
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();
@@ -297,14 +367,15 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
     private static ClientNotificationCoordinator CreateCoordinator(
         PreparedCache prepared,
         IClientNotificationPlatform platform,
-        Func<ClientNotificationSettingsSnapshot>? settingsProvider = null) =>
+        Func<ClientNotificationSettingsSnapshot>? settingsProvider = null,
+        ILogger<ClientNotificationCoordinator>? logger = null) =>
         new(
             prepared.Identity,
             prepared.Cache,
             platform,
             settingsProvider ?? (static () => ClientNotificationSettingsSnapshot.Enabled),
             static () => null,
-            NullLogger<ClientNotificationCoordinator>.Instance);
+            logger ?? NullLogger<ClientNotificationCoordinator>.Instance);
 
     private static MessageDto CreateMessage(long id, Guid conversationId) => new(
         id,
@@ -431,5 +502,23 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
                 }
             }
         }
+    }
+
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public ConcurrentQueue<string> Entries { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Entries.Enqueue(formatter(state, exception));
     }
 }

@@ -15,6 +15,7 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
     private readonly Func<Guid?> foregroundConversationIdProvider;
     private readonly Action requestReadThroughUpload;
     private readonly IClientNotificationRoundCoordinator notificationRoundCoordinator;
+    private readonly bool ownsNotificationRoundCoordinator;
     private readonly ILogger<ClientSyncCoordinator> logger;
     private readonly CancellationTokenSource lifetimeCancellation = new();
     private Task<ClientSyncRunOutcome>? activeFlight;
@@ -53,7 +54,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
         ILogger<ClientSyncCoordinator> logger,
         Func<Guid?> foregroundConversationIdProvider,
         Action? requestReadThroughUpload = null,
-        IClientNotificationRoundCoordinator? notificationRoundCoordinator = null)
+        IClientNotificationRoundCoordinator? notificationRoundCoordinator = null,
+        bool ownsNotificationRoundCoordinator = true)
         : this(
             identity,
             httpClient,
@@ -65,7 +67,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
             timeProvider: null,
             foregroundConversationIdProvider,
             requestReadThroughUpload,
-            notificationRoundCoordinator)
+            notificationRoundCoordinator,
+            ownsNotificationRoundCoordinator)
     {
     }
 
@@ -80,7 +83,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
         TimeProvider? timeProvider,
         Func<Guid?>? foregroundConversationIdProvider = null,
         Action? requestReadThroughUpload = null,
-        IClientNotificationRoundCoordinator? notificationRoundCoordinator = null)
+        IClientNotificationRoundCoordinator? notificationRoundCoordinator = null,
+        bool ownsNotificationRoundCoordinator = true)
     {
         ArgumentNullException.ThrowIfNull(identity);
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
@@ -90,6 +94,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
         this.requestReadThroughUpload = requestReadThroughUpload ?? (static () => { });
         this.notificationRoundCoordinator = notificationRoundCoordinator ??
             new NoOpClientNotificationRoundCoordinator();
+        this.ownsNotificationRoundCoordinator = notificationRoundCoordinator is null ||
+            ownsNotificationRoundCoordinator;
         if (!string.Equals(identity.Id, localCache.Identity.Id, StringComparison.Ordinal))
         {
             throw new ArgumentException(
@@ -174,7 +180,10 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
             await flight.ConfigureAwait(false);
         }
 
-        await notificationRoundCoordinator.DisposeAsync().ConfigureAwait(false);
+        if (ownsNotificationRoundCoordinator)
+        {
+            await notificationRoundCoordinator.DisposeAsync().ConfigureAwait(false);
+        }
         lifetimeCancellation.Dispose();
     }
 
@@ -296,14 +305,21 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
             return MapHttpStatus(snapshotResult.Status);
         }
 
-        var snapshotStatus = await localCache
-            .ApplyAuthoritativeConversationSnapshotAsync(
+        var snapshotOutcome = await localCache
+            .ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
                 snapshotResult.Value!,
                 cancellationToken)
             .ConfigureAwait(false);
-        if (snapshotStatus != LocalCacheOperationStatus.Ready)
+        foreach (var revokedConversationId in snapshotOutcome.RevokedConversationIds)
         {
-            return MapLocalStatus(snapshotStatus);
+            await notificationRoundCoordinator
+                .ConversationRevokedAsync(revokedConversationId, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+
+        if (snapshotOutcome.Status != LocalCacheOperationStatus.Ready)
+        {
+            return MapLocalStatus(snapshotOutcome.Status);
         }
 
         await notificationRoundCoordinator

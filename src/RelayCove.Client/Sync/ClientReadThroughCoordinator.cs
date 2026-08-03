@@ -11,6 +11,7 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
     private readonly object stateGate = new();
     private readonly AccountScopedLocalCache localCache;
     private readonly ClientReadThroughHttpTransport transport;
+    private readonly Func<Guid, CancellationToken, Task> conversationRevokedAsync;
     private readonly ILogger<ClientReadThroughCoordinator> logger;
     private readonly CancellationTokenSource lifetimeCancellation = new();
     private readonly Dictionary<Guid, long> acknowledgedTargets = new();
@@ -27,11 +28,14 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
         HttpClient httpClient,
         IClientAuthenticationSession authenticationSession,
         AccountScopedLocalCache localCache,
-        ILogger<ClientReadThroughCoordinator> logger)
+        ILogger<ClientReadThroughCoordinator> logger,
+        Func<Guid, CancellationToken, Task>? conversationRevokedAsync = null)
     {
         ArgumentNullException.ThrowIfNull(identity);
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        this.conversationRevokedAsync = conversationRevokedAsync ??
+            (static (_, _) => Task.CompletedTask);
         if (!string.Equals(identity.Id, localCache.Identity.Id, StringComparison.Ordinal))
         {
             throw new ArgumentException(
@@ -234,6 +238,13 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
                             .ConfigureAwait(false);
                         acknowledgedTargets.Remove(target.ConversationId);
                         suppressedConversations.Remove(target.ConversationId);
+                        if (revokeStatus is LocalCacheOperationStatus.RevokedConversation or
+                            LocalCacheOperationStatus.FatalScope)
+                        {
+                            await NotifyConversationRevokedAsync(target.ConversationId)
+                                .ConfigureAwait(false);
+                        }
+
                         if (revokeStatus == LocalCacheOperationStatus.RevokedConversation)
                         {
                             continue;
@@ -374,6 +385,22 @@ internal sealed class ClientReadThroughCoordinator : IClientAccountReadThroughCo
             };
 
         return Rank(candidate) > Rank(current) ? candidate : current;
+    }
+
+    private async Task NotifyConversationRevokedAsync(Guid conversationId)
+    {
+        try
+        {
+            await conversationRevokedAsync(conversationId, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Clearing notification state after read-through revocation failed; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
     }
 
     private void ThrowIfDisposed() =>

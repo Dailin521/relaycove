@@ -98,15 +98,6 @@ internal sealed class ClientAccountRuntimeFactory
                 .ConfigureAwait(false);
             await cache.AdoptNotificationStateAsync(cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            readThroughCoordinator = new ClientReadThroughCoordinator(
-                identity,
-                httpClient,
-                authenticationSession,
-                cache,
-                loggerFactory.CreateLogger<ClientReadThroughCoordinator>());
-            var readThroughRequestor = new ClientReadThroughRequestor(
-                readThroughCoordinator,
-                loggerFactory.CreateLogger<ClientReadThroughRequestor>());
             var notificationCoordinator = new ClientNotificationCoordinator(
                 identity,
                 cache,
@@ -120,6 +111,16 @@ internal sealed class ClientAccountRuntimeFactory
                 activityState,
                 loggerFactory.CreateLogger<ClientNotificationRoundCoordinator>());
             unownedNotificationRoundCoordinator = notificationRoundCoordinator;
+            readThroughCoordinator = new ClientReadThroughCoordinator(
+                identity,
+                httpClient,
+                authenticationSession,
+                cache,
+                loggerFactory.CreateLogger<ClientReadThroughCoordinator>(),
+                notificationRoundCoordinator.ConversationRevokedAsync);
+            var readThroughRequestor = new ClientReadThroughRequestor(
+                readThroughCoordinator,
+                loggerFactory.CreateLogger<ClientReadThroughRequestor>());
             syncCoordinator = new ClientSyncCoordinator(
                 identity,
                 httpClient,
@@ -128,8 +129,8 @@ internal sealed class ClientAccountRuntimeFactory
                 loggerFactory.CreateLogger<ClientSyncCoordinator>(),
                 activityState.GetForegroundConversationId,
                 readThroughRequestor.Request,
-                notificationRoundCoordinator);
-            unownedNotificationRoundCoordinator = null;
+                notificationRoundCoordinator,
+                ownsNotificationRoundCoordinator: false);
             var syncRequestor = new ClientAccountSyncRequestor(
                 syncCoordinator,
                 loggerFactory.CreateLogger<ClientAccountSyncRequestor>());
@@ -152,15 +153,18 @@ internal sealed class ClientAccountRuntimeFactory
                 realtimeSink,
                 loggerFactory.CreateLogger<ClientRealtimeConnection>());
 
-            return new ClientAccountRuntime(
+            var runtime = new ClientAccountRuntime(
                 identity,
                 authenticationSession,
                 realtimeConnection,
                 syncCoordinator,
                 readThroughCoordinator,
+                notificationRoundCoordinator,
                 cache,
                 activityState,
                 loggerFactory.CreateLogger<ClientAccountRuntime>());
+            unownedNotificationRoundCoordinator = null;
+            return runtime;
         }
         catch (Exception creationFailure)
         {
@@ -180,18 +184,18 @@ internal sealed class ClientAccountRuntimeFactory
                         cleanupFailures)
                     .ConfigureAwait(false);
             }
-            else if (unownedNotificationRoundCoordinator is not null)
-            {
-                await CaptureCleanupFailureAsync(
-                        () => unownedNotificationRoundCoordinator.DisposeAsync(),
-                        cleanupFailures)
-                    .ConfigureAwait(false);
-            }
-
             if (readThroughCoordinator is not null)
             {
                 await CaptureCleanupFailureAsync(
                         () => readThroughCoordinator.DisposeAsync(),
+                        cleanupFailures)
+                    .ConfigureAwait(false);
+            }
+
+            if (unownedNotificationRoundCoordinator is not null)
+            {
+                await CaptureCleanupFailureAsync(
+                        () => unownedNotificationRoundCoordinator.DisposeAsync(),
                         cleanupFailures)
                     .ConfigureAwait(false);
             }
