@@ -24,6 +24,9 @@ internal static class ClientAuthenticationResponseValidator
     private static bool IsRequiredText(string? value, int maximumLength) =>
         !string.IsNullOrWhiteSpace(value) && value.Length <= maximumLength;
 
+    public static bool IsValidRefreshToken(string? value) =>
+        IsValidToken(value);
+
     private static bool IsValidToken(string? value) =>
         !string.IsNullOrWhiteSpace(value) &&
         value.Length <= MaximumTokenLength &&
