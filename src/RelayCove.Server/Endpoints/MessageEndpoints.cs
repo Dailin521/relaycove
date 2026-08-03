@@ -14,6 +14,10 @@ public static class MessageEndpoints
         endpoints.MapPost("/api/messages", SendAsync).RequireAuthorization();
         endpoints.MapGet("/api/conversations/{conversationId:guid}/messages", GetHistoryAsync)
             .RequireAuthorization();
+        endpoints.MapGet(
+                "/api/conversations/{conversationId:guid}/messages/around/{messageId:long}",
+                GetAroundAsync)
+            .RequireAuthorization();
         endpoints.MapPost("/api/conversations/{conversationId:guid}/read", MarkReadAsync)
             .RequireAuthorization();
         return endpoints;
@@ -108,6 +112,39 @@ public static class MessageEndpoints
             : MessageError(context, result.Status);
     }
 
+    private static async Task<IResult> GetAroundAsync(
+        Guid conversationId,
+        long messageId,
+        [FromQuery] int? before,
+        [FromQuery] int? after,
+        HttpContext context,
+        MessageRequestValidator validator,
+        MessageQueryService queryService,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetActorUserId(context, out var actorUserId))
+        {
+            return AuthenticationRequired(context);
+        }
+
+        var errors = validator.ValidateAround(messageId, before, after);
+        if (errors.Count > 0)
+        {
+            return ValidationError(context, errors);
+        }
+
+        var result = await queryService.GetAroundAsync(
+            actorUserId,
+            conversationId,
+            messageId,
+            before ?? MessageRequestValidator.DefaultAroundSideCount,
+            after ?? MessageRequestValidator.DefaultAroundSideCount,
+            cancellationToken);
+        return result.Status == MessageOperationStatus.Success
+            ? Results.Ok(result.Value)
+            : MessageError(context, result.Status);
+    }
+
     private static IResult MessageError(HttpContext context, MessageOperationStatus status) =>
         status switch
         {
@@ -138,7 +175,7 @@ public static class MessageEndpoints
                 {
                     ["mentionUserIds"] = ["One or more mentioned users are unavailable in this conversation."],
                 }),
-            MessageOperationStatus.ReadTargetInvalid => ValidationError(
+            MessageOperationStatus.MessageTargetInvalid => ValidationError(
                 context,
                 new Dictionary<string, string[]>
                 {

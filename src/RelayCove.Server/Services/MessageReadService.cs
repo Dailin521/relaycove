@@ -48,7 +48,7 @@ public sealed class MessageReadService(
         if (!targetExists)
         {
             await transaction.RollbackAsync(cancellationToken);
-            return new MessageOperationResult<ConversationReadReceipt>(MessageOperationStatus.ReadTargetInvalid);
+            return new MessageOperationResult<ConversationReadReceipt>(MessageOperationStatus.MessageTargetInvalid);
         }
 
         var member = await dbContext.ConversationMembers.SingleOrDefaultAsync(

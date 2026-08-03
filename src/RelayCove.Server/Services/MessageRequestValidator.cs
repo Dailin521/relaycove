@@ -5,6 +5,9 @@ namespace RelayCove.Server.Services;
 
 public sealed class MessageRequestValidator
 {
+    public const int DefaultAroundSideCount = 20;
+    public const int MaximumAroundSideCount = 100;
+
     public IReadOnlyDictionary<string, string[]> ValidateSend(SendMessageRequest? request)
     {
         var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
@@ -94,6 +97,30 @@ public sealed class MessageRequestValidator
         if (request is null || request.MessageId <= 0)
         {
             errors["messageId"] = ["A positive message ID is required."];
+        }
+
+        return errors;
+    }
+
+    public IReadOnlyDictionary<string, string[]> ValidateAround(
+        long messageId,
+        int? before,
+        int? after)
+    {
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        if (messageId <= 0)
+        {
+            errors["messageId"] = ["A positive message ID is required."];
+        }
+
+        if (before is < 0 or > MaximumAroundSideCount)
+        {
+            errors["before"] = [$"Before must be between 0 and {MaximumAroundSideCount}."];
+        }
+
+        if (after is < 0 or > MaximumAroundSideCount)
+        {
+            errors["after"] = [$"After must be between 0 and {MaximumAroundSideCount}."];
         }
 
         return errors;
