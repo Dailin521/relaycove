@@ -22,18 +22,21 @@ internal sealed class ClientAccountRuntimeFactory
         IClientAccountRealtimeConnection> createRealtimeConnection;
     private readonly IClientNotificationPlatform notificationPlatform;
     private readonly Func<ClientNotificationSettingsSnapshot> notificationSettingsProvider;
+    private readonly IClientNotificationAttention notificationAttention;
 
     public ClientAccountRuntimeFactory(
         HttpClient httpClient,
         string accountDataRootDirectory,
-        ILoggerFactory loggerFactory)
+        ILoggerFactory loggerFactory,
+        IClientNotificationAttention? notificationAttention = null)
         : this(
             httpClient,
             accountDataRootDirectory,
             loggerFactory,
             createRealtimeConnection: null,
             notificationPlatform: null,
-            notificationSettingsProvider: null)
+            notificationSettingsProvider: null,
+            notificationAttention: notificationAttention)
     {
     }
 
@@ -48,7 +51,8 @@ internal sealed class ClientAccountRuntimeFactory
             ILogger<ClientRealtimeConnection>,
             IClientAccountRealtimeConnection>? createRealtimeConnection,
         IClientNotificationPlatform? notificationPlatform = null,
-        Func<ClientNotificationSettingsSnapshot>? notificationSettingsProvider = null)
+        Func<ClientNotificationSettingsSnapshot>? notificationSettingsProvider = null,
+        IClientNotificationAttention? notificationAttention = null)
     {
         this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         ArgumentException.ThrowIfNullOrWhiteSpace(accountDataRootDirectory);
@@ -56,6 +60,8 @@ internal sealed class ClientAccountRuntimeFactory
         this.loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
         this.createRealtimeConnection = createRealtimeConnection ??
             CreateDefaultRealtimeConnection;
+        this.notificationAttention = notificationAttention ??
+            NoOpClientNotificationAttention.Instance;
         if (notificationPlatform is null)
         {
             var windowsPlatform = new WindowsClientNotificationPlatform(
@@ -115,7 +121,8 @@ internal sealed class ClientAccountRuntimeFactory
                 notificationPlatform,
                 notificationSettingsProvider,
                 activityState.GetForegroundConversationId,
-                loggerFactory.CreateLogger<ClientNotificationCoordinator>());
+                loggerFactory.CreateLogger<ClientNotificationCoordinator>(),
+                notificationAttention);
             var notificationRoundCoordinator = new ClientNotificationRoundCoordinator(
                 cache,
                 notificationCoordinator,

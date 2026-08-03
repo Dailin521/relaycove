@@ -13,6 +13,7 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
     private readonly IClientNotificationPlatform platform;
     private readonly Func<ClientNotificationSettingsSnapshot> settingsProvider;
     private readonly Func<Guid?> foregroundConversationIdProvider;
+    private readonly IClientNotificationAttention notificationAttention;
     private readonly ILogger<ClientNotificationCoordinator> logger;
     private readonly SemaphoreSlim dispatchGate = new(1, 1);
     private readonly CancellationTokenSource lifetimeCancellation = new();
@@ -25,7 +26,8 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
         IClientNotificationPlatform platform,
         Func<ClientNotificationSettingsSnapshot> settingsProvider,
         Func<Guid?> foregroundConversationIdProvider,
-        ILogger<ClientNotificationCoordinator> logger)
+        ILogger<ClientNotificationCoordinator> logger,
+        IClientNotificationAttention? notificationAttention = null)
     {
         ArgumentNullException.ThrowIfNull(identity);
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
@@ -34,6 +36,8 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
             throw new ArgumentNullException(nameof(settingsProvider));
         this.foregroundConversationIdProvider = foregroundConversationIdProvider ??
             throw new ArgumentNullException(nameof(foregroundConversationIdProvider));
+        this.notificationAttention = notificationAttention ??
+            NoOpClientNotificationAttention.Instance;
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         if (!string.Equals(identity.Id, localCache.Identity.Id, StringComparison.Ordinal))
         {
@@ -48,7 +52,8 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
     public Task<ClientNotificationDispatchOutcome> DispatchAsync(
         IReadOnlyCollection<long> messageIds,
         ClientNotificationDispatchMode mode,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ClientNotificationAttentionGate? attentionGate = null)
     {
         ArgumentNullException.ThrowIfNull(messageIds);
         if (!Enum.IsDefined(mode))
@@ -67,7 +72,10 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
         lock (stateGate)
         {
             ThrowIfDisposed();
-            operation = ExecuteSerializedDispatchAsync(distinctIds, mode);
+            operation = ExecuteSerializedDispatchAsync(
+                distinctIds,
+                mode,
+                attentionGate ?? new ClientNotificationAttentionGate());
             TrackOperation(operation);
         }
 
@@ -122,7 +130,8 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
 
     private async Task<ClientNotificationDispatchOutcome> ExecuteSerializedDispatchAsync(
         IReadOnlyList<long> messageIds,
-        ClientNotificationDispatchMode mode)
+        ClientNotificationDispatchMode mode,
+        ClientNotificationAttentionGate attentionGate)
     {
         try
         {
@@ -135,7 +144,11 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
 
         try
         {
-            return await DispatchCoreAsync(messageIds, mode, lifetimeCancellation.Token)
+            return await DispatchCoreAsync(
+                    messageIds,
+                    mode,
+                    attentionGate,
+                    lifetimeCancellation.Token)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (lifetimeCancellation.IsCancellationRequested)
@@ -162,6 +175,7 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
     private async Task<ClientNotificationDispatchOutcome> DispatchCoreAsync(
         IReadOnlyList<long> messageIds,
         ClientNotificationDispatchMode mode,
+        ClientNotificationAttentionGate attentionGate,
         CancellationToken cancellationToken)
     {
         if (messageIds.Count == 0)
@@ -217,10 +231,12 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
         {
             ClientNotificationDispatchMode.PerMessage => await DispatchPerMessageAsync(
                     evaluation,
+                    attentionGate,
                     cancellationToken)
                 .ConfigureAwait(false),
             ClientNotificationDispatchMode.Summary => await DispatchSummaryAsync(
                     evaluation,
+                    attentionGate,
                     cancellationToken)
                 .ConfigureAwait(false),
             _ => throw new InvalidOperationException("Unexpected notification dispatch mode."),
@@ -229,6 +245,7 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
 
     private async Task<ClientNotificationDispatchOutcome> DispatchPerMessageAsync(
         LocalNotificationCandidateBatchOutcome initialEvaluation,
+        ClientNotificationAttentionGate attentionGate,
         CancellationToken cancellationToken)
     {
         var acceptedCount = 0;
@@ -279,6 +296,11 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
                 continue;
             }
 
+            if (result.Status == ClientNotificationPlatformStatus.Accepted)
+            {
+                TrySignalAttention(attentionGate);
+            }
+
             var markStatus = await localCache.MarkNotificationCandidatesHandledAsync(
                     [candidate.MessageId],
                     CancellationToken.None)
@@ -312,6 +334,7 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
 
     private async Task<ClientNotificationDispatchOutcome> DispatchSummaryAsync(
         LocalNotificationCandidateBatchOutcome initialEvaluation,
+        ClientNotificationAttentionGate attentionGate,
         CancellationToken cancellationToken)
     {
         var settings = GetSettings();
@@ -368,6 +391,11 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
                     initialEvaluation.HandledWithoutPlatformCount,
                 AcceptedCount: 0,
                 handledWithoutPlatformCount);
+        }
+
+        if (result.Status == ClientNotificationPlatformStatus.Accepted)
+        {
+            TrySignalAttention(attentionGate);
         }
 
         var candidateIds = current.Candidates.Select(candidate => candidate.MessageId).ToArray();
@@ -604,6 +632,25 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
         }
 
         return settings;
+    }
+
+    private void TrySignalAttention(ClientNotificationAttentionGate attentionGate)
+    {
+        if (!attentionGate.TryAcquire())
+        {
+            return;
+        }
+
+        try
+        {
+            notificationAttention.SignalAcceptedToast();
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Desktop notification attention failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
     }
 
     private static ClientNotificationMessage ToPlatformMessage(

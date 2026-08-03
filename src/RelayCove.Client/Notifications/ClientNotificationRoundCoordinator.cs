@@ -185,6 +185,7 @@ internal sealed class ClientNotificationRoundCoordinator :
             .Where(candidate => candidate.Value == IncomingMessageSource.Realtime)
             .Select(candidate => candidate.Key)
             .ToArray();
+        var attentionGate = new ClientNotificationAttentionGate();
         if (status != ClientSyncRunStatus.Completed)
         {
             if (realtimeIds.Length != 0)
@@ -192,7 +193,8 @@ internal sealed class ClientNotificationRoundCoordinator :
                 await DispatchAndObserveAsync(
                         realtimeIds,
                         ClientNotificationDispatchMode.PerMessage,
-                        CancellationToken.None)
+                        CancellationToken.None,
+                        attentionGate)
                     .ConfigureAwait(false);
             }
 
@@ -205,7 +207,8 @@ internal sealed class ClientNotificationRoundCoordinator :
                 await DispatchAndObserveAsync(
                         oldRecoveryIds,
                         ClientNotificationDispatchMode.Automatic,
-                        CancellationToken.None)
+                        CancellationToken.None,
+                        attentionGate)
                     .ConfigureAwait(false);
             }
 
@@ -217,7 +220,8 @@ internal sealed class ClientNotificationRoundCoordinator :
             await DispatchAndObserveAsync(
                     roundIds.Concat(oldRecoveryIds).ToArray(),
                     ClientNotificationDispatchMode.Summary,
-                    CancellationToken.None)
+                    CancellationToken.None,
+                    attentionGate)
                 .ConfigureAwait(false);
             return;
         }
@@ -227,7 +231,8 @@ internal sealed class ClientNotificationRoundCoordinator :
             await DispatchAndObserveAsync(
                     roundIds.ToArray(),
                     ClientNotificationDispatchMode.None,
-                    CancellationToken.None)
+                    CancellationToken.None,
+                    attentionGate)
                 .ConfigureAwait(false);
             return;
         }
@@ -235,7 +240,8 @@ internal sealed class ClientNotificationRoundCoordinator :
         await DispatchAndObserveAsync(
                 roundIds.Concat(oldRecoveryIds).ToArray(),
                 ClientNotificationDispatchMode.Automatic,
-                CancellationToken.None)
+                CancellationToken.None,
+                attentionGate)
             .ConfigureAwait(false);
     }
 
@@ -268,7 +274,8 @@ internal sealed class ClientNotificationRoundCoordinator :
     private async Task DispatchAndObserveAsync(
         IReadOnlyCollection<long> messageIds,
         ClientNotificationDispatchMode mode,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ClientNotificationAttentionGate? attentionGate = null)
     {
         if (messageIds.Count == 0)
         {
@@ -278,7 +285,7 @@ internal sealed class ClientNotificationRoundCoordinator :
         try
         {
             var outcome = await notificationCoordinator
-                .DispatchAsync(messageIds, mode, cancellationToken)
+                .DispatchAsync(messageIds, mode, cancellationToken, attentionGate)
                 .ConfigureAwait(false);
             if (outcome.Status is ClientNotificationDispatchStatus.LocalCacheFailure or
                 ClientNotificationDispatchStatus.TransientFailure)

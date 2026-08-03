@@ -1,24 +1,36 @@
+using System.ComponentModel;
 using System.Windows;
+using System.Windows.Interop;
 using Microsoft.Extensions.Logging;
 using RelayCove.Client.Activation;
+using RelayCove.Client.Desktop;
 using RelayCove.Client.Notifications;
+using RelayCove.Shared.Realtime;
 
 namespace RelayCove.Client;
 
-public partial class App : Application
+public partial class App : System.Windows.Application
 {
     private ILoggerFactory? loggerFactory;
     private WindowsSingleInstanceHost? singleInstanceHost;
     private ClientNotificationActivationRouter? notificationActivationRouter;
     private ClientActivationDispatcher? activationDispatcher;
     private WindowsClientNotificationHost? notificationHost;
+    private WindowsMainWindowState? mainWindowState;
+    private WindowsDesktopNotificationAttention? notificationAttention;
+    private ClientTrayHost? trayHost;
     private int lifecycleStopping;
+    private int explicitExitRequested;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         loggerFactory = LoggerFactory.Create(builder => builder.AddDebug());
+        mainWindowState = new WindowsMainWindowState();
+        notificationAttention = new WindowsDesktopNotificationAttention(
+            mainWindowState,
+            loggerFactory.CreateLogger<WindowsDesktopNotificationAttention>());
         notificationActivationRouter = new ClientNotificationActivationRouter(
             NavigateNotificationTarget,
             loggerFactory.CreateLogger<ClientNotificationActivationRouter>(),
@@ -63,6 +75,10 @@ public partial class App : Application
             return;
         }
 
+        // Establish close-to-tray before the window first becomes visible. Window.Show
+        // can pump native messages, so creating the tray immediately after it would
+        // still leave a narrow interval in which WM_CLOSE terminates the application.
+        TryStartTrayHost();
         EnsureMainWindow();
         if (notificationHost is null)
         {
@@ -74,6 +90,9 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         Interlocked.Exchange(ref lifecycleStopping, 1);
+        trayHost?.Dispose();
+        notificationAttention?.StopFlashing();
+        mainWindowState?.Update(nint.Zero, isForeground: false);
         activationDispatcher?.Dispose();
         notificationActivationRouter?.Dispose();
         notificationHost?.DetachForProcessExit();
@@ -82,6 +101,14 @@ public partial class App : Application
         singleInstanceHost?.Dispose();
         loggerFactory?.Dispose();
         base.OnExit(e);
+    }
+
+    protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
+    {
+        // A normal Close hides to the tray. Windows logoff and shutdown must instead
+        // flow through the real close path so they cannot leave the session waiting.
+        Interlocked.Exchange(ref explicitExitRequested, 1);
+        base.OnSessionEnding(e);
     }
 
     private static void NavigateNotificationTarget(
@@ -133,6 +160,37 @@ public partial class App : Application
         window.Activate();
     }
 
+    private async void RequestExplicitExit()
+    {
+        if (Volatile.Read(ref lifecycleStopping) != 0)
+        {
+            return;
+        }
+
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(RequestExplicitExit);
+            return;
+        }
+
+        if (Interlocked.Exchange(ref explicitExitRequested, 1) != 0)
+        {
+            return;
+        }
+
+        if (MainWindow is MainWindow window)
+        {
+            window.Close();
+            return;
+        }
+
+        Interlocked.Exchange(ref lifecycleStopping, 1);
+        trayHost?.Dispose();
+        notificationAttention?.StopFlashing();
+        mainWindowState?.Update(nint.Zero, isForeground: false);
+        await StopPrimaryAndShutdownAsync();
+    }
+
     private void QueueProcessActivation(WindowsProcessActivation activation)
     {
         if (Volatile.Read(ref lifecycleStopping) != 0)
@@ -161,10 +219,63 @@ public partial class App : Application
         }
 
         var window = new MainWindow();
+        window.SourceInitialized += OnMainWindowStateChanged;
+        window.Activated += OnMainWindowStateChanged;
+        window.Deactivated += OnMainWindowStateChanged;
+        window.StateChanged += OnMainWindowStateChanged;
+        window.IsVisibleChanged += OnMainWindowVisibilityChanged;
+        window.Closing += OnMainWindowClosing;
         window.Closed += OnMainWindowClosed;
         MainWindow = window;
         window.Show();
         return window;
+    }
+
+    private void OnMainWindowStateChanged(object? sender, EventArgs e)
+    {
+        _ = e;
+        if (sender is not MainWindow window)
+        {
+            return;
+        }
+
+        var handle = new WindowInteropHelper(window).Handle;
+        var isForeground = handle != nint.Zero &&
+            window.IsVisible &&
+            window.WindowState != WindowState.Minimized &&
+            window.IsActive;
+        mainWindowState?.Update(handle, isForeground);
+        if (isForeground)
+        {
+            notificationAttention?.StopFlashing();
+        }
+    }
+
+    private void OnMainWindowVisibilityChanged(
+        object sender,
+        DependencyPropertyChangedEventArgs e)
+    {
+        _ = e;
+        OnMainWindowStateChanged(sender, EventArgs.Empty);
+    }
+
+    private void OnMainWindowClosing(object? sender, CancelEventArgs e)
+    {
+        if (Volatile.Read(ref lifecycleStopping) != 0 ||
+            Volatile.Read(ref explicitExitRequested) != 0 ||
+            trayHost?.IsAvailable != true ||
+            sender is not MainWindow window)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        window.Hide();
+        mainWindowState?.Update(
+            new WindowInteropHelper(window).Handle,
+            isForeground: false);
+        loggerFactory?.CreateLogger<App>().LogInformation(
+            "The main window was hidden to the notification area.");
     }
 
     private async void OnMainWindowClosed(object? sender, EventArgs e)
@@ -176,9 +287,24 @@ public partial class App : Application
 
         if (sender is MainWindow window)
         {
+            window.SourceInitialized -= OnMainWindowStateChanged;
+            window.Activated -= OnMainWindowStateChanged;
+            window.Deactivated -= OnMainWindowStateChanged;
+            window.StateChanged -= OnMainWindowStateChanged;
+            window.IsVisibleChanged -= OnMainWindowVisibilityChanged;
+            window.Closing -= OnMainWindowClosing;
             window.Closed -= OnMainWindowClosed;
         }
 
+        trayHost?.Dispose();
+        trayHost = null;
+        notificationAttention?.StopFlashing();
+        mainWindowState?.Update(nint.Zero, isForeground: false);
+        await StopPrimaryAndShutdownAsync();
+    }
+
+    private async Task StopPrimaryAndShutdownAsync()
+    {
         var host = notificationHost;
         await ClientApplicationShutdown.StopPrimaryAsync(
             () => activationDispatcher?.Dispose(),
@@ -196,5 +322,45 @@ public partial class App : Application
             },
             () => singleInstanceHost?.Dispose());
         Shutdown();
+    }
+
+    private void TryStartTrayHost()
+    {
+        try
+        {
+            var candidate = new ClientTrayHost(
+                new WindowsFormsClientTrayIcon(),
+                action =>
+                {
+                    if (Dispatcher.CheckAccess())
+                    {
+                        action();
+                    }
+                    else
+                    {
+                        Dispatcher.BeginInvoke(action);
+                    }
+                },
+                RestoreMainWindow,
+                RequestExplicitExit,
+                new ClientTrayStatus(
+                    totalUnreadCount: 0,
+                    ConnectionState.Disconnected),
+                loggerFactory!.CreateLogger<ClientTrayHost>());
+            if (candidate.TryStart())
+            {
+                trayHost = candidate;
+            }
+            else
+            {
+                candidate.Dispose();
+            }
+        }
+        catch (Exception exception)
+        {
+            loggerFactory?.CreateLogger<App>().LogError(
+                "Creating the Windows tray icon failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
     }
 }

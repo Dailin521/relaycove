@@ -237,6 +237,129 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task DispatchPerMessage_WhenManyToastsAreAccepted_SignalsAttentionOnce()
+    {
+        var prepared = await PrepareAsync(messageCount: 3);
+        await using var cache = prepared.Cache;
+        var attention = new RecordingNotificationAttention();
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            new FakeNotificationPlatform(),
+            notificationAttention: attention);
+
+        var outcome = await coordinator.DispatchAsync(
+            prepared.MessageIds,
+            ClientNotificationDispatchMode.PerMessage);
+
+        Assert.Equal(ClientNotificationDispatchStatus.Completed, outcome.Status);
+        Assert.Equal(3, outcome.AcceptedCount);
+        Assert.Equal(1, attention.SignalCount);
+    }
+
+    [Fact]
+    public async Task Dispatch_WhenCallsShareRoundGate_SignalsAttentionOnceAcrossCalls()
+    {
+        var prepared = await PrepareAsync(messageCount: 2);
+        await using var cache = prepared.Cache;
+        var attention = new RecordingNotificationAttention();
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            new FakeNotificationPlatform(),
+            notificationAttention: attention);
+        var attentionGate = new ClientNotificationAttentionGate();
+
+        var first = await coordinator.DispatchAsync(
+            [1],
+            ClientNotificationDispatchMode.PerMessage,
+            attentionGate: attentionGate);
+        var second = await coordinator.DispatchAsync(
+            [2],
+            ClientNotificationDispatchMode.PerMessage,
+            attentionGate: attentionGate);
+
+        Assert.Equal(1, first.AcceptedCount);
+        Assert.Equal(1, second.AcceptedCount);
+        Assert.Equal(1, attention.SignalCount);
+    }
+
+    [Fact]
+    public async Task DispatchSummary_WhenToastIsAccepted_SignalsAttentionOnce()
+    {
+        var prepared = await PrepareAsync(messageCount: 12);
+        await using var cache = prepared.Cache;
+        var attention = new RecordingNotificationAttention();
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            new FakeNotificationPlatform(),
+            notificationAttention: attention);
+
+        var outcome = await coordinator.DispatchAsync(
+            prepared.MessageIds,
+            ClientNotificationDispatchMode.Summary);
+
+        Assert.Equal(ClientNotificationDispatchStatus.Completed, outcome.Status);
+        Assert.Equal(12, outcome.AcceptedCount);
+        Assert.Equal(1, attention.SignalCount);
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task Dispatch_WhenToastIsNotAccepted_DoesNotSignalAttention(int platformStatus)
+    {
+        var prepared = await PrepareAsync(messageCount: 1);
+        await using var cache = prepared.Cache;
+        var attention = new RecordingNotificationAttention();
+        var platform = new FakeNotificationPlatform
+        {
+            SubmitResult = new ClientNotificationPlatformResult(
+                (ClientNotificationPlatformStatus)platformStatus),
+        };
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            platform,
+            notificationAttention: attention);
+
+        _ = await coordinator.DispatchAsync(
+            prepared.MessageIds,
+            ClientNotificationDispatchMode.PerMessage);
+
+        Assert.Equal(0, attention.SignalCount);
+    }
+
+    [Fact]
+    public async Task Dispatch_WhenAttentionThrows_StillCommitsAcceptedToastAndLogsTypeOnly()
+    {
+        var prepared = await PrepareAsync(messageCount: 1);
+        await using var cache = prepared.Cache;
+        var attention = new RecordingNotificationAttention
+        {
+            SignalException = new InvalidOperationException("sensitive attention"),
+        };
+        var logger = new RecordingLogger<ClientNotificationCoordinator>();
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            new FakeNotificationPlatform(),
+            logger: logger,
+            notificationAttention: attention);
+
+        var outcome = await coordinator.DispatchAsync(
+            prepared.MessageIds,
+            ClientNotificationDispatchMode.PerMessage);
+
+        Assert.Equal(ClientNotificationDispatchStatus.Completed, outcome.Status);
+        Assert.Equal(1, outcome.AcceptedCount);
+        Assert.True(ReadNotificationHandled(prepared.Identity, 1));
+        Assert.Equal(1, attention.SignalCount);
+        Assert.Contains(
+            logger.Entries,
+            entry => entry.Contains(nameof(InvalidOperationException), StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            logger.Entries,
+            entry => entry.Contains("sensitive attention", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Dispatch_WhenCallerCancelsWait_DoesNotCancelAcceptedPlatformFlight()
     {
         var prepared = await PrepareAsync(messageCount: 1);
@@ -497,14 +620,16 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
         IClientNotificationPlatform platform,
         Func<ClientNotificationSettingsSnapshot>? settingsProvider = null,
         Func<Guid?>? foregroundConversationIdProvider = null,
-        ILogger<ClientNotificationCoordinator>? logger = null) =>
+        ILogger<ClientNotificationCoordinator>? logger = null,
+        IClientNotificationAttention? notificationAttention = null) =>
         new(
             prepared.Identity,
             prepared.Cache,
             platform,
             settingsProvider ?? (static () => ClientNotificationSettingsSnapshot.Enabled),
             foregroundConversationIdProvider ?? (static () => null),
-            logger ?? NullLogger<ClientNotificationCoordinator>.Instance);
+            logger ?? NullLogger<ClientNotificationCoordinator>.Instance,
+            notificationAttention);
 
     private static MessageDto CreateMessage(long id, Guid conversationId) => new(
         id,
@@ -649,6 +774,29 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
                 }
             }
         }
+    }
+
+    private sealed class RecordingNotificationAttention : IClientNotificationAttention
+    {
+        private int signalCount;
+        private int stopCount;
+
+        public Exception? SignalException { get; init; }
+
+        public int SignalCount => Volatile.Read(ref signalCount);
+
+        public int StopCount => Volatile.Read(ref stopCount);
+
+        public void SignalAcceptedToast()
+        {
+            Interlocked.Increment(ref signalCount);
+            if (SignalException is not null)
+            {
+                throw SignalException;
+            }
+        }
+
+        public void StopFlashing() => Interlocked.Increment(ref stopCount);
     }
 
     private sealed class RecordingLogger<T> : ILogger<T>

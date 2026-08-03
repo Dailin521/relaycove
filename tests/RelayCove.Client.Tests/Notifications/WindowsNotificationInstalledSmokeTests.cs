@@ -15,6 +15,12 @@ public sealed class WindowsNotificationInstalledSmokeTests
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
     [Fact]
+    public void NativeBuilder_WhenToastIsCreated_MutesAudioAndRoundTripsActivation()
+    {
+        AssertNativeBuilderActivationRoundTrip(Guid.NewGuid(), messageId: 42);
+    }
+
+    [Fact]
     public async Task InstalledRuntime_WhenExplicitlyEnabled_RegistersShowsQueriesAndRemoves()
     {
         if (!string.Equals(
@@ -136,6 +142,13 @@ public sealed class WindowsNotificationInstalledSmokeTests
         Assert.NotNull(launch);
         Assert.Contains(';', launch);
         Assert.DoesNotContain('&', launch);
+        var audio = XDocument.Parse(native.Payload)
+            .Descendants()
+            .Single(element => string.Equals(
+                element.Name.LocalName,
+                "audio",
+                StringComparison.Ordinal));
+        Assert.Equal("true", audio.Attribute("silent")?.Value);
         Assert.True(WindowsNotificationActivationCodec.TryDecode(launch, out var decoded));
         Assert.Equal(target, decoded);
     }

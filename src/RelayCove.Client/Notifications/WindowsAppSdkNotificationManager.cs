@@ -109,6 +109,10 @@ internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotification
         var appNotification = builder
             .AddText(notification.Title)
             .AddText(notification.Body)
+            // Per-message batches can contain several Toasts. Their built-in audio
+            // would bypass the per-round attention gate, so the gated MessageBeep is
+            // the sole sound source.
+            .MuteAudio()
             .BuildNotification();
         appNotification.Tag = notification.Tag;
         appNotification.Group = notification.Group;

@@ -118,6 +118,9 @@ public sealed class ClientNotificationRoundCoordinatorTests : IDisposable
         Assert.DoesNotContain(
             sink.Dispatches.SelectMany(dispatch => dispatch.MessageIds),
             messageId => messageId == 10);
+        var dispatches = sink.Dispatches.ToArray();
+        Assert.All(dispatches, dispatch => Assert.NotNull(dispatch.AttentionGate));
+        Assert.Same(dispatches[0].AttentionGate, dispatches[1].AttentionGate);
     }
 
     [Fact]
@@ -263,10 +266,11 @@ public sealed class ClientNotificationRoundCoordinatorTests : IDisposable
         public Task<ClientNotificationDispatchOutcome> DispatchAsync(
             IReadOnlyCollection<long> messageIds,
             ClientNotificationDispatchMode mode,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            ClientNotificationAttentionGate? attentionGate = null)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            dispatches.Enqueue(new DispatchRecord(messageIds.ToArray(), mode));
+            dispatches.Enqueue(new DispatchRecord(messageIds.ToArray(), mode, attentionGate));
             return Task.FromResult(new ClientNotificationDispatchOutcome(
                 ClientNotificationDispatchStatus.Completed,
                 messageIds.Count,
@@ -283,5 +287,6 @@ public sealed class ClientNotificationRoundCoordinatorTests : IDisposable
 
     private sealed record DispatchRecord(
         IReadOnlyList<long> MessageIds,
-        ClientNotificationDispatchMode Mode);
+        ClientNotificationDispatchMode Mode,
+        ClientNotificationAttentionGate? AttentionGate);
 }
