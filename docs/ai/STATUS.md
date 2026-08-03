@@ -5,7 +5,7 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API 已合入；阶段 4 文字消息存储、幂等发送、History 与会话聚合纵向切片已完成并待快进集成
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 文字消息存储/发送/History 已合入；read-through API 切片已开始
 - **最近验证通过的状态：** 文字消息 API 代码 `391aff08f3a48396e1a499e3e4cc9db2cc7fdc41`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — Full、format、156 项测试、文字消息顺序/并发/跨发送者幂等、撤权优先、单查询 History keyset、未读/入群水位/busy、真实 SQLite AUTOINCREMENT/migration up-down/约束/外键、既有会话与认证回归、model drift、漏洞审计与空白检查通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-4-text-message-api`：绿色完成，待仅快进 `agent/v1-integration`。
+- `agent/stage-4-message-read-api`：实现单调 read-through、Public 个人水位及撤权边界。
 
 ## 已完成
 
@@ -37,7 +37,7 @@
 
 ## 下一任务
 
-快进集成后开始阶段 4 后续 around/read 与固定上界 Sync 纵向切片。
+完成阶段 4 read-through API 后，继续 around 与固定上界 Sync 纵向切片。
 
 ## 阻塞项
 

@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 4
-ActiveTask: docs/ai/tasks/2026-08-03-stage-4-text-message-api.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-4-message-read-api.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 391aff08f3a48396e1a499e3e4cc9db2cc7fdc41
-LatestGreenIntegrationCommit: 4309fe4b729c5eef063bab4903def5776e57409e
-NextAction: 仅快进集成文字消息 API 后开始 around/read 与固定上界 Sync 切片
+LatestGreenIntegrationCommit: 1a957784f86f09f22d1ea8bd6edbfa382d7e9f7e
+NextAction: 冻结并实现单调 read-through、Public 个人水位与撤权边界
 ClaudeCalls: 22（软上限 24，硬上限 30）
 ClaudeCostUsd: 5.4229485 confirmed；另有十五次失败/中断调用费用 unavailable
 Blocker: none
