@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 6
-ActiveTask: docs/ai/tasks/2026-08-03-stage-6-local-access-cache.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-6-client-sync-page.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 9182c73b79aa9ec6fd09bd681d6e9aa19ccd35f0
-LatestGreenIntegrationCommit: f76b95fd80c88a4c3abe39ca84c4d1efebc44d9d
-NextAction: 快进集成阶段 6 本地缓存，随后启动客户端固定上界 Sync/统一合并切片
+LatestGreenIntegrationCommit: ef69d87ade1a0bc50e5a683ee3a751e664908f31
+NextAction: 实现 Complete 会话快照原子对账与 Sync 页/LastSyncCursor 同事务提交
 ClaudeCalls: 30（软上限 24，硬上限 30，已封顶）
 ClaudeCostUsd: 6.710481 confirmed；另有二十一次失败/中断调用费用 unavailable
 Blocker: none

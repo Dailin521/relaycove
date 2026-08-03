@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-6-local-access-cache`：`completed`，待仅快进集成并清理任务分支。
+- `agent/stage-6-client-sync`：实现 Complete 权威会话快照原子对账与固定上界 Sync 页/LastSyncCursor 同事务提交。
 
 ## 已完成
 

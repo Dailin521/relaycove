@@ -236,3 +236,14 @@
 - **理由：** 2.1.12 是同依赖家族的最小稳定补丁覆盖，满足 Microsoft.Data.Sqlite 的无上限最低版本范围，避免引入 3.x 大版本兼容风险，同时让审计实际解析到不受该 advisory 标记的原生包。
 - **影响：** 增加一个显式 PackageReference 以固定原有传递依赖，不新增运行时能力或架构边界；后续 Microsoft.Data.Sqlite 若提升最低安全 bundle，可删除冗余直接 pin，但必须以当时依赖图和漏洞审计为证据。
 - **来源：** `DEC-017`；`docs/ai/tasks/2026-08-03-stage-6-local-access-cache.md`；2026-08-03 NuGet `Microsoft.Data.Sqlite 10.0.10` 与 `SQLitePCLRaw.bundle_e_sqlite3/lib.e_sqlite3` 包元数据；GitHub Advisory GHSA-2m69-gcr7-jv3q；仓库真实 `dotnet list package --vulnerable --include-transitive` 输出。
+
+### DEC-020：Complete 会话快照与 Sync 页原子本地提交
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** 服务端固定上界 `/api/sync` 以及 `ConversationListResponse(Conversations, Complete=true)` 权威全集已完成，客户端账户缓存也已有唯一合并与撤权门，但 LocalCache 只能逐会话/逐消息各自提交，尚未消费完整快照或保存 LastSyncCursor。若客户端把部分列表当全集清理，或先推进 cursor 再逐条合并，会分别造成错误撤权和永久漏消息。
+- **决策：** 复用阶段 3 既有 `ConversationListResponse`，且只允许 `Complete=true` 快照驱动缺失撤权。客户端先校验完整/唯一 DTO，在 scope gate 下为缺失会话先建立 deny 与 durable intent，再以一个立即写事务 upsert 当前集合、清除权威重新加入者的 tombstone、tombstone+删除缺失项并清 intent；提交后才替换当前 store 授权集合，任何失败使 scope fatal。
+- **决策：** Sync 页在触库前校验固定上界全部响应不变量；本地立即写事务先确认磁盘 LastSyncCursor 等于调用方 expected cursor，再让本页每条消息调用与 Realtime 相同的事务内 merge 裁决，最后写 NextCursor。Inserted、PendingPromoted、Duplicate 可提交；Conflict、未知/撤权、陈旧 cursor 或协议错误整页回滚且不推进。后续页的 expected SnapshotUpperBound 必须与服务端响应完全相同，不能夹断、归零或另取上界。
+- **理由：** 显式 Complete 位把破坏性“缺失即撤权”限定在可证明全集；单一本地事务使 cursor 成为已持久化消息集合的提交水位，而不是网络接收水位。复用同一 merge 裁决维持 Realtime 先到、发送回声与补拉的统一幂等语义。
+- **影响：** 为既有 Shared wrapper 增加脱敏输出，新增 Client snapshot/page store API 和真实磁盘测试，不改服务端协议、数据库或 `/api/sync`。HttpClient retry、401 refresh、single-flight、后台触发和未读/通知在后续切片实现。
+- **来源：** 工程落地方案第 12.3–12.8、阶段 6；`DEC-003`、`DEC-013`、`DEC-017`、`DEC-018`；`docs/ai/tasks/2026-08-03-stage-6-client-sync-page.md`；当前 ConversationEndpoints、SyncEndpoints、SyncResponse 与 AccountScopedLocalCache 仓库事实。
