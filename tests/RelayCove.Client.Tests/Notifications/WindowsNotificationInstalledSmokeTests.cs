@@ -73,12 +73,52 @@ public sealed class WindowsNotificationInstalledSmokeTests
                 tag,
                 group,
                 expectedPresent: false));
+
+            var summaryTag = WindowsNotificationIdentity.SummaryTag;
+            var summaryGroup = WindowsNotificationIdentity.GetSummaryGroup(AccountScopeId);
+            var summary = await platform.SubmitAsync(
+                new ClientNotificationRequest(
+                    AccountScopeId,
+                    NotificationPolicy.Summary,
+                    [
+                        CreateMessage(messageId + 1, conversationId),
+                        CreateMessage(messageId + 2, conversationId),
+                    ]),
+                CancellationToken.None);
+            Assert.Equal(ClientNotificationPlatformStatus.Accepted, summary.Status);
+            Assert.True(await WaitForNotificationStateAsync(
+                summaryTag,
+                summaryGroup,
+                expectedPresent: true));
+
+            var clearSummary = await platform.ClearSummaryAsync(
+                AccountScopeId,
+                CancellationToken.None);
+            Assert.Equal(ClientNotificationPlatformStatus.Accepted, clearSummary.Status);
+            Assert.True(await WaitForNotificationStateAsync(
+                summaryTag,
+                summaryGroup,
+                expectedPresent: false));
         }
         finally
         {
             await AppNotificationManager.Default.RemoveAllAsync();
         }
     }
+
+    private static ClientNotificationMessage CreateMessage(
+        long messageId,
+        Guid conversationId) =>
+        new(
+            messageId,
+            conversationId,
+            ConversationType.Direct,
+            "RelayCove 安装态验证",
+            Guid.NewGuid(),
+            "RelayCove",
+            MessageType.Text,
+            "Windows App SDK 2.3.1 Summary 通知提交与清理验证。",
+            DateTimeOffset.UtcNow);
 
     private static async Task<bool> WaitForNotificationStateAsync(
         string tag,
