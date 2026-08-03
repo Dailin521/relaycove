@@ -282,7 +282,7 @@ $allowedFiles = @(
     'docs/ai/WORKFLOW.md',
     'docs/ai/tasks/2026-07-31-stage-0-sync-contract.md'
 )
-$changedFiles = @(git diff --name-only "$ExecutionBase..HEAD")
+$changedFiles = @(git -c core.quotepath=false diff --name-only "$ExecutionBase..HEAD")
 $unexpectedFiles = @($changedFiles | Where-Object { $_ -notin $allowedFiles })
 if ($unexpectedFiles.Count -gt 0) { throw "发现范围外文件：$($unexpectedFiles -join ', ')" }
 $missingFiles = @($allowedFiles | Where-Object { $_ -notin $changedFiles })
