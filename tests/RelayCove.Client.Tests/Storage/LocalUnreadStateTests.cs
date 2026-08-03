@@ -116,6 +116,50 @@ public sealed class LocalUnreadStateTests : IDisposable
     }
 
     [Fact]
+    public async Task MergeForegroundRealtime_WhenSnapshotAdvancedReadBoundary_DoesNotConsumeExcludedRows()
+    {
+        var identity = CreateIdentity();
+        await using var cache = await CreateCacheAsync(identity);
+        var initial = CreateConversation(lastMessageId: 60, lastReadMessageId: 50, unreadCount: 10);
+        await ApplySnapshotAsync(cache, initial);
+        var page = new SyncResponse(
+            Enumerable.Range(51, 10)
+                .Select(id => CreateMessage(id, initial.Id))
+                .ToArray(),
+            NextCursor: 60,
+            SnapshotUpperBound: 60,
+            HasMore: false);
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            (await cache.ApplySyncPageAsync(page, 0, null)).Status);
+        await ApplySnapshotAsync(cache, initial with
+        {
+            LastMessageId = 62,
+            LastReadMessageId = 60,
+            UnreadCount = 2,
+        });
+        Assert.Equal(
+            10,
+            Scalar(
+                identity,
+                "SELECT COUNT(*) FROM LocalMessages WHERE ServerMessageId <= 60 AND IsRead = 0;"));
+
+        var realtime = await cache.MergeIncomingMessageAsync(
+            CreateMessage(63, initial.Id),
+            new LocalMessageIngestionContext(IncomingMessageSource.Realtime, initial.Id));
+
+        Assert.Null(realtime.NotificationCandidateMessageId);
+        Assert.Equal(
+            0,
+            Scalar(
+                identity,
+                "SELECT COUNT(*) FROM LocalMessages WHERE ServerMessageId <= 60 AND IsRead = 0;"));
+        Assert.Equal(
+            new ConversationAttention(63, 60, PendingReadThroughMessageId: 63, 2),
+            ReadConversationAttention(identity, initial.Id));
+    }
+
+    [Fact]
     public async Task MergeDuplicate_WhenConversationBecomesForeground_ConsumesExistingUnreadOnce()
     {
         var identity = CreateIdentity();
@@ -478,6 +522,31 @@ public sealed class LocalUnreadStateTests : IDisposable
         var outcome = await cache.MergeIncomingMessageAsync(
             CreateMessage(1, conversation.Id),
             new LocalMessageIngestionContext(IncomingMessageSource.Realtime, conversation.Id));
+
+        Assert.Equal(LocalCacheOperationStatus.FatalScope, outcome.Status);
+        Assert.True(cache.IsFatal);
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+    }
+
+    [Fact]
+    public async Task ApplySyncPage_WhenSyncCursorIsCorrupt_FailsScopeClosedWithoutPartialWrite()
+    {
+        var identity = CreateIdentity();
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation(lastMessageId: 0, lastReadMessageId: 0, unreadCount: 0);
+        await ApplySnapshotAsync(cache, conversation);
+        ExecuteNonQuery(
+            identity,
+            """
+            INSERT INTO LocalAppState (Key, Value, UpdatedAt)
+            VALUES ('LastSyncCursor', 'invalid', '2026-08-03T00:00:00Z')
+            ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value;
+            """);
+
+        var outcome = await cache.ApplySyncPageAsync(
+            new SyncResponse([CreateMessage(1, conversation.Id)], 1, 1, HasMore: false),
+            0,
+            null);
 
         Assert.Equal(LocalCacheOperationStatus.FatalScope, outcome.Status);
         Assert.True(cache.IsFatal);

@@ -443,61 +443,73 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             return SyncPageOutcome(status);
         }
 
-        var outcome = ExecuteWriteWithRetry((connection, transaction) =>
+        SyncPageCommitOutcome outcome;
+        try
         {
-            if (ReadLastSyncCursor(connection, transaction) != expectedCursor)
+            outcome = ExecuteWriteWithRetry((connection, transaction) =>
             {
-                return TransactionResult<SyncPageCommitOutcome>.Rollback(
-                    SyncPageOutcome(LocalCacheOperationStatus.StaleCursor));
-            }
-
-            var mergeResults = new List<IncomingMessageMergeResult>(response.Messages.Count);
-            var notificationCandidateMessageIds = new List<long>(response.Messages.Count);
-            var foregroundReadThroughs = new ForegroundReadThroughAccumulator();
-            foreach (var message in response.Messages)
-            {
-                var mergeOutcome = MergeIncomingMessageInTransaction(
-                    connection,
-                    transaction,
-                    message,
-                    context,
-                    foregroundReadThroughs);
-                if (mergeOutcome.Status != LocalCacheOperationStatus.Ready)
+                if (ReadLastSyncCursor(connection, transaction) != expectedCursor)
                 {
                     return TransactionResult<SyncPageCommitOutcome>.Rollback(
-                        SyncPageOutcome(mergeOutcome.Status));
+                        SyncPageOutcome(LocalCacheOperationStatus.StaleCursor));
                 }
 
-                if (mergeOutcome.Result == IncomingMessageMergeResult.Conflict)
+                var mergeResults = new List<IncomingMessageMergeResult>(response.Messages.Count);
+                var notificationCandidateMessageIds = new List<long>(response.Messages.Count);
+                var foregroundReadThroughs = new ForegroundReadThroughAccumulator();
+                foreach (var message in response.Messages)
                 {
-                    return TransactionResult<SyncPageCommitOutcome>.Rollback(
-                        SyncPageOutcome(LocalCacheOperationStatus.Conflict));
+                    var mergeOutcome = MergeIncomingMessageInTransaction(
+                        connection,
+                        transaction,
+                        message,
+                        context,
+                        foregroundReadThroughs);
+                    if (mergeOutcome.Status != LocalCacheOperationStatus.Ready)
+                    {
+                        return TransactionResult<SyncPageCommitOutcome>.Rollback(
+                            SyncPageOutcome(mergeOutcome.Status));
+                    }
+
+                    if (mergeOutcome.Result == IncomingMessageMergeResult.Conflict)
+                    {
+                        return TransactionResult<SyncPageCommitOutcome>.Rollback(
+                            SyncPageOutcome(LocalCacheOperationStatus.Conflict));
+                    }
+
+                    mergeResults.Add(mergeOutcome.Result!.Value);
+                    if (mergeOutcome.NotificationCandidateMessageId is { } candidateMessageId)
+                    {
+                        notificationCandidateMessageIds.Add(candidateMessageId);
+                    }
                 }
 
-                mergeResults.Add(mergeOutcome.Result!.Value);
-                if (mergeOutcome.NotificationCandidateMessageId is { } candidateMessageId)
+                foreach (var readThrough in foregroundReadThroughs.Values)
                 {
-                    notificationCandidateMessageIds.Add(candidateMessageId);
+                    AdvanceForegroundReadThrough(
+                        connection,
+                        transaction,
+                        readThrough.LatestMessage,
+                        readThrough.UncountedMessageIds);
                 }
-            }
 
-            foreach (var readThrough in foregroundReadThroughs.Values)
-            {
-                AdvanceForegroundReadThrough(
-                    connection,
-                    transaction,
-                    readThrough.LatestMessage,
-                    readThrough.UncountedMessageIds);
-            }
-
-            WriteLastSyncCursor(connection, transaction, response.NextCursor);
-            return TransactionResult<SyncPageCommitOutcome>.Commit(
-                new SyncPageCommitOutcome(
-                    LocalCacheOperationStatus.Ready,
-                    mergeResults,
-                    response.NextCursor,
-                    notificationCandidateMessageIds));
-        });
+                WriteLastSyncCursor(connection, transaction, response.NextCursor);
+                return TransactionResult<SyncPageCommitOutcome>.Commit(
+                    new SyncPageCommitOutcome(
+                        LocalCacheOperationStatus.Ready,
+                        mergeResults,
+                        response.NextCursor,
+                        notificationCandidateMessageIds));
+            });
+        }
+        catch (InvalidDataException exception)
+        {
+            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state during sync-page attention processing after an error of type {ExceptionType}.",
+                exception.GetType().Name);
+            return SyncPageOutcome(LocalCacheOperationStatus.FatalScope);
+        }
 
         if (outcome.Status == LocalCacheOperationStatus.Conflict)
         {
@@ -653,6 +665,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             {
                 deniedConversations.TryAdd(message.ConversationId, 0);
                 authorizedConversations.TryRemove(message.ConversationId, out _);
+                authoritativeLastMessageIds.TryRemove(message.ConversationId, out _);
             }
 
             return new LocalCacheMergeOutcome(databaseStatus, null);
@@ -1025,6 +1038,10 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             SELECT COUNT(*)
             FROM LocalMessages
             WHERE ConversationId = $conversationId
+              AND ServerMessageId > (
+                  SELECT LastReadMessageId
+                  FROM LocalConversations
+                  WHERE Id = $conversationId)
               AND ServerMessageId <= $serverMessageId
               AND IsRead = 0
               AND SenderId <> $currentUserId;
@@ -1084,6 +1101,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         {
             deniedConversations.TryAdd(conversationId, 0);
             authorizedConversations.TryRemove(conversationId, out _);
+            authoritativeLastMessageIds.TryRemove(conversationId, out _);
             return new LocalCacheReadOutcome(LocalCacheOperationStatus.RevokedConversation, NoMessages);
         }
 
