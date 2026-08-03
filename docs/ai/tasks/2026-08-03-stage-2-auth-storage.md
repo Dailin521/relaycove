@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 2 — 建立用户与 refresh token 持久化安全基线
-- **状态：** 进行中
+- **状态：** 进行中（候选验证完成，等待独立复核）
 - **基准提交：** `0e5eefb0c44cdb024e4e455ff91b3eb542adfa8e`
 - **工作分支：** `agent/stage-2-auth-storage`
 - **相关方案章节：** `RelayCove_工程落地方案.md` 第 3.2、5.4、7.1、8.1、11.1、11.2、18.4、19.4、阶段 2；`DEC-001`、`DEC-004`、`DEC-005`
@@ -61,12 +61,12 @@
 
 ### 验收标准
 
-- [ ] 首个迁移只创建 Users、RefreshTokens 和 EF migration history，列类型、外键、唯一键与索引可由 SQLite metadata 验证。
-- [ ] `NormalizedUserName` 对 ASCII 大小写给出同一结果，数据库拒绝重复规范化名；原始名只能经实体方法更新且非法/不可见/Unicode 登录名被拒绝。
-- [ ] User/RefreshToken GUID 以小写 `D` 文本保存；时间以固定 UTC 文本保存、读回 `Kind=Utc`，非 UTC 写入失败，LINQ 过期比较正确。
-- [ ] RefreshTokens 只有 43 字符 `TokenHash`，SHA-256 结果稳定且唯一，非法长度被 CHECK 拒绝，User 删除可清理其 Token。
-- [ ] 同一密码两次 hash 不同，正确/错误/畸形验证与 dummy verify 不泄漏异常，并以本地结果保留 `SuccessRehashNeeded` 语义。
-- [ ] Server 运行时依赖不包含 Design 包资产；Shared 不新增依赖；包版本与官方证据一致且漏洞审计无已知漏洞。
+- [x] 首个迁移只创建 Users、RefreshTokens 和 EF migration history，列类型、外键、唯一键与索引可由 SQLite metadata 验证。
+- [x] `NormalizedUserName` 对 ASCII 大小写给出同一结果，数据库拒绝重复规范化名；原始名只能经实体方法更新且非法/不可见/Unicode 登录名被拒绝。
+- [x] User/RefreshToken GUID 以小写 `D` 文本保存；时间以固定 UTC 文本保存、读回 `Kind=Utc`，非 UTC 写入失败，LINQ 过期比较正确。
+- [x] RefreshTokens 只有 43 字符 `TokenHash`，SHA-256 结果稳定且唯一，非法长度被 CHECK 拒绝，User 删除可清理其 Token。
+- [x] 同一密码两次 hash 不同，正确/错误/畸形验证与 dummy verify 不泄漏异常，并以本地结果保留 `SuccessRehashNeeded` 语义。
+- [x] Server 运行时依赖不包含 Design 包资产；Shared 不新增依赖；包版本与官方证据一致且漏洞审计无已知漏洞。
 - [ ] Claude challenge、Fast、Full、迁移 up/down、文件白名单、`git diff --check` 和候选独立复核通过或按规则如实降级记录。
 
 ### 验证命令
@@ -102,7 +102,10 @@ Fast 后创建代码检查点，Full 后固定 ReviewHead 做候选复核；不�
 
 ### 修改摘要
 
-- 待实施后填写。
+- 新增 Users/RefreshTokens 实体、EF Core SQLite DbContext、首个 migration 及显式配置注册；启动不自动应用迁移。
+- 新增 ASCII 登录名规范化、IdentityV3 密码服务与确定性 refresh-token SHA-256 hasher；所有公共返回避免泄漏框架枚举或原始机密。
+- 用真实 SQLite 文件验证 migration up/down、pending model、schema、CHECK/unique/FK/cascade、固定 GUID/UTC 持久化与过期查询。
+- 发现并修复 EF 默认传递的 High SQLite 原生依赖漏洞，显式固定 `SQLitePCLRaw.lib.e_sqlite3 3.53.3`。
 
 ### 验证证据
 
@@ -113,19 +116,21 @@ Fast 后创建代码检查点，Full 后固定 ReviewHead 做候选复核；不�
 | `已验证` | 实现期 Fast | Debug 0 警告、0 错误；Server 28、Shared 9、Client/Updater 各 1，共 40 项测试通过 |
 | `已验证` | `dotnet ef migrations list` | 工具构建通过并列出唯一 `InitialAuthenticationStorage` 迁移；未对开发数据库执行更新 |
 | `已验证` | 依赖与发布审计 | 原生 SQLite 固定 `3.53.3` 后 8 个项目无已知漏洞；Server publish 的 deps 不含 EF Design，包含安全原生库 |
-| `未验证` | Full / 候选 SQLite 迁移 | 等代码检查点后执行 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full` | `ReviewHead=e5ea2174e915cac5a79d152efa2921d223fb3737`：format、Release 构建、40 项测试和 `git diff --check` 通过，0 警告、0 错误 |
+| `已验证` | SQLite migration up/down 与模型漂移 | Server 测试在真实临时 SQLite 文件上调用 `MigrateAsync` 与 `IMigrator.MigrateAsync("0")`，表/列、约束、级联和 `HasPendingModelChanges=false` 均通过 |
+| `未验证` | 当前分支后台进程烟测 | `Start-Process`/停止脚本被本机命令策略拒绝且未执行；M0 已验证 Server 监听，本任务以 Release 构建、发布与迁移测试覆盖新增路径，且开发 DB 文件不存在 |
 | `未验证` | 候选独立复核 | 待固定 ReviewHead 后执行 |
 
 ### 文件范围
 
-- 新增：待填写。
-- 修改：待填写。
+- 新增：`.config/dotnet-tools.json`，Server `Data/Entities`、`Data/Migrations`、`RelayCoveDbContext`、converter，`Services` 下用户名/密码/token hash 类型，以及四个 Server 测试文件。
+- 修改：Server `Program.cs`、项目文件、两个 appsettings；工程方案、`DECISIONS.md`、`STATUS.md`、`V1_EXECUTION.md`、`CLAUDE.md` 与本任务记录。
 - 删除：无。
 
 ### 决策与限制
 
 - 决策：challenge 后采用 ASCII 登录标识、固定 UTC/GUID 文本、hash-only refresh token、显式 IdentityV3 参数和显式迁移应用边界；详见 `DEC-005`。
-- 已知限制：本任务不提供任何可调用认证端点，也不证明 Token 签发或会话轮换安全性。
+- 已知限制：本任务不提供任何可调用认证端点，也不证明 Token 签发、会话轮换、WAL/备份或真实 Linux 迁移安全性；当前分支后台进程烟测受命令策略限制未重复执行。
 
 ### 下一步
 

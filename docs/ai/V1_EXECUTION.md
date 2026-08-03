@@ -11,9 +11,9 @@ CurrentStage: 阶段 1
 ActiveTask: docs/ai/tasks/2026-08-03-stage-2-auth-storage.md
 TaskStatus: running
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 35125ef4b1cba453416b915b6fb82fed0b12eb44
+LatestGreenCodeCommit: e5ea2174e915cac5a79d152efa2921d223fb3737
 LatestGreenIntegrationCommit: 0e5eefb0c44cdb024e4e455ff91b3eb542adfa8e
-NextAction: 按 DEC-005 实现认证存储、首个迁移、固定转换与密码/refresh token 哈希服务
+NextAction: 固定认证存储候选 ReviewHead 并执行一次 Claude/Codex 独立复核
 ClaudeCalls: 12（软上限 24，硬上限 30）
 ClaudeCostUsd: 1.67582775 confirmed；另有八次失败/中断调用费用 unavailable
 Blocker: none

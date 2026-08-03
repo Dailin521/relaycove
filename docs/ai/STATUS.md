@@ -6,9 +6,9 @@
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
 - **当前分支成果：** 同步契约、v1 外层账本、.NET 10 可构建骨架与认证共享契约已完成
-- **最近验证通过的状态：** 本地集成头 `0e5eefb0c44cdb024e4e455ff91b3eb542adfa8e`
-- **可构建状态：** `已验证` — 最终 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Fast/Full、format、12 项测试、文件白名单、依赖边界、漏洞审计与空白检查通过
+- **最近验证通过的状态：** 认证存储候选代码 `e5ea2174e915cac5a79d152efa2921d223fb3737`
+- **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
+- **自动化验证：** `已验证` — Fast/Full、format、40 项测试、真实 SQLite migration up/down、发布依赖、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
 - **本任务 Claude 调用：** `已验证` — 认证存储 challenge 的 MCP/限域 CLI 三次被时长上限截断；无工具 CLI 以 `claude-opus-5` / XHigh 返回 `REVISE`，有效发现已独立核对并写入 `DEC-005`，费用见 `V1_EXECUTION.md`
