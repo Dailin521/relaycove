@@ -120,3 +120,17 @@
 - **理由：** ASP.NET Core 的资源授权发生在资源加载后，需要命令/查询边界内的命令式动态判断；SQLite 同时只有一个待提交写者，非 deferred 事务可在权限复核前取得写锁，避免先授权后等待写锁造成的陈旧权限。EF Core 单查询避免 split query 在并发撤权下返回内部不一致结果，且 `Complete=true` 只用于确实完整的集合。统一 403 隐藏私有资源是否存在，409 则只表示已获授权上下文中的资源类型不支持该操作。
 - **影响：** Shared 增加创建、列表、会话和成员 DTO，以及 `ConversationTypeConflict`、`UserNotFound` 稳定错误码；Server 端点和测试必须覆盖 Direct 正反序/并发/恢复、事务内动态降权、撤权后 403、单查询全集和日志脱敏。阶段 4 修改成员初始化时必须与 Messages migration/服务同批验证，不能继续写常量 0。频道更新/删除、公共显式成员、用户目录、消息、SignalR 和客户端不在本切片。
 - **来源：** 工程落地方案第 7.2、7.3、8.2、10.2、阶段 3；`DEC-003`、`DEC-006`、`DEC-008`；`docs/ai/tasks/2026-08-03-stage-3-conversation-api.md`；2026-08-03 Microsoft.Data.Sqlite transactions、ASP.NET Core resource-based authorization 与 EF Core single/split query 官方文档。
+
+### DEC-010：不可变文字消息、幂等入库与历史分页边界
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** `DEC-003` 已冻结消息不可变、权限先于幂等回读和固定 ID 游标，但尚未定义首个可写 Message schema 的文本边界、外键删除、提及/回复语义、目标唯一冲突后的事务恢复，以及 History 页形状。若这些由各端点临时决定，会产生键复用误判、撤权绕过、ID 复用和历史翻页遗漏。
+- **决策：** `MessageType` 固定为 Text=1、Image=2、File=3、System=4；首个用户发送端点只开放 Text，其他已定义类型返回稳定 `409 MessageTypeUnsupported`。Text 按原字符串精确保存和比较，要求 1–4000 个有效 Unicode scalar value、至少一个非空白字符；允许 TAB/CR/LF，拒绝其他 Unicode Control，不 trim、不做 Unicode 或换行规范化。请求/响应 record 的 `ToString()` 必须隐藏正文和集合载荷，服务日志只记录 actor、conversation、message、client-message ID 与结果。
+- **决策：** Messages.Id 使用 SQLite `INTEGER PRIMARY KEY AUTOINCREMENT`，已提交 ID 永不复用且允许空洞。消息一经提交不编辑、不撤回、不删除；Conversation 硬删 Cascade 消息，Sender 与可空 Reply 使用 Restrict，MessageMention 随 Message Cascade、MentionedUser 使用 Restrict。Reply 必须大于 0 且属于同一 Conversation。MentionUserIds 是最多 20 个非空、无重复的无序集合，目标必须是正常用户且当前可访问该会话；AttachmentIds 在附件存储上线前必须为空。
+- **决策：** `POST /api/messages` 在 SQLite 非 deferred Serializable 写事务内先用 `ConversationAccessQuery` 复核当前权限，再验证 reply/mentions，然后尝试目标 INSERT；不得在 INSERT 成功前更新 Conversation 或产生其他持久副作用。只识别 `UNIQUE(SenderId, ClientMessageId)` 冲突；失败实体从 tracker 移除后在同一事务和发送者范围回读。会话、类型、精确正文、reply、附件集合与 mention 集合全部相等返回 200，不同返回 `409 IdempotencyKeyReuse`；新建消息成功后才更新 Conversation.UpdatedAt 并返回 201。撤权后旧键重放仍先返回 `403 ConversationAccessRevoked`。
+- **决策：** History 使用唯一消息 ID keyset：`beforeMessageId` 可空且排除边界，`limit` 默认 50、范围 1–100；数据库按 ID 降序取 `limit+1`，响应消息按 ID 升序。`HasMore=true` 时 `NextBeforeMessageId` 等于本页最旧 ID，否则为 null。权限过滤、ConversationId 和消息投影处于同一权威查询边界；不使用 offset。首个消息切片上线时，会话列表投影真实 LastMessageId，并按当前成员水位统计他人未读；Public 尚无状态行时水位为 0。
+- **决策：** Messages 上线的同一变更必须将私有成员首次加入/重新加入的常量 0 替换为事务内该会话当前 `MAX(Messages.Id)`；重复 upsert 不得重置现有水位。around、read-through、Search、Sync、SignalR、附件与客户端缓存仍由后续切片实现，不以占位结果冒充。
+- **理由：** AUTOINCREMENT 是 `DEC-003` 固定游标不复用的数据库前提；精确字符串与集合比较给并发重放唯一答案。权限先行和 INSERT 前无副作用封住撤权与失败插入窗口；ID keyset 对不可变消息稳定且有匹配索引，避免 offset 在并发新增下的漂移。
+- **影响：** 新 migration 必须验证旧认证/会话数据升级降级、AUTOINCREMENT 删除后不复用、目标唯一、CHECK、自引用/用户/会话外键与硬删行为。Shared/Server 测试必须固定 201/200/409、相同键并发、撤权旧键、精确正文/mention 集合、keyset 页边界和日志脱敏。允许消息编辑删除、增加写实例或更换数据库时必须新增决策并重审 `DEC-003`。
+- **来源：** 工程落地方案第 7.4、10.1/10.2、11.1/11.2、12.1–12.4、阶段 4；`DEC-002`、`DEC-003`、`DEC-009`；`docs/ai/tasks/2026-08-03-stage-4-text-message-api.md`；2026-08-03 SQLite AUTOINCREMENT、EF Core 10 SQLite value generation/keyset pagination 与 Microsoft.Data.Sqlite transactions 官方文档。

@@ -972,7 +972,7 @@ public sealed record ApiErrorResponse(
 ```
 
 - `Code` 是客户端分支的稳定字符串；`Message` 只用于人类诊断或显示，不是兼容性键。`Details` 的键使用 Web camelCase 请求字段名，每个字段可包含多个错误。
-- 第一批稳定错误码为 `ValidationFailed`、`AuthenticationFailed`、`AuthenticationRequired`、`AccessDenied`、`RateLimitExceeded`、`ServiceUnavailable`、`InternalServerError`、`UserNameAlreadyExists`、`UserNotFound`、`ConversationTypeConflict`、`SyncCursorInvalid`、`IdempotencyKeyReuse`、`ConversationAccessRevoked`。
+- 第一批稳定错误码为 `ValidationFailed`、`AuthenticationFailed`、`AuthenticationRequired`、`AccessDenied`、`RateLimitExceeded`、`ServiceUnavailable`、`InternalServerError`、`UserNameAlreadyExists`、`UserNotFound`、`ConversationTypeConflict`、`MessageTypeUnsupported`、`SyncCursorInvalid`、`IdempotencyKeyReuse`、`ConversationAccessRevoked`。
 - 未知用户名、密码错误和账号禁用统一返回 `401 AuthenticationFailed`，响应不得揭示账号是否存在或禁用；精确原因只进入不含机密的服务端诊断。
 - 缺少或无效认证返回 `401 AuthenticationRequired`；身份有效但普通权限不足返回 `403 AccessDenied`；已撤销会话权限继续使用 `403 ConversationAccessRevoked`。
 - 请求校验失败返回 `400 ValidationFailed`；同步游标和幂等键冲突使用各自已冻结的 `409` 错误码。错误响应、日志和 TraceId 都不得包含密码、完整 Token 或密钥。
@@ -1021,6 +1021,12 @@ public sealed record SendMessageRequest(
     IReadOnlyList<Guid> AttachmentIds,
     IReadOnlyList<Guid> MentionUserIds);
 ```
+
+阶段 4 首个发送切片只开放 `MessageType.Text`；Image/File 待附件存储上线，System 只由未来受控服务生成，其他类型请求返回 `409 MessageTypeUnsupported`。Text 精确保留，要求 1–4000 个有效 Unicode scalar value且非全空白，允许 TAB/CR/LF、拒绝其他控制字符，不 trim 或规范化。MentionUserIds 是最多 20 个当前可访问正常用户的无序唯一集合；ReplyToMessageId 必须属于同一会话；附件表上线前 AttachmentIds 必须为空。
+
+`POST /api/messages` 必须先在同一 SQLite 写事务复核权限和引用，再 INSERT-first；只有目标 `(SenderId, ClientMessageId)` 唯一冲突可进入精确载荷/集合回读。新建 201、相同重放 200、不同载荷 409，且 INSERT 成功前不得更新 Conversation 或留下其他持久副作用。
+
+History 响应使用 `MessageHistoryResponse(Messages, NextBeforeMessageId, HasMore)`；`beforeMessageId` 为排除边界，`limit` 默认 50、范围 1–100。查询按 ID 降序取 `limit+1`，响应按 ID 升序；有更多时下一 before 为本页最旧 ID，否则为 null。
 
 ### AttachmentDto
 
@@ -1162,6 +1168,8 @@ UNIQUE(SenderId, ClientMessageId)
 
 第一版消息一经写入不可编辑、撤回或删除。所有 GUID 在 SQLite 中使用 `Guid.ToString("D").ToLowerInvariant()` 的规范文本；未来若支持消息变更，必须新增独立变更流，不能复用只向前扫描的新消息游标。
 
+`Id` 必须实际生成 `INTEGER PRIMARY KEY AUTOINCREMENT`，保证已提交消息 ID 在数据库生命周期内不复用；空洞合法。Conversation 硬删级联 Messages，Sender 与 Reply 外键 Restrict。Text 的数据库 CHECK 固定 Type/Content 对应、1–4000 长度和非空；完整 Unicode scalar、空白和控制字符语义由唯一写入实体/服务防守。
+
 ### MessageMentions
 
 ```text
@@ -1170,6 +1178,8 @@ MentionedUserId             TEXT NOT NULL
 
 PRIMARY KEY (MessageId, MentionedUserId)
 ```
+
+MessageMention 随 Message 硬删级联，MentionedUser 外键 Restrict，避免用户硬删改变不可变消息载荷。
 
 ### Attachments
 

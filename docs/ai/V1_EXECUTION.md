@@ -14,8 +14,8 @@ IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: b9b004109183e0157bca5c16f0acdaf7a39c8940
 LatestGreenIntegrationCommit: 4309fe4b729c5eef063bab4903def5776e57409e
 NextAction: 冻结并实现文字消息存储、INSERT-first 幂等发送与 keyset 历史
-ClaudeCalls: 21（软上限 24，硬上限 30）
-ClaudeCostUsd: 5.4229485 confirmed；另有十四次失败/中断调用费用 unavailable
+ClaudeCalls: 22（软上限 24，硬上限 30）
+ClaudeCostUsd: 5.4229485 confirmed；另有十五次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -74,9 +74,10 @@ RequiredUserGate: none
 | 19 | 2026-08-03 | 管理员引导 | 前置 challenge | Opus / XHigh | `ChallengeHead=0480b01`；120 秒上限后因同一认证源优先级禁用 claude.ai connector 而超时，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库、NIST 与 Microsoft 官方证据收敛 `DEC-007` | `unavailable` |
 | 20 | 2026-08-03 | 会话成员存储 | 前置 challenge | Opus / XHigh | `ChallengeHead=cd90023`；120 秒窗口内因本机认证源优先级禁用 claude.ai connector 而失败，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库与 Microsoft EF Core 官方证据收敛 `DEC-008` | `unavailable` |
 | 21 | 2026-08-03 | 会话访问与成员 API | 前置 challenge | Opus / XHigh | `ChallengeHead=22d60cf`；60 秒窗口内因本机认证源优先级禁用 claude.ai connector 而超时，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库与 Microsoft SQLite/EF/资源授权官方证据收敛 `DEC-009` | `unavailable` |
+| 22 | 2026-08-03 | 文字消息 API | 前置 challenge | Opus / XHigh | `ChallengeHead=e677597`；60 秒窗口内因本机认证源优先级禁用 claude.ai connector 而超时，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库与 SQLite/EF Core 官方证据收敛 `DEC-010` | `unavailable` |
 
-- 调用计数：`21 / 24 soft / 30 hard`。
-- 已确认费用合计：`$5.4229485`；其余十四次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`22 / 24 soft / 30 hard`。
+- 已确认费用合计：`$5.4229485`；其余十五次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - Claude 恢复可用后，每次调用必须记录返回的 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；达到调用或费用硬上限时降级为 Codex 独立复核，不停止开发。
 
 ## 阻塞与用户 Gate

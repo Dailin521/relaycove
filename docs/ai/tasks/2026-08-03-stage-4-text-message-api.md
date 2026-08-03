@@ -20,15 +20,16 @@
 - `已验证`：EF Core 10 SQLite 对非复合数字主键默认启用 AUTOINCREMENT；SQLite 官方保证 AUTOINCREMENT 不复用已提交 ROWID 且单调增加但允许空洞，符合固定消息游标前提。
 - `已验证`：EF Core 官方建议 ID keyset/seek 分页并要求完全唯一排序；History 以单调唯一消息 ID 为游标，无需 offset。
 - `已验证`：当前没有 Attachments 表、消息推送器、around/read/Sync 端点或客户端缓存；本切片不得伪造这些能力。
+- `已验证`：Claude XHigh challenge #22 在 60 秒窗口内因本机认证源优先级禁用 claude.ai connector 而超时，没有返回模型、workspace、费用或结论；按用户要求不重试，不阻塞 Codex 依据仓库与官方证据冻结 `DEC-010`。
 
-### 假设
+### 已冻结契约
 
-- `假设`：Shared 固定 `MessageType` 为 Text=1、Image=2、File=3、System=4；本切片的用户发送只接受 Text。Image/File 等附件存储完成后开放，System 只允许未来受控服务端生成；非 Text 请求返回稳定 `409 MessageTypeUnsupported`。
-- `假设`：Text `Content` 保留原始有效 UTF-16/换行语义，要求 1–4000 Unicode scalar value且至少一个非空白字符；允许 `TAB/CR/LF`，拒绝其他 Unicode Control。幂等比较使用保存后的精确字符串，不 trim、不规范化。
-- `假设`：MentionUserIds 作为无序集合比较，最多 20 个、不得含空值或重复；目标必须是当前正常用户且对该会话有内容访问权。ReplyToMessageId 必须大于 0并属于同一会话。附件 ID 列表在本切片必须为空。
-- `假设`：Messages 的 Sender/User 与 Reply 外键使用 Restrict，Conversation 硬删 Cascade；MessageMentions 随 Message 硬删 Cascade、MentionedUser 使用 Restrict，避免用户硬删改变不可变消息载荷。常规会话仍只软删，消息不提供编辑、撤回或删除端点。
-- `假设`：`GET /api/conversations/{id}/messages?beforeMessageId=&limit=` 默认 50、范围 1..100，以 `Id < before` 读取 `limit+1` 条；响应按 ID 升序，`NextBeforeMessageId` 指向本页最旧 ID，`HasMore` 明确是否可继续。
-- `假设`：发送/历史 MessageDto 的 Attachments 在本切片固定为空集合；新消息提交时更新 Conversation.UpdatedAt。会话列表的 LastMessageId 取当前最大 ID，UnreadCount 只统计他人且超过当前成员水位的消息；Public 无状态行时水位为 0。
+- `已验证`：Shared 固定 `MessageType` 为 Text=1、Image=2、File=3、System=4；本切片的用户发送只接受 Text。Image/File 等附件存储完成后开放，System 只允许未来受控服务端生成；非 Text 请求返回稳定 `409 MessageTypeUnsupported`。
+- `已验证`：Text `Content` 保留原始有效 UTF-16/换行语义，要求 1–4000 Unicode scalar value且至少一个非空白字符；允许 `TAB/CR/LF`，拒绝其他 Unicode Control。幂等比较使用保存后的精确字符串，不 trim、不规范化。
+- `已验证`：MentionUserIds 作为无序集合比较，最多 20 个、不得含空值或重复；目标必须是当前正常用户且对该会话有内容访问权。ReplyToMessageId 必须大于 0并属于同一会话。附件 ID 列表在本切片必须为空。
+- `已验证`：Messages 的 Sender/User 与 Reply 外键使用 Restrict，Conversation 硬删 Cascade；MessageMentions 随 Message 硬删 Cascade、MentionedUser 使用 Restrict，避免用户硬删改变不可变消息载荷。常规会话仍只软删，消息不提供编辑、撤回或删除端点。
+- `已验证`：`GET /api/conversations/{id}/messages?beforeMessageId=&limit=` 默认 50、范围 1..100，以 `Id < before` 读取 `limit+1` 条；响应按 ID 升序，`NextBeforeMessageId` 指向本页最旧 ID，`HasMore` 明确是否可继续。
+- `已验证`：发送/历史 MessageDto 的 Attachments 在本切片固定为空集合；新消息提交时更新 Conversation.UpdatedAt。会话列表的 LastMessageId 取当前最大 ID，UnreadCount 只统计他人且超过当前成员水位的消息；Public 无状态行时水位为 0。
 
 ### 范围
 
