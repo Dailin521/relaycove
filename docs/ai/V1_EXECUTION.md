@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 5
 ActiveTask: docs/ai/tasks/2026-08-03-stage-5-client-realtime.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 709a2b5a6ccd54f2a293070998c6f98734ae3d93
+LatestGreenCodeCommit: c3717c9455a98cbf9014e8cbd37ef2f635261cc3
 LatestGreenIntegrationCommit: 8c811cfe69e09f919d27114b543d23c683b846b9
-NextAction: 实现客户端 SignalR 接收、串行 sink 和连接状态边界
+NextAction: 仅快进集成客户端实时绿色提交，然后建立本地缓存与撤权 fail-closed 基础
 ClaudeCalls: 29（软上限 24，硬上限 30）
 ClaudeCostUsd: 6.438276 confirmed；另有二十一次失败/中断调用费用 unavailable
 Blocker: none
@@ -52,6 +52,7 @@ RequiredUserGate: none
 - 当前固定上界 Sync API 代码检查点 `9d87ac2ee94cc83005e15ca3b095dcc5ea8530dd` 已通过 Full、197 项测试、deferred 只读快照、固定上界/空洞前进、Public/Private/Direct 动态权限、mentions/两条查询、日志、model drift 与漏洞审计；Claude #25 无结论，已如实降级记录 Codex 固定差异复核。
 - 当前 SignalR NewMessage 代码检查点 `5556899ca699bab097acae0003983943b4ca92d9` 已通过 Full、202 项测试、认证/query-token 日志边界、Public/Private/Direct 分组与当前收件人、完整 DTO、撤权旧连接、顺序/并发幂等、transport 故障隔离、model drift 与漏洞审计；Claude #26 无结论，已如实降级记录 Codex 固定差异复核。
 - 当前 SignalR ConversationAccessRevoked 代码检查点 `709a2b5a6ccd54f2a293070998c6f98734ae3d93` 已通过 Full、206 项测试、多连接目标路由、其他用户隔离、撤权后生产 NewMessage 停止、并发/重复一次事件、负向零事件、transport 故障隔离、model drift 与漏洞审计；固定差异复核无剩余发现。
+- 当前客户端 SignalR 代码检查点 `c3717c9455a98cbf9014e8cbd37ef2f635261cc3` 已通过 Full、220 项测试、真实认证 TestServer/LongPolling、反向代理子路径、动态 token、完整 DTO、撤权 FIFO 屏障、初始失败重启、自动重连状态、sink 故障隔离、并发生命周期和回调内 Stop/Dispose；关键竞争测试 Release 连续 5 轮通过，model drift 与漏洞审计无异常，Claude #29 无结论且已降级 Codex 固定差异复核。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确授权绿色任务的常规 push、合入集成分支与任务分支清理，无需二次确认；`main`、Tag、Release、真实发布和生产部署仍须满足对应里程碑与发布 Gate，不由该授权自动放宽。
 

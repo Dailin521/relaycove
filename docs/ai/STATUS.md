@@ -5,10 +5,10 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 SignalR NewMessage 与服务端 ConversationAccessRevoked 已完成
-- **最近验证通过的状态：** SignalR ConversationAccessRevoked 集成 `8c811cfe69e09f919d27114b543d23c683b846b9`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片，以及阶段 5 服务端/客户端 SignalR 实时边界已完成
+- **最近验证通过的状态：** 客户端 SignalR 接收与连接状态代码 `c3717c9455a98cbf9014e8cbd37ef2f635261cc3`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Full、format、206 项测试、SignalR 认证/分组/用户路由/NewMessage/ConversationAccessRevoked/撤权后当前收件人、并发幂等/故障隔离/日志、既有消息/会话/认证回归、model drift、漏洞审计与空白检查通过
+- **自动化验证：** `已验证` — Full、format、220 项测试、服务端 SignalR 认证/分组/用户路由/当前收件人/撤权，客户端真实认证接收/动态 token/FIFO 撤权屏障/重连状态/并发生命周期/故障隔离/日志，以及既有消息/会话/认证回归、model drift、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
 - **最近 Claude 调用：** `未验证` — 本机只读 CLI #28 已证明 API 可调用 `claude-opus-5`；随后客户端实时边界 XHigh challenge #29 的 `claude_second_brain` MCP wrapper 仍因认证源优先级在 60 秒超时，无模型、费用或结论；两者均不替代 Codex 与自动化证据
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-5-client-realtime`：实现客户端 SignalR 接收、串行 sink 和连接状态边界。
+- 客户端实时切片已完成验证，正在交接至 `agent/v1-integration` 并调查阶段 6 本地缓存与撤权 fail-closed 基础。
 
 ## 已完成
 
@@ -39,10 +39,11 @@
 - 固定上界 Sync、deferred SQLite 只读快照、动态权限过滤、权限空洞与单调权威游标（`DEC-013`）
 - SignalR 认证 Hub、`sub` 用户标识、每连接权威分组、当前收件人快照和提交后 NewMessage 尽力投递（`DEC-014`）
 - 私有成员真实删除提交结果、目标用户全部连接 ConversationAccessRevoked、并发一次事件与发布失败隔离（`DEC-015`）
+- 客户端动态 token SignalR、确定连接状态、默认重连与 NewMessage/撤权 FIFO 单一 sink（`DEC-016`）
 
 ## 下一任务
 
-完成客户端 SignalR 接收、连接生命周期和状态切片，随后接入本地唯一合并与撤权 deny-set。
+建立 AccountScopeId 隔离的本地 SQLite、撤权 tombstone/deny-set 与统一消息合并入口。
 
 ## 阻塞项
 
