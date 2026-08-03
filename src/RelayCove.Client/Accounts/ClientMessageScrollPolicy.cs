@@ -36,6 +36,17 @@ internal static class ClientMessageScrollPolicy
         var appended = nextLatestMessageId is { } nextLatest &&
             previousLatestMessageId is { } previousLatest &&
             nextLatest > previousLatest;
+        var sameWindow = previousOldestMessageId == nextOldestMessageId &&
+            previousLatestMessageId == nextLatestMessageId;
+        if (sameWindow)
+        {
+            return new ClientMessageScrollDecision(
+                PreservePrependOffset: true,
+                ScrollToMessageId: null,
+                ShowNewMessageIndicator: false,
+                ObservedThroughMessageId: null);
+        }
+
         if (prepended)
         {
             return new ClientMessageScrollDecision(

@@ -17,6 +17,7 @@ public partial class MainWindow : Window
     private long lastMessageRevision;
     private Guid? displayedMessageConversationId;
     private long? displayedTargetMessageId;
+    private ClientMessageListSnapshot? displayedMessageSnapshot;
     private bool suppressSelectionRequest;
     private bool applyingMessageSnapshot;
 
@@ -205,7 +206,10 @@ public partial class MainWindow : Window
         applyingMessageSnapshot = true;
         try
         {
-            MessageList.ItemsSource = snapshot.Messages;
+            if (!previousItems.SequenceEqual(snapshot.Messages))
+            {
+                MessageList.ItemsSource = snapshot.Messages;
+            }
             MessageList.IsEnabled = snapshot.Status == ClientMessageListStatus.Ready;
             MessageList.Visibility = snapshot.Messages.Count == 0
                 ? Visibility.Collapsed
@@ -243,6 +247,7 @@ public partial class MainWindow : Window
             NewMessageIndicatorButton.Visibility = decision.ShowNewMessageIndicator
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            displayedMessageSnapshot = snapshot;
         }
         finally
         {
@@ -456,11 +461,11 @@ public partial class MainWindow : Window
             NewMessageIndicatorButton.Visibility = Visibility.Collapsed;
         }
 
-        var snapshot = accountShell?.MessageList;
+        var snapshot = displayedMessageSnapshot;
         if (snapshot?.Status == ClientMessageListStatus.Ready &&
             snapshot.ConversationId is { } conversationId)
         {
-            accountShell?.AcknowledgeMessageSnapshotApplied(
+            accountShell?.AcknowledgeMessageViewportChanged(
                 conversationId,
                 snapshot.Revision,
                 isAtLatestRegion ? snapshot.LatestMessageId : null,
@@ -472,7 +477,7 @@ public partial class MainWindow : Window
     {
         _ = sender;
         _ = e;
-        var snapshot = accountShell?.MessageList;
+        var snapshot = displayedMessageSnapshot;
         if (snapshot?.Status != ClientMessageListStatus.Ready ||
             snapshot.ConversationId is not { } conversationId ||
             snapshot.Messages.Count == 0)
@@ -482,7 +487,7 @@ public partial class MainWindow : Window
 
         MessageList.ScrollIntoView(snapshot.Messages[^1]);
         NewMessageIndicatorButton.Visibility = Visibility.Collapsed;
-        accountShell?.AcknowledgeMessageSnapshotApplied(
+        accountShell?.AcknowledgeMessageViewportChanged(
             conversationId,
             snapshot.Revision,
             snapshot.LatestMessageId,

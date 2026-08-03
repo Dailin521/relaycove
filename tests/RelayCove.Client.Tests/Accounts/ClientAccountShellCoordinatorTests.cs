@@ -787,6 +787,138 @@ public sealed class ClientAccountShellCoordinatorTests
     }
 
     [Fact]
+    public async Task MessageRefresh_WhenLocalScopeFails_HidesMessagesAndClearsActivity()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var message = CreateMessage(10, conversationId);
+        var readCount = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 1),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                Interlocked.Increment(ref readCount) == 1
+                    ? new LocalMessagePageReadOutcome(
+                        LocalCacheOperationStatus.Ready,
+                        id,
+                        [message],
+                        NextBeforeMessageId: null,
+                        HasMoreBefore: false)
+                    : new LocalMessagePageReadOutcome(
+                        LocalCacheOperationStatus.FatalScope,
+                        id,
+                        [message],
+                        NextBeforeMessageId: null,
+                        HasMoreBefore: false)),
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.UpdateActivity(new ClientActivitySnapshot(
+            true,
+            false,
+            true,
+            OpenConversationId: null));
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready && !coordinator.MessageList.IsLoading);
+        var applied = coordinator.MessageList;
+        coordinator.AcknowledgeMessageSnapshotApplied(
+            conversationId,
+            applied.Revision,
+            observedThroughMessageId: 10,
+            isAtLatestRegion: true);
+        await WaitUntilAsync(() => runtime.LastActivity?.OpenConversationId == conversationId);
+
+        runtime.RaiseConversationStateChanged(1);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.FatalScope);
+
+        Assert.Empty(coordinator.MessageList.Messages);
+        Assert.False(coordinator.MessageList.HasMoreBefore);
+        Assert.False(coordinator.MessageList.HasMoreAfter);
+        Assert.Null(coordinator.MessageList.TargetMessageId);
+        Assert.Null(runtime.LastActivity!.OpenConversationId);
+    }
+
+    [Fact]
+    public async Task MessageViewportChanged_WhenNewerSnapshotIsNotApplied_DoesNotAdvanceRead()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var firstMessage = CreateMessage(10, conversationId);
+        var secondMessage = CreateMessage(11, conversationId);
+        var includeSecondMessage = 0;
+        var markedMessageIds = new ConcurrentQueue<long>();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 1),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    Volatile.Read(ref includeSecondMessage) == 0
+                        ? [firstMessage]
+                        : [firstMessage, secondMessage],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            MarkRenderedAction = (_, messageId, _) =>
+            {
+                markedMessageIds.Enqueue(messageId);
+                return Task.FromResult(LocalCacheOperationStatus.Ready);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.UpdateActivity(new ClientActivitySnapshot(
+            true,
+            false,
+            true,
+            OpenConversationId: null));
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready && !coordinator.MessageList.IsLoading);
+        var firstApplied = coordinator.MessageList;
+        coordinator.AcknowledgeMessageSnapshotApplied(
+            conversationId,
+            firstApplied.Revision,
+            observedThroughMessageId: 10,
+            isAtLatestRegion: true);
+        await WaitUntilAsync(() => markedMessageIds.Count == 1);
+
+        Volatile.Write(ref includeSecondMessage, 1);
+        runtime.RaiseConversationStateChanged(2);
+        await WaitUntilAsync(() => coordinator.MessageList.LatestMessageId == 11);
+        var notYetApplied = coordinator.MessageList;
+        coordinator.AcknowledgeMessageViewportChanged(
+            conversationId,
+            notYetApplied.Revision,
+            observedThroughMessageId: 11,
+            isAtLatestRegion: true);
+        await Task.Delay(50);
+
+        Assert.Equal([10L], markedMessageIds);
+        coordinator.AcknowledgeMessageSnapshotApplied(
+            conversationId,
+            notYetApplied.Revision,
+            observedThroughMessageId: 11,
+            isAtLatestRegion: true);
+        await WaitUntilAsync(() => markedMessageIds.Count == 2);
+        Assert.Equal([10L, 11L], markedMessageIds);
+    }
+
+    [Fact]
     public async Task SelectConversation_WhenOldReadCompletesLate_DoesNotReplaceNewSelection()
     {
         var session = CreateSession();

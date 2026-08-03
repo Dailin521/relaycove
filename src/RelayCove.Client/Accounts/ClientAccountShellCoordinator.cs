@@ -335,6 +335,35 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         long? observedThroughMessageId,
         bool isAtLatestRegion)
     {
+        AcknowledgeMessageViewport(
+            conversationId,
+            revision,
+            observedThroughMessageId,
+            isAtLatestRegion,
+            isSnapshotApplication: true);
+    }
+
+    public void AcknowledgeMessageViewportChanged(
+        Guid conversationId,
+        long revision,
+        long? observedThroughMessageId,
+        bool isAtLatestRegion)
+    {
+        AcknowledgeMessageViewport(
+            conversationId,
+            revision,
+            observedThroughMessageId,
+            isAtLatestRegion,
+            isSnapshotApplication: false);
+    }
+
+    private void AcknowledgeMessageViewport(
+        Guid conversationId,
+        long revision,
+        long? observedThroughMessageId,
+        bool isAtLatestRegion,
+        bool isSnapshotApplication)
+    {
         if (conversationId == Guid.Empty)
         {
             throw new ArgumentException(
@@ -356,13 +385,17 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                 messageList.Status != ClientMessageListStatus.Ready ||
                 messageList.ConversationId != conversationId ||
                 messageList.Revision != revision ||
+                (!isSnapshotApplication && selection.AppliedRevision != revision) ||
                 (observedThroughMessageId.HasValue &&
                  !selection.Messages.ContainsKey(observedThroughMessageId.Value)))
             {
                 return;
             }
 
-            selection.AppliedRevision = revision;
+            if (isSnapshotApplication)
+            {
+                selection.AppliedRevision = revision;
+            }
             if (observedThroughMessageId is { } observedMessageId)
             {
                 selection.PendingObservedThroughMessageId = Math.Max(
@@ -1461,11 +1494,21 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
     {
         ClientMessageListSnapshot value;
         Action<ClientMessageListSnapshot>? handlers;
+        IClientAccountRuntime? activityRuntime = null;
+        ClientActivitySnapshot? activity = null;
         lock (stateGate)
         {
             if (!IsCurrentMessageSelectionLocked(selection))
             {
                 return false;
+            }
+
+            if (status != ClientMessageListStatus.Ready &&
+                renderedConversationId == selection.ConversationId)
+            {
+                renderedConversationId = null;
+                activityRuntime = runtime;
+                activity = BuildRuntimeActivityLocked();
             }
 
             value = CreateMessageSnapshot(
@@ -1481,6 +1524,11 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         }
 
         PublishMessageListHandlers(value, handlers);
+        if (activity is not null)
+        {
+            TryUpdateRuntimeActivity(activityRuntime, activity);
+        }
+
         return true;
     }
 
@@ -1529,18 +1577,23 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         MessageSelection selection,
         ClientMessageListStatus status,
         bool isLoading,
-        ClientMessageLoadStatus? lastLoadStatus) =>
-        new(
+        ClientMessageLoadStatus? lastLoadStatus)
+    {
+        var isReady = status == ClientMessageListStatus.Ready;
+        return new ClientMessageListSnapshot(
             status,
             selection.ConversationId,
-            ClientMessageListPresenter.Present(
-                selection.Messages.Values,
-                selection.Subscription.Runtime.Identity.UserId),
+            isReady
+                ? ClientMessageListPresenter.Present(
+                    selection.Messages.Values,
+                    selection.Subscription.Runtime.Identity.UserId)
+                : Array.Empty<ClientMessageListItemPresentation>(),
             isLoading,
-            selection.HasMoreBefore,
-            selection.HasMoreAfter,
-            selection.TargetMessageId,
+            isReady && selection.HasMoreBefore,
+            isReady && selection.HasMoreAfter,
+            isReady ? selection.TargetMessageId : null,
             lastLoadStatus);
+    }
 
     private static ClientMessageListStatus MapLocalMessageStatus(
         LocalCacheOperationStatus status) =>

@@ -58,6 +58,25 @@ public sealed class ClientMessageScrollPolicyTests
         Assert.Null(decision.ObservedThroughMessageId);
     }
 
+    [Fact]
+    public void Decide_WhenSameWindowIsRepublished_PreservesOffsetAndDoesNotAdvanceRead()
+    {
+        var decision = ClientMessageScrollPolicy.Decide(
+            sameConversation: true,
+            previousOldestMessageId: 51,
+            previousLatestMessageId: 100,
+            nextOldestMessageId: 51,
+            nextLatestMessageId: 100,
+            wasNearBottom: false,
+            targetMessageId: null,
+            targetChanged: false);
+
+        Assert.True(decision.PreservePrependOffset);
+        Assert.Null(decision.ScrollToMessageId);
+        Assert.False(decision.ShowNewMessageIndicator);
+        Assert.Null(decision.ObservedThroughMessageId);
+    }
+
     [Theory]
     [InlineData(true, 101L, false, 101L)]
     [InlineData(false, null, true, null)]
