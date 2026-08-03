@@ -45,6 +45,7 @@ builder.Services.AddSingleton<PasswordPolicy>();
 builder.Services.AddSingleton<NewUserValidator>();
 builder.Services.AddSingleton<ConversationRequestValidator>();
 builder.Services.AddSingleton<MessageRequestValidator>();
+builder.Services.AddSingleton<SyncRequestValidator>();
 builder.Services.AddSingleton<RefreshTokenHasher>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ServerClock>();
@@ -58,6 +59,7 @@ builder.Services.AddScoped<ConversationQueryService>();
 builder.Services.AddScoped<MessageCommandService>();
 builder.Services.AddScoped<MessageQueryService>();
 builder.Services.AddScoped<MessageReadService>();
+builder.Services.AddScoped<MessageSyncService>();
 builder.Services.AddScoped<RelayCoveJwtBearerEvents>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();
@@ -88,6 +90,7 @@ app.MapAuthenticationEndpoints();
 app.MapAdminUserEndpoints();
 app.MapConversationEndpoints();
 app.MapMessageEndpoints();
+app.MapSyncEndpoints();
 
 app.Run();
 
