@@ -492,3 +492,15 @@
 - **理由：** 会话作用域 endpoint 同时覆盖 Public 和成员型会话而不改变 `/members`，且候选查询自身绑定授权，避免“先授权、后目录查询”之间把撤权后的数据当成当前结果。限制字段、前缀和结果量把必要的普通用户发现能力压缩到 `@用户` 的实际用途；发送事务仍是最终授权真源，可拒绝搜索后发生的禁用或撤权。
 - **影响：** Shared 增加两个向后兼容响应 record，Server 增加无 schema 的 validator/query service/GET endpoint；不改数据库、迁移、现有成员/消息协议、发送验证、客户端或依赖。客户端候选传输、token 编辑语义和 durable 非空提及发送留在下一切片。
 - **来源：** 工程落地方案第 8.3、10.4、12.1–12.3、12.6–12.8、阶段 8；`DEC-009`、`DEC-010`、`DEC-035`；`docs/ai/tasks/2026-08-04-stage-8-mention-candidates.md`；最终 Fast/两次 Full 807 项（Shared 37、Server 192、Client 577、Updater 1）、Shared/validator/真实 HTTP/SQLite endpoint 关键集 190/190、model drift、八项目漏洞审计与空白检查。Claude #67 因认证源优先级失败，无结论；Codex 威胁建模、固定差异与本机门禁为依据。
+
+### DEC-041：客户端提及以正文 token 存活条件冻结 durable ID 集合
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-010/035/040` 已冻结最多 20 个不可变提及 ID、可靠 pending/retry 和会话作用域最小候选，但客户端尚未定义候选迟到竞态、正文编辑后 ID 是否保留、服务端规范排序与本地不可变载荷的衔接，以及异步提交完成后的组合器清理条件。
+- **决策：** 第一版候选只由用户在当前 Ready 会话显式提交 1–64 位规范用户名字符前缀查询；不随正文每次键入自动联网。候选 transport 只接受会话 ID 相等、字段有效、大小写不敏感前缀命中、唯一且按规范用户名/ID 稳定排序、数量不越过请求 limit、`HasMore` 与满页一致的响应。Shell 在请求前后验证同一 runtime、会话与 selection version；旧账户、切换、撤权或刷新后的迟到结果不发布。
+- **决策：** picker 插入唯一身份 token `@UserName`，昵称只展示。内存候选 ID 只在正文仍存在大小写不敏感、前后用户名字符边界完整的相应 token 时保留；删除、改名或拼接为邮箱/更长用户名会移除 ID。会话切换、非 Ready 和账户结束清除候选/已选状态。最多保留 20 个唯一非空 ID，不把 ID 呈现或写入日志。
+- **决策：** 发送入口在创建 pending 前校验提及集合并按 `Guid` 稳定排序，随后以该只读快照贯穿本地 mention 行、HTTP、SendResponse/Realtime merge 和显式 retry；retry 只能读取持久失败行的原集合。组合提交同时捕获正文、reply、排序 ID、会话与 context version，只有 pending 已提交且所有上下文仍相等时才清空正文/reply/mentions，防止迟到完成覆盖新编辑或新选择。
+- **理由：** 正文 token 是用户可见意图，ID 是授权与不可变协议载荷；以严格 token 存活条件维护二者对应，既避免正文已删除却仍静默提及，也避免昵称歧义。pending 前规范排序使服务端 `Order()` 响应、Realtime 与本地顺序比较一致，并确保不确定结果的同键重试不会改变语义。
+- **影响：** Client 增加无 schema 的候选 transport/coordinator、token policy、runtime/shell/WPF 接线并扩展发送方法参数；不改 Shared/Server 协议、SQLite schema/migration 或依赖。富文本高亮、自动补全、昵称/模糊/全局搜索与真实跨机体验不在本决策范围。
+- **来源：** 工程落地方案第 8.3、10.4、12.1–12.3、12.6–12.8、阶段 8；`DEC-010`、`DEC-017`、`DEC-035`、`DEC-040`；`docs/ai/tasks/2026-08-04-stage-8-mention-compose.md`；绿色集成头 Fast 807 项基线与仓库发送/cache/WPF 证据。Claude #68 因认证源优先级失败，无结论；最终门禁待本任务完成记录补齐。
