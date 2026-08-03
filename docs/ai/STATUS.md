@@ -6,7 +6,7 @@
 
 - **当前阶段：** 阶段 8 — production 账户组合与聊天 UI
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、自动恢复、登录/重试/注销、授权 lease、最小账户壳和凭据清理 barrier 已完成
-- **最近验证通过的状态：** production 账户壳最终代码检查点 `93d8fd5883a45ef154ef4612da7e7fcb8b9f6dc7` 已通过全部门禁；绿色集成头仍为 `de15ef589402050ee1072bd3c7ee6c41e3c07b9c`，等待本完成记录提交后仅快进
+- **最近验证通过的状态：** production 账户壳最终代码检查点 `93d8fd5883a45ef154ef4612da7e7fcb8b9f6dc7` 已通过全部门禁，完成记录 `4a48dd4e5e2aa0d6150b850a26fe1e449e937139` 已仅快进到绿色集成分支
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — 最终 Fast/Full、format、658 项测试、Client 447/447；review-fix 定向 71/71、关键 60/60，完整 Client 在 SQLite 隔离检查点 2,205 次与 review-fix 检查点 2,230 次重复全绿；真实 Release WPF 登录/不可达失败/密码即时清空/关闭隐藏/同 HWND 恢复、既有原生通知/attention/托盘/激活证据、model drift、八项目漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-8-production-account-shell`：代码、验证、独立复核和完成记录均已收敛，待 push 并仅快进 `agent/v1-integration`；随后直接创建会话列表切片。
+- `agent/stage-8-conversation-list-shell`：从绿色集成头 `4a48dd4` 接入账户隔离会话列表读取、提交后变更信号、持续连接/总未读和双栏主窗口；基线 Fast 658/658 已验证。
 
 ## 已完成
 

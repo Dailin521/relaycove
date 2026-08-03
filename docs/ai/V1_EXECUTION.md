@@ -8,13 +8,13 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 8
-ActiveTask: docs/ai/tasks/2026-08-04-stage-8-production-account-shell.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-04-stage-8-conversation-list-shell.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 93d8fd5883a45ef154ef4612da7e7fcb8b9f6dc7
-LatestGreenIntegrationCommit: de15ef589402050ee1072bd3c7ee6c41e3c07b9c
-NextAction: 提交完成记录，push 并仅快进集成分支，然后启动账户隔离会话列表切片
-ClaudeCalls: 50（全部终态；仅关键用途调用）
+LatestGreenIntegrationCommit: 4a48dd4e5e2aa0d6150b850a26fe1e449e937139
+NextAction: 实现账户隔离会话列表读取、提交后状态信号、持续连接/总未读与双栏主窗口
+ClaudeCalls: 51（50 次终态、#51 运行中；仅关键用途调用）
 ClaudeCostUsd: 51.78059725 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 97.75059725；另有二十二次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
