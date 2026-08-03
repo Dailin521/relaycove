@@ -7,13 +7,13 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M1
-CurrentStage: 阶段 3
-ActiveTask: docs/ai/tasks/2026-08-03-stage-3-conversation-api.md
-TaskStatus: completed
+CurrentStage: 阶段 4
+ActiveTask: docs/ai/tasks/2026-08-03-stage-4-text-message-api.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: b9b004109183e0157bca5c16f0acdaf7a39c8940
-LatestGreenIntegrationCommit: 9c4f4d4eab931d03071c21fcf6c19de440fcd661
-NextAction: 仅快进集成会话 API 完成提交并开始阶段 4 文字消息纵向切片
+LatestGreenIntegrationCommit: 4309fe4b729c5eef063bab4903def5776e57409e
+NextAction: 冻结并实现文字消息存储、INSERT-first 幂等发送与 keyset 历史
 ClaudeCalls: 21（软上限 24，硬上限 30）
 ClaudeCostUsd: 5.4229485 confirmed；另有十四次失败/中断调用费用 unavailable
 Blocker: none
