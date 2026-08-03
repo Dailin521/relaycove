@@ -50,7 +50,7 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
     }
 
     [Fact]
-    public async Task Dispatch_WhenPlatformIsUnavailable_DoesNotClaimOrScanCandidates()
+    public async Task Dispatch_WhenPlatformIsUnavailable_DoesNotClaimEligibleCandidates()
     {
         var prepared = await PrepareAsync(messageCount: 1);
         await using var cache = prepared.Cache;
@@ -67,6 +67,57 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
         Assert.Equal(ClientNotificationDispatchStatus.TransientFailure, outcome.Status);
         Assert.Empty(platform.Requests);
         Assert.False(ReadNotificationHandled(prepared.Identity, 1));
+    }
+
+    [Fact]
+    public async Task Dispatch_WhenPlatformIsUnavailable_CommitsForegroundSuppression()
+    {
+        var prepared = await PrepareAsync(messageCount: 1);
+        await using var cache = prepared.Cache;
+        var platform = new FakeNotificationPlatform();
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            platform,
+            static () => ClientNotificationSettingsSnapshot.Unavailable,
+            () => prepared.Conversation.Id);
+
+        var outcome = await coordinator.DispatchAsync(
+            prepared.MessageIds,
+            ClientNotificationDispatchMode.PerMessage);
+
+        Assert.Equal(ClientNotificationDispatchStatus.Completed, outcome.Status);
+        Assert.Empty(platform.Requests);
+        Assert.True(ReadNotificationHandled(prepared.Identity, 1));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task Dispatch_WhenPlatformBecomesUnavailable_StillCommitsForegroundSuppression(
+        int dispatchMode)
+    {
+        var prepared = await PrepareAsync(messageCount: 1);
+        await using var cache = prepared.Cache;
+        var platform = new FakeNotificationPlatform();
+        var settingsReadCount = 0;
+        var foregroundReadCount = 0;
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            platform,
+            () => Interlocked.Increment(ref settingsReadCount) == 1
+                ? ClientNotificationSettingsSnapshot.Enabled
+                : ClientNotificationSettingsSnapshot.Unavailable,
+            () => Interlocked.Increment(ref foregroundReadCount) == 1
+                ? null
+                : prepared.Conversation.Id);
+
+        var outcome = await coordinator.DispatchAsync(
+            prepared.MessageIds,
+            (ClientNotificationDispatchMode)dispatchMode);
+
+        Assert.Equal(ClientNotificationDispatchStatus.Completed, outcome.Status);
+        Assert.Empty(platform.Requests);
+        Assert.True(ReadNotificationHandled(prepared.Identity, 1));
     }
 
     [Theory]
@@ -131,6 +182,30 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
         Assert.Equal(12, outcome.AcceptedCount);
         Assert.All(prepared.MessageIds, id =>
             Assert.True(ReadNotificationHandled(prepared.Identity, id)));
+    }
+
+    [Theory]
+    [InlineData(10, 10, 1)]
+    [InlineData(11, 1, 2)]
+    public async Task DispatchAutomatic_WhenCandidateCountCrossesBoundary_SelectsExpectedPolicy(
+        int messageCount,
+        int expectedRequestCount,
+        int expectedPolicy)
+    {
+        var prepared = await PrepareAsync(messageCount);
+        await using var cache = prepared.Cache;
+        var platform = new FakeNotificationPlatform();
+        await using var coordinator = CreateCoordinator(prepared, platform);
+
+        var outcome = await coordinator.DispatchAsync(
+            prepared.MessageIds,
+            ClientNotificationDispatchMode.Automatic);
+
+        Assert.Equal(ClientNotificationDispatchStatus.Completed, outcome.Status);
+        Assert.Equal(expectedRequestCount, platform.Requests.Count);
+        Assert.All(
+            platform.Requests,
+            request => Assert.Equal((NotificationPolicy)expectedPolicy, request.Policy));
     }
 
     [Fact]
@@ -368,13 +443,14 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
         PreparedCache prepared,
         IClientNotificationPlatform platform,
         Func<ClientNotificationSettingsSnapshot>? settingsProvider = null,
+        Func<Guid?>? foregroundConversationIdProvider = null,
         ILogger<ClientNotificationCoordinator>? logger = null) =>
         new(
             prepared.Identity,
             prepared.Cache,
             platform,
             settingsProvider ?? (static () => ClientNotificationSettingsSnapshot.Enabled),
-            static () => null,
+            foregroundConversationIdProvider ?? (static () => null),
             logger ?? NullLogger<ClientNotificationCoordinator>.Instance);
 
     private static MessageDto CreateMessage(long id, Guid conversationId) => new(

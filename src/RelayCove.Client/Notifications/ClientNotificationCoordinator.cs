@@ -167,18 +167,10 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
         }
 
         var settings = GetSettings();
-        if (mode != ClientNotificationDispatchMode.None &&
+        var platformUnavailable = mode != ClientNotificationDispatchMode.None &&
             settings.PlatformAvailability ==
                 ClientNotificationPlatformAvailability.Unavailable &&
-            !settings.IsDoNotDisturbEnabled)
-        {
-            return new ClientNotificationDispatchOutcome(
-                ClientNotificationDispatchStatus.TransientFailure,
-                CandidateCount: 0,
-                AcceptedCount: 0,
-                HandledWithoutPlatformCount: 0);
-        }
-
+            !settings.IsDoNotDisturbEnabled;
         var suppressAll = mode == ClientNotificationDispatchMode.None ||
             settings.IsDoNotDisturbEnabled ||
             settings.PlatformAvailability == ClientNotificationPlatformAvailability.Disabled;
@@ -199,6 +191,15 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
         {
             return new ClientNotificationDispatchOutcome(
                 ClientNotificationDispatchStatus.Completed,
+                evaluation.Candidates.Count + evaluation.HandledWithoutPlatformCount,
+                AcceptedCount: 0,
+                evaluation.HandledWithoutPlatformCount);
+        }
+
+        if (platformUnavailable)
+        {
+            return new ClientNotificationDispatchOutcome(
+                ClientNotificationDispatchStatus.TransientFailure,
                 evaluation.Candidates.Count + evaluation.HandledWithoutPlatformCount,
                 AcceptedCount: 0,
                 evaluation.HandledWithoutPlatformCount);
@@ -233,14 +234,9 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
         foreach (var initialCandidate in initialEvaluation.Candidates)
         {
             var settings = GetSettings();
-            if (settings.PlatformAvailability ==
-                    ClientNotificationPlatformAvailability.Unavailable &&
-                !settings.IsDoNotDisturbEnabled)
-            {
-                transientFailure = true;
-                continue;
-            }
-
+            var platformUnavailable = settings.PlatformAvailability ==
+                ClientNotificationPlatformAvailability.Unavailable &&
+                !settings.IsDoNotDisturbEnabled;
             var suppress = settings.IsDoNotDisturbEnabled ||
                 settings.PlatformAvailability == ClientNotificationPlatformAvailability.Disabled;
             var current = await localCache.EvaluateNotificationCandidatesAsync(
@@ -258,6 +254,12 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
             var candidate = current.Candidates.SingleOrDefault();
             if (candidate is null)
             {
+                continue;
+            }
+
+            if (platformUnavailable)
+            {
+                transientFailure = true;
                 continue;
             }
 
@@ -309,18 +311,9 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
         CancellationToken cancellationToken)
     {
         var settings = GetSettings();
-        if (settings.PlatformAvailability ==
-                ClientNotificationPlatformAvailability.Unavailable &&
-            !settings.IsDoNotDisturbEnabled)
-        {
-            return new ClientNotificationDispatchOutcome(
-                ClientNotificationDispatchStatus.TransientFailure,
-                initialEvaluation.Candidates.Count +
-                    initialEvaluation.HandledWithoutPlatformCount,
-                AcceptedCount: 0,
-                initialEvaluation.HandledWithoutPlatformCount);
-        }
-
+        var platformUnavailable = settings.PlatformAvailability ==
+            ClientNotificationPlatformAvailability.Unavailable &&
+            !settings.IsDoNotDisturbEnabled;
         var suppress = settings.IsDoNotDisturbEnabled ||
             settings.PlatformAvailability == ClientNotificationPlatformAvailability.Disabled;
         var current = await EvaluateInBatchesAsync(
@@ -340,6 +333,16 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
         {
             return new ClientNotificationDispatchOutcome(
                 ClientNotificationDispatchStatus.Completed,
+                initialEvaluation.Candidates.Count +
+                    initialEvaluation.HandledWithoutPlatformCount,
+                AcceptedCount: 0,
+                handledWithoutPlatformCount);
+        }
+
+        if (platformUnavailable)
+        {
+            return new ClientNotificationDispatchOutcome(
+                ClientNotificationDispatchStatus.TransientFailure,
                 initialEvaluation.Candidates.Count +
                     initialEvaluation.HandledWithoutPlatformCount,
                 AcceptedCount: 0,
