@@ -2,7 +2,7 @@
 
 ## 状态
 
-- `in_progress`
+- `completed`
 - 分支：`agent/stage-6-client-sync`
 - 基线：`ef69d87ade1a0bc50e5a683ee3a751e664908f31`
 
@@ -48,11 +48,11 @@
 
 ## 验收标准
 
-- [ ] 既有 `/api/conversations` 认证、权限、单查询和 `Complete=true` wrapper 回归不变；Shared round-trip 与新增脱敏 ToString 测试通过。
-- [ ] 完整快照一次提交新增/更新/撤销，缺失会话在对账期间立即 deny，提交后数据级联清除；权威重新加入可清 tombstone，普通登记仍被拒绝。
-- [ ] 每页消息合并与 LastSyncCursor 在同一立即写事务；Inserted/PendingPromoted/Duplicate 全部允许提交，Conflict/未知/撤权/陈旧 cursor/协议错误整页回滚。
-- [ ] 首页/续页、空页权限空洞、重启、Realtime 先到、并发页与账户隔离的真实磁盘测试通过，日志不含正文、会话名、用户 ID、数据库路径或 cursor 原值。
-- [ ] Client/Shared/Server 定向测试、Fast/Full、model drift、漏洞审计、白名单、空白与固定差异复核通过。
+- [x] 既有 `/api/conversations` 认证、权限、单查询和 `Complete=true` wrapper 回归不变；Shared round-trip 与新增脱敏 ToString 测试通过。
+- [x] 完整快照一次提交新增/更新/撤销，缺失会话在对账期间立即 deny，提交后数据级联清除；权威重新加入可清 tombstone，普通登记仍被拒绝。
+- [x] 每页消息合并与 LastSyncCursor 在同一立即写事务；Inserted/PendingPromoted/Duplicate 全部允许提交，Conflict/未知/撤权/陈旧 cursor/协议错误整页回滚。
+- [x] 首页/续页、空页权限空洞、重启、Realtime 先到、并发页与账户隔离的真实磁盘测试通过，日志不含正文、会话名、用户 ID、数据库路径或 cursor 原值。
+- [x] Client/Shared/Server 定向测试、Fast/Full、model drift、漏洞审计、白名单、空白与固定差异复核通过。
 
 ## 验证命令
 
@@ -74,14 +74,24 @@ dotnet list RelayCove.sln package --vulnerable --include-transitive
 
 ### 修改摘要
 
-- 进行中。
+- 为 `ConversationListResponse` 增加脱敏输出，客户端只接受 `Complete=true` 且 DTO 唯一/合法的权威会话快照。
+- 快照对账先建立进程 deny 与 durable revocation intent，再以一个 SQLite 立即写事务完成当前会话 upsert、重新加入解封、缺失会话 tombstone/级联删除和 intent 清理。
+- 新增脱敏的游标读取/整页提交结果；Sync 页在一个事务中重用 Realtime 唯一合并裁决，只在全页成功时推进 `LastSyncCursor`。
+- 代码检查点为 `cb7b1ed26dbbb934d92865af829beb159370abcf`；未改服务端协议、EF 模型、migration 或依赖。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 集成基线 | `agent/v1-integration` 本地/远端均为 `ef69d87`，前序 Full/244 项测试、原生 SQLite 安全版本、model drift 与漏洞审计通过 |
+| `已验证` | Sync/快照定向 | Release `SyncPageCommitTests` 15/15、Storage 37/37、Shared 会话契约 3/3 |
+| `已验证` | 故障与竞态 | 快照提交期间跨 store deny、同 cursor 并发仅一页提交、后续 Conflict 整页回滚，Release 每轮 3 项连续 5 轮通过 |
+| `已验证` | Fast/Full | Debug/Release 均 0 警告、0 错误；Client 51 + Shared 32 + Server 175 + Updater 1 = 259 项测试全部通过 |
+| `已验证` | 格式/空白/白名单 | `dotnet format --verify-no-changes`、`git diff --check` 通过；固定差异仅 8 个允许的 Client/Shared/测试文件 |
+| `已验证` | EF model drift | `has-pending-model-changes --no-build` 返回自最新 migration 后模型无变化 |
+| `已验证` | 依赖漏洞审计 | 8 个源/测试项目的直接与传递依赖均未报告已知漏洞 |
+| `已验证` | 固定候选 Codex 复核 | 检查快照 intent/主事务失败窗口、授权/deny 更新顺序、page cursor 预条件、唯一合并顺序和整页回滚，无剩余发现；Claude 已达 `30/30` 硬上限，本任务不追加调用 |
 
 ### 下一步
 
-- 固定快照事务与 page commit 返回状态后实现最小存储代码。
+- 快进集成本切片，随后实现 Sync HTTP 调度、401 refresh、有界网络重试、single-flight 与触发原因合并。
