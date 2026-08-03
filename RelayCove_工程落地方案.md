@@ -1364,7 +1364,7 @@ public sealed record SyncResponse(
     bool HasMore);
 ```
 
-- 首页省略 `snapshotUpperBound`。服务端在同一只读事务内读取 `MAX(Messages.Id)`（空表为 `0`）并完成本页查询，得到固定 `SnapshotUpperBound`。后续页原样携带该值；固定的是 ID 截止上界，不是在多个 HTTP 请求间持有同一事务。
+- 首页省略 `snapshotUpperBound`。服务端在同一只读事务内读取 `MAX(Messages.Id)`（空表为 `0`）并完成本页查询，得到固定 `SnapshotUpperBound`。后续页原样携带该值；固定的是 ID 截止上界，不是在多个 HTTP 请求间持有同一事务。`limit` 省略时为 100，允许范围 `1..200`。
 - 每页按当前权限重新过滤 `cursor < MessageId <= SnapshotUpperBound` 的同步候选。私有频道还要求 `MessageId > ConversationMembers.LastReadMessageId`；这只影响增量 Sync，不限制当前成员通过 History/Search 懒加载全部历史。
 - 可见候选按 `MessageId ASC` 查询 `limit + 1` 条。有第 `limit + 1` 条时返回前 `limit` 条，`HasMore=true`，`NextCursor` 为本页最后一条 ID；没有更多可见消息时，`HasMore=false`，`NextCursor=SnapshotUpperBound`。即使本页为空或上界前全是无权限空洞，也必须跨到上界，不能空页死循环。
 - 响应必须满足：消息 ID 严格递增且位于 `(cursor, NextCursor]`；`0 <= cursor <= NextCursor <= SnapshotUpperBound`；`HasMore == (NextCursor < SnapshotUpperBound)`；`HasMore=true` 时消息非空且 `NextCursor > cursor`；只要上界大于游标，下一游标就必须前进。

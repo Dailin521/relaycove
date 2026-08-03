@@ -156,3 +156,14 @@
 - **理由：** 专用双侧响应让客户端无需从不足一页猜测是否还能加载上下文；允许零窗口支持只定位目标。权限优先避免用目标 ID 探测私有会话，最终查询重检则在不持有跨请求快照或扩大写锁的前提下封住查询间撤权窗口；消息不可变和 ID 永不复用使目标在两次只读查询之间不会合法消失。
 - **影响：** 新增 Shared around 响应及 Server 验证、endpoint、查询与测试，不新增 migration。Search、固定上界 Sync、客户端跳转/高亮和附件仍是后续切片；允许消息编辑删除、改变 ID 语义或增加写实例时必须重审该边界与 `DEC-003`。
 - **来源：** 工程落地方案第 10.2、12.2–12.4、15.5、阶段 4；`DEC-003`、`DEC-009`、`DEC-010`、`DEC-011`；`docs/ai/tasks/2026-08-03-stage-4-message-around-api.md`；当前 MessageQueryService、ConversationAccessQuery 与 Message/MessageMention 模型。
+
+### DEC-013：固定上界 Sync 的默认页与 SQLite 只读快照
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** `DEC-003` 已冻结固定上界、权限空洞和游标不变量，但没有指定可空 limit 的缺省值，也未落到当前 Microsoft.Data.Sqlite/EF Core 如何保证首页最大 ID 与本页处于同一数据库快照。使用既有立即写事务会让纯同步读取不必要地争抢写锁，使用两个无事务查询又可能让首页上界与页面观察不同提交点。
+- **决策：** `GET /api/sync` 的 limit 默认 100、允许 `1..200`。每次请求显式开启 Microsoft.Data.Sqlite `deferred: true`、Serializable 事务并交由当前 DbContext 使用；在该只读快照内先读取仍正常的 actor 与全局 `MAX(Messages.Id)`，完成游标/上界验证，再执行按消息计数限制为 `limit+1` 的权限化页面与 mentions 投影。续页同样读取当前最大 ID以拒绝伪造未来上界，但仍使用客户端原样携带的有效上界。
+- **决策：** 每页权限过滤为：未删除 Public；当前成员的 Direct；当前成员的 Private 且 `MessageId > actor.LastReadMessageId`。Private 过滤只影响增量 Sync，不改变 History/around 的全部历史读取。事务中 actor 已不存在或禁用时返回认证失败，不得以空成功页推进游标。读事务不执行写入、升级或跨 HTTP 请求保留。
+- **理由：** 100 条缺省页在 200 上限内提供确定兼容行为；deferred 只读事务既给两条查询一致快照，又避免立即取得 SQLite RESERVED 写锁。先对消息做 `Take(limit+1)` 再连接 mentions，防止多 mentions 消耗消息页容量；末页由服务端直接推进到快照上界以跨过权限空洞。
+- **影响：** 新增 Shared SyncResponse、Server Sync endpoint/验证/服务及自动化测试，不新增 migration 或依赖。客户端事务合并、AccountScopeId、通知 gate、SignalR 和同步世代仍属后续切片；更换数据库、增加写实例或改变消息 ID/可变性时必须重审 `DEC-003` 与本决策。
+- **来源：** 工程落地方案第 12.4；`DEC-003`、`DEC-009`、`DEC-010`、`DEC-011`；`docs/ai/tasks/2026-07-31-stage-0-sync-contract.md`；`docs/ai/tasks/2026-08-03-stage-4-message-sync-api.md`；本地 Microsoft.Data.Sqlite 10.0.5 transaction API 与当前 EF Core SQLite 模型。

@@ -15,8 +15,10 @@
 - `已验证`：规范已固定 `SyncResponse(Messages, NextCursor, SnapshotUpperBound, HasMore)`；首页省略上界并在同一只读数据库快照读取当前 `MAX(Messages.Id)` 与第一页，续页原样携带上界。
 - `已验证`：候选满足 `cursor < Id <= SnapshotUpperBound` 并按 ID 升序取 `limit+1`；有更多时返回前 limit 条且 NextCursor 为页尾 ID，否则 NextCursor 直接推进到快照上界，包括空页和末尾无权限空洞。
 - `已验证`：每页重新应用当前内容权限。Public 对正常用户可见；Private/Direct 要求当前成员；Private 还排除 `Id <= actor.LastReadMessageId` 的加入前/已读历史，Direct 与 Public 不使用该过滤。
-- `已验证`：cursor 非负，limit 默认待按规范落为 100、范围 `1..200`，`snapshotUpperBound < cursor` 为 400；cursor 或提供上界大于当前服务端最大消息 ID 为 `409 SyncCursorInvalid`，不得夹断/归零。
+- `已验证`：`DEC-013` 固定 cursor 必填且非负，limit 默认 100、范围 `1..200`，`snapshotUpperBound < cursor` 为 400；cursor 或提供上界大于当前服务端最大消息 ID 为 `409 SyncCursorInvalid`，不得夹断/归零。
 - `已验证`：消息不可变、SQLite AUTOINCREMENT 已通过真实 migration/不复用验证，当前仍是单服务实例和单 SQLite 主库，未改变 `DEC-003` 前提。
+- `已验证`：每次请求使用 Microsoft.Data.Sqlite `deferred:true` Serializable 只读事务，让 actor/当前最大 ID 与页面处于同一数据库快照，且不以立即事务争抢写锁；消息先限 `limit+1` 再连接 mentions。
+- `已验证`：Claude XHigh challenge #25 在 60 秒内因本机认证源优先级禁用 claude.ai connector 而超时，没有返回模型、workspace、费用或结论；按用户要求不重试、不阻塞 Codex，`DEC-013` 由已冻结协议、本地 provider API 和当前模型证据独立收敛。
 
 ## 范围
 
@@ -67,4 +69,4 @@ dotnet list RelayCove.sln package --vulnerable --include-transitive
 
 ### 下一步
 
-- 固定实现查询形状与只读快照策略，做一次 Claude 窄审查后实现 Shared/Server 与真实 SQLite 测试。
+- 按 `DEC-003/013` 实现 Shared 契约、deferred 只读快照、权限化页面、endpoint 与自动化验证。

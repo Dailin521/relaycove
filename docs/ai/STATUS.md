@@ -11,7 +11,7 @@
 - **自动化验证：** `已验证` — Full、format、181 项测试、around 双侧窗口/目标/mentions/授权重检、read-through/文字消息/会话/认证回归、model drift、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
-- **最近 Claude 调用：** `未验证` — around API XHigh challenge #24 对 `ChallengeHead=acbd34b` 因本机认证源覆盖 claude.ai 登录在 60 秒内超时；未取得审查结论且按用户要求未重试，`DEC-012` 由 Codex 结合仓库协议/授权/不可变模型证据独立收敛
+- **最近 Claude 调用：** `未验证` — Sync API XHigh challenge #25 对 `ChallengeHead=0c7c767` 因本机认证源覆盖 claude.ai 登录在 60 秒内超时；未取得审查结论且按用户要求未重试，`DEC-013` 由 Codex 结合冻结协议、本地 provider API 与当前模型证据独立收敛
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
