@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 8
-ActiveTask: docs/ai/tasks/2026-08-04-stage-8-conversation-list-shell.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-04-stage-8-message-list-shell.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: ea83e7bf37e83f03c678bf0f82375bfb8a4166af
-LatestGreenIntegrationCommit: 4a48dd4e5e2aa0d6150b850a26fe1e449e937139
-NextAction: 提交完成记录并仅快进集成分支，然后启动当前会话消息列表/History/read-through 切片
+LatestGreenCodeCommit: a477d68d8477b6d3bee938b29ff22a3cfcb7fa05
+LatestGreenIntegrationCommit: a477d68d8477b6d3bee938b29ff22a3cfcb7fa05
+NextAction: 完成有界消息列表、本地首屏、History/Around 懒加载和渲染后 read-through 切片
 ClaudeCalls: 53（全部终态；仅关键用途调用）
 ClaudeCostUsd: 66.15776975 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 112.12776975；另有二十二次失败/中断调用费用 unavailable
 Blocker: none
