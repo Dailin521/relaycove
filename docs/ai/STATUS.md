@@ -5,10 +5,10 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片已合入；阶段 5 SignalR 服务端 NewMessage 切片已开始
-- **最近验证通过的状态：** Sync API 代码 `9d87ac2ee94cc83005e15ca3b095dcc5ea8530dd`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片已合入；阶段 5 SignalR 服务端 NewMessage 已绿色完成并等待快进集成
+- **最近验证通过的状态：** SignalR NewMessage 代码 `5556899ca699bab097acae0003983943b4ca92d9`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Full、format、197 项测试、Sync 固定上界/空洞/权限变化/mentions/查询边界、around/read-through/文字消息/会话/认证回归、model drift、漏洞审计与空白检查通过
+- **自动化验证：** `已验证` — Full、format、202 项测试、SignalR 认证/分组/用户路由/NewMessage/撤权/并发幂等/故障隔离/日志、既有消息/会话/认证回归、model drift、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
 - **最近 Claude 调用：** `未验证` — SignalR NewMessage XHigh challenge #26 对 `ChallengeHead=cb5a4d6` 因本机认证源覆盖 claude.ai 登录在 60 秒内超时；未取得审查结论且按用户要求未重试，`DEC-014` 由 Codex 结合仓库事务/权限事实与 ASP.NET Core 10 官方证据独立收敛
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-5-signalr-new-message`：实现认证 Hub、当前权限分组与提交后 NewMessage 尽力实时投递。
+- `agent/stage-5-signalr-new-message`：认证 Hub、当前权限分组与提交后 NewMessage 尽力实时投递已绿色完成，等待仅快进集成。
 
 ## 已完成
 
@@ -37,10 +37,11 @@
 - read-through 真实目标验证、单调服务端确认、Public 个人水位、Private/Direct 撤权边界与 Public 成员 API 隔离（`DEC-011`）
 - 消息 around 专用双侧窗口、目标归属、两侧更多标志与撤权 fail-closed 查询（`DEC-012`）
 - 固定上界 Sync、deferred SQLite 只读快照、动态权限过滤、权限空洞与单调权威游标（`DEC-013`）
+- SignalR 认证 Hub、`sub` 用户标识、每连接权威分组、当前收件人快照和提交后 NewMessage 尽力投递（`DEC-014`）
 
 ## 下一任务
 
-完成阶段 5 SignalR 服务端 NewMessage 实时投递纵向切片。
+仅快进集成 SignalR NewMessage 绿色提交，然后实现 `ConversationAccessRevoked` 提交后事件与撤权实时收敛切片。
 
 ## 阻塞项
 

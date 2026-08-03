@@ -2,7 +2,7 @@
 
 ## 状态
 
-- `in_progress`
+- `completed`
 - 分支：`agent/stage-5-signalr-new-message`
 - 基线：`8f7c074b6889ad35f517e13738755097f1492a89`
 
@@ -51,12 +51,12 @@
 
 ## 验收标准
 
-- [ ] `/hubs/chat` 必须认证；有效正常用户可连接，缺失/失效/禁用身份失败；WebSocket/SSE 查询 token 只在该 Hub 路径提取且不会进入默认 Information URL 日志。
-- [ ] SignalR 用户 ID 取严格唯一的 `sub` GUID；每个新连接按当前数据库权限加入 Public 与其成员 Private/Direct 组，Hub 不暴露任意加组方法。
-- [ ] 新插入文字消息提交后向发送者和所有当前活跃授权用户投递一次完整 `MessageDto`；非成员、禁用用户和在连接后被撤权的旧连接不接收后续消息。
-- [ ] 幂等重放与并发同键只有获胜插入发布一次；失败请求不发布；SignalR/收件人查询失败不回滚消息、不把 201 改成错误。
-- [ ] 日志不含 access token、消息正文或显示名；投递日志只使用消息 ID、会话 ID、收件人数和异常元数据。
-- [ ] SignalR 实际连接/分组/投递测试、既有回归、Fast/Full、model drift、漏洞审计、空白和固定差异复核通过。
+- [x] `/hubs/chat` 必须认证；有效正常用户可连接，缺失/失效/禁用身份失败；WebSocket/SSE 查询 token 只在该 Hub 路径提取且不会进入默认 Information URL 日志。
+- [x] SignalR 用户 ID 取严格唯一的 `sub` GUID；每个新连接按当前数据库权限加入 Public 与其成员 Private/Direct 组，Hub 不暴露任意加组方法。
+- [x] 新插入文字消息提交后向发送者和所有当前活跃授权用户投递一次完整 `MessageDto`；非成员、禁用用户和在连接后被撤权的旧连接不接收后续消息。
+- [x] 幂等重放与并发同键只有获胜插入发布一次；失败请求不发布；SignalR/收件人查询失败不回滚消息、不把 201 改成错误。
+- [x] 日志不含 access token、消息正文或显示名；投递日志只使用消息 ID、会话 ID、收件人数和异常元数据。
+- [x] SignalR 实际连接/分组/投递测试、既有回归、Fast/Full、model drift、漏洞审计、空白和固定差异复核通过。
 
 ## 验证命令
 
@@ -79,14 +79,40 @@ dotnet list RelayCove.sln package --vulnerable --include-transitive
 
 ### 修改摘要
 
-- 进行中。
+- 新增只读强类型 `ChatHub`、`IChatClient.NewMessage`、稳定会话组名和严格 `sub` GUID `IUserIdProvider`；Hub 要求认证并在 token 到期时关闭连接。
+- JWT bearer 只在 `/hubs/chat` 路径提取唯一非空 `access_token` 查询值；Hosting Information 日志被提升至 Warning，避免默认 URL 日志泄露 token。
+- 每个连接从数据库读取当前 Public 与成员 Private/Direct 会话并加组；断开后不保留，重连重新查询，客户端没有任意加组方法。
+- 新增当前收件人发布器：单条查询选择 Public 的全部正常用户或 Private/Direct 当前正常成员，通过用户 ID 投递到全部连接，不用旧组状态做授权。
+- Message endpoint 只在 `MessageCommandService` 已提交且返回 `Created` 后尝试一次发布；publisher 吸收收件人查询/transport 异常，重放和失败状态不发布。
+- Server.Tests 增加同版本 SignalR .NET client，通过真实 TestServer LongPolling 验证连接、分组、用户路由、完整 DTO、撤权、并发幂等、失败隔离和敏感日志。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast`（基线） | Debug 0 警告、0 错误；197 项测试通过 |
+| `未验证` | Claude XHigh challenge #26 | 60 秒内因本机认证源优先级超时；前后 `HEAD=cb5a4d6` 且工作区干净，无模型、workspace、费用或结论，按用户要求未重试 |
+| `已修正` | 首次 SignalR 定向测试 | 两处测试编译 method-group 形状已修正；重连探针曾早于服务端 `OnConnectedAsync` 加组完成，改为等待该用户权威分组完成日志后再发送，生产实现无失败 |
+| `已验证` | SignalR/Realtime 定向测试 | Debug 与 Release 均 5/5 通过；覆盖 401/禁用、query-token 限域/日志、Public/Private/Direct 分组、重连重查、完整 NewMessage、当前撤权、顺序/并发重放、transport 故障隔离 |
+| `已验证` | 权威收件人查询 | Public 包含全部正常用户且排除禁用用户，Private/Direct 仅当前成员；三次发布各执行恰好一条 `SELECT` |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast` | Debug 0 警告、0 错误；Server 171、Shared 29、Client 1、Updater 1，共 202 项通过 |
+| `已修正` | 首次 `pwsh ./scripts/verify.ps1 -Mode Full` | 仅命中既有 Sync 文件与当前 Program 的 Windows CRLF/LF formatter 机械差异；formatter 后 `git diff --numstat` 为空、暂存归一化后工作区干净 |
+| `已验证` | 最终 `pwsh ./scripts/verify.ps1 -Mode Full` | format 干净；Release 0 警告、0 错误；202 项测试和空白检查通过 |
+| `已验证` | EF model drift | `dotnet ef migrations has-pending-model-changes ... --no-build` 返回模型无变化 |
+| `已验证` | 依赖漏洞审计 | 8 个项目的直接/传递依赖均未发现已知漏洞，含新增测试依赖 `Microsoft.AspNetCore.SignalR.Client 10.0.10` |
+| `已验证` | Codex 固定差异复核 | `ReviewBase=cb5a4d613adadeae9307bf4c06df047595cb1542`，`ReviewHead=5556899ca699bab097acae0003983943b4ca92d9`；17 个预期文件、白名单与 `git diff --check` 通过，无阻塞发现 |
+
+### 文件范围
+
+- 新增：Server `Hubs/`、`Realtime/` 与 Server.Tests `Realtime/SignalRRealtimeTests.cs`。
+- 修改：JWT events、Message endpoint、Program、Server.Tests 项目文件、工程方案、`DEC-014`、状态账本和本任务。
+- 删除：无。
+
+### 决策与限制
+
+- 决策：`DEC-014` 固定 Hub 身份、query-token 日志边界、连接组非授权真源、当前收件人查询和提交后尽力发布。
+- 已知限制：本切片未实现 `ConversationAccessRevoked`、主动移组/断连、客户端 SignalR/重连/本地合并、跨实例 backplane/outbox 或真实 HTTPS/WebSocket 验收；遗漏由现有固定上界 Sync 协议补偿。
 
 ### 下一步
 
-- 冻结 `DEC-014` 后实现服务端 Hub、当前收件人发布边界与真实 SignalR 集成测试。
+- 仅快进合入 `agent/v1-integration`，随后实现 `ConversationAccessRevoked` 的提交后事件与撤权实时收敛切片。
