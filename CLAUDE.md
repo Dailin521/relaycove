@@ -76,6 +76,8 @@ ProcessIncomingMessage(MessageDto message, IncomingMessageSource source)
 
 API 失败统一使用 `ApiErrorResponse` 的稳定字符串 `Code`；客户端不得解析 `Message` 分支。未知用户、错误密码和禁用账号统一为 `AuthenticationFailed`，避免账号枚举。Login request/response 的 `ToString()` 已脱敏，但任何日志代码仍不得显式记录密码、Access Token 或 Refresh Token。
 
+认证存储遵循 `DEC-005`：登录名为 3–64 个 ASCII 字符并用 invariant-uppercase `NormalizedUserName` 唯一查找，Unicode 姓名只放 `DisplayName`。SQLite GUID 为小写 `D` 文本，时间为固定 UTC 文本；refresh token 只存 43 字符 SHA-256 Base64Url 哈希，密码使用配置化 IdentityV3 `PasswordHasher`。迁移只通过显式运维动作应用，服务启动不得隐式改库；当前原生 SQLite 显式固定到无已知漏洞的 `3.53.3`。
+
 ### 客户端约束
 
 消息列表用虚拟化；集合更新回到 UI 线程；上传下载和缩略图不阻塞 UI；关闭窗口默认隐藏到托盘并保留 SignalR 连接与通知能力，真正退出只走托盘菜单。单实例激活必须通过实现探针在 `AppInstance` 与 `Mutex + Named Pipe` IPC 中选型，并把完整 `MessageTarget` / `UnreadOverviewTarget` 转交已有实例；不能只激活窗口。

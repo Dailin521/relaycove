@@ -20,6 +20,7 @@
 - `已验证`：[Microsoft 密码哈希文档](https://learn.microsoft.com/en-us/aspnet/core/security/data-protection/consumer-apis/password-hashing)要求新密码登录应用使用 `PasswordHasher`，不直接用低层 `KeyDerivation.Pbkdf2` 自定义格式。
 - `已验证`：[EF Core SQLite 限制文档](https://learn.microsoft.com/en-us/ef/core/providers/sqlite/limitations)说明 `DateTimeOffset` 比较/排序受限并建议持久化 UTC `DateTime`；schema 的时间列仍以 SQLite `TEXT` 保存。
 - `已验证`：Claude XHigh challenge 返回 `REVISE`；其 UTC Kind、迁移漂移、用户名原子更新、SQLite CHECK、Token hash 格式、PasswordHasher 配置与 FK 发现经 Codex 独立判断成立。
+- `已验证`：EF Core `10.0.10` 默认解析的 `SQLitePCLRaw.lib.e_sqlite3 2.1.11` 命中 High [GHSA-2m69-gcr7-jv3q](https://github.com/advisories/GHSA-2m69-gcr7-jv3q)；SQLitePCLRaw 官方 `v2.1.12` 维护说明改用原生库 `3.53.3`，项目显式固定该安全版本后漏洞审计清零。
 
 ### 假设
 
@@ -32,7 +33,7 @@
 ### 范围
 
 - 必须实现：
-  - 为 Server 引入 `Microsoft.EntityFrameworkCore.Sqlite` 与私有设计时 `Microsoft.EntityFrameworkCore.Design`，固定为稳定 `10.0.10`；加入同版本本地 `dotnet-ef` 工具清单。
+  - 为 Server 引入 `Microsoft.EntityFrameworkCore.Sqlite` 与私有设计时 `Microsoft.EntityFrameworkCore.Design`，固定为稳定 `10.0.10`；加入同版本本地 `dotnet-ef` 工具清单，并显式固定无已知漏洞的原生 `SQLitePCLRaw.lib.e_sqlite3 3.53.3`。
   - `User`、`RefreshToken` 服务端实体和 `RelayCoveDbContext`，字段、外键、唯一约束、索引、GUID/UTC 持久化语义与工程方案一致。
   - 仅创建 Users/RefreshTokens 的首个迁移；迁移必须能应用到真实 SQLite 数据库并可回滚。
   - ASCII 用户名规范化服务以及原始名/规范化名原子更新和唯一性；非法输入返回验证失败，不产生 Unicode/控制符异常。
@@ -109,7 +110,10 @@ Fast 后创建代码检查点，Full 后固定 ReviewHead 做候选复核；不�
 | --- | --- | --- |
 | `已验证` | 基准 `pwsh ./scripts/verify.ps1 -Mode Fast` | Debug 0 警告、0 错误；Shared 9 项，Client/Server/Updater 各 1 项，共 12 项通过 |
 | `已验证` | Claude challenge | MCP #9/#11 在 300 秒上限无结果，CLI #10 也被外层上限截断；无工具 CLI #12 以实际 `claude-opus-5` / XHigh 完成，费用 `$0.3419475`，结论 `REVISE`；`ChallengeHead=6b821f1e9ba23b005630a3781fd407737e579684` 且调用前后工作树干净 |
-| `未验证` | Fast / Full / SQLite 迁移 | 待实现后执行 |
+| `已验证` | 实现期 Fast | Debug 0 警告、0 错误；Server 28、Shared 9、Client/Updater 各 1，共 40 项测试通过 |
+| `已验证` | `dotnet ef migrations list` | 工具构建通过并列出唯一 `InitialAuthenticationStorage` 迁移；未对开发数据库执行更新 |
+| `已验证` | 依赖与发布审计 | 原生 SQLite 固定 `3.53.3` 后 8 个项目无已知漏洞；Server publish 的 deps 不含 EF Design，包含安全原生库 |
+| `未验证` | Full / 候选 SQLite 迁移 | 等代码检查点后执行 |
 | `未验证` | 候选独立复核 | 待固定 ReviewHead 后执行 |
 
 ### 文件范围
