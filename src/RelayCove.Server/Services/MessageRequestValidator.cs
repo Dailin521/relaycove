@@ -87,4 +87,15 @@ public sealed class MessageRequestValidator
 
         return errors;
     }
+
+    public IReadOnlyDictionary<string, string[]> ValidateRead(MarkConversationReadRequest? request)
+    {
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        if (request is null || request.MessageId <= 0)
+        {
+            errors["messageId"] = ["A positive message ID is required."];
+        }
+
+        return errors;
+    }
 }

@@ -57,6 +57,7 @@ builder.Services.AddScoped<ConversationCommandService>();
 builder.Services.AddScoped<ConversationQueryService>();
 builder.Services.AddScoped<MessageCommandService>();
 builder.Services.AddScoped<MessageQueryService>();
+builder.Services.AddScoped<MessageReadService>();
 builder.Services.AddScoped<RelayCoveJwtBearerEvents>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();

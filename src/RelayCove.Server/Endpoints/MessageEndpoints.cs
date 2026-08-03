@@ -14,6 +14,8 @@ public static class MessageEndpoints
         endpoints.MapPost("/api/messages", SendAsync).RequireAuthorization();
         endpoints.MapGet("/api/conversations/{conversationId:guid}/messages", GetHistoryAsync)
             .RequireAuthorization();
+        endpoints.MapPost("/api/conversations/{conversationId:guid}/read", MarkReadAsync)
+            .RequireAuthorization();
         return endpoints;
     }
 
@@ -77,6 +79,35 @@ public static class MessageEndpoints
             : MessageError(context, result.Status);
     }
 
+    private static async Task<IResult> MarkReadAsync(
+        Guid conversationId,
+        [FromBody] MarkConversationReadRequest? request,
+        HttpContext context,
+        MessageRequestValidator validator,
+        MessageReadService readService,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetActorUserId(context, out var actorUserId))
+        {
+            return AuthenticationRequired(context);
+        }
+
+        var errors = validator.ValidateRead(request);
+        if (errors.Count > 0)
+        {
+            return ValidationError(context, errors);
+        }
+
+        var result = await readService.MarkReadAsync(
+            actorUserId,
+            conversationId,
+            request!.MessageId,
+            cancellationToken);
+        return result.Status == MessageOperationStatus.Success
+            ? Results.Ok(result.Value)
+            : MessageError(context, result.Status);
+    }
+
     private static IResult MessageError(HttpContext context, MessageOperationStatus status) =>
         status switch
         {
@@ -106,6 +137,12 @@ public static class MessageEndpoints
                 new Dictionary<string, string[]>
                 {
                     ["mentionUserIds"] = ["One or more mentioned users are unavailable in this conversation."],
+                }),
+            MessageOperationStatus.ReadTargetInvalid => ValidationError(
+                context,
+                new Dictionary<string, string[]>
+                {
+                    ["messageId"] = ["The message is unavailable in this conversation."],
                 }),
             MessageOperationStatus.IdempotencyKeyReuse => ApiErrorWriter.Result(
                 context,
