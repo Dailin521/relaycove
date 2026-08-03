@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 3
 ActiveTask: docs/ai/tasks/2026-08-03-stage-3-conversation-api.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 1a3c49289940d625182237fddcd1954fc40983e9
+LatestGreenCodeCommit: b9b004109183e0157bca5c16f0acdaf7a39c8940
 LatestGreenIntegrationCommit: 9c4f4d4eab931d03071c21fcf6c19de440fcd661
-NextAction: 冻结并实现阶段 3 会话创建、权威列表、私有成员管理与动态访问校验
+NextAction: 仅快进集成会话 API 完成提交并开始阶段 4 文字消息纵向切片
 ClaudeCalls: 21（软上限 24，硬上限 30）
 ClaudeCostUsd: 5.4229485 confirmed；另有十四次失败/中断调用费用 unavailable
 Blocker: none
@@ -45,6 +45,7 @@ RequiredUserGate: none
 - `agent/v1-integration` 是本地最新绿色集成头；任务分支只有完成验证和交接提交后，才允许仅快进该分支。
 - 当前管理员引导代码检查点 `419ef00069c86c85b097a7961cebe95a16730cc5` 已通过 Fast、Full、100 项测试、真实 bootstrap/动态管理员授权/同名并发、密码与日志边界及依赖漏洞审计；Claude 无候选结论，已如实降级记录 Codex 固定差异自审。
 - 当前会话存储代码检查点 `1a3c49289940d625182237fddcd1954fc40983e9` 已通过 Fast、Full、116 项测试、真实 migration up/down/旧认证数据保留、约束/唯一/外键、model drift 与漏洞审计；Claude #20 无结论，已如实降级记录 Codex 固定差异复核。
+- 当前会话访问与成员 API 代码检查点 `b9b004109183e0157bca5c16f0acdaf7a39c8940` 已通过 Full、134 项测试、真实 HTTP/SQLite Direct 与成员并发、动态授权/撤权、共享访问查询、单查询、busy 503、model drift 与漏洞审计；Claude #21 无结论，已如实降级记录 Codex 固定差异复核。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确授权绿色任务的常规 push、合入集成分支与任务分支清理，无需二次确认；`main`、Tag、Release、真实发布和生产部署仍须满足对应里程碑与发布 Gate，不由该授权自动放宽。
 

@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 3 — 会话创建、权威列表、成员管理与动态访问校验
-- **状态：** 进行中
+- **状态：** 已完成
 - **基准提交：** `9c4f4d4eab931d03071c21fcf6c19de440fcd661`
 - **工作分支：** `agent/stage-3-conversation-api`
 - **相关方案章节：** `RelayCove_工程落地方案.md` 第 7.2、7.3、8.2、10.2、阶段 3；`DEC-003`、`DEC-006`、`DEC-008`
@@ -61,13 +61,13 @@
 
 ### 验收标准
 
-- [ ] 未认证请求统一 401；只有数据库当前全局管理员可创建频道，创建者拥有频道 Administrator 成员行。
-- [ ] 所有正常用户都在权威列表看到非删除公共频道；私有/Direct 仅当前成员可见，响应 `Complete=true`，Direct 双方看到对方昵称。
-- [ ] 同一 pair 的正序、反序和并发 Direct 创建永久只得到同一 ID 与恰好两个 Member；软删除后恢复原 ID，自聊/空/禁用目标稳定失败。
-- [ ] 全局管理员或当前频道 Administrator 可新增、重新加入、更新角色和移除私有成员；初始水位为 0，重复操作幂等，普通成员/非成员/错误类型使用稳定 403/409。
-- [ ] 私有成员撤权提交后，单会话、成员列表与后续消息资源的共享访问检查立即返回 `403 ConversationAccessRevoked`，权威全集不再包含该会话。
-- [ ] 请求校验使用 camelCase Details；错误/日志不泄露请求对象、昵称或 SQLite 细节；busy/locked 保持 503。
-- [ ] Fast、Full、漏洞审计、文件白名单、`git diff --check` 与固定差异独立复核通过或按规则如实记录。
+- [x] 未认证请求统一 401；只有数据库当前全局管理员可创建频道，创建者拥有频道 Administrator 成员行。
+- [x] 所有正常用户都在权威列表看到非删除公共频道；私有/Direct 仅当前成员可见，响应 `Complete=true`，Direct 双方看到对方昵称。
+- [x] 同一 pair 的正序、反序和并发 Direct 创建永久只得到同一 ID 与恰好两个 Member；软删除后恢复原 ID，自聊/空/禁用目标稳定失败。
+- [x] 全局管理员或当前频道 Administrator 可新增、重新加入、更新角色和移除私有成员；初始水位为 0，重复操作幂等，普通成员/非成员/错误类型使用稳定 403/409。
+- [x] 私有成员撤权提交后，单会话、成员列表与后续消息资源的共享访问检查立即返回 `403 ConversationAccessRevoked`，权威全集不再包含该会话。
+- [x] 请求校验使用 camelCase Details；错误/日志不泄露请求对象、昵称或 SQLite 细节；busy/locked 保持 503。
+- [x] Fast、Full、漏洞审计、文件白名单、`git diff --check` 与固定差异独立复核通过或按规则如实记录。
 
 ### 验证命令
 
@@ -98,25 +98,37 @@ Claude 仅作一次限时参考，不阻塞 Codex 主流程；绿色后按用户
 
 ### 修改摘要
 
-- 进行中。
+- Shared 新增判别式创建请求、会话/完整列表、成员 upsert/列表 DTO，以及 `UserNotFound`、`ConversationTypeConflict` 稳定错误码；Web JSON 契约和错误码集合由测试固定。
+- Server 新增六个认证会话端点、请求校验、命令与查询服务。所有频道/Direct/成员写命令在 SQLite 非 deferred Serializable 事务内重新确认 actor、目标、会话类型与当前角色；Direct 正反序、并发和软删恢复复用永久 pair key。
+- `GET /api/conversations` 在单个数据库命令中返回 `Complete=true` 权威集合；详情和成员列表把可见性过滤与数据投影保持在同一 SQL。可组合 `ConversationAccessQuery` 为阶段 4 消息资源复用同一可见性真源；全局管理员可管理私有成员但未加入时不能读取私有会话，Public 访问隐式，Direct 成员不可变。
+- 真实 HTTP/SQLite 测试覆盖动态降权、全局/本地管理员、成员并发 upsert/幂等删除、撤权后列表/详情/成员 403、类型冲突、Direct 双视角/并发/恢复、禁用目标、单查询计数、busy 503 与日志边界。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 基准 Fast | Debug 0 警告、0 错误；116 项测试通过 |
+| `未验证` | Claude challenge #21 | `ChallengeHead=22d60cf`；本机认证源优先级禁用 claude.ai connector，60 秒窗口内超时，无模型、workspace、费用或结论；按用户要求未重试 |
+| `已验证` | 会话专项测试 | Server `FullyQualifiedName~Conversation` 共 `30/30` 通过；含真实 HTTP、SQLite 并发、软删恢复、撤权、单数据库命令计数、busy 503 与 Unicode/判别请求校验 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full` | format、Release 构建、134 项测试和 `git diff --check` 全部通过；Server 113、Shared 19、Client/Updater 各 1，构建 0 警告、0 错误 |
+| `已验证` | `dotnet ef migrations has-pending-model-changes ...` | 返回“自上次 migration 后模型无变化” |
+| `已验证` | `dotnet list RelayCove.sln package --vulnerable --include-transitive` | 8 个源/测试项目的直接与传递依赖均未报告已知漏洞 |
+| `已验证` | 基准差异文件白名单 | `9c4f4d4..b9b0041` 共 26 个文件，0 个超出任务允许范围；`git diff --check` 通过 |
+| `已验证` | Codex 固定差异复核 | 按 `REVIEW_TEMPLATE.md` 审查首个候选 `74eb8f6` 的授权、存在性泄漏、事务/并发、错误状态、日志和测试；发现后续消息资源缺少可组合共享访问查询，在 `b9b0041` 补齐；定向 30 项与 Full 134 项复测通过，最终 `ReviewHead=b9b004109183e0157bca5c16f0acdaf7a39c8940` 未发现剩余可操作问题 |
+| `未验证` | Claude 候选 review | 用户要求 Claude 仅作参考且避免长耗时；前置 #21 已超时，故未重复候选调用，由 Codex 固定差异复核、真实 HTTP/SQLite 测试与 Full 降级覆盖 |
 
 ### 文件范围
 
-- 新增：本任务文件。
-- 修改：进行中。
+- 新增：Shared 会话/成员 DTO；Server 会话端点、校验、命令/查询服务及结果类型；对应 Shared/Server 自动化测试；本任务文件。
+- 修改：Conversation 更新时间方法、通用 SQLite busy 错误映射、Server 注册、稳定错误码及契约测试；工程方案、`DECISIONS.md`、`STATUS.md`、`V1_EXECUTION.md`。
 - 删除：无。
 
 ### 决策与限制
 
-- 决策：进行中。
-- 已知限制：进行中。
+- 决策：频道创建者为会话 Administrator；私有成员管理允许当前全局管理员或当前会话 Administrator，但全局管理覆盖不授予私有内容访问；权威列表是单查询完整集合；Direct 永久复用同一会话；详见 `DEC-009`。
+- 已知限制：当前没有 Messages，因此列表消息字段和加入/重新加入水位只能为 0。阶段 4 必须在同一成员写事务中把水位初始化替换为当前 `MAX(Messages.Id)`；Public 普通用户当前没有显式成员行，其持久化已读/静音状态同样留给消息/read 切片冻结。
+- 独立复核限制：Claude #21 和候选 review 均无结论，不能标记为通过；已由固定候选 Codex 复核、134 项 Full、专项并发/权限测试、model drift 与漏洞审计如实降级覆盖。
 
 ### 下一步
 
-- 冻结 API/授权语义并实现 Shared 契约、服务、端点与真实 HTTP/SQLite 验证。
+- 将完成提交仅快进合入并推送 `agent/v1-integration`；下一切片实现阶段 4 文字消息存储、HTTP 幂等发送、权限与 History/Sync 基础闭环，不提前实现 SignalR。

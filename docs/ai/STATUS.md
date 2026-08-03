@@ -5,10 +5,10 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员存储已合入；会话访问与成员管理 API 切片已开始
-- **最近验证通过的状态：** 会话与成员存储代码 `1a3c49289940d625182237fddcd1954fc40983e9`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员存储已合入；会话访问与成员管理 API 候选已完成并通过验证
+- **最近验证通过的状态：** 会话访问与成员 API 代码 `b9b004109183e0157bca5c16f0acdaf7a39c8940`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Fast/Full、format、116 项测试、真实 SQLite migration up/down/旧认证数据保留/会话约束、认证轮换/bootstrap/管理员并发、JWT 负向、限流、日志泄漏、发布依赖、漏洞审计与空白检查通过
+- **自动化验证：** `已验证` — Full、format、134 项测试、会话 HTTP/Direct/成员并发/撤权/单查询/busy、真实 SQLite migration/约束、认证轮换/bootstrap、JWT 负向、限流、日志泄漏、发布依赖、model drift、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
 - **最近 Claude 调用：** `未验证` — 会话 API XHigh challenge #21 对 `ChallengeHead=22d60cf` 因本机认证源覆盖 claude.ai 登录在 60 秒内超时；未取得审查结论且按用户要求未重试，`DEC-009` 由 Codex 结合仓库与 Microsoft 官方证据独立收敛
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-3-conversation-api`：冻结并实现会话创建、权威列表、私有成员管理与动态访问校验。
+- `agent/stage-3-conversation-api`：绿色完成，待仅快进合入集成分支。
 
 ## 已完成
 
@@ -32,10 +32,11 @@
 - 严格 typed HS256 access JWT、login/refresh/logout/me、原子 refresh rotation、动态禁用检查、认证限流、统一错误 envelope 与 `DEC-006`
 - 默认关闭的空库管理员 bootstrap、15–128 Unicode scalar 密码策略、动态数据库管理员授权、管理员创建用户与 `DEC-007`
 - Conversations/ConversationMembers 实体、Direct 永久唯一身份、成员角色/单调已读、SQLite 约束与 migration（`DEC-008`）
+- 会话创建/详情/权威全集、Direct 并发获取/恢复、私有成员动态管理、撤权 403 与 `DEC-009`
 
 ## 下一任务
 
-完成阶段 3 会话创建、成员管理、`Complete=true` 权威列表、Direct 获取/恢复和动态访问校验。
+开始阶段 4 文字消息存储、HTTP 幂等发送、History/Sync 与会话权限基础闭环。
 
 ## 阻塞项
 
