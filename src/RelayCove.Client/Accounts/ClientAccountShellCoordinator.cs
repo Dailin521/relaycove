@@ -4,6 +4,7 @@ using RelayCove.Client.Auth;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
 using RelayCove.Shared.Auth;
+using RelayCove.Shared.Messages;
 using RelayCove.Shared.Realtime;
 
 namespace RelayCove.Client.Accounts;
@@ -32,7 +33,11 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         LocalConversationListReadOutcome.Failure(
             LocalCacheOperationStatus.AuthoritativeSnapshotRequired,
             revision: 0);
+    private ClientMessageListSnapshot messageList = ClientMessageListSnapshot.Initial;
+    private MessageSelection? messageSelection;
+    private Guid? renderedConversationId;
     private long conversationPublicationRevision;
+    private long messagePublicationRevision;
     private long shellPublicationRevision;
     private Task? disposeTask;
     private bool detachedForProcessExit;
@@ -61,10 +66,14 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 
     public event Action<LocalConversationListReadOutcome>? ConversationListChanged;
 
+    public event Action<ClientMessageListSnapshot>? MessageListChanged;
+
     public ClientAccountShellSnapshot Snapshot => Volatile.Read(ref snapshot);
 
     public LocalConversationListReadOutcome ConversationList =>
         Volatile.Read(ref conversationList);
+
+    public ClientMessageListSnapshot MessageList => Volatile.Read(ref messageList);
 
     public Task RestoreAsync(CancellationToken cancellationToken = default) =>
         StartRestoreAsync(cancellationToken);
@@ -200,8 +209,11 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         IClientAccountRuntime? activeRuntime;
         lock (stateGate)
         {
-            latestActivity = activity;
+            latestActivity = activity.OpenConversationId is null
+                ? activity
+                : activity with { OpenConversationId = null };
             activeRuntime = runtime;
+            activity = BuildRuntimeActivityLocked();
         }
 
         if (activeRuntime is null || Volatile.Read(ref disposeStarted) != 0)
@@ -224,12 +236,154 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                 "Publishing account window activity failed; errorType={ErrorType}.",
                 exception.GetType().Name);
         }
+
+        TryCommitPendingRenderedBoundary();
+    }
+
+    public void SelectConversation(
+        Guid? conversationId,
+        long? targetMessageId = null)
+    {
+        if (conversationId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "A selected conversation ID cannot be empty.",
+                nameof(conversationId));
+        }
+
+        if (targetMessageId is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(targetMessageId));
+        }
+
+        ThrowIfStopping();
+        MessageSelection? previousSelection;
+        MessageSelection? nextSelection = null;
+        IClientAccountRuntime? activeRuntime;
+        ClientActivitySnapshot activity;
+        lock (stateGate)
+        {
+            activeRuntime = runtime;
+            var isAuthorizedSelection = conversationId is { } selectedId &&
+                activeRuntime is not null &&
+                runtimeSubscription is not null &&
+                conversationList.Status == LocalCacheOperationStatus.Ready &&
+                conversationList.Conversations.Any(item => item.Id == selectedId);
+            if (isAuthorizedSelection &&
+                messageSelection is { } currentSelection &&
+                currentSelection.ConversationId == conversationId &&
+                (targetMessageId is null ||
+                 currentSelection.TargetMessageId == targetMessageId))
+            {
+                return;
+            }
+
+            previousSelection = messageSelection;
+            messageSelection = null;
+            renderedConversationId = null;
+            if (isAuthorizedSelection)
+            {
+                nextSelection = new MessageSelection(
+                    conversationId!.Value,
+                    targetMessageId,
+                    runtimeSubscription!,
+                    CancellationTokenSource.CreateLinkedTokenSource(
+                        lifetimeCancellation.Token));
+                messageSelection = nextSelection;
+            }
+
+            activity = BuildRuntimeActivityLocked();
+        }
+
+        previousSelection?.Cancel();
+        PublishMessageList(nextSelection is null
+            ? ClientMessageListSnapshot.Initial
+            : CreateMessageSnapshot(
+                nextSelection,
+                ClientMessageListStatus.Loading,
+                isLoading: true,
+                lastLoadStatus: null));
+        TryUpdateRuntimeActivity(activeRuntime, activity);
+        if (nextSelection is not null)
+        {
+            _ = OpenMessageSelectionAsync(nextSelection);
+        }
+    }
+
+    public Task LoadOlderMessagesAsync()
+    {
+        ThrowIfStopping();
+        MessageSelection? selection;
+        lock (stateGate)
+        {
+            selection = messageSelection;
+            if (selection is null ||
+                !IsCurrentMessageSelectionLocked(selection) ||
+                !messageList.CanLoadOlder ||
+                Interlocked.CompareExchange(ref selection.OlderLoadRunning, 1, 0) != 0)
+            {
+                return Task.CompletedTask;
+            }
+        }
+
+        return LoadOlderMessagesCoreAsync(selection);
+    }
+
+    public void AcknowledgeMessageSnapshotApplied(
+        Guid conversationId,
+        long revision,
+        long? observedThroughMessageId,
+        bool isAtLatestRegion)
+    {
+        if (conversationId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "An applied conversation ID cannot be empty.",
+                nameof(conversationId));
+        }
+
+        if (observedThroughMessageId is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(observedThroughMessageId));
+        }
+
+        IClientAccountRuntime? activeRuntime;
+        ClientActivitySnapshot activity;
+        lock (stateGate)
+        {
+            if (messageSelection is not { } selection ||
+                !IsCurrentMessageSelectionLocked(selection) ||
+                messageList.Status != ClientMessageListStatus.Ready ||
+                messageList.ConversationId != conversationId ||
+                messageList.Revision != revision ||
+                (observedThroughMessageId.HasValue &&
+                 !selection.Messages.ContainsKey(observedThroughMessageId.Value)))
+            {
+                return;
+            }
+
+            selection.AppliedRevision = revision;
+            if (observedThroughMessageId is { } observedMessageId)
+            {
+                selection.PendingObservedThroughMessageId = Math.Max(
+                    selection.PendingObservedThroughMessageId ?? 0,
+                    observedMessageId);
+            }
+
+            renderedConversationId = isAtLatestRegion ? conversationId : null;
+            activeRuntime = runtime;
+            activity = BuildRuntimeActivityLocked();
+        }
+
+        TryUpdateRuntimeActivity(activeRuntime, activity);
+        TryCommitPendingRenderedBoundary();
     }
 
     public void DetachForProcessExit()
     {
         IDisposable? lease;
         RuntimeSubscription? subscription;
+        MessageSelection? selection;
         lock (stateGate)
         {
             if (Interlocked.Exchange(ref disposeStarted, 1) != 0)
@@ -242,11 +396,16 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             activationLease = null;
             subscription = runtimeSubscription;
             runtimeSubscription = null;
+            selection = messageSelection;
+            messageSelection = null;
+            renderedConversationId = null;
             SnapshotChanged = null;
             ConversationListChanged = null;
+            MessageListChanged = null;
         }
 
         lifetimeCancellation.Cancel();
+        selection?.Cancel();
         subscription?.Detach();
         lease?.Dispose();
     }
@@ -335,6 +494,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             {
                 SnapshotChanged = null;
                 ConversationListChanged = null;
+                MessageListChanged = null;
             }
 
             if (failure is null)
@@ -617,6 +777,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         IDisposable? lease;
         IClientAccountRuntime? detachedRuntime;
         RuntimeSubscription? subscription;
+        MessageSelection? selection;
         lock (stateGate)
         {
             if (!ReferenceEquals(runtime, expectedRuntime))
@@ -630,14 +791,19 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             activationLease = null;
             runtime = null;
             runtimeSubscription = null;
+            selection = messageSelection;
+            messageSelection = null;
+            renderedConversationId = null;
             activeDisplayName = null;
             activeServerBaseUri = null;
         }
 
         subscription?.Detach();
+        selection?.Cancel();
         PublishConversationList(LocalConversationListReadOutcome.Failure(
             LocalCacheOperationStatus.AuthoritativeSnapshotRequired,
             ConversationList.Revision));
+        PublishMessageList(ClientMessageListSnapshot.Initial);
         lease?.Dispose();
         var logoutStatus = detachedRuntime is null
             ? ClientLogoutStatus.LoggedOut
@@ -712,6 +878,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
     {
         _ = revision;
         RequestConversationRefresh(subscription);
+        RequestMessageRefresh(subscription);
     }
 
     private void RequestConversationRefresh(RuntimeSubscription subscription)
@@ -773,6 +940,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                     return;
                 }
 
+                ReconcileMessageSelection(subscription, outcome);
+
                 TryPublishRuntimeActiveSnapshot(
                     subscription,
                     subscription.Runtime.ConnectionState);
@@ -788,6 +957,642 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             }
         }
     }
+
+    private async Task OpenMessageSelectionAsync(MessageSelection selection)
+    {
+        try
+        {
+            var local = await selection.Subscription.Runtime
+                .ReadMessagePageAsync(
+                    selection.ConversationId,
+                    beforeMessageId: null,
+                    limit: 50,
+                    selection.Token)
+                .ConfigureAwait(false);
+            if (!TryApplyLocalPage(selection, local, replacePagingState: true))
+            {
+                return;
+            }
+
+            if (local.Status != LocalCacheOperationStatus.Ready)
+            {
+                TryPublishMessageSelection(
+                    selection,
+                    MapLocalMessageStatus(local.Status),
+                    isLoading: false,
+                    lastLoadStatus: null);
+                return;
+            }
+
+            TryPublishMessageSelection(
+                selection,
+                ClientMessageListStatus.Ready,
+                isLoading: true,
+                lastLoadStatus: null);
+
+            if (selection.TargetMessageId is { } targetMessageId &&
+                !SelectionContainsMessage(selection, targetMessageId))
+            {
+                var around = await selection.Subscription.Runtime
+                    .LoadMessageAroundAsync(
+                        selection.ConversationId,
+                        targetMessageId,
+                        before: 20,
+                        after: 20,
+                        selection.Token)
+                    .ConfigureAwait(false);
+                if (around.Status == ClientMessageLoadStatus.AuthenticationRequired)
+                {
+                    await EndAuthenticationRequiredSessionAsync(
+                            selection.Subscription.Runtime)
+                        .ConfigureAwait(false);
+                    return;
+                }
+
+                if (!TryApplyAroundOutcome(selection, around))
+                {
+                    return;
+                }
+
+                TryPublishMessageSelection(
+                    selection,
+                    around.Status == ClientMessageLoadStatus.Completed
+                        ? ClientMessageListStatus.Ready
+                        : MapMessageLoadStatus(around.Status),
+                    isLoading: false,
+                    lastLoadStatus: around.Status == ClientMessageLoadStatus.Completed
+                        ? null
+                        : around.Status);
+                return;
+            }
+
+            var history = await selection.Subscription.Runtime
+                .LoadMessageHistoryAsync(
+                    selection.ConversationId,
+                    beforeMessageId: null,
+                    limit: 50,
+                    selection.Token)
+                .ConfigureAwait(false);
+            if (history.Status == ClientMessageLoadStatus.AuthenticationRequired)
+            {
+                await EndAuthenticationRequiredSessionAsync(selection.Subscription.Runtime)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            if (!TryApplyHistoryOutcome(selection, history))
+            {
+                return;
+            }
+
+            TryPublishMessageSelection(
+                selection,
+                history.Status is ClientMessageLoadStatus.AccessRevoked or
+                    ClientMessageLoadStatus.AuthenticationRequired or
+                    ClientMessageLoadStatus.LocalCacheFailure or
+                    ClientMessageLoadStatus.ProtocolError
+                    ? MapMessageLoadStatus(history.Status)
+                    : ClientMessageListStatus.Ready,
+                isLoading: false,
+                lastLoadStatus: history.Status == ClientMessageLoadStatus.Completed
+                    ? null
+                    : history.Status);
+        }
+        catch (OperationCanceledException) when (
+            selection.Token.IsCancellationRequested ||
+            lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (!IsCurrentMessageSelection(selection))
+        {
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Opening the selected message list failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+            TryPublishMessageSelection(
+                selection,
+                ClientMessageListStatus.LocalCacheFailure,
+                isLoading: false,
+                lastLoadStatus: ClientMessageLoadStatus.LocalCacheFailure);
+        }
+    }
+
+    private async Task LoadOlderMessagesCoreAsync(MessageSelection selection)
+    {
+        try
+        {
+            long? beforeMessageId;
+            lock (stateGate)
+            {
+                if (!IsCurrentMessageSelectionLocked(selection) ||
+                    selection.Messages.Count == 0)
+                {
+                    return;
+                }
+
+                beforeMessageId = selection.NextBeforeMessageId ??
+                    selection.Messages.Keys.First();
+            }
+
+            TryPublishMessageSelection(
+                selection,
+                ClientMessageListStatus.Ready,
+                isLoading: true,
+                lastLoadStatus: null);
+            var local = await selection.Subscription.Runtime
+                .ReadMessagePageAsync(
+                    selection.ConversationId,
+                    beforeMessageId,
+                    limit: 50,
+                    selection.Token)
+                .ConfigureAwait(false);
+            if (!TryApplyLocalPage(selection, local, replacePagingState: false))
+            {
+                return;
+            }
+
+            if (local.Status != LocalCacheOperationStatus.Ready)
+            {
+                TryPublishMessageSelection(
+                    selection,
+                    MapLocalMessageStatus(local.Status),
+                    isLoading: false,
+                    lastLoadStatus: null);
+                return;
+            }
+
+            TryPublishMessageSelection(
+                selection,
+                ClientMessageListStatus.Ready,
+                isLoading: true,
+                lastLoadStatus: null);
+            var history = await selection.Subscription.Runtime
+                .LoadMessageHistoryAsync(
+                    selection.ConversationId,
+                    beforeMessageId,
+                    limit: 50,
+                    selection.Token)
+                .ConfigureAwait(false);
+            if (history.Status == ClientMessageLoadStatus.AuthenticationRequired)
+            {
+                await EndAuthenticationRequiredSessionAsync(selection.Subscription.Runtime)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            if (!TryApplyHistoryOutcome(selection, history))
+            {
+                return;
+            }
+
+            TryPublishMessageSelection(
+                selection,
+                history.Status is ClientMessageLoadStatus.AccessRevoked or
+                    ClientMessageLoadStatus.AuthenticationRequired or
+                    ClientMessageLoadStatus.LocalCacheFailure or
+                    ClientMessageLoadStatus.ProtocolError
+                    ? MapMessageLoadStatus(history.Status)
+                    : ClientMessageListStatus.Ready,
+                isLoading: false,
+                lastLoadStatus: history.Status == ClientMessageLoadStatus.Completed
+                    ? null
+                    : history.Status);
+        }
+        catch (OperationCanceledException) when (
+            selection.Token.IsCancellationRequested ||
+            lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (!IsCurrentMessageSelection(selection))
+        {
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Loading older messages failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+            TryPublishMessageSelection(
+                selection,
+                ClientMessageListStatus.Ready,
+                isLoading: false,
+                lastLoadStatus: ClientMessageLoadStatus.LocalCacheFailure);
+        }
+        finally
+        {
+            Volatile.Write(ref selection.OlderLoadRunning, 0);
+        }
+    }
+
+    private bool TryApplyLocalPage(
+        MessageSelection selection,
+        LocalMessagePageReadOutcome outcome,
+        bool replacePagingState)
+    {
+        lock (stateGate)
+        {
+            if (!IsCurrentMessageSelectionLocked(selection) ||
+                outcome.ConversationId != selection.ConversationId)
+            {
+                return false;
+            }
+
+            if (outcome.Status == LocalCacheOperationStatus.Ready)
+            {
+                MergeMessagesLocked(selection, outcome.Messages);
+                if (replacePagingState || outcome.HasMoreBefore)
+                {
+                    selection.HasMoreBefore = outcome.HasMoreBefore;
+                    selection.NextBeforeMessageId = outcome.NextBeforeMessageId;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    private bool TryApplyHistoryOutcome(
+        MessageSelection selection,
+        ClientMessageHistoryPageOutcome outcome)
+    {
+        lock (stateGate)
+        {
+            if (!IsCurrentMessageSelectionLocked(selection))
+            {
+                return false;
+            }
+
+            if (outcome.Status == ClientMessageLoadStatus.Completed)
+            {
+                MergeMessagesLocked(selection, outcome.Messages);
+                selection.HasMoreBefore = outcome.HasMore;
+                selection.NextBeforeMessageId = outcome.NextBeforeMessageId;
+            }
+
+            return true;
+        }
+    }
+
+    private bool TryApplyAroundOutcome(
+        MessageSelection selection,
+        ClientMessageAroundOutcome outcome)
+    {
+        lock (stateGate)
+        {
+            if (!IsCurrentMessageSelectionLocked(selection))
+            {
+                return false;
+            }
+
+            if (outcome.Status == ClientMessageLoadStatus.Completed &&
+                outcome.TargetMessageId == selection.TargetMessageId)
+            {
+                MergeMessagesLocked(selection, outcome.Messages);
+                selection.HasMoreBefore = outcome.HasMoreBefore;
+                selection.NextBeforeMessageId =
+                    outcome.HasMoreBefore && outcome.Messages.Count != 0
+                        ? outcome.Messages[0].Id
+                        : null;
+                selection.HasMoreAfter = outcome.HasMoreAfter;
+            }
+
+            return true;
+        }
+    }
+
+    private static void MergeMessagesLocked(
+        MessageSelection selection,
+        IEnumerable<MessageDto> messages)
+    {
+        foreach (var message in messages)
+        {
+            if (message.ConversationId == selection.ConversationId)
+            {
+                selection.Messages[message.Id] = message;
+            }
+        }
+    }
+
+    private bool SelectionContainsMessage(MessageSelection selection, long messageId)
+    {
+        lock (stateGate)
+        {
+            return IsCurrentMessageSelectionLocked(selection) &&
+                selection.Messages.ContainsKey(messageId);
+        }
+    }
+
+    private void ReconcileMessageSelection(
+        RuntimeSubscription subscription,
+        LocalConversationListReadOutcome outcome)
+    {
+        MessageSelection? selection;
+        lock (stateGate)
+        {
+            selection = messageSelection;
+            if (selection is null ||
+                !ReferenceEquals(selection.Subscription, subscription))
+            {
+                return;
+            }
+
+            if (outcome.Status == LocalCacheOperationStatus.Ready &&
+                outcome.Conversations.Any(item => item.Id == selection.ConversationId))
+            {
+                return;
+            }
+        }
+
+        SelectConversation(conversationId: null);
+    }
+
+    private void RequestMessageRefresh(RuntimeSubscription subscription)
+    {
+        MessageSelection? selection;
+        lock (stateGate)
+        {
+            selection = messageSelection;
+            if (selection is null ||
+                !ReferenceEquals(selection.Subscription, subscription) ||
+                !IsCurrentMessageSelectionLocked(selection))
+            {
+                return;
+            }
+        }
+
+        Volatile.Write(ref selection.RefreshPending, 1);
+        if (Interlocked.CompareExchange(ref selection.RefreshRunning, 1, 0) == 0)
+        {
+            _ = RefreshSelectedMessagesAsync(selection);
+        }
+    }
+
+    private async Task RefreshSelectedMessagesAsync(MessageSelection selection)
+    {
+        try
+        {
+            while (Interlocked.Exchange(ref selection.RefreshPending, 0) == 1 &&
+                IsCurrentMessageSelection(selection))
+            {
+                var local = await selection.Subscription.Runtime
+                    .ReadMessagePageAsync(
+                        selection.ConversationId,
+                        beforeMessageId: null,
+                        limit: 50,
+                        selection.Token)
+                    .ConfigureAwait(false);
+                if (!TryApplyLocalPage(selection, local, replacePagingState: false))
+                {
+                    return;
+                }
+
+                TryPublishMessageSelection(
+                    selection,
+                    local.Status == LocalCacheOperationStatus.Ready
+                        ? ClientMessageListStatus.Ready
+                        : MapLocalMessageStatus(local.Status),
+                    isLoading: Volatile.Read(ref selection.OlderLoadRunning) != 0,
+                    lastLoadStatus: null);
+            }
+        }
+        catch (OperationCanceledException) when (selection.Token.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException) when (!IsCurrentMessageSelection(selection))
+        {
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Refreshing selected messages failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
+        finally
+        {
+            Volatile.Write(ref selection.RefreshRunning, 0);
+            if (Volatile.Read(ref selection.RefreshPending) != 0 &&
+                IsCurrentMessageSelection(selection))
+            {
+                RequestMessageRefresh(selection.Subscription);
+            }
+        }
+    }
+
+    private void TryCommitPendingRenderedBoundary()
+    {
+        MessageSelection? selection;
+        IClientAccountRuntime? activeRuntime;
+        long messageId;
+        lock (stateGate)
+        {
+            selection = messageSelection;
+            activeRuntime = runtime;
+            if (selection is null ||
+                activeRuntime is null ||
+                !IsCurrentMessageSelectionLocked(selection) ||
+                !latestActivity.IsMainWindowForeground ||
+                selection.PendingObservedThroughMessageId is not { } pendingMessageId ||
+                pendingMessageId <= selection.CommittedObservedThroughMessageId ||
+                Interlocked.CompareExchange(ref selection.RenderCommitRunning, 1, 0) != 0)
+            {
+                return;
+            }
+
+            messageId = pendingMessageId;
+        }
+
+        _ = CompleteRenderedBoundaryAsync(selection, activeRuntime, messageId);
+    }
+
+    private async Task CompleteRenderedBoundaryAsync(
+        MessageSelection selection,
+        IClientAccountRuntime expectedRuntime,
+        long messageId)
+    {
+        var committed = false;
+        try
+        {
+            var status = await expectedRuntime
+                .MarkConversationRenderedThroughAsync(
+                    selection.ConversationId,
+                    messageId,
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+            lock (stateGate)
+            {
+                if (status == LocalCacheOperationStatus.Ready)
+                {
+                    committed = true;
+                    selection.CommittedObservedThroughMessageId = Math.Max(
+                        selection.CommittedObservedThroughMessageId,
+                        messageId);
+                    if (selection.PendingObservedThroughMessageId <= messageId)
+                    {
+                        selection.PendingObservedThroughMessageId = null;
+                    }
+                }
+            }
+        }
+        catch (ObjectDisposedException) when (!IsCurrentRuntime(expectedRuntime))
+        {
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Committing a rendered message boundary failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
+        finally
+        {
+            Volatile.Write(ref selection.RenderCommitRunning, 0);
+            if (committed)
+            {
+                TryCommitPendingRenderedBoundary();
+            }
+        }
+    }
+
+    private bool TryPublishMessageSelection(
+        MessageSelection selection,
+        ClientMessageListStatus status,
+        bool isLoading,
+        ClientMessageLoadStatus? lastLoadStatus)
+    {
+        ClientMessageListSnapshot value;
+        Action<ClientMessageListSnapshot>? handlers;
+        lock (stateGate)
+        {
+            if (!IsCurrentMessageSelectionLocked(selection))
+            {
+                return false;
+            }
+
+            value = CreateMessageSnapshot(
+                selection,
+                status,
+                isLoading,
+                lastLoadStatus) with
+            {
+                Revision = Interlocked.Increment(ref messagePublicationRevision),
+            };
+            Volatile.Write(ref messageList, value);
+            handlers = MessageListChanged;
+        }
+
+        PublishMessageListHandlers(value, handlers);
+        return true;
+    }
+
+    private void PublishMessageList(ClientMessageListSnapshot value)
+    {
+        Action<ClientMessageListSnapshot>? handlers;
+        lock (stateGate)
+        {
+            value = value with
+            {
+                Revision = Interlocked.Increment(ref messagePublicationRevision),
+            };
+            Volatile.Write(ref messageList, value);
+            handlers = MessageListChanged;
+        }
+
+        PublishMessageListHandlers(value, handlers);
+    }
+
+    private void PublishMessageListHandlers(
+        ClientMessageListSnapshot value,
+        Action<ClientMessageListSnapshot>? handlers)
+    {
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action<ClientMessageListSnapshot> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(value);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    "Publishing an account message-list snapshot failed; " +
+                    "errorType={ErrorType}.",
+                    exception.GetType().Name);
+            }
+        }
+    }
+
+    private static ClientMessageListSnapshot CreateMessageSnapshot(
+        MessageSelection selection,
+        ClientMessageListStatus status,
+        bool isLoading,
+        ClientMessageLoadStatus? lastLoadStatus) =>
+        new(
+            status,
+            selection.ConversationId,
+            ClientMessageListPresenter.Present(
+                selection.Messages.Values,
+                selection.Subscription.Runtime.Identity.UserId),
+            isLoading,
+            selection.HasMoreBefore,
+            selection.HasMoreAfter,
+            selection.TargetMessageId,
+            lastLoadStatus);
+
+    private static ClientMessageListStatus MapLocalMessageStatus(
+        LocalCacheOperationStatus status) =>
+        status switch
+        {
+            LocalCacheOperationStatus.Ready => ClientMessageListStatus.Ready,
+            LocalCacheOperationStatus.AuthoritativeSnapshotRequired =>
+                ClientMessageListStatus.AuthoritativeSnapshotRequired,
+            LocalCacheOperationStatus.RevokedConversation or
+                LocalCacheOperationStatus.UnknownConversation =>
+                ClientMessageListStatus.RevokedConversation,
+            LocalCacheOperationStatus.TransientFailure =>
+                ClientMessageListStatus.TransientFailure,
+            LocalCacheOperationStatus.FatalScope => ClientMessageListStatus.FatalScope,
+            LocalCacheOperationStatus.ProtocolError or LocalCacheOperationStatus.Conflict =>
+                ClientMessageListStatus.ProtocolError,
+            _ => ClientMessageListStatus.LocalCacheFailure,
+        };
+
+    private static ClientMessageListStatus MapMessageLoadStatus(
+        ClientMessageLoadStatus status) =>
+        status switch
+        {
+            ClientMessageLoadStatus.Completed => ClientMessageListStatus.Ready,
+            ClientMessageLoadStatus.AuthenticationRequired =>
+                ClientMessageListStatus.AuthenticationRequired,
+            ClientMessageLoadStatus.AccessRevoked =>
+                ClientMessageListStatus.RevokedConversation,
+            ClientMessageLoadStatus.AccessDenied => ClientMessageListStatus.AccessDenied,
+            ClientMessageLoadStatus.TransientFailure =>
+                ClientMessageListStatus.TransientFailure,
+            ClientMessageLoadStatus.ProtocolError => ClientMessageListStatus.ProtocolError,
+            ClientMessageLoadStatus.RemoteFailure => ClientMessageListStatus.RemoteFailure,
+            ClientMessageLoadStatus.LocalCacheFailure =>
+                ClientMessageListStatus.LocalCacheFailure,
+            ClientMessageLoadStatus.Canceled => ClientMessageListStatus.None,
+            _ => ClientMessageListStatus.LocalCacheFailure,
+        };
+
+    private bool IsCurrentMessageSelection(MessageSelection selection)
+    {
+        lock (stateGate)
+        {
+            return IsCurrentMessageSelectionLocked(selection);
+        }
+    }
+
+    private bool IsCurrentMessageSelectionLocked(MessageSelection selection) =>
+        ReferenceEquals(messageSelection, selection) &&
+        ReferenceEquals(runtimeSubscription, selection.Subscription) &&
+        ReferenceEquals(runtime, selection.Subscription.Runtime) &&
+        Volatile.Read(ref disposeStarted) == 0;
 
     private void PublishConversationList(LocalConversationListReadOutcome value)
     {
@@ -864,7 +1669,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         lock (stateGate)
         {
             activeRuntime = runtime;
-            activity = latestActivity;
+            activity = BuildRuntimeActivityLocked();
         }
 
         if (activeRuntime is null)
@@ -880,6 +1685,37 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         {
             logger.LogWarning(
                 "Restoring account window activity failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
+    }
+
+    private ClientActivitySnapshot BuildRuntimeActivityLocked() =>
+        renderedConversationId is null
+            ? latestActivity
+            : latestActivity with { OpenConversationId = renderedConversationId };
+
+    private void TryUpdateRuntimeActivity(
+        IClientAccountRuntime? expectedRuntime,
+        ClientActivitySnapshot activity)
+    {
+        if (expectedRuntime is null ||
+            Volatile.Read(ref disposeStarted) != 0 ||
+            !IsCurrentRuntime(expectedRuntime))
+        {
+            return;
+        }
+
+        try
+        {
+            expectedRuntime.UpdateActivity(activity);
+        }
+        catch (ObjectDisposedException) when (!IsCurrentRuntime(expectedRuntime))
+        {
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Publishing selected-conversation activity failed; errorType={ErrorType}.",
                 exception.GetType().Name);
         }
     }
@@ -920,6 +1756,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         out IClientAccountRuntime? activeRuntime)
     {
         RuntimeSubscription? subscription;
+        MessageSelection? selection;
         lock (stateGate)
         {
             lease = activationLease;
@@ -928,14 +1765,19 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             activationLease = null;
             runtime = null;
             runtimeSubscription = null;
+            selection = messageSelection;
+            messageSelection = null;
+            renderedConversationId = null;
             activeDisplayName = null;
             activeServerBaseUri = null;
         }
 
         subscription?.Detach();
+        selection?.Cancel();
         PublishConversationList(LocalConversationListReadOutcome.Failure(
             LocalCacheOperationStatus.AuthoritativeSnapshotRequired,
             ConversationList.Revision));
+        PublishMessageList(ClientMessageListSnapshot.Initial);
     }
 
     private void PublishStoppingSnapshot()
@@ -1021,6 +1863,72 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                 logger.LogWarning(
                     "Publishing an account shell snapshot failed; errorType={ErrorType}.",
                     exception.GetType().Name);
+            }
+        }
+    }
+
+    private sealed class MessageSelection
+    {
+        private readonly CancellationTokenSource cancellation;
+        private int canceled;
+
+        public MessageSelection(
+            Guid conversationId,
+            long? targetMessageId,
+            RuntimeSubscription subscription,
+            CancellationTokenSource cancellation)
+        {
+            ConversationId = conversationId;
+            TargetMessageId = targetMessageId;
+            Subscription = subscription;
+            this.cancellation = cancellation;
+            Token = cancellation.Token;
+        }
+
+        public Guid ConversationId { get; }
+
+        public long? TargetMessageId { get; }
+
+        public RuntimeSubscription Subscription { get; }
+
+        public CancellationToken Token { get; }
+
+        public SortedDictionary<long, MessageDto> Messages { get; } = [];
+
+        public long? NextBeforeMessageId { get; set; }
+
+        public bool HasMoreBefore { get; set; }
+
+        public bool HasMoreAfter { get; set; }
+
+        public long AppliedRevision { get; set; }
+
+        public long? PendingObservedThroughMessageId { get; set; }
+
+        public long CommittedObservedThroughMessageId { get; set; }
+
+        public int OlderLoadRunning;
+
+        public int RefreshPending;
+
+        public int RefreshRunning;
+
+        public int RenderCommitRunning;
+
+        public void Cancel()
+        {
+            if (Interlocked.Exchange(ref canceled, 1) != 0)
+            {
+                return;
+            }
+
+            try
+            {
+                cancellation.Cancel();
+            }
+            finally
+            {
+                cancellation.Dispose();
             }
         }
     }

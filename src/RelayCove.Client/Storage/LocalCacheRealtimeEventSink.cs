@@ -169,4 +169,5 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
                 exception.GetType().Name);
         }
     }
+
 }

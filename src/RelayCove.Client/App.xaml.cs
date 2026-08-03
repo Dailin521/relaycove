@@ -90,6 +90,7 @@ public partial class App : System.Windows.Application
             accountComposition.Coordinator.SnapshotChanged += OnAccountShellSnapshotChanged;
             accountComposition.Coordinator.ConversationListChanged +=
                 OnConversationListChanged;
+            accountComposition.Coordinator.MessageListChanged += OnMessageListChanged;
         }
         catch (Exception exception)
         {
@@ -433,6 +434,7 @@ public partial class App : System.Windows.Application
             accountComposition.Coordinator.SnapshotChanged -= OnAccountShellSnapshotChanged;
             accountComposition.Coordinator.ConversationListChanged -=
                 OnConversationListChanged;
+            accountComposition.Coordinator.MessageListChanged -= OnMessageListChanged;
             try
             {
                 await accountComposition.DisposeAsync();
@@ -512,6 +514,25 @@ public partial class App : System.Windows.Application
         if (MainWindow is MainWindow window)
         {
             window.ApplyConversationListSnapshot(outcome);
+        }
+    }
+
+    private void OnMessageListChanged(ClientMessageListSnapshot snapshot)
+    {
+        if (Volatile.Read(ref lifecycleStopping) != 0)
+        {
+            return;
+        }
+
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(() => OnMessageListChanged(snapshot));
+            return;
+        }
+
+        if (MainWindow is MainWindow window)
+        {
+            window.ApplyMessageListSnapshot(snapshot);
         }
     }
 

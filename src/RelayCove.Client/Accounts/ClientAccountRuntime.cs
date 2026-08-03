@@ -15,6 +15,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
     private readonly IClientAccountRealtimeConnection realtimeConnection;
     private readonly IClientAccountSyncCoordinator syncCoordinator;
     private readonly IClientAccountReadThroughCoordinator readThroughCoordinator;
+    private readonly ClientMessageHistoryCoordinator? messageHistoryCoordinator;
     private readonly IAsyncDisposable notificationCoordinator;
     private readonly IAsyncDisposable localCache;
     private readonly AccountScopedLocalCache? conversationSource;
@@ -41,7 +42,8 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         ILogger<ClientAccountRuntime> logger,
         Func<ClientNotificationActivationTarget, bool>? notificationTargetAuthorizer = null,
         AccountScopedLocalCache? conversationSource = null,
-        ClientAccountRuntimeStateHub? stateHub = null)
+        ClientAccountRuntimeStateHub? stateHub = null,
+        ClientMessageHistoryCoordinator? messageHistoryCoordinator = null)
     {
         Identity = identity ?? throw new ArgumentNullException(nameof(identity));
         this.authenticationSession = authenticationSession ??
@@ -56,6 +58,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
             new NoOpClientNotificationRoundCoordinator();
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
         this.conversationSource = conversationSource;
+        this.messageHistoryCoordinator = messageHistoryCoordinator;
         this.activityState = activityState ?? throw new ArgumentNullException(nameof(activityState));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.stateHub = stateHub ?? new ClientAccountRuntimeStateHub(logger);
@@ -140,6 +143,84 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
                 revision: 0))
             : conversationSource.ReadConversationListAsync(cancellationToken);
     }
+
+    public Task<LocalMessagePageReadOutcome> ReadMessagePageAsync(
+        Guid conversationId,
+        long? beforeMessageId,
+        int limit,
+        CancellationToken cancellationToken = default) =>
+        TrackRuntimeOperation(
+            token => conversationSource is null
+                ? Task.FromResult(LocalMessagePageReadOutcome.Failure(
+                    LocalCacheOperationStatus.AuthoritativeSnapshotRequired,
+                    conversationId))
+                : conversationSource.ReadMessagePageAsync(
+                    conversationId,
+                    beforeMessageId,
+                    limit,
+                    token),
+            cancellationToken);
+
+    public Task<ClientMessageHistoryPageOutcome> LoadMessageHistoryAsync(
+        Guid conversationId,
+        long? beforeMessageId,
+        int limit,
+        CancellationToken cancellationToken = default) =>
+        TrackRuntimeOperation(
+            token => messageHistoryCoordinator is null
+                ? Task.FromResult(ClientMessageHistoryPageOutcome.Failure(
+                    ClientMessageLoadStatus.LocalCacheFailure))
+                : messageHistoryCoordinator.LoadHistoryAsync(
+                    conversationId,
+                    beforeMessageId,
+                    limit,
+                    token),
+            cancellationToken);
+
+    public Task<ClientMessageAroundOutcome> LoadMessageAroundAsync(
+        Guid conversationId,
+        long messageId,
+        int before,
+        int after,
+        CancellationToken cancellationToken = default) =>
+        TrackRuntimeOperation(
+            token => messageHistoryCoordinator is null
+                ? Task.FromResult(ClientMessageAroundOutcome.Failure(
+                    ClientMessageLoadStatus.LocalCacheFailure))
+                : messageHistoryCoordinator.LoadAroundAsync(
+                    conversationId,
+                    messageId,
+                    before,
+                    after,
+                    token),
+            cancellationToken);
+
+    public Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(
+        Guid conversationId,
+        long messageId,
+        CancellationToken cancellationToken = default) =>
+        TrackRuntimeOperation(
+            async token =>
+            {
+                if (conversationSource is null)
+                {
+                    return LocalCacheOperationStatus.AuthoritativeSnapshotRequired;
+                }
+
+                var status = await conversationSource
+                    .MarkConversationRenderedThroughAsync(
+                        conversationId,
+                        messageId,
+                        token)
+                    .ConfigureAwait(false);
+                if (status == LocalCacheOperationStatus.Ready)
+                {
+                    RequestReadThroughUpload();
+                }
+
+                return status;
+            },
+            cancellationToken);
 
     public Task<ClientAccountRuntimeStartOutcome> StartAsync(
         CancellationToken cancellationToken = default)
@@ -475,6 +556,13 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
             .ConfigureAwait(false);
         await CaptureFailureAsync(() => readThroughCoordinator.DisposeAsync(), failures)
             .ConfigureAwait(false);
+        if (messageHistoryCoordinator is not null)
+        {
+            await CaptureFailureAsync(
+                    () => messageHistoryCoordinator.DisposeAsync(),
+                    failures)
+                .ConfigureAwait(false);
+        }
         await CaptureFailureAsync(() => notificationCoordinator.DisposeAsync(), failures)
             .ConfigureAwait(false);
 
@@ -565,6 +653,80 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
+    }
+
+    private Task<T> TrackRuntimeOperation<T>(
+        Func<CancellationToken, Task<T>> operation,
+        CancellationToken callerCancellation)
+    {
+        callerCancellation.ThrowIfCancellationRequested();
+        Task<T> flight;
+        lock (stateGate)
+        {
+            ThrowIfTerminating();
+            flight = RunRuntimeOperationAsync(
+                operation,
+                callerCancellation,
+                lifetimeCancellation.Token);
+            TrackExplicitFlight(flight);
+        }
+
+        return flight;
+    }
+
+    private static async Task<T> RunRuntimeOperationAsync<T>(
+        Func<CancellationToken, Task<T>> operation,
+        CancellationToken callerCancellation,
+        CancellationToken lifetimeToken)
+    {
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            callerCancellation,
+            lifetimeToken);
+        return await operation(linkedCancellation.Token).ConfigureAwait(false);
+    }
+
+    private void RequestReadThroughUpload()
+    {
+        try
+        {
+            _ = ObserveReadThroughUploadAsync(
+                readThroughCoordinator.TriggerAsync(CancellationToken.None));
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Requesting read-through after a rendered message boundary failed; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
+    }
+
+    private async Task ObserveReadThroughUploadAsync(
+        Task<ClientReadThroughRunOutcome> upload)
+    {
+        try
+        {
+            var outcome = await upload.ConfigureAwait(false);
+            if (outcome.Status is not ClientReadThroughRunStatus.Completed and
+                not ClientReadThroughRunStatus.Canceled)
+            {
+                logger.LogWarning(
+                    "Rendered-message read-through upload did not complete; status={Status}.",
+                    outcome.Status);
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Rendered-message read-through upload failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
     }
 
     private void RemoveExplicitFlight(Task flight)

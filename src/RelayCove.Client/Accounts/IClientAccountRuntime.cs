@@ -23,6 +23,30 @@ internal interface IClientAccountRuntime : IAsyncDisposable
     Task<LocalConversationListReadOutcome> ReadConversationListAsync(
         CancellationToken cancellationToken = default);
 
+    Task<LocalMessagePageReadOutcome> ReadMessagePageAsync(
+        Guid conversationId,
+        long? beforeMessageId,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    Task<ClientMessageHistoryPageOutcome> LoadMessageHistoryAsync(
+        Guid conversationId,
+        long? beforeMessageId,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    Task<ClientMessageAroundOutcome> LoadMessageAroundAsync(
+        Guid conversationId,
+        long messageId,
+        int before,
+        int after,
+        CancellationToken cancellationToken = default);
+
+    Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(
+        Guid conversationId,
+        long messageId,
+        CancellationToken cancellationToken = default);
+
     Task<ClientAccountRuntimeStartOutcome> StartAsync(
         CancellationToken cancellationToken = default);
 

@@ -562,6 +562,352 @@ public sealed class ClientAccountShellCoordinatorTests
     }
 
     [Fact]
+    public async Task SelectConversation_UntilCurrentSnapshotIsApplied_DoesNotPublishActivityOrRead()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var message = CreateMessage(10, conversationId);
+        var historyEntered = NewSignal();
+        var releaseHistory = NewSignal();
+        var rendered = NewSignal();
+        var markedMessageIds = new ConcurrentQueue<long>();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 1),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [message],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            MessageHistoryLoadAction = async (_, _, _, _) =>
+            {
+                historyEntered.TrySetResult();
+                await releaseHistory.Task;
+                return new ClientMessageHistoryPageOutcome(
+                    ClientMessageLoadStatus.Completed,
+                    [message],
+                    NextBeforeMessageId: null,
+                    HasMore: false);
+            },
+            MarkRenderedAction = (id, messageId, _) =>
+            {
+                Assert.Equal(conversationId, id);
+                markedMessageIds.Enqueue(messageId);
+                rendered.TrySetResult();
+                return Task.FromResult(LocalCacheOperationStatus.Ready);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.UpdateActivity(new ClientActivitySnapshot(
+            true,
+            false,
+            true,
+            OpenConversationId: null));
+        var localPublished = NewSignal();
+        coordinator.MessageListChanged += snapshot =>
+        {
+            if (snapshot.Status == ClientMessageListStatus.Ready &&
+                snapshot.Messages.Count == 1)
+            {
+                localPublished.TrySetResult();
+            }
+        };
+
+        coordinator.SelectConversation(conversationId);
+        await localPublished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await historyEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Null(runtime.LastActivity!.OpenConversationId);
+        Assert.Empty(markedMessageIds);
+        var applied = coordinator.MessageList;
+        coordinator.AcknowledgeMessageSnapshotApplied(
+            conversationId,
+            applied.Revision,
+            observedThroughMessageId: 10,
+            isAtLatestRegion: true);
+        await rendered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(conversationId, runtime.LastActivity.OpenConversationId);
+        Assert.Equal([10L], markedMessageIds);
+        coordinator.AcknowledgeMessageSnapshotApplied(
+            conversationId,
+            applied.Revision,
+            observedThroughMessageId: null,
+            isAtLatestRegion: false);
+        Assert.Null(runtime.LastActivity.OpenConversationId);
+        releaseHistory.TrySetResult();
+    }
+
+    [Fact]
+    public async Task AcknowledgeMessageSnapshotApplied_WhenWindowIsHidden_DefersReadUntilForeground()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var message = CreateMessage(10, conversationId);
+        var rendered = NewSignal();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 1),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [message],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            MarkRenderedAction = (_, _, _) =>
+            {
+                rendered.TrySetResult();
+                return Task.FromResult(LocalCacheOperationStatus.Ready);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.UpdateActivity(ClientActivitySnapshot.Inactive);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready && coordinator.MessageList.Messages.Count == 1);
+        var applied = coordinator.MessageList;
+
+        coordinator.AcknowledgeMessageSnapshotApplied(
+            conversationId,
+            applied.Revision,
+            observedThroughMessageId: 10,
+            isAtLatestRegion: true);
+        await Task.Delay(50);
+
+        Assert.False(rendered.Task.IsCompleted);
+        Assert.Equal(conversationId, runtime.LastActivity!.OpenConversationId);
+        coordinator.UpdateActivity(new ClientActivitySnapshot(
+            true,
+            false,
+            true,
+            OpenConversationId: null));
+        await rendered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task SelectConversation_WhenHistoryRequiresAuthentication_EndsAccountSession()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 1),
+            MessageHistoryLoadAction = (_, _, _, _) => Task.FromResult(
+                ClientMessageHistoryPageOutcome.Failure(
+                    ClientMessageLoadStatus.AuthenticationRequired)),
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.Snapshot.Phase ==
+            ClientAccountShellPhase.SignedOut);
+
+        Assert.Equal(1, runtime.LogoutCount);
+        Assert.Equal(1, runtime.DisposeCount);
+        Assert.Equal(
+            PersistentClientAuthenticationStatus.AuthenticationFailed,
+            coordinator.Snapshot.AuthenticationStatus);
+        Assert.Equal(ClientMessageListStatus.None, coordinator.MessageList.Status);
+    }
+
+    [Fact]
+    public async Task AcknowledgeMessageSnapshotApplied_WhenCacheIsTransient_DoesNotTightLoop()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var message = CreateMessage(10, conversationId);
+        var attempts = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 1),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [message],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            MarkRenderedAction = (_, _, _) =>
+            {
+                Interlocked.Increment(ref attempts);
+                return Task.FromResult(LocalCacheOperationStatus.TransientFailure);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.UpdateActivity(new ClientActivitySnapshot(
+            true,
+            false,
+            true,
+            OpenConversationId: null));
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready && !coordinator.MessageList.IsLoading);
+        var applied = coordinator.MessageList;
+
+        coordinator.AcknowledgeMessageSnapshotApplied(
+            conversationId,
+            applied.Revision,
+            observedThroughMessageId: 10,
+            isAtLatestRegion: true);
+        await WaitUntilAsync(() => Volatile.Read(ref attempts) == 1);
+        await Task.Delay(100);
+
+        Assert.Equal(1, Volatile.Read(ref attempts));
+    }
+
+    [Fact]
+    public async Task SelectConversation_WhenOldReadCompletesLate_DoesNotReplaceNewSelection()
+    {
+        var session = CreateSession();
+        var firstConversationId = Guid.NewGuid();
+        var secondConversationId = Guid.NewGuid();
+        var firstEntered = NewSignal();
+        var releaseFirst = NewSignal();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(
+                firstConversationId,
+                secondConversationId),
+            MessagePageReadAction = async (id, _, _, _) =>
+            {
+                if (id == firstConversationId)
+                {
+                    firstEntered.TrySetResult();
+                    await releaseFirst.Task;
+                }
+
+                return new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [CreateMessage(id == firstConversationId ? 1 : 2, id)],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+
+        coordinator.SelectConversation(firstConversationId);
+        await firstEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        coordinator.SelectConversation(secondConversationId);
+        await WaitUntilAsync(() =>
+            coordinator.MessageList.ConversationId == secondConversationId &&
+            coordinator.MessageList.Status == ClientMessageListStatus.Ready &&
+            coordinator.MessageList.Messages.Count == 1);
+        releaseFirst.TrySetResult();
+        await Task.Delay(50);
+
+        Assert.Equal(secondConversationId, coordinator.MessageList.ConversationId);
+        Assert.Equal(2, Assert.Single(coordinator.MessageList.Messages).Id);
+    }
+
+    [Fact]
+    public async Task LoadOlderMessagesAsync_WhenInvokedTwice_SharesOneRemotePageAndPrepends()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var latest = Enumerable.Range(51, 50)
+            .Select(id => CreateMessage(id, conversationId))
+            .ToArray();
+        var older = Enumerable.Range(1, 50)
+            .Select(id => CreateMessage(id, conversationId))
+            .ToArray();
+        var olderEntered = NewSignal();
+        var releaseOlder = NewSignal();
+        var olderRequestCount = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, before, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    before.HasValue ? older : latest,
+                    before.HasValue ? null : 51,
+                    HasMoreBefore: !before.HasValue)),
+            MessageHistoryLoadAction = async (_, before, _, _) =>
+            {
+                if (!before.HasValue)
+                {
+                    return new ClientMessageHistoryPageOutcome(
+                        ClientMessageLoadStatus.Completed,
+                        latest,
+                        NextBeforeMessageId: 51,
+                        HasMore: true);
+                }
+
+                Interlocked.Increment(ref olderRequestCount);
+                olderEntered.TrySetResult();
+                await releaseOlder.Task;
+                return new ClientMessageHistoryPageOutcome(
+                    ClientMessageLoadStatus.Completed,
+                    older,
+                    NextBeforeMessageId: null,
+                    HasMore: false);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.CanLoadOlder);
+
+        var first = coordinator.LoadOlderMessagesAsync();
+        var second = coordinator.LoadOlderMessagesAsync();
+        await olderEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, Volatile.Read(ref olderRequestCount));
+        releaseOlder.TrySetResult();
+        await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(100, coordinator.MessageList.Messages.Count);
+        Assert.Equal(1, coordinator.MessageList.Messages[0].Id);
+        Assert.Equal(100, coordinator.MessageList.Messages[^1].Id);
+        Assert.False(coordinator.MessageList.HasMoreBefore);
+    }
+
+    [Fact]
     public async Task DisposeAsync_WhenCalledConcurrently_SharesCleanupAndRevokesActivation()
     {
         var session = CreateSession();
@@ -846,6 +1192,60 @@ public sealed class ClientAccountShellCoordinatorTests
             totalUnreadCount,
             Revision: 1);
 
+    private static LocalConversationListReadOutcome CreateConversationListOutcome(
+        Guid firstConversationId,
+        Guid secondConversationId) =>
+        new(
+            LocalCacheOperationStatus.Ready,
+            [
+                CreateConversationListItem(firstConversationId),
+                CreateConversationListItem(secondConversationId),
+            ],
+            TotalUnreadCount: 0,
+            Revision: 1);
+
+    private static LocalConversationListItem CreateConversationListItem(
+        Guid conversationId) =>
+        new(
+            conversationId,
+            ConversationType.PrivateChannel,
+            "Conversation",
+            AvatarUrl: null,
+            LastMessageId: 10,
+            MessageType.Text,
+            LastMessageContent: "preview",
+            LastMessageCreatedAt: Now,
+            UnreadCount: 0,
+            IsMuted: false,
+            UpdatedAt: Now);
+
+    private static MessageDto CreateMessage(long id, Guid conversationId) => new(
+        id,
+        Guid.NewGuid(),
+        conversationId,
+        Guid.NewGuid(),
+        "Sender",
+        MessageType.Text,
+        $"message {id}",
+        ReplyToMessageId: null,
+        Array.Empty<AttachmentDto>(),
+        Array.Empty<Guid>(),
+        Now.AddSeconds(id));
+
+    private static async Task WaitUntilAsync(Func<bool> predicate)
+    {
+        var timeout = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!predicate())
+        {
+            if (DateTime.UtcNow >= timeout)
+            {
+                throw new TimeoutException("The expected coordinator state was not published.");
+            }
+
+            await Task.Delay(10);
+        }
+    }
+
     private static TaskCompletionSource NewSignal() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -950,6 +1350,34 @@ public sealed class ClientAccountShellCoordinatorTests
             set;
         }
 
+        public Func<Guid, long?, int, CancellationToken, Task<LocalMessagePageReadOutcome>>?
+            MessagePageReadAction
+        {
+            get;
+            set;
+        }
+
+        public Func<Guid, long?, int, CancellationToken, Task<ClientMessageHistoryPageOutcome>>?
+            MessageHistoryLoadAction
+        {
+            get;
+            set;
+        }
+
+        public Func<Guid, long, int, int, CancellationToken, Task<ClientMessageAroundOutcome>>?
+            MessageAroundLoadAction
+        {
+            get;
+            set;
+        }
+
+        public Func<Guid, long, CancellationToken, Task<LocalCacheOperationStatus>>?
+            MarkRenderedAction
+        {
+            get;
+            set;
+        }
+
         public ClientSyncRunOutcome RetryOutcome { get; init; } = new(
             ClientSyncRunStatus.Completed,
             SyncReason.Reconnect,
@@ -992,6 +1420,61 @@ public sealed class ClientAccountShellCoordinatorTests
             CancellationToken cancellationToken = default) =>
             ConversationListReadAction?.Invoke(cancellationToken) ??
             Task.FromResult(ConversationListOutcome);
+
+        public Task<LocalMessagePageReadOutcome> ReadMessagePageAsync(
+            Guid conversationId,
+            long? beforeMessageId,
+            int limit,
+            CancellationToken cancellationToken = default) =>
+            MessagePageReadAction?.Invoke(
+                conversationId,
+                beforeMessageId,
+                limit,
+                cancellationToken) ??
+            Task.FromResult(new LocalMessagePageReadOutcome(
+                LocalCacheOperationStatus.Ready,
+                conversationId,
+                Array.Empty<MessageDto>(),
+                NextBeforeMessageId: null,
+                HasMoreBefore: false));
+
+        public Task<ClientMessageHistoryPageOutcome> LoadMessageHistoryAsync(
+            Guid conversationId,
+            long? beforeMessageId,
+            int limit,
+            CancellationToken cancellationToken = default) =>
+            MessageHistoryLoadAction?.Invoke(
+                conversationId,
+                beforeMessageId,
+                limit,
+                cancellationToken) ??
+            Task.FromResult(new ClientMessageHistoryPageOutcome(
+                ClientMessageLoadStatus.Completed,
+                Array.Empty<MessageDto>(),
+                NextBeforeMessageId: null,
+                HasMore: false));
+
+        public Task<ClientMessageAroundOutcome> LoadMessageAroundAsync(
+            Guid conversationId,
+            long messageId,
+            int before,
+            int after,
+            CancellationToken cancellationToken = default) =>
+            MessageAroundLoadAction?.Invoke(
+                conversationId,
+                messageId,
+                before,
+                after,
+                cancellationToken) ??
+            Task.FromResult(ClientMessageAroundOutcome.Failure(
+                ClientMessageLoadStatus.RemoteFailure));
+
+        public Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(
+            Guid conversationId,
+            long messageId,
+            CancellationToken cancellationToken = default) =>
+            MarkRenderedAction?.Invoke(conversationId, messageId, cancellationToken) ??
+            Task.FromResult(LocalCacheOperationStatus.Ready);
 
         public void RaiseConnectionStateChanged(ConnectionState state)
         {

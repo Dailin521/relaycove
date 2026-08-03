@@ -102,6 +102,7 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
             accountDataRootDirectory);
         AccountScopedLocalCache? cache = null;
         ClientReadThroughCoordinator? readThroughCoordinator = null;
+        ClientMessageHistoryCoordinator? messageHistoryCoordinator = null;
         ClientSyncCoordinator? syncCoordinator = null;
         IClientNotificationRoundCoordinator? unownedNotificationRoundCoordinator = null;
         IClientAccountRealtimeConnection? realtimeConnection = null;
@@ -141,6 +142,13 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
             var readThroughRequestor = new ClientReadThroughRequestor(
                 readThroughCoordinator,
                 loggerFactory.CreateLogger<ClientReadThroughRequestor>());
+            messageHistoryCoordinator = new ClientMessageHistoryCoordinator(
+                identity,
+                httpClient,
+                authenticationSession,
+                cache,
+                loggerFactory.CreateLogger<ClientMessageHistoryCoordinator>(),
+                notificationRoundCoordinator.ConversationRevokedAsync);
             syncCoordinator = new ClientSyncCoordinator(
                 identity,
                 httpClient,
@@ -198,7 +206,8 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                     _ => false,
                 },
                 cache,
-                stateHub);
+                stateHub,
+                messageHistoryCoordinator);
             unownedNotificationRoundCoordinator = null;
             return runtime;
         }
@@ -224,6 +233,13 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
             {
                 await CaptureCleanupFailureAsync(
                         () => readThroughCoordinator.DisposeAsync(),
+                        cleanupFailures)
+                    .ConfigureAwait(false);
+            }
+            if (messageHistoryCoordinator is not null)
+            {
+                await CaptureCleanupFailureAsync(
+                        () => messageHistoryCoordinator.DisposeAsync(),
                         cleanupFailures)
                     .ConfigureAwait(false);
             }

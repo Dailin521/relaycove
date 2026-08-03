@@ -125,7 +125,7 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
     }
 
     [Fact]
-    public async Task LocalCacheRealtimeEventSink_WhenForegroundMergeCommits_RequestsReadThroughUpload()
+    public async Task LocalCacheRealtimeEventSink_WhenForegroundActivityWasRendered_RequestsReadThroughUpload()
     {
         var identity = CreateIdentity(UserId);
         await using var cache = await CreateCacheAsync(identity);
@@ -147,6 +147,13 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
             Scalar(
                 identity,
                 "SELECT COUNT(*) FROM LocalConversations WHERE PendingReadThroughMessageId IS NOT NULL;"));
+        Assert.Equal(1, Scalar(
+            identity,
+            "SELECT IsRead FROM LocalMessages WHERE ServerMessageId = 101;"));
+        Assert.Equal(1, Scalar(
+            identity,
+            "SELECT IsNotificationHandled FROM LocalMessages WHERE ServerMessageId = 101;"));
+        Assert.Equal(2, Scalar(identity, "SELECT UnreadCount FROM LocalConversations;"));
     }
 
     [Fact]
@@ -646,6 +653,292 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         var outcome = await cache.ReadConversationListAsync();
         Assert.Equal(LocalCacheOperationStatus.Ready, outcome.Status);
         Assert.Empty(outcome.Conversations);
+    }
+
+    [Fact]
+    public async Task ReadMessagePageAsync_WhenHistoryIsLarge_ReturnsBoundedExclusiveKeyset()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation() with
+        {
+            LastMessageId = 6,
+            LastReadMessageId = 0,
+            UnreadCount = 6,
+        };
+        var messages = Enumerable.Range(1, 6)
+            .Select(id => CreateMessage(conversation.Id) with
+            {
+                Id = id,
+                ClientMessageId = Guid.NewGuid(),
+                Content = $"message {id}",
+            })
+            .ToArray();
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([conversation], Complete: true)));
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            (await cache.ApplySyncPageAsync(
+                new SyncResponse(messages, 6, 6, HasMore: false),
+                expectedCursor: 0,
+                expectedSnapshotUpperBound: null)).Status);
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.AddPendingMessageAsync(new PendingMessage(
+                Guid.NewGuid(),
+                conversation.Id,
+                UserId,
+                "Current user",
+                MessageType.Text,
+                "pending",
+                ReplyToMessageId: null,
+                Array.Empty<Guid>(),
+                DateTimeOffset.UtcNow)));
+
+        var latest = await cache.ReadMessagePageAsync(
+            conversation.Id,
+            beforeMessageId: null,
+            limit: 2);
+        var middle = await cache.ReadMessagePageAsync(
+            conversation.Id,
+            latest.NextBeforeMessageId,
+            limit: 2);
+        var oldest = await cache.ReadMessagePageAsync(
+            conversation.Id,
+            middle.NextBeforeMessageId,
+            limit: 2);
+
+        Assert.Equal([5L, 6L], latest.Messages.Select(message => message.Id));
+        Assert.True(latest.HasMoreBefore);
+        Assert.Equal(5, latest.NextBeforeMessageId);
+        Assert.Equal([3L, 4L], middle.Messages.Select(message => message.Id));
+        Assert.True(middle.HasMoreBefore);
+        Assert.Equal(3, middle.NextBeforeMessageId);
+        Assert.Equal([1L, 2L], oldest.Messages.Select(message => message.Id));
+        Assert.False(oldest.HasMoreBefore);
+        Assert.Null(oldest.NextBeforeMessageId);
+        var list = Assert.IsAssignableFrom<IList<MessageDto>>(latest.Messages);
+        Assert.Throws<NotSupportedException>(() => list.Add(messages[0]));
+    }
+
+    [Fact]
+    public async Task ApplyHistoryPageAsync_WhenLaterMessageConflicts_RollsBackWholePage()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation() with
+        {
+            LastMessageId = 2,
+            LastReadMessageId = 0,
+            UnreadCount = 2,
+        };
+        var existing = CreateMessage(conversation.Id) with { Id = 2 };
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([conversation], Complete: true)));
+        Assert.Equal(
+            IncomingMessageMergeResult.Inserted,
+            (await cache.MergeIncomingMessageAsync(existing)).Result);
+        var newHistory = CreateMessage(conversation.Id) with
+        {
+            Id = 1,
+            ClientMessageId = Guid.NewGuid(),
+        };
+
+        var outcome = await cache.ApplyHistoryPageAsync(
+            conversation.Id,
+            [newHistory, existing with { Content = "conflict" }]);
+
+        Assert.Equal(LocalCacheOperationStatus.Conflict, outcome.Status);
+        Assert.Equal(1, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+        Assert.Equal(existing.Content, TextScalar(
+            identity,
+            "SELECT Content FROM LocalMessages WHERE ServerMessageId = 2;"));
+    }
+
+    [Fact]
+    public async Task ApplyHistoryPageAsync_UntilRendered_DoesNotConsumeExistingUnread()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation() with
+        {
+            LastMessageId = 1,
+            LastReadMessageId = 0,
+            UnreadCount = 1,
+        };
+        var message = CreateMessage(conversation.Id) with { Id = 1 };
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([conversation], Complete: true)));
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            (await cache.ApplySyncPageAsync(
+                new SyncResponse([message], 1, 1, HasMore: false),
+                expectedCursor: 0,
+                expectedSnapshotUpperBound: null)).Status);
+
+        var history = await cache.ApplyHistoryPageAsync(conversation.Id, [message]);
+
+        Assert.Equal(LocalCacheOperationStatus.Ready, history.Status);
+        Assert.Equal([IncomingMessageMergeResult.Duplicate], history.MergeResults);
+        Assert.Equal(0, Scalar(
+            identity,
+            "SELECT IsRead FROM LocalMessages WHERE ServerMessageId = 1;"));
+        Assert.Equal(1, Scalar(
+            identity,
+            "SELECT IsNotificationHandled FROM LocalMessages WHERE ServerMessageId = 1;"));
+        Assert.Equal(1, Scalar(
+            identity,
+            "SELECT UnreadCount FROM LocalConversations;"));
+
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.MarkConversationRenderedThroughAsync(conversation.Id, 1));
+
+        Assert.Equal(1, Scalar(
+            identity,
+            "SELECT IsRead FROM LocalMessages WHERE ServerMessageId = 1;"));
+        Assert.Equal(1, Scalar(
+            identity,
+            "SELECT IsNotificationHandled FROM LocalMessages WHERE ServerMessageId = 1;"));
+        Assert.Equal(0, Scalar(
+            identity,
+            "SELECT UnreadCount FROM LocalConversations;"));
+        Assert.Equal(1, Scalar(
+            identity,
+            "SELECT PendingReadThroughMessageId FROM LocalConversations;"));
+    }
+
+    [Fact]
+    public async Task ApplyHistoryPageAsync_WhenRowsAreNew_PreservesUnreadUntilRendered()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var updatedAt = DateTimeOffset.Parse("2026-08-03T02:00:00Z");
+        var conversation = CreateConversation() with
+        {
+            LastMessageId = 1,
+            LastReadMessageId = 0,
+            UnreadCount = 1,
+            UpdatedAt = updatedAt,
+        };
+        var authoritativeMessage = CreateMessage(conversation.Id) with
+        {
+            Id = 1,
+            ClientMessageId = Guid.NewGuid(),
+            CreatedAt = DateTimeOffset.Parse("2026-08-03T03:00:00Z"),
+        };
+        var newerMessage = CreateMessage(conversation.Id) with
+        {
+            Id = 2,
+            ClientMessageId = Guid.NewGuid(),
+            CreatedAt = DateTimeOffset.Parse("2026-08-03T04:00:00Z"),
+        };
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([conversation], Complete: true)));
+
+        var history = await cache.ApplyHistoryPageAsync(
+            conversation.Id,
+            [authoritativeMessage, newerMessage]);
+
+        Assert.Equal(LocalCacheOperationStatus.Ready, history.Status);
+        Assert.Equal(
+            [IncomingMessageMergeResult.Inserted, IncomingMessageMergeResult.Inserted],
+            history.MergeResults);
+        Assert.Equal(0, Scalar(
+            identity,
+            "SELECT COUNT(*) FROM LocalMessages WHERE IsRead <> 0;"));
+        Assert.Equal(2, Scalar(
+            identity,
+            "SELECT COUNT(*) FROM LocalMessages WHERE IsNotificationHandled = 1;"));
+        Assert.Equal(1, Scalar(identity, "SELECT UnreadCount FROM LocalConversations;"));
+        Assert.Equal(0, Scalar(
+            identity,
+            "SELECT COUNT(*) FROM LocalConversations WHERE PendingReadThroughMessageId IS NOT NULL;"));
+
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([conversation], Complete: true)));
+        Assert.Equal(2, Scalar(identity, "SELECT UnreadCount FROM LocalConversations;"));
+
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.MarkConversationRenderedThroughAsync(conversation.Id, 2));
+        Assert.Equal(2, Scalar(
+            identity,
+            "SELECT COUNT(*) FROM LocalMessages WHERE IsRead = 1;"));
+        Assert.Equal(0, Scalar(identity, "SELECT UnreadCount FROM LocalConversations;"));
+        Assert.Equal(2, Scalar(
+            identity,
+            "SELECT PendingReadThroughMessageId FROM LocalConversations;"));
+        Assert.Equal(1, Scalar(identity, "SELECT LastMessageId FROM LocalConversations;"));
+        Assert.Equal(
+            updatedAt.ToString("O"),
+            TextScalar(identity, "SELECT UpdatedAt FROM LocalConversations;"));
+    }
+
+    [Fact]
+    public async Task MarkConversationRenderedThroughAsync_WhenBoundaryIsAlreadyRead_DoesNotCreatePendingUpload()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation() with
+        {
+            LastMessageId = 1,
+            LastReadMessageId = 1,
+            UnreadCount = 0,
+        };
+        var message = CreateMessage(conversation.Id) with { Id = 1 };
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([conversation], Complete: true)));
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            (await cache.ApplyHistoryPageAsync(conversation.Id, [message])).Status);
+
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.MarkConversationRenderedThroughAsync(conversation.Id, 1));
+
+        Assert.Equal(0, Scalar(
+            identity,
+            "SELECT COUNT(*) FROM LocalConversations WHERE PendingReadThroughMessageId IS NOT NULL;"));
+    }
+
+    [Fact]
+    public async Task MessagePageOperations_AfterRevocation_FailClosed()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([conversation], Complete: true)));
+        Assert.Equal(
+            LocalCacheOperationStatus.RevokedConversation,
+            await cache.RevokeConversationAccessAsync(conversation.Id));
+
+        Assert.Equal(
+            LocalCacheOperationStatus.RevokedConversation,
+            (await cache.ReadMessagePageAsync(conversation.Id, null, 50)).Status);
+        Assert.Equal(
+            LocalCacheOperationStatus.RevokedConversation,
+            (await cache.ApplyHistoryPageAsync(
+                conversation.Id,
+                [CreateMessage(conversation.Id)])).Status);
+        Assert.Equal(
+            LocalCacheOperationStatus.RevokedConversation,
+            await cache.MarkConversationRenderedThroughAsync(conversation.Id, 101));
     }
 
     public void Dispose()

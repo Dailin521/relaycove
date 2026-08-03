@@ -290,47 +290,131 @@
                     </Border>
 
                     <Border Grid.Column="2"
-                            Padding="32"
+                            Padding="24"
                             Background="White"
                             BorderBrush="#FFDCE5EF"
                             BorderThickness="1"
                             CornerRadius="10">
                         <Grid>
                             <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <StackPanel VerticalAlignment="Center">
-                                <Border Width="64"
-                                        Height="64"
-                                        HorizontalAlignment="Center"
-                                        Background="#FFE5F1FC"
-                                        CornerRadius="32">
-                                    <TextBlock Text="✓"
-                                               HorizontalAlignment="Center"
-                                               VerticalAlignment="Center"
-                                               Foreground="#FF1677D2"
-                                               FontSize="30"
-                                               FontWeight="Bold" />
-                                </Border>
+                            <StackPanel>
                                 <TextBlock x:Name="ConversationHeadingText"
-                                           Margin="0,18,0,0"
+                                           Text="请选择会话"
+                                           AutomationProperties.LiveSetting="Polite"
+                                           Foreground="#FF25394D"
+                                           FontSize="20"
+                                           FontWeight="SemiBold" />
+                                <TextBlock x:Name="NavigationNoticeText"
+                                           Margin="0,5,0,0"
+                                           Text="选择左侧真实会话以查看消息。"
+                                           AutomationProperties.LiveSetting="Polite"
+                                           Foreground="#FF718396"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <Grid Grid.Row="1" Margin="0,14,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="LoadOlderButton"
+                                        Content="加载更早消息"
+                                        MinHeight="30"
+                                        Padding="12,5"
+                                        Visibility="Collapsed"
+                                        Click="OnLoadOlderMessagesClicked" />
+                                <TextBlock x:Name="MessageStatusText"
+                                           Grid.Column="1"
+                                           Margin="12,0,0,0"
+                                           Text="请选择会话"
+                                           AutomationProperties.LiveSetting="Polite"
+                                           VerticalAlignment="Center"
+                                           HorizontalAlignment="Right"
+                                           Foreground="#FF8796A5"
+                                           FontSize="12"
+                                           TextWrapping="Wrap" />
+                            </Grid>
+
+                            <Grid Grid.Row="2">
+                                <ListBox x:Name="MessageList"
+                                         AutomationProperties.Name="消息列表"
+                                         Background="#FFF7F9FC"
+                                         BorderBrush="#FFE6ECF3"
+                                         BorderThickness="1"
+                                         ScrollViewer.CanContentScroll="True"
+                                         ScrollViewer.ScrollChanged="OnMessageScrollChanged"
+                                         VirtualizingPanel.IsVirtualizing="True"
+                                         VirtualizingPanel.VirtualizationMode="Recycling">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="Padding" Value="0" />
+                                            <Setter Property="Margin" Value="8,4" />
+                                            <Setter Property="Focusable" Value="False" />
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Padding="12,9"
+                                                    Background="White"
+                                                    BorderBrush="#FFE5EBF2"
+                                                    BorderThickness="1"
+                                                    CornerRadius="8">
+                                                <StackPanel>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding SenderLabel}"
+                                                                   Foreground="#FF1677D2"
+                                                                   FontWeight="SemiBold" />
+                                                        <TextBlock Grid.Column="1"
+                                                                   Text="{Binding Timestamp}"
+                                                                   Foreground="#FF94A1AE"
+                                                                   FontSize="11" />
+                                                    </Grid>
+                                                    <TextBlock Text="{Binding Content}"
+                                                               Margin="0,6,0,0"
+                                                               Foreground="#FF25394D"
+                                                               TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                                <TextBlock x:Name="MessageEmptyText"
+                                           Margin="28"
                                            Text="请选择会话"
                                            AutomationProperties.LiveSetting="Polite"
                                            HorizontalAlignment="Center"
-                                           Foreground="#FF25394D"
-                                           FontSize="18"
-                                           FontWeight="SemiBold" />
-                                <TextBlock x:Name="NavigationNoticeText"
-                                           Margin="20,9,20,0"
-                                           Text="消息视图尚未接入；此页面不会展示伪造的聊天内容。"
-                                           AutomationProperties.LiveSetting="Polite"
-                                           HorizontalAlignment="Center"
-                                           Foreground="#FF718396"
+                                           VerticalAlignment="Center"
+                                           Foreground="#FF8796A5"
                                            TextAlignment="Center"
                                            TextWrapping="Wrap" />
-                            </StackPanel>
-                            <StackPanel Grid.Row="1"
+                                <Button x:Name="NewMessageIndicatorButton"
+                                        Content="有新消息，回到最新"
+                                        Margin="0,0,16,14"
+                                        Padding="14,6"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Bottom"
+                                        Visibility="Collapsed"
+                                        Click="OnNewMessagesClicked" />
+                                <ProgressBar x:Name="MessageLoadingBar"
+                                             Height="3"
+                                             VerticalAlignment="Top"
+                                             AutomationProperties.Name="消息加载中"
+                                             IsIndeterminate="True"
+                                             Visibility="Collapsed" />
+                            </Grid>
+
+                            <StackPanel Grid.Row="3"
+                                        Margin="0,14,0,0"
                                         HorizontalAlignment="Center"
                                         Orientation="Horizontal">
                                 <Button x:Name="RetryButton"

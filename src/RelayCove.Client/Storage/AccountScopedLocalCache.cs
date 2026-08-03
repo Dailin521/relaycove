@@ -547,6 +547,147 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
     }
 
+    internal async Task<LocalMessagePageReadOutcome> ReadMessagePageAsync(
+        Guid conversationId,
+        long? beforeMessageId,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateGuid(conversationId, nameof(conversationId));
+        if (beforeMessageId is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(beforeMessageId));
+        }
+
+        if (limit is < 1 or > 100)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit));
+        }
+
+        ThrowIfDisposed();
+        var syncStatus = GetSyncStatus();
+        if (syncStatus != LocalCacheOperationStatus.Ready)
+        {
+            return LocalMessagePageReadOutcome.Failure(syncStatus, conversationId);
+        }
+
+        var accessStatus = GetAccessStatus(conversationId);
+        if (accessStatus != LocalCacheOperationStatus.Ready)
+        {
+            return LocalMessagePageReadOutcome.Failure(accessStatus, conversationId);
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(() => ReadMessagePage(
+                    conversationId,
+                    beforeMessageId,
+                    limit))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+    }
+
+    internal async Task<LocalHistoryPageCommitOutcome> ApplyHistoryPageAsync(
+        Guid conversationId,
+        IReadOnlyList<MessageDto> messages,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateGuid(conversationId, nameof(conversationId));
+        ArgumentNullException.ThrowIfNull(messages);
+        if (!TryValidateHistoryMessages(conversationId, messages))
+        {
+            return LocalHistoryPageCommitOutcome.Failure(
+                LocalCacheOperationStatus.ProtocolError);
+        }
+
+        ThrowIfDisposed();
+        var syncStatus = GetSyncStatus();
+        if (syncStatus != LocalCacheOperationStatus.Ready)
+        {
+            return LocalHistoryPageCommitOutcome.Failure(syncStatus);
+        }
+
+        var accessStatus = GetAccessStatus(conversationId);
+        if (accessStatus != LocalCacheOperationStatus.Ready)
+        {
+            return LocalHistoryPageCommitOutcome.Failure(accessStatus);
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        LocalHistoryPageCommitOutcome outcome;
+        try
+        {
+            outcome = await Task.Run(() => ApplyHistoryPage(conversationId, messages))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+
+        if (outcome.Status is LocalCacheOperationStatus.Ready or
+            LocalCacheOperationStatus.RevokedConversation or
+            LocalCacheOperationStatus.FatalScope)
+        {
+            PublishConversationStateChanged();
+        }
+
+        return outcome;
+    }
+
+    internal async Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(
+        Guid conversationId,
+        long messageId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateGuid(conversationId, nameof(conversationId));
+        if (messageId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(messageId));
+        }
+
+        ThrowIfDisposed();
+        var syncStatus = GetSyncStatus();
+        if (syncStatus != LocalCacheOperationStatus.Ready)
+        {
+            return syncStatus;
+        }
+
+        var accessStatus = GetAccessStatus(conversationId);
+        if (accessStatus != LocalCacheOperationStatus.Ready)
+        {
+            return accessStatus;
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        LocalCacheOperationStatus outcome;
+        try
+        {
+            outcome = await Task.Run(() => MarkConversationRenderedThrough(
+                    conversationId,
+                    messageId))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+
+        if (outcome is LocalCacheOperationStatus.Ready or
+            LocalCacheOperationStatus.RevokedConversation or
+            LocalCacheOperationStatus.FatalScope)
+        {
+            PublishConversationStateChanged();
+        }
+
+        return outcome;
+    }
+
     internal async Task<LocalReadThroughBatchOutcome> ReadPendingReadThroughBatchAsync(
         Guid? afterConversationId,
         int limit,
@@ -1423,7 +1564,9 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                     AdvanceForegroundReadThrough(
                         connection,
                         transaction,
-                        readThrough.LatestMessage,
+                        readThrough.LatestMessage.ConversationId,
+                        readThrough.LatestMessage.Id,
+                        readThrough.LatestMessage.CreatedAt,
                         readThrough.UncountedMessageIds);
                 }
 
@@ -1451,6 +1594,95 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
 
         return outcome;
+    }
+
+    private LocalHistoryPageCommitOutcome ApplyHistoryPage(
+        Guid conversationId,
+        IReadOnlyList<MessageDto> messages)
+    {
+        var status = GetAccessStatus(conversationId);
+        if (status != LocalCacheOperationStatus.Ready)
+        {
+            return LocalHistoryPageCommitOutcome.Failure(status);
+        }
+
+        try
+        {
+            var outcome = ExecuteWriteWithRetry((connection, transaction) =>
+            {
+                var databaseStatus = GetDatabaseAccessStatus(
+                    connection,
+                    transaction,
+                    conversationId);
+                if (databaseStatus != LocalCacheOperationStatus.Ready)
+                {
+                    return TransactionResult<LocalHistoryPageCommitOutcome>.Rollback(
+                        LocalHistoryPageCommitOutcome.Failure(databaseStatus));
+                }
+
+                var mergeResults = new List<IncomingMessageMergeResult>(messages.Count);
+                foreach (var message in messages)
+                {
+                    var mergeOutcome = MergeIncomingMessageInTransaction(
+                        connection,
+                        transaction,
+                        message,
+                        LocalMessageIngestionContext.UnobservedHistory);
+                    if (mergeOutcome.Status != LocalCacheOperationStatus.Ready)
+                    {
+                        return TransactionResult<LocalHistoryPageCommitOutcome>.Rollback(
+                            LocalHistoryPageCommitOutcome.Failure(mergeOutcome.Status));
+                    }
+
+                    if (mergeOutcome.Result == IncomingMessageMergeResult.Conflict)
+                    {
+                        return TransactionResult<LocalHistoryPageCommitOutcome>.Rollback(
+                            LocalHistoryPageCommitOutcome.Failure(
+                                LocalCacheOperationStatus.Conflict));
+                    }
+
+                    mergeResults.Add(mergeOutcome.Result!.Value);
+                }
+
+                return TransactionResult<LocalHistoryPageCommitOutcome>.Commit(
+                    new LocalHistoryPageCommitOutcome(
+                        LocalCacheOperationStatus.Ready,
+                        mergeResults.AsReadOnly()));
+            });
+
+            if (outcome.Status == LocalCacheOperationStatus.RevokedConversation)
+            {
+                deniedConversations.TryAdd(conversationId, 0);
+                authorizedConversations.TryRemove(conversationId, out _);
+                authoritativeLastMessageIds.TryRemove(conversationId, out _);
+            }
+
+            if (outcome.Status == LocalCacheOperationStatus.Conflict)
+            {
+                logger.LogWarning(
+                    "A history page was rolled back because an immutable message payload conflicted.");
+            }
+
+            return outcome;
+        }
+        catch (SqliteException exception) when (IsBusy(exception))
+        {
+            logger.LogWarning(
+                "Applying a local history page was busy; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return LocalHistoryPageCommitOutcome.Failure(
+                LocalCacheOperationStatus.TransientFailure);
+        }
+        catch (Exception exception)
+        {
+            MarkScopeFatal();
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state while applying a history " +
+                "page after an error of type {ExceptionType}.",
+                exception.GetType().Name);
+            return LocalHistoryPageCommitOutcome.Failure(
+                LocalCacheOperationStatus.FatalScope);
+        }
     }
 
     private LocalCacheOperationStatus RegisterAuthoritativeConversation(ConversationDto conversation)
@@ -1741,6 +1973,9 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         var atOrBelowReadBoundary = message.Id <= conversationState.LastReadMessageId;
         var foregroundLiveMessage = liveSource &&
             context.IsForegroundConversation(message.ConversationId);
+        var historyObservationConfirmed =
+            context.Source != IncomingMessageSource.History ||
+            context.IsHistoryObservationConfirmed;
         var suppressNotification = ownMessage ||
             atOrBelowReadBoundary ||
             conversationState.IsMuted ||
@@ -1761,7 +1996,9 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 AdvanceForegroundReadThrough(
                     connection,
                     transaction,
-                    message,
+                    message.ConversationId,
+                    message.Id,
+                    message.CreatedAt,
                     uncountedMessageIds);
             }
             else
@@ -1776,9 +2013,11 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         {
             var markRead = ownMessage || atOrBelowReadBoundary ||
                 mergeResult == IncomingMessageMergeResult.PendingPromoted ||
-                context.Source == IncomingMessageSource.History;
+                (context.Source == IncomingMessageSource.History &&
+                 historyObservationConfirmed);
             var consumeObservedUnread =
                 context.Source == IncomingMessageSource.History &&
+                historyObservationConfirmed &&
                 !ownMessage &&
                 !atOrBelowReadBoundary &&
                 (mergeResult != IncomingMessageMergeResult.Inserted ||
@@ -1949,10 +2188,40 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         command.ExecuteNonQuery();
     }
 
+    private void ApplyRenderedReadBoundary(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid conversationId,
+        long messageId) =>
+        ApplyObservedReadBoundary(
+            connection,
+            transaction,
+            conversationId,
+            messageId,
+            messageCreatedAt: null,
+            Array.Empty<long>());
+
     private void AdvanceForegroundReadThrough(
         SqliteConnection connection,
         SqliteTransaction transaction,
-        MessageDto message,
+        Guid conversationId,
+        long messageId,
+        DateTimeOffset messageCreatedAt,
+        IReadOnlyCollection<long> uncountedMessageIds) =>
+        ApplyObservedReadBoundary(
+            connection,
+            transaction,
+            conversationId,
+            messageId,
+            messageCreatedAt,
+            uncountedMessageIds);
+
+    private void ApplyObservedReadBoundary(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid conversationId,
+        long messageId,
+        DateTimeOffset? messageCreatedAt,
         IReadOnlyCollection<long> uncountedMessageIds)
     {
         // A realtime ID can be ahead of unseen sync gaps. The message row is safe to
@@ -1981,8 +2250,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
               AND IsRead = 0
               AND SenderId <> $currentUserId;
             """);
-        AddParameter(countCommand, "$conversationId", FormatGuid(message.ConversationId));
-        AddParameter(countCommand, "$serverMessageId", message.Id);
+        AddParameter(countCommand, "$conversationId", FormatGuid(conversationId));
+        AddParameter(countCommand, "$serverMessageId", messageId);
         AddParameter(countCommand, "$currentUserId", FormatGuid(identity.UserId));
         var newlyReadCount = Convert.ToInt32(countCommand.ExecuteScalar());
 
@@ -1995,36 +2264,52 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
               AND (IsRead = 0 OR IsNotificationHandled = 0);
             """))
         {
-            AddParameter(messagesCommand, "$conversationId", FormatGuid(message.ConversationId));
-            AddParameter(messagesCommand, "$serverMessageId", message.Id);
+            AddParameter(messagesCommand, "$conversationId", FormatGuid(conversationId));
+            AddParameter(messagesCommand, "$serverMessageId", messageId);
             messagesCommand.ExecuteNonQuery();
         }
 
         var safeReadBoundary = ReadSafeConversationMessageId(
             connection,
             transaction,
-            message.ConversationId,
-            Math.Min(message.Id, committedSyncCursor));
+            conversationId,
+            Math.Min(messageId, committedSyncCursor));
 
         using var conversationCommand = CreateCommand(connection, transaction, """
             UPDATE LocalConversations
-            SET LastMessageId = MAX(LastMessageId, $serverMessageId),
+            SET LastMessageId = CASE
+                    WHEN $updateArrivalMetadata = 1
+                        THEN MAX(LastMessageId, $serverMessageId)
+                    ELSE LastMessageId
+                END,
                 LastReadMessageId = MAX(LastReadMessageId, $safeReadBoundary),
-                PendingReadThroughMessageId = MAX(
-                    COALESCE(PendingReadThroughMessageId, 0),
-                    $serverMessageId),
+                PendingReadThroughMessageId = CASE
+                    WHEN $serverMessageId > LastReadMessageId
+                        THEN MAX(
+                            COALESCE(PendingReadThroughMessageId, 0),
+                            $serverMessageId)
+                    ELSE PendingReadThroughMessageId
+                END,
                 UnreadCount = MAX(UnreadCount - $newlyReadCount, 0),
                 UpdatedAt = CASE
-                    WHEN LastMessageId < $serverMessageId THEN $updatedAt
+                    WHEN $updateArrivalMetadata = 1 AND LastMessageId < $serverMessageId
+                        THEN $updatedAt
                     ELSE UpdatedAt
                 END
             WHERE Id = $conversationId;
             """);
-        AddParameter(conversationCommand, "$serverMessageId", message.Id);
+        AddParameter(conversationCommand, "$serverMessageId", messageId);
         AddParameter(conversationCommand, "$safeReadBoundary", safeReadBoundary);
         AddParameter(conversationCommand, "$newlyReadCount", newlyReadCount);
-        AddParameter(conversationCommand, "$updatedAt", FormatDateTime(message.CreatedAt));
-        AddParameter(conversationCommand, "$conversationId", FormatGuid(message.ConversationId));
+        AddParameter(
+            conversationCommand,
+            "$updateArrivalMetadata",
+            messageCreatedAt.HasValue ? 1 : 0);
+        AddParameter(
+            conversationCommand,
+            "$updatedAt",
+            FormatDateTime(messageCreatedAt ?? DateTimeOffset.UnixEpoch));
+        AddParameter(conversationCommand, "$conversationId", FormatGuid(conversationId));
         conversationCommand.ExecuteNonQuery();
     }
 
@@ -2091,6 +2376,174 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             .Select(record => ToMessageDto(connection, record))
             .ToArray();
         return new LocalCacheReadOutcome(LocalCacheOperationStatus.Ready, messages);
+    }
+
+    private LocalMessagePageReadOutcome ReadMessagePage(
+        Guid conversationId,
+        long? beforeMessageId,
+        int limit)
+    {
+        var syncStatus = GetSyncStatus();
+        if (syncStatus != LocalCacheOperationStatus.Ready)
+        {
+            return LocalMessagePageReadOutcome.Failure(syncStatus, conversationId);
+        }
+
+        var accessStatus = GetAccessStatus(conversationId);
+        if (accessStatus != LocalCacheOperationStatus.Ready)
+        {
+            return LocalMessagePageReadOutcome.Failure(accessStatus, conversationId);
+        }
+
+        try
+        {
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction(deferred: true);
+            var databaseStatus = GetDatabaseAccessStatus(
+                connection,
+                transaction,
+                conversationId);
+            if (databaseStatus != LocalCacheOperationStatus.Ready)
+            {
+                return LocalMessagePageReadOutcome.Failure(
+                    databaseStatus,
+                    conversationId);
+            }
+
+            using var command = CreateCommand(connection, transaction, """
+                SELECT LocalId, ServerMessageId, ClientMessageId, ConversationId, SenderId,
+                       SenderDisplayName, Type, Content, ReplyToMessageId, CreatedAt,
+                       LocalSendStatus
+                FROM LocalMessages
+                WHERE ConversationId = $conversationId
+                  AND ServerMessageId IS NOT NULL
+                  AND ($beforeMessageId IS NULL OR ServerMessageId < $beforeMessageId)
+                ORDER BY ServerMessageId DESC
+                LIMIT $limitPlusOne;
+                """);
+            AddParameter(command, "$conversationId", FormatGuid(conversationId));
+            AddParameter(command, "$beforeMessageId", beforeMessageId);
+            AddParameter(command, "$limitPlusOne", limit + 1);
+            var records = new List<LocalMessageRecord>(limit + 1);
+            using (var reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    var record = ReadMessageRecord(reader);
+                    if (record.ServerMessageId is null ||
+                        record.ConversationId != conversationId)
+                    {
+                        throw new InvalidDataException(
+                            "The local cache contains an invalid message-page row.");
+                    }
+
+                    records.Add(record);
+                }
+            }
+
+            var hasMoreBefore = records.Count > limit;
+            if (hasMoreBefore)
+            {
+                records.RemoveAt(records.Count - 1);
+            }
+
+            records.Reverse();
+            var messages = records
+                .Select(record => ToMessageDto(connection, record, transaction))
+                .ToList()
+                .AsReadOnly();
+            return new LocalMessagePageReadOutcome(
+                LocalCacheOperationStatus.Ready,
+                conversationId,
+                messages,
+                hasMoreBefore && messages.Count != 0 ? messages[0].Id : null,
+                hasMoreBefore);
+        }
+        catch (SqliteException exception) when (IsBusy(exception))
+        {
+            logger.LogWarning(
+                "Reading a local message page was busy; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return LocalMessagePageReadOutcome.Failure(
+                LocalCacheOperationStatus.TransientFailure,
+                conversationId);
+        }
+        catch (Exception exception)
+        {
+            MarkScopeFatal();
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state while reading a message " +
+                "page after an error of type {ExceptionType}.",
+                exception.GetType().Name);
+            return LocalMessagePageReadOutcome.Failure(
+                LocalCacheOperationStatus.FatalScope,
+                conversationId);
+        }
+    }
+
+    private LocalCacheOperationStatus MarkConversationRenderedThrough(
+        Guid conversationId,
+        long messageId)
+    {
+        var status = GetAccessStatus(conversationId);
+        if (status != LocalCacheOperationStatus.Ready)
+        {
+            return status;
+        }
+
+        try
+        {
+            return ExecuteWriteWithRetry((connection, transaction) =>
+            {
+                var databaseStatus = GetDatabaseAccessStatus(
+                    connection,
+                    transaction,
+                    conversationId);
+                if (databaseStatus != LocalCacheOperationStatus.Ready)
+                {
+                    return TransactionResult<LocalCacheOperationStatus>.Rollback(databaseStatus);
+                }
+
+                using var command = CreateCommand(connection, transaction, """
+                    SELECT 1
+                    FROM LocalMessages
+                    WHERE ConversationId = $conversationId
+                      AND ServerMessageId = $messageId
+                    LIMIT 1;
+                    """);
+                AddParameter(command, "$conversationId", FormatGuid(conversationId));
+                AddParameter(command, "$messageId", messageId);
+                if (command.ExecuteScalar() is null)
+                {
+                    return TransactionResult<LocalCacheOperationStatus>.Rollback(
+                        LocalCacheOperationStatus.ProtocolError);
+                }
+
+                ApplyRenderedReadBoundary(
+                    connection,
+                    transaction,
+                    conversationId,
+                    messageId);
+                return TransactionResult<LocalCacheOperationStatus>.Commit(
+                    LocalCacheOperationStatus.Ready);
+            });
+        }
+        catch (SqliteException exception) when (IsBusy(exception))
+        {
+            logger.LogWarning(
+                "Marking a rendered message boundary was busy; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return LocalCacheOperationStatus.TransientFailure;
+        }
+        catch (Exception exception)
+        {
+            MarkScopeFatal();
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state while marking a rendered " +
+                "message boundary after an error of type {ExceptionType}.",
+                exception.GetType().Name);
+            return LocalCacheOperationStatus.FatalScope;
+        }
     }
 
     private LocalReadThroughBatchOutcome ReadPendingReadThroughBatch(
@@ -3014,7 +3467,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
 
     private static MessageDto ToMessageDto(
         SqliteConnection connection,
-        LocalMessageRecord record) => new(
+        LocalMessageRecord record,
+        SqliteTransaction? transaction = null) => new(
         record.ServerMessageId!.Value,
         record.ClientMessageId,
         record.ConversationId,
@@ -3024,7 +3478,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         record.Content,
         record.ReplyToMessageId,
         Array.Empty<AttachmentDto>(),
-        LoadMentions(connection, null, record.LocalId),
+        LoadMentions(connection, transaction, record.LocalId),
         record.CreatedAt);
 
     private static bool IsScalarExactMatch(LocalMessageRecord record, MessageDto message) =>
@@ -3285,6 +3739,38 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         return true;
     }
 
+    private static bool TryValidateHistoryMessages(
+        Guid conversationId,
+        IReadOnlyList<MessageDto> messages)
+    {
+        if (messages.Count > 100)
+        {
+            return false;
+        }
+
+        long previousMessageId = 0;
+        try
+        {
+            foreach (var message in messages)
+            {
+                ValidateIncomingMessage(message);
+                if (message.ConversationId != conversationId ||
+                    message.Id <= previousMessageId)
+                {
+                    return false;
+                }
+
+                previousMessageId = message.Id;
+            }
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
     private static void ValidateConversation(ConversationDto conversation)
     {
         ArgumentNullException.ThrowIfNull(conversation);
@@ -3338,6 +3824,14 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         {
             throw new ArgumentException(
                 "A foreground conversation ID cannot be empty.",
+                nameof(context));
+        }
+
+        if (context.Source != IncomingMessageSource.History &&
+            !context.IsHistoryObservationConfirmed)
+        {
+            throw new ArgumentException(
+                "Only History ingestion may defer observation side effects.",
                 nameof(context));
         }
     }
