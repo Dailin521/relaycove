@@ -45,6 +45,7 @@ internal interface IClientAccountRuntime : IAsyncDisposable
     Task<ClientMessageSendOutcome> SendTextMessageAsync(
         Guid conversationId,
         string? content,
+        long? replyToMessageId = null,
         CancellationToken cancellationToken = default);
 
     Task<ClientMessageSendOutcome> RetryPendingMessageAsync(

@@ -206,6 +206,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
     public Task<ClientMessageSendOutcome> SendTextMessageAsync(
         Guid conversationId,
         string? content,
+        long? replyToMessageId = null,
         CancellationToken cancellationToken = default) =>
         TrackRuntimeOperation(
             token => messageSendCoordinator is null
@@ -214,6 +215,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
                 : messageSendCoordinator.SendTextAsync(
                     conversationId,
                     content,
+                    replyToMessageId,
                     token),
             cancellationToken);
 

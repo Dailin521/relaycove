@@ -43,6 +43,27 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         Assert.Equal(2, Scalar(identity, "SELECT COUNT(*) FROM LocalMessageMentions;"));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task MergeIncomingMessage_WhenReplyTargetIsNonPositive_RejectsBeforeWrite(
+        long replyToMessageId)
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        await RegisterAsync(cache, conversation);
+        var message = CreateMessage(conversation.Id) with
+        {
+            ReplyToMessageId = replyToMessageId,
+        };
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            cache.MergeIncomingMessageAsync(message));
+
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+    }
+
     [Fact]
     public async Task MergeIncomingMessage_WhenPendingExists_PromotesThenDuplicates()
     {

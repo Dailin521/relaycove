@@ -11,7 +11,7 @@
 - **自动化验证：** `已验证` — 最终 Fast/Full、format、751 项测试、Client 540/540；自动调度/runtime/既有 Sync coordinator 关键集每轮 67 项、连续 10 轮 670/670；真实 Release WPF 非零窗口句柄/响应/单实例/进程清理、既有原生通知/attention/托盘/激活证据、model drift、八项目漏洞审计与空白检查通过；真实丢推送、五分钟壁钟、双客户端与 Narrator 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
-- **最近 Claude 调用：** `已验证` — Reply 客户端闭环 #63 MCP 只读 challenge 因认证源优先级失败，无 job、模型、费用或结论；失败不冒充通过，Codex 继续实现与验证
+- **最近 Claude 调用：** `已验证` — Reply 客户端闭环 #64 MCP 当前差异只读 review 因认证源优先级失败，无 job、模型、费用或结论；失败不冒充通过，Codex 继续实现与验证
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中

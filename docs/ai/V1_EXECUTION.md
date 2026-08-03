@@ -14,8 +14,8 @@ IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 64f6985a48f1aaeec48af36bd64f17d87b0f8341
 LatestGreenIntegrationCommit: a919992d6cdd7c646adf4b933b119e089dc79fce
 NextAction: 实现并验证 Reply 选择、durable 发送、引用展示与 Around 导航
-ClaudeCalls: 63（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63 失败；仅关键用途调用）
-ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有二十三次失败/中断调用费用 unavailable
+ClaudeCalls: 64（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64 失败；仅关键用途调用）
+ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有三十一次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -141,9 +141,10 @@ RequiredUserGate: none
 | 61 | 2026-08-04 | WindowActivated / Periodic Sync 可靠性 challenge | MCP 只读 challenge | Opus / XHigh | 当前 MCP consultation 因 `ANTHROPIC_API_KEY`/其他认证源优先于 claude.ai 登录而失败；无 job、模型、workspace 回执、费用或结论 | `unavailable` |
 | 62 | 2026-08-04 | WindowActivated / Periodic Sync 固定提交 review | 本机后台只读 CLI | Opus / XHigh | background id `0f5dda0b`、session `0f5dda0b-e23e-480d-9fa1-014b1cbdb360`，`workspace=E:\WorkSpace\RelayCove`、`permission-mode=plan`、工具限于 Read/Glob/Grep；订阅额度 403，停在 idle/blocked 且未读取仓库，主代理确认后主动停止，无正式答案或费用元数据 | `unavailable` |
 | 63 | 2026-08-04 | Reply 客户端闭环 challenge | MCP 只读 challenge | Opus / XHigh | 当前 MCP consultation 因 `ANTHROPIC_API_KEY`/其他认证源优于 claude.ai 登录而失败；无 job、模型、workspace 回执、费用或结论 | `unavailable` |
+| 64 | 2026-08-04 | Reply 客户端闭环当前差异复核 | MCP 只读 review | Opus / XHigh | 当前暴露接口仍为兼容 `consult_claude`；调用因 `ANTHROPIC_API_KEY`/其他认证源优于 claude.ai 登录而失败；无 job、模型、workspace 回执、费用或结论 | `unavailable` |
 
-- 调用计数：`63`（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63 失败）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
-- 已确认精确费用合计：`$80.07301150`；另有 #44–#50 本机 Claude Code 状态显示值合计 `$45.97`（界面两位小数，未伪造更高精度），按显示值总计约 `$126.04301150`。其余三十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`64`（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64 失败）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
+- 已确认精确费用合计：`$80.07301150`；另有 #44–#50 本机 Claude Code 状态显示值合计 `$45.97`（界面两位小数，未伪造更高精度），按显示值总计约 `$126.04301150`。其余三十一次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate

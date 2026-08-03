@@ -54,10 +54,12 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
     public Task<ClientMessageSendOutcome> SendTextAsync(
         Guid conversationId,
         string? content,
+        long? replyToMessageId = null,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         if (conversationId == Guid.Empty ||
+            replyToMessageId is <= 0 ||
             !ClientTextMessageContentValidator.IsValid(content))
         {
             return Task.FromResult(ClientMessageSendOutcome.Failure(
@@ -71,7 +73,7 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
             senderDisplayName,
             MessageType.Text,
             content,
-            ReplyToMessageId: null,
+            replyToMessageId,
             MentionUserIds: NoIds,
             DateTimeOffset.UtcNow);
         return StartFlight(

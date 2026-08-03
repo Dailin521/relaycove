@@ -42,6 +42,74 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
         Assert.Equal(0, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task SendTextAsync_WhenReplyTargetIsInvalid_DoesNotPersistOrPost(
+        long replyToMessageId)
+    {
+        await using var prepared = await CreatePreparedAsync();
+        var requests = 0;
+        using var httpClient = new HttpClient(new DelegateHttpHandler((_, _) =>
+        {
+            Interlocked.Increment(ref requests);
+            throw new InvalidOperationException("HTTP must not run for an invalid reply target.");
+        }));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        var outcome = await coordinator.SendTextAsync(
+            prepared.Conversation.Id,
+            "invalid reply",
+            replyToMessageId);
+
+        Assert.Equal(ClientMessageSendStatus.ValidationFailed, outcome.Status);
+        Assert.False(outcome.PendingCommitted);
+        Assert.Equal(0, Volatile.Read(ref requests));
+        Assert.Equal(0, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
+    }
+
+    [Fact]
+    public async Task SendTextAsync_WhenReplyTargetIsProvided_PersistsAndPostsExactTarget()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        const long replyToMessageId = 73;
+        await SeedReplyTargetAsync(prepared, replyToMessageId);
+        SendMessageRequest? captured = null;
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            captured = await request.Content!.ReadFromJsonAsync<SendMessageRequest>(
+                JsonOptions,
+                token);
+            var pendingPage = await prepared.Cache.ReadMessagePageAsync(
+                prepared.Conversation.Id,
+                beforeMessageId: null,
+                limit: 50,
+                token);
+            Assert.Equal(replyToMessageId, Assert.Single(pendingPage.PendingMessages)
+                .ReplyToMessageId);
+            return Created(CreateResponse(captured!));
+        }));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        var outcome = await coordinator.SendTextAsync(
+            prepared.Conversation.Id,
+            "reply body",
+            replyToMessageId);
+
+        Assert.Equal(ClientMessageSendStatus.Completed, outcome.Status);
+        Assert.True(outcome.PendingCommitted);
+        Assert.Equal(replyToMessageId, captured!.ReplyToMessageId);
+        var page = await prepared.Cache.ReadMessagePageAsync(
+            prepared.Conversation.Id,
+            beforeMessageId: null,
+            limit: 50);
+        Assert.Empty(page.PendingMessages);
+        Assert.Equal(
+            replyToMessageId,
+            Assert.Single(page.Messages, message =>
+                message.ClientMessageId == captured.ClientMessageId).ReplyToMessageId);
+    }
+
     [Fact]
     public async Task SendTextAsync_WhenCreated_PersistsBeforePostAndPromotesSameRow()
     {
@@ -84,6 +152,7 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
     public async Task RetryAsync_WhenFirstPostIsAmbiguous_ReusesExactKeyAndPayload()
     {
         await using var prepared = await CreatePreparedAsync();
+        await SeedReplyTargetAsync(prepared, messageId: 88);
         var requests = new List<SendMessageRequest>();
         using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
         {
@@ -97,7 +166,10 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
         }));
         await using var coordinator = CreateCoordinator(prepared, httpClient);
 
-        var first = await coordinator.SendTextAsync(prepared.Conversation.Id, "retry me");
+        var first = await coordinator.SendTextAsync(
+            prepared.Conversation.Id,
+            "retry me",
+            replyToMessageId: 88);
         var failedPage = await prepared.Cache.ReadMessagePageAsync(
             prepared.Conversation.Id,
             beforeMessageId: null,
@@ -110,11 +182,12 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
         Assert.Equal(ClientMessageSendStatus.TransientFailure, first.Status);
         Assert.True(first.PendingCommitted);
         Assert.Equal(MessageSendStatus.Failed, failed.SendStatus);
+        Assert.Equal(88, failed.ReplyToMessageId);
         Assert.Equal(ClientMessageSendStatus.Completed, retry.Status);
         Assert.Equal(2, requests.Count);
         AssertRequestEqual(requests[0], requests[1]);
-        Assert.Equal(1, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
-        Assert.Equal(1, Scalar(
+        Assert.Equal(2, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
+        Assert.Equal(2, Scalar(
             prepared.Identity,
             "SELECT COUNT(*) FROM LocalMessages WHERE ServerMessageId IS NOT NULL;"));
     }
@@ -123,6 +196,7 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
     public async Task SendTextAsync_WhenRealtimeWins_ResponseBecomesDuplicate()
     {
         await using var prepared = await CreatePreparedAsync();
+        await SeedReplyTargetAsync(prepared, messageId: 77);
         var requestSeen = new TaskCompletionSource<SendMessageRequest>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseResponse = new TaskCompletionSource(
@@ -138,8 +212,12 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
         }));
         await using var coordinator = CreateCoordinator(prepared, httpClient);
 
-        var send = coordinator.SendTextAsync(prepared.Conversation.Id, "race");
+        var send = coordinator.SendTextAsync(
+            prepared.Conversation.Id,
+            "race",
+            replyToMessageId: 77);
         var sentRequest = await requestSeen.Task;
+        Assert.Equal(77, sentRequest.ReplyToMessageId);
         var realtime = CreateResponse(sentRequest);
         var realtimeMerge = await prepared.Cache.MergeIncomingMessageAsync(
             realtime,
@@ -149,10 +227,11 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
 
         Assert.Equal(IncomingMessageMergeResult.PendingPromoted, realtimeMerge.Result);
         Assert.Equal(ClientMessageSendStatus.Completed, outcome.Status);
-        Assert.Equal(1, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
+        Assert.Equal(2, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
         Assert.Equal((long)MessageSendStatus.Sent, Scalar(
             prepared.Identity,
-            "SELECT LocalSendStatus FROM LocalMessages;"));
+            "SELECT LocalSendStatus FROM LocalMessages WHERE ClientMessageId = '" +
+            sentRequest.ClientMessageId.ToString("D") + "';"));
     }
 
     [Fact]
@@ -448,6 +527,27 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
             prepared.Cache,
             NullLogger<ClientMessageSendCoordinator>.Instance,
             conversationRevokedAsync);
+
+    private static async Task SeedReplyTargetAsync(
+        PreparedSend prepared,
+        long messageId)
+    {
+        var outcome = await prepared.Cache.MergeIncomingMessageAsync(
+            new MessageDto(
+                messageId,
+                Guid.NewGuid(),
+                prepared.Conversation.Id,
+                Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+                "Reply Target",
+                MessageType.Text,
+                "target",
+                ReplyToMessageId: null,
+                Array.Empty<AttachmentDto>(),
+                Array.Empty<Guid>(),
+                DateTimeOffset.Parse("2026-08-03T02:00:00Z")),
+            LocalMessageIngestionContext.Background(IncomingMessageSource.Sync));
+        Assert.Equal(IncomingMessageMergeResult.Inserted, outcome.Result);
+    }
 
     private static MessageDto CreateResponse(SendMessageRequest request) => new(
         Id: 101,

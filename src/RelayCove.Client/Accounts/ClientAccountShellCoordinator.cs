@@ -331,6 +331,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 
     public async Task<ClientMessageSendOutcome> SendTextMessageAsync(
         string? content,
+        long? replyToMessageId = null,
         CancellationToken cancellationToken = default)
     {
         IClientAccountRuntime? activeRuntime;
@@ -339,7 +340,10 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         {
             if (messageSelection is not { } selection ||
                 !IsCurrentMessageSelectionLocked(selection) ||
-                messageList.Status != ClientMessageListStatus.Ready)
+                messageList.Status != ClientMessageListStatus.Ready ||
+                replyToMessageId is <= 0 ||
+                (replyToMessageId.HasValue &&
+                 !selection.Messages.ContainsKey(replyToMessageId.Value)))
             {
                 return ClientMessageSendOutcome.Failure(
                     ClientMessageSendStatus.Unavailable);
@@ -357,7 +361,11 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         try
         {
             var outcome = await activeRuntime
-                .SendTextMessageAsync(conversationId, content, cancellationToken)
+                .SendTextMessageAsync(
+                    conversationId,
+                    content,
+                    replyToMessageId,
+                    cancellationToken)
                 .ConfigureAwait(false);
             if (outcome.Status == ClientMessageSendStatus.AuthenticationRequired)
             {

@@ -445,3 +445,15 @@
 - **理由：** runtime 是账户资源和托盘存活期的现有所有者，把自动触发放在此处可覆盖窗口隐藏期间的周期补偿并沿用统一终止顺序。上升沿过滤吸收 WPF 多事件噪声；完成后再计时形成天然背压，避免在网络长故障时积压任务。五分钟是在规范未给数值时兼顾聊天收敛延迟与小型服务端轮询负载的明确假设，未来若要外部配置必须另行冻结校验与部署口径。
 - **影响：** Client 新增无依赖、无 schema 的自动 Sync 调度器并接入 runtime factory/activity/termination；不改 Shared/Server 协议、Sync 原因数值/优先级、HTTP retry、通知策略、DPAPI 或 WPF 布局。真实丢推送/VPS/双客户端与五分钟壁钟端到端行为留到 M5；本切片以注入时钟和真实 Windows 进程 smoke 验证本地调度与生命周期。
 - **来源：** 工程落地方案第 4.2、9.2–9.4、12.4–12.8、21.2、阶段 8；`DEC-014`、`DEC-016`、`DEC-021`、`DEC-025`、`DEC-028`、`DEC-032`；`docs/ai/tasks/2026-08-04-stage-8-sync-triggers.md`；最终 Fast/Full 751 项、Client 540 项、关键集 670/670、真实 Release WPF 响应窗口/单实例/清理、model drift 与八项目漏洞审计。Claude #61 因认证源优先级失败，无结论；Codex 固定差异和本机门禁为最终依据。
+
+### DEC-037：当前确认消息 Reply、durable 原目标与版本化输入上下文
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-010/012/017/034/035` 已提供服务端同会话 Reply 校验、Around、账户隔离消息窗口和 durable Text 发送。Shared、Server、SQLite 与 merge/retry 已保存 `ReplyToMessageId`，但新发送固定为空，Client HTTP transport 还拒绝所有非空 Reply；WPF 没有引用展示或输入上下文。若 UI 接受 pending、本地 ID、旧选择或缺失行作为新目标，会把未确认或陈旧事实带入写请求；若迟到发送结果只比较当前文字和值，则用户切走再切回或重选同一目标后仍可能被旧结果清空。
+- **决策：** 新 Reply 只接受当前账户当前 `Ready` message selection 字典中仍存在的正 `ServerMessageId`；pending 行没有服务器身份且永远不可成为新目标。shell 在同一选择锁内验证并捕获会话与目标，选择切换不取消已经 durable 提交的 flight。send coordinator 在 HTTP 前把精确 nullable 正 `ReplyToMessageId` 写入 pending；transport 只拒绝非正 ID，201/200 响应继续逐字段匹配，显式 retry、Realtime 与 Sync promotion 均复用 durable 原值。Client incoming/pending 边界拒绝非正 Reply，避免畸形缓存进入可点击 UI。
+- **决策：** presentation 只用当前已授权窗口中的确认消息解析引用发送者与正文。已加载目标显示真实摘要；缺失目标只显示“原消息未加载”并由用户点击后复用现有 `SelectConversation(conversationId, targetMessageId)` Around 路径，不为每行自动发请求。非 Ready、撤权、切换、退出均隐藏消息并清除 composer 引用；确认行可回复，pending 只展示自己 durable 保存的引用和失败/重试状态。presentation、pending、请求与快照 `ToString()` 继续隐藏正文、身份和 Reply ID。
+- **决策：** composer 为会话 ID、Ready 状态和 Reply 操作维护单调上下文版本。发送捕获文字、会话、目标与版本；只有 `PendingCommitted=true` 且四者仍完全一致时才清空文字和引用。任何账户/会话/Ready 边界变化、选择或取消 Reply 都推进版本，因此旧 flight 即使后来观察到相同表面值也不能覆盖新 UI。`@用户` 不并入本切片：当前没有普通用户目录，Public 成员 API 也按冻结契约拒绝该用途。
+- **理由：** 当前 selection 的确认 ID 门把 UI 意图绑定到已授权服务器事实；durable 原目标延续 `DEC-035` 的幂等恢复语义；缺失引用的显式 Around 同时避免请求风暴与伪造摘要。上下文版本解决单纯值比较无法区分 ABA 用户操作的问题。
+- **影响：** Client 扩展无 schema 变化的 send/runtime/shell、transport/incoming 校验、presentation 和 WPF Reply 交互；不改 Shared/Server 协议、SQLite schema/migration、依赖、附件或 Mention。真实服务器/VPS、双客户端、Narrator 与 Reply 视觉端到端留到 M5 Gate；`@用户` 需先冻结普通用户目录/可选成员协议。
+- **来源：** 工程落地方案第 4.2、9.2–9.4、10.4、12.1–12.3、21.2、阶段 8；`DEC-010`、`DEC-012`、`DEC-017`、`DEC-034`、`DEC-035`；`docs/ai/tasks/2026-08-04-stage-8-message-reply.md`；Fast 760 项与 Reply/send/presenter/shell/cache/sync 定向 113 项初检。Claude #63/#64 因认证源优先级失败，无结论；Codex 固定差异与本机门禁为依据。

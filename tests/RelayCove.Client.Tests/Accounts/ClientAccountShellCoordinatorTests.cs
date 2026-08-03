@@ -1040,7 +1040,154 @@ public sealed class ClientAccountShellCoordinatorTests
     }
 
     [Fact]
-    public async Task SendTextMessageAsync_WhenSelectionChanges_KeepsCapturedConversationFlight()
+    public async Task SelectConversation_WhenReplyTargetIsMissing_LoadsAroundAndPublishesTarget()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        long? requestedTargetMessageId = null;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [CreateMessage(10, id)],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            MessageAroundLoadAction = (id, targetMessageId, _, _, _) =>
+            {
+                requestedTargetMessageId = targetMessageId;
+                return Task.FromResult(new ClientMessageAroundOutcome(
+                    ClientMessageLoadStatus.Completed,
+                    [CreateMessage(98, id), CreateMessage(targetMessageId, id)],
+                    targetMessageId,
+                    HasMoreBefore: true,
+                    HasMoreAfter: true));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+
+        coordinator.SelectConversation(conversationId, targetMessageId: 99);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready &&
+            !coordinator.MessageList.IsLoading &&
+            coordinator.MessageList.TargetMessageId == 99);
+
+        Assert.Equal(99, requestedTargetMessageId);
+        Assert.Contains(
+            coordinator.MessageList.Messages,
+            item => item.ServerMessageId == 99);
+        Assert.True(coordinator.MessageList.HasMoreBefore);
+        Assert.True(coordinator.MessageList.HasMoreAfter);
+    }
+
+    [Fact]
+    public async Task SendTextMessageAsync_WhenReplyTargetIsLoaded_ForwardsExactTarget()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var target = CreateMessage(10, conversationId);
+        Guid? sentConversationId = null;
+        string? sentContent = null;
+        long? sentReplyToMessageId = null;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [target],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            MessageSendAction = (conversation, content, replyToMessageId, _) =>
+            {
+                sentConversationId = conversation;
+                sentContent = content;
+                sentReplyToMessageId = replyToMessageId;
+                return Task.FromResult(new ClientMessageSendOutcome(
+                    ClientMessageSendStatus.Completed,
+                    PendingCommitted: true));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready &&
+            coordinator.MessageList.Messages.Any(item => item.ServerMessageId == 10));
+
+        var outcome = await coordinator.SendTextMessageAsync("reply body", 10);
+
+        Assert.Equal(ClientMessageSendStatus.Completed, outcome.Status);
+        Assert.Equal(conversationId, sentConversationId);
+        Assert.Equal("reply body", sentContent);
+        Assert.Equal(10, sentReplyToMessageId);
+    }
+
+    [Fact]
+    public async Task SendTextMessageAsync_WhenReplyTargetIsMissingOrInvalid_DoesNotInvokeRuntime()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var sendCount = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [CreateMessage(10, id)],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            MessageSendAction = (_, _, _, _) =>
+            {
+                Interlocked.Increment(ref sendCount);
+                return Task.FromResult(new ClientMessageSendOutcome(
+                    ClientMessageSendStatus.Completed,
+                    PendingCommitted: true));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready &&
+            coordinator.MessageList.Messages.Any(item => item.ServerMessageId == 10));
+
+        var missing = await coordinator.SendTextMessageAsync("missing", 999);
+        var zero = await coordinator.SendTextMessageAsync("zero", 0);
+        var negative = await coordinator.SendTextMessageAsync("negative", -1);
+
+        Assert.Equal(ClientMessageSendStatus.Unavailable, missing.Status);
+        Assert.Equal(ClientMessageSendStatus.Unavailable, zero.Status);
+        Assert.Equal(ClientMessageSendStatus.Unavailable, negative.Status);
+        Assert.Equal(0, Volatile.Read(ref sendCount));
+    }
+
+    [Fact]
+    public async Task SendTextMessageAsync_WhenSelectionChanges_KeepsCapturedConversationAndReplyFlight()
     {
         var session = CreateSession();
         var firstConversationId = Guid.NewGuid();
@@ -1048,6 +1195,7 @@ public sealed class ClientAccountShellCoordinatorTests
         var sendEntered = NewSignal();
         var releaseSend = NewSignal();
         Guid? sentConversationId = null;
+        long? sentReplyToMessageId = null;
         CancellationToken sentToken = default;
         var runtime = new FakeRuntime(session)
         {
@@ -1058,12 +1206,13 @@ public sealed class ClientAccountShellCoordinatorTests
                 new LocalMessagePageReadOutcome(
                     LocalCacheOperationStatus.Ready,
                     id,
-                    Array.Empty<MessageDto>(),
+                    [CreateMessage(id == firstConversationId ? 10 : 20, id)],
                     NextBeforeMessageId: null,
                     HasMoreBefore: false)),
-            MessageSendAction = async (conversationId, _, token) =>
+            MessageSendAction = async (conversationId, _, replyToMessageId, token) =>
             {
                 sentConversationId = conversationId;
+                sentReplyToMessageId = replyToMessageId;
                 sentToken = token;
                 sendEntered.TrySetResult();
                 await releaseSend.Task;
@@ -1082,9 +1231,10 @@ public sealed class ClientAccountShellCoordinatorTests
             LocalCacheOperationStatus.Ready);
         coordinator.SelectConversation(firstConversationId);
         await WaitUntilAsync(() => coordinator.MessageList.Status ==
-            ClientMessageListStatus.Ready);
+            ClientMessageListStatus.Ready &&
+            coordinator.MessageList.Messages.Any(item => item.ServerMessageId == 10));
 
-        var send = coordinator.SendTextMessageAsync("persist across selection");
+        var send = coordinator.SendTextMessageAsync("persist across selection", 10);
         await sendEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         coordinator.SelectConversation(secondConversationId);
         await WaitUntilAsync(() => coordinator.MessageList.Status ==
@@ -1096,6 +1246,7 @@ public sealed class ClientAccountShellCoordinatorTests
         var outcome = await send;
 
         Assert.Equal(firstConversationId, sentConversationId);
+        Assert.Equal(10, sentReplyToMessageId);
         Assert.Equal(ClientMessageSendStatus.Completed, outcome.Status);
         Assert.Equal(secondConversationId, coordinator.MessageList.ConversationId);
     }
@@ -1624,7 +1775,7 @@ public sealed class ClientAccountShellCoordinatorTests
             set;
         }
 
-        public Func<Guid, string?, CancellationToken, Task<ClientMessageSendOutcome>>?
+        public Func<Guid, string?, long?, CancellationToken, Task<ClientMessageSendOutcome>>?
             MessageSendAction
         {
             get;
@@ -1739,8 +1890,13 @@ public sealed class ClientAccountShellCoordinatorTests
         public Task<ClientMessageSendOutcome> SendTextMessageAsync(
             Guid conversationId,
             string? content,
+            long? replyToMessageId = null,
             CancellationToken cancellationToken = default) =>
-            MessageSendAction?.Invoke(conversationId, content, cancellationToken) ??
+            MessageSendAction?.Invoke(
+                conversationId,
+                content,
+                replyToMessageId,
+                cancellationToken) ??
             Task.FromResult(ClientMessageSendOutcome.Failure(
                 ClientMessageSendStatus.RemoteFailure));
 

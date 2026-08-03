@@ -25,8 +25,11 @@ internal static class ClientMessageListPresenter
                 nameof(currentUserId));
         }
 
-        var items = messages
+        var confirmedMessages = messages
             .OrderBy(message => message.Id)
+            .ToArray();
+        var messagesById = confirmedMessages.ToDictionary(message => message.Id);
+        var items = confirmedMessages
             .Select(message => new ClientMessageListItemPresentation(
                 ServerMessageId: message.Id,
                 message.ClientMessageId,
@@ -38,7 +41,15 @@ internal static class ClientMessageListPresenter
                 message.SenderId == currentUserId,
                 MessageSendStatus.Sent,
                 SendStatusLabel: string.Empty,
-                CanRetry: false))
+                CanRetry: false,
+                message.ReplyToMessageId,
+                ReplySenderLabel(message.ReplyToMessageId, messagesById, currentUserId),
+                ReplyContent(message.ReplyToMessageId, messagesById),
+                HasReply: message.ReplyToMessageId is > 0,
+                IsReplyTargetAvailable: ReplyTargetIsAvailable(
+                    message.ReplyToMessageId,
+                    messagesById),
+                CanReply: true))
             .ToList();
         items.AddRange(pendingMessages
             .OrderBy(message => message.CreatedAt)
@@ -54,9 +65,45 @@ internal static class ClientMessageListPresenter
                 message.SenderId == currentUserId,
                 message.SendStatus,
                 message.SendStatus == MessageSendStatus.Failed ? "发送失败" : "发送中…",
-                CanRetry: message.SendStatus == MessageSendStatus.Failed)));
+                CanRetry: message.SendStatus == MessageSendStatus.Failed,
+                message.ReplyToMessageId,
+                ReplySenderLabel(message.ReplyToMessageId, messagesById, currentUserId),
+                ReplyContent(message.ReplyToMessageId, messagesById),
+                HasReply: message.ReplyToMessageId is > 0,
+                IsReplyTargetAvailable: ReplyTargetIsAvailable(
+                    message.ReplyToMessageId,
+                    messagesById),
+                CanReply: false)));
         return items.AsReadOnly();
     }
+
+    private static string ReplySenderLabel(
+        long? replyToMessageId,
+        IReadOnlyDictionary<long, MessageDto> messagesById,
+        Guid currentUserId) =>
+        replyToMessageId is { } messageId &&
+        messagesById.TryGetValue(messageId, out var target)
+            ? target.SenderId == currentUserId
+                ? "回复 我"
+                : $"回复 {target.SenderDisplayName}"
+            : replyToMessageId is > 0
+                ? "回复消息"
+                : string.Empty;
+
+    private static string ReplyContent(
+        long? replyToMessageId,
+        IReadOnlyDictionary<long, MessageDto> messagesById) =>
+        replyToMessageId is { } messageId &&
+        messagesById.TryGetValue(messageId, out var target)
+            ? PresentContent(target)
+            : replyToMessageId is > 0
+                ? "原消息未加载，点击定位"
+                : string.Empty;
+
+    private static bool ReplyTargetIsAvailable(
+        long? replyToMessageId,
+        IReadOnlyDictionary<long, MessageDto> messagesById) =>
+        replyToMessageId is { } messageId && messagesById.ContainsKey(messageId);
 
     private static string PresentContent(MessageDto message) =>
         PresentContent(message.Type, message.Content);

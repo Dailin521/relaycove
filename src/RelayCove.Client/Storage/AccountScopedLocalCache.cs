@@ -4177,6 +4177,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(message.MentionUserIds);
         if (message.Id <= 0 ||
             !Enum.IsDefined(message.Type) ||
+            message.ReplyToMessageId is <= 0 ||
             message.Attachments.Count != 0 ||
             message.MentionUserIds.Any(id => id == Guid.Empty))
         {

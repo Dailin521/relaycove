@@ -384,6 +384,45 @@
                                                                Margin="0,6,0,0"
                                                                Foreground="#FF25394D"
                                                                TextWrapping="Wrap" />
+                                                    <Button Margin="0,7,0,0"
+                                                            MinHeight="0"
+                                                            Padding="0"
+                                                            HorizontalContentAlignment="Stretch"
+                                                            Background="Transparent"
+                                                            BorderThickness="0"
+                                                            Tag="{Binding ReplyToMessageId}"
+                                                            ToolTip="定位被回复的消息"
+                                                            Click="OnReplyReferenceClicked">
+                                                        <Button.Style>
+                                                            <Style TargetType="Button">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding HasReply}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Button.Style>
+                                                        <Border Padding="9,6"
+                                                                Background="#FFF0F5FA"
+                                                                BorderBrush="#FFD7E2ED"
+                                                                BorderThickness="3,0,0,0"
+                                                                CornerRadius="3">
+                                                            <StackPanel>
+                                                                <TextBlock Text="{Binding ReplySenderLabel}"
+                                                                           Foreground="#FF52708C"
+                                                                           FontSize="11"
+                                                                           FontWeight="SemiBold" />
+                                                                <TextBlock Text="{Binding ReplyContent}"
+                                                                           Margin="0,2,0,0"
+                                                                           Foreground="#FF718396"
+                                                                           FontSize="11"
+                                                                           MaxHeight="34"
+                                                                           TextTrimming="CharacterEllipsis"
+                                                                           TextWrapping="Wrap" />
+                                                            </StackPanel>
+                                                        </Border>
+                                                    </Button>
                                                     <StackPanel Margin="0,6,0,0"
                                                                 HorizontalAlignment="Right"
                                                                 Orientation="Horizontal">
@@ -392,6 +431,22 @@
                                                                    VerticalAlignment="Center"
                                                                    Foreground="#FFB05A32"
                                                                    FontSize="11" />
+                                                        <Button Content="回复"
+                                                                Margin="0,0,6,0"
+                                                                Padding="8,2"
+                                                                Tag="{Binding ServerMessageId}"
+                                                                Click="OnReplyMessageClicked">
+                                                            <Button.Style>
+                                                                <Style TargetType="Button">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding CanReply}" Value="True">
+                                                                            <Setter Property="Visibility" Value="Visible" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Button.Style>
+                                                        </Button>
                                                         <Button Content="重试"
                                                                 Padding="8,2"
                                                                 Tag="{Binding ClientMessageId}"
@@ -446,8 +501,46 @@
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
+                                <Border x:Name="ReplyComposerPanel"
+                                        Grid.ColumnSpan="2"
+                                        Margin="0,0,0,7"
+                                        Padding="10,7"
+                                        Background="#FFF0F5FA"
+                                        BorderBrush="#FFD7E2ED"
+                                        BorderThickness="3,0,0,0"
+                                        CornerRadius="3"
+                                        Visibility="Collapsed">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel>
+                                            <TextBlock x:Name="ReplyComposerSenderText"
+                                                       Text="正在回复"
+                                                       Foreground="#FF52708C"
+                                                       FontSize="11"
+                                                       FontWeight="SemiBold" />
+                                            <TextBlock x:Name="ReplyComposerContentText"
+                                                       Margin="0,2,10,0"
+                                                       Foreground="#FF718396"
+                                                       FontSize="11"
+                                                       MaxHeight="34"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1"
+                                                Content="取消"
+                                                MinHeight="28"
+                                                Padding="8,2"
+                                                VerticalAlignment="Center"
+                                                Click="OnCancelReplyClicked" />
+                                    </Grid>
+                                </Border>
                                 <TextBox x:Name="MessageComposerTextBox"
+                                         Grid.Row="1"
                                          MinHeight="68"
                                          MaxHeight="150"
                                          Padding="10,8"
@@ -459,6 +552,7 @@
                                          TextChanged="OnMessageComposerTextChanged"
                                          PreviewKeyDown="OnMessageComposerPreviewKeyDown" />
                                 <Button x:Name="SendMessageButton"
+                                        Grid.Row="1"
                                         Grid.Column="1"
                                         MinWidth="76"
                                         Margin="10,0,0,0"
@@ -468,7 +562,7 @@
                                         VerticalAlignment="Stretch"
                                         Click="OnSendMessageClicked" />
                                 <TextBlock x:Name="MessageComposerStatusText"
-                                           Grid.Row="1"
+                                           Grid.Row="2"
                                            Grid.ColumnSpan="2"
                                            Margin="2,5,0,0"
                                            Text="选择可用会话后发送 Text 消息；Ctrl+Enter 换行。"

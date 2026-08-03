@@ -199,7 +199,11 @@ public sealed class SyncPageCommitTests : IDisposable
         await using var cache = await CreateCacheAsync(identity);
         var conversation = CreateConversation("Conversation");
         var realtime = CreateMessage(1, conversation.Id);
-        var pendingEcho = CreateMessage(2, conversation.Id) with { SenderId = UserId };
+        var pendingEcho = CreateMessage(2, conversation.Id) with
+        {
+            SenderId = UserId,
+            ReplyToMessageId = realtime.Id,
+        };
         await ApplySnapshotAsync(cache, conversation);
         await cache.MergeIncomingMessageAsync(realtime);
         await cache.AddPendingMessageAsync(new PendingMessage(
@@ -224,6 +228,11 @@ public sealed class SyncPageCommitTests : IDisposable
             outcome.MergeResults);
         Assert.Equal(2, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
         Assert.Equal(2, (await cache.ReadLastSyncCursorAsync()).Cursor);
+        Assert.Equal(
+            realtime.Id,
+            Assert.Single(
+                (await cache.ReadMessagesAsync(conversation.Id)).Messages,
+                message => message.Id == pendingEcho.Id).ReplyToMessageId);
     }
 
     [Fact]

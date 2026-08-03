@@ -15,12 +15,12 @@
 ### 已知事实
 
 - `已验证`：绿色集成头 `a919992` 已包含 751/751 的 WindowActivated/Periodic Sync 切片；当前分支建立时工作树干净。
-- `已验证`：Shared `SendMessageRequest`/`MessageDto`、Server 同会话回复校验与幂等载荷比较、Client SQLite pending/confirmed 表、统一 merge 和重试读取均已完整保存 `ReplyToMessageId`；无协议或 schema 缺口。
-- `已验证`：当前发送 coordinator 唯一缺口是新 Text pending 固定 `ReplyToMessageId=null`；HTTP 成功响应已按完整请求字段严格校验，retry 已从 durable pending 复用原回复目标。
+- `已验证`：Shared `SendMessageRequest`/`MessageDto`、Server 同会话回复校验与幂等载荷比较、Client SQLite pending/confirmed 表、统一 merge 和重试读取均已完整保存 `ReplyToMessageId`；无 Shared/Server 协议或 schema 缺口。
+- `已验证`：新 Text pending 原先固定 `ReplyToMessageId=null`，且 Client HTTP transport 虽已序列化并严格比较响应 Reply 字段，入口校验仍拒绝任何非空 Reply；本任务把发送入口、transport 与 malformed incoming 校验一起收敛为 nullable 正 ID，并继续从 durable pending 复用原目标。
 - `已验证`：当前消息选择状态保存已加载的 `MessageDto` 字典，presentation/WPF 只显示正文和发送状态，尚未暴露 Reply 操作、输入区引用上下文或消息行引用。
 - `已验证`：现有 `SelectConversation(conversationId, targetMessageId)` 已用 Around 定位目标消息，可复用为未加载引用的显式导航，不需要新增消息端点。
 - `已验证`：`@用户` 不能安全并入本任务：当前没有普通用户目录 API，Public 会话成员列表按既有契约返回 `ConversationTypeConflict`；若实现可用 @ 选择器需要另开服务端协议任务。
-- `已验证`：Claude #63 MCP 只读 challenge 因本机认证源优先级冲突失败，无 job、模型、费用或结论；Codex 继续负责边界、实现和验证。
+- `已验证`：Claude #63 前置 challenge 与 #64 当前差异 review 均因本机认证源优先级冲突失败，无 job、模型、费用或结论；Codex 继续负责边界、实现和验证，失败不冒充审查通过。
 
 ### 假设
 
@@ -36,7 +36,7 @@
   - WPF 每条确认消息提供 Reply 操作；composer 显示目标摘要和取消按钮。会话切换、账户切换、非 Ready、撤权和退出清除旧引用。
   - 覆盖目标校验、pending 早于 HTTP、201/200/Realtime/Sync 合并、失败重试原 ID、缺失目标、导航、发送期间改目标、旧 revision/旧账户隔离与日志脱敏。
 - 允许修改：
-  - `src/RelayCove.Client/Accounts/`、`Sync/`、`MainWindow.xaml(.cs)` 及对应 Client 测试。
+  - `src/RelayCove.Client/Accounts/`、`Sync/`、`Storage/` 的输入校验、`MainWindow.xaml(.cs)` 及对应 Client 测试。
   - 本任务必要的 `docs/ai/` 记录。
 - 明确不做：
   - `@用户`、普通用户目录/成员缓存、Shared/Server 协议、SQLite schema/migration、附件、链接识别、复制、日期/新消息分割线或新依赖。

@@ -19,6 +19,11 @@ public partial class MainWindow : Window
     private Guid? displayedMessageConversationId;
     private long? displayedTargetMessageId;
     private ClientMessageListSnapshot? displayedMessageSnapshot;
+    private Guid? composerReplyConversationId;
+    private long? composerReplyToMessageId;
+    private Guid? composerContextConversationId;
+    private long composerContextVersion;
+    private bool composerContextReady;
     private bool suppressSelectionRequest;
     private bool applyingMessageSnapshot;
     private bool composerAvailable;
@@ -47,6 +52,8 @@ public partial class MainWindow : Window
             pendingConversationSelectionId = null;
             composerAvailable = false;
             MessageComposerTextBox.IsEnabled = false;
+            UpdateComposerConversationContext(conversationId: null, isReady: false);
+            ClearComposerReply();
             UpdateComposerState();
         }
 
@@ -249,6 +256,10 @@ public partial class MainWindow : Window
             composerAvailable = snapshot.Status == ClientMessageListStatus.Ready &&
                 snapshot.ConversationId.HasValue;
             MessageComposerTextBox.IsEnabled = composerAvailable;
+            UpdateComposerConversationContext(
+                snapshot.ConversationId,
+                composerAvailable);
+            ReconcileComposerReply(snapshot);
             UpdateComposerState();
 
             UpdateLayout();
@@ -505,6 +516,69 @@ public partial class MainWindow : Window
         await SendComposedMessageAsync();
     }
 
+    private void OnReplyMessageClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button
+            {
+                DataContext: ClientMessageListItemPresentation item,
+                Tag: long messageId,
+            } ||
+            !item.CanReply ||
+            item.ServerMessageId != messageId ||
+            displayedMessageSnapshot is not
+            {
+                Status: ClientMessageListStatus.Ready,
+                ConversationId: { } conversationId,
+            } snapshot ||
+            !snapshot.Messages.Any(candidate => candidate.ServerMessageId == messageId))
+        {
+            return;
+        }
+
+        composerReplyConversationId = conversationId;
+        composerReplyToMessageId = messageId;
+        composerContextVersion++;
+        SetLiveText(ReplyComposerSenderText, $"正在回复 {item.SenderLabel}");
+        SetLiveText(ReplyComposerContentText, item.Content);
+        ReplyComposerPanel.Visibility = Visibility.Visible;
+        MessageComposerTextBox.Focus();
+    }
+
+    private void OnReplyReferenceClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button
+            {
+                DataContext: ClientMessageListItemPresentation item,
+                Tag: long messageId,
+            } ||
+            !item.HasReply ||
+            item.ReplyToMessageId != messageId ||
+            displayedMessageSnapshot is not
+            {
+                Status: ClientMessageListStatus.Ready,
+                ConversationId: { } conversationId,
+            } snapshot ||
+            !snapshot.Messages.Any(candidate => candidate.ClientMessageId == item.ClientMessageId))
+        {
+            return;
+        }
+
+        SetLiveText(NavigationNoticeText, item.IsReplyTargetAvailable
+            ? "正在定位被回复的消息。"
+            : "原消息尚未加载；正在从服务器定位。");
+        accountShell?.SelectConversation(conversationId, messageId);
+    }
+
+    private void OnCancelReplyClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        ClearComposerReply();
+        MessageComposerTextBox.Focus();
+    }
+
     private async void OnRetryPendingMessageClicked(object sender, RoutedEventArgs e)
     {
         _ = e;
@@ -531,19 +605,40 @@ public partial class MainWindow : Window
         }
 
         var submittedContent = MessageComposerTextBox.Text;
+        var submittedConversationId = displayedMessageSnapshot?.ConversationId;
+        var submittedReplyToMessageId = composerReplyToMessageId;
+        var submittedContextVersion = composerContextVersion;
+        if (submittedReplyToMessageId.HasValue &&
+            composerReplyConversationId != submittedConversationId)
+        {
+            ClearComposerReply();
+            UpdateComposerState();
+            return;
+        }
+
         composerSubmissionRunning = true;
         UpdateComposerState();
         SetLiveText(MessageComposerStatusText, "正在持久化并发送…");
         try
         {
-            var outcome = await accountShell.SendTextMessageAsync(submittedContent);
+            var outcome = await accountShell.SendTextMessageAsync(
+                submittedContent,
+                submittedReplyToMessageId);
+            var replyContextUnchanged = submittedReplyToMessageId.HasValue
+                ? composerReplyConversationId == submittedConversationId &&
+                  composerReplyToMessageId == submittedReplyToMessageId
+                : !composerReplyToMessageId.HasValue;
             if (outcome.PendingCommitted &&
+                displayedMessageSnapshot?.ConversationId == submittedConversationId &&
+                composerContextVersion == submittedContextVersion &&
+                replyContextUnchanged &&
                 string.Equals(
                     MessageComposerTextBox.Text,
                     submittedContent,
                     StringComparison.Ordinal))
             {
                 MessageComposerTextBox.Clear();
+                ClearComposerReply();
             }
 
             SetLiveText(MessageComposerStatusText, DescribeSendOutcome(outcome, isRetry: false));
@@ -650,6 +745,17 @@ public partial class MainWindow : Window
     private void ApplySelectedConversation(
         ClientConversationListItemPresentation? selected)
     {
+        if (composerContextConversationId != selected?.Id)
+        {
+            UpdateComposerConversationContext(selected?.Id, isReady: false);
+        }
+
+        if (composerReplyConversationId.HasValue &&
+            composerReplyConversationId != selected?.Id)
+        {
+            ClearComposerReply();
+        }
+
         SetLiveText(
             ConversationHeadingText,
             selected is null ? "请选择会话" : selected.Name);
@@ -658,6 +764,50 @@ public partial class MainWindow : Window
             selected is null
                 ? "选择左侧真实会话以查看消息。"
                 : $"已选择{selected.TypeLabel}；正在读取账户隔离的真实消息。");
+    }
+
+    private void ReconcileComposerReply(ClientMessageListSnapshot snapshot)
+    {
+        if (!composerReplyToMessageId.HasValue)
+        {
+            return;
+        }
+
+        if (snapshot.Status != ClientMessageListStatus.Ready ||
+            snapshot.ConversationId != composerReplyConversationId ||
+            !snapshot.Messages.Any(item =>
+                item.ServerMessageId == composerReplyToMessageId.Value &&
+                item.CanReply))
+        {
+            ClearComposerReply();
+        }
+    }
+
+    private void ClearComposerReply()
+    {
+        if (composerReplyConversationId.HasValue || composerReplyToMessageId.HasValue)
+        {
+            composerContextVersion++;
+        }
+
+        composerReplyConversationId = null;
+        composerReplyToMessageId = null;
+        ReplyComposerPanel.Visibility = Visibility.Collapsed;
+        SetLiveText(ReplyComposerSenderText, "正在回复");
+        SetLiveText(ReplyComposerContentText, string.Empty);
+    }
+
+    private void UpdateComposerConversationContext(Guid? conversationId, bool isReady)
+    {
+        if (composerContextConversationId == conversationId &&
+            composerContextReady == isReady)
+        {
+            return;
+        }
+
+        composerContextConversationId = conversationId;
+        composerContextReady = isReady;
+        composerContextVersion++;
     }
 
     private static bool IsNearBottom(ScrollViewer? scrollViewer) =>

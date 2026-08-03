@@ -241,7 +241,7 @@ internal sealed class ClientMessageSendHttpTransport
             request.ConversationId == Guid.Empty ||
             request.Type != MessageType.Text ||
             !ClientTextMessageContentValidator.IsValid(request.Content) ||
-            request.ReplyToMessageId is not null ||
+            request.ReplyToMessageId is <= 0 ||
             request.AttachmentIds is null ||
             request.AttachmentIds.Count != 0 ||
             request.MentionUserIds is null ||
