@@ -1375,6 +1375,19 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 
             if (outcome.Status == LocalCacheOperationStatus.Ready)
             {
+                if (replacePendingMessages && !selection.InitialUnreadStateCaptured)
+                {
+                    if (outcome.LastReadMessageId < 0 || outcome.UnreadCount < 0)
+                    {
+                        return false;
+                    }
+
+                    selection.InitialUnreadStateCaptured = true;
+                    selection.InitialLastReadMessageId = outcome.LastReadMessageId;
+                    selection.InitialUnreadCount = outcome.UnreadCount;
+                    selection.NewMessageBoundaryResolved = outcome.UnreadCount == 0;
+                }
+
                 MergeMessagesLocked(selection, outcome.Messages);
                 if (replacePendingMessages)
                 {
@@ -1411,6 +1424,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                 MergeMessagesLocked(selection, outcome.Messages);
                 selection.HasMoreBefore = outcome.HasMore;
                 selection.NextBeforeMessageId = outcome.NextBeforeMessageId;
+                TryResolveNewMessageBoundaryFromHistoryLocked(selection, outcome);
             }
 
             return true;
@@ -1438,6 +1452,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                         ? outcome.Messages[0].Id
                         : null;
                 selection.HasMoreAfter = outcome.HasMoreAfter;
+                TryResolveNewMessageBoundaryFromAroundLocked(selection, outcome);
             }
 
             return true;
@@ -1456,6 +1471,77 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             }
         }
     }
+
+    private static void TryResolveNewMessageBoundaryFromHistoryLocked(
+        MessageSelection selection,
+        ClientMessageHistoryPageOutcome outcome)
+    {
+        if (!CanResolveNewMessageBoundary(selection) ||
+            (outcome.HasMore &&
+             (outcome.Messages.Count == 0 ||
+              outcome.Messages[0].Id > selection.InitialLastReadMessageId)))
+        {
+            return;
+        }
+
+        ResolveNewMessageBoundaryLocked(selection);
+    }
+
+    private static void TryResolveNewMessageBoundaryFromAroundLocked(
+        MessageSelection selection,
+        ClientMessageAroundOutcome outcome)
+    {
+        if (!CanResolveNewMessageBoundary(selection) || outcome.Messages.Count == 0)
+        {
+            return;
+        }
+
+        var reachesReadBoundary = !outcome.HasMoreBefore ||
+            outcome.Messages[0].Id <= selection.InitialLastReadMessageId;
+        if (!reachesReadBoundary)
+        {
+            return;
+        }
+
+        var firstNewMessage = FindFirstNewMessageId(
+            outcome.Messages,
+            selection.InitialLastReadMessageId,
+            selection.Subscription.Runtime.Identity.UserId);
+        if (firstNewMessage.HasValue)
+        {
+            selection.NewMessageSeparatorBeforeMessageId = firstNewMessage;
+            selection.NewMessageBoundaryResolved = true;
+        }
+        else if (!outcome.HasMoreAfter)
+        {
+            selection.NewMessageBoundaryResolved = true;
+        }
+    }
+
+    private static bool CanResolveNewMessageBoundary(MessageSelection selection) =>
+        selection.InitialUnreadStateCaptured &&
+        selection.InitialUnreadCount > 0 &&
+        !selection.NewMessageBoundaryResolved;
+
+    private static void ResolveNewMessageBoundaryLocked(MessageSelection selection)
+    {
+        selection.NewMessageSeparatorBeforeMessageId = FindFirstNewMessageId(
+            selection.Messages.Values,
+            selection.InitialLastReadMessageId,
+            selection.Subscription.Runtime.Identity.UserId);
+        selection.NewMessageBoundaryResolved = true;
+    }
+
+    private static long? FindFirstNewMessageId(
+        IEnumerable<MessageDto> messages,
+        long lastReadMessageId,
+        Guid currentUserId) =>
+        messages
+            .Where(message =>
+                message.Id > lastReadMessageId &&
+                message.SenderId != currentUserId)
+            .Select(message => (long?)message.Id)
+            .FirstOrDefault();
 
     private bool SelectionContainsMessage(MessageSelection selection, long messageId)
     {
@@ -1741,7 +1827,10 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                 ? ClientMessageListPresenter.Present(
                     selection.Messages.Values,
                     selection.PendingMessages.Values,
-                    selection.Subscription.Runtime.Identity.UserId)
+                    selection.Subscription.Runtime.Identity.UserId,
+                    selection.NewMessageBoundaryResolved
+                        ? selection.NewMessageSeparatorBeforeMessageId
+                        : null)
                 : Array.Empty<ClientMessageListItemPresentation>(),
             isLoading,
             isReady && selection.HasMoreBefore,
@@ -2116,6 +2205,16 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         public long? PendingObservedThroughMessageId { get; set; }
 
         public long CommittedObservedThroughMessageId { get; set; }
+
+        public bool InitialUnreadStateCaptured { get; set; }
+
+        public long InitialLastReadMessageId { get; set; }
+
+        public int InitialUnreadCount { get; set; }
+
+        public bool NewMessageBoundaryResolved { get; set; }
+
+        public long? NewMessageSeparatorBeforeMessageId { get; set; }
 
         public int OlderLoadRunning;
 

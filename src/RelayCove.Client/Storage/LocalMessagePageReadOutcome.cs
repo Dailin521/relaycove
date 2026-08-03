@@ -8,7 +8,9 @@ public sealed record LocalMessagePageReadOutcome(
     IReadOnlyList<MessageDto> Messages,
     long? NextBeforeMessageId,
     bool HasMoreBefore,
-    IReadOnlyList<LocalPendingMessage> PendingMessages)
+    IReadOnlyList<LocalPendingMessage> PendingMessages,
+    long LastReadMessageId = 0,
+    int UnreadCount = 0)
 {
     public LocalMessagePageReadOutcome(
         LocalCacheOperationStatus Status,
@@ -22,7 +24,9 @@ public sealed record LocalMessagePageReadOutcome(
             Messages,
             NextBeforeMessageId,
             HasMoreBefore,
-            Array.Empty<LocalPendingMessage>())
+            Array.Empty<LocalPendingMessage>(),
+            LastReadMessageId: 0,
+            UnreadCount: 0)
     {
     }
 
@@ -35,11 +39,14 @@ public sealed record LocalMessagePageReadOutcome(
             Array.Empty<MessageDto>(),
             NextBeforeMessageId: null,
             HasMoreBefore: false,
-            Array.Empty<LocalPendingMessage>());
+            Array.Empty<LocalPendingMessage>(),
+            LastReadMessageId: 0,
+            UnreadCount: 0);
 
     public override string ToString() =>
         $"{nameof(LocalMessagePageReadOutcome)} {{ Status = {Status}, " +
         "ConversationId = [REDACTED], Messages = [REDACTED], " +
         "PendingMessages = [REDACTED], " +
-        $"NextBeforeMessageId = [REDACTED], HasMoreBefore = {HasMoreBefore} }}";
+        $"NextBeforeMessageId = [REDACTED], HasMoreBefore = {HasMoreBefore}, " +
+        "LastReadMessageId = [REDACTED], UnreadCount = [REDACTED] }";
 }

@@ -2712,6 +2712,32 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                     conversationId);
             }
 
+            long lastReadMessageId;
+            int unreadCount;
+            using (var stateCommand = CreateCommand(connection, transaction, """
+                SELECT LastReadMessageId, UnreadCount
+                FROM LocalConversations
+                WHERE Id = $conversationId
+                LIMIT 1;
+                """))
+            {
+                AddParameter(stateCommand, "$conversationId", FormatGuid(conversationId));
+                using var stateReader = stateCommand.ExecuteReader();
+                if (!stateReader.Read())
+                {
+                    throw new InvalidDataException(
+                        "The local cache is missing the authorized conversation row.");
+                }
+
+                lastReadMessageId = stateReader.GetInt64(0);
+                unreadCount = stateReader.GetInt32(1);
+                if (lastReadMessageId < 0 || unreadCount < 0)
+                {
+                    throw new InvalidDataException(
+                        "The local cache contains invalid conversation read state.");
+                }
+            }
+
             using var command = CreateCommand(connection, transaction, """
                 SELECT LocalId, ServerMessageId, ClientMessageId, ConversationId, SenderId,
                        SenderDisplayName, Type, Content, ReplyToMessageId, CreatedAt,
@@ -2763,7 +2789,9 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 messages,
                 hasMoreBefore && messages.Count != 0 ? messages[0].Id : null,
                 hasMoreBefore,
-                pendingMessages);
+                pendingMessages,
+                lastReadMessageId,
+                unreadCount);
         }
         catch (SqliteException exception) when (IsBusy(exception))
         {

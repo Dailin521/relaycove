@@ -468,3 +468,15 @@
 - **理由：** 双层 scheme/host/载荷校验与当前快照成员门把“不可信聊天文本”降为“当前授权用户显式点击的 URL association 请求”；不拼参数封住 shell metacharacter 注入。固定数量/长度和线性算法让 UI 成本受消息协议上限约束。localhost、IP、内网、query 和 fragment 在显式点击后允许，因为客户端不承担内容信誉或网络分类职责；未来若加入信誉服务必须另行冻结隐私和联网边界。
 - **影响：** Client 增加无依赖、无 schema 的 link parser/presentation/current policy/shell launcher 与 WPF 按钮；不改 Shared/Server、消息正文、Copy、缓存、read-through、通知或日志。`file/mailto/ftp` 等外部协议、inline 富文本、网页预览、信誉检查、点击历史和自动打开明确不做；真实浏览器打开不由自动化触发，保留人工/M5 Gate。
 - **来源：** 工程落地方案第 9.2–9.4、18.4、阶段 8；`DEC-034`、`DEC-037`；`docs/ai/tasks/2026-08-04-stage-8-safe-links.md`；最终 Fast/两次 Full 782 项、Client 571 项、parser/policy/launcher/presenter 关键集 190/190、真实 Release WPF 响应窗口/单实例/精确清理、model drift、八项目漏洞审计、敏感日志检索与空白检查。Claude #65 因认证源优先级失败，无结论；Codex 威胁建模与固定差异自审发现并修正初版二次扫描后由本机门禁复验。
+
+### DEC-039：selection 冻结未读边界与分页证明后的新消息分割线
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-026/027/034` 已冻结本地未读、渲染后 read-through 与有界 History/Around，但阶段 8 尚无“新消息”分割线。若 presentation 每次读取当前 `UnreadCount` 或 `LastReadMessageId`，首屏应用后立即发生的 read-through 会让标记移动或消失；若只在最新 50 条中选择首条大于边界的消息，未加载的更早页可能包含真正的第一条未读，UI 会显示一个看似精确但实际错误的位置。pending 无服务器身份，自己的确认消息也不构成未读。
+- **决策：** `ReadMessagePage` 在既有账户/会话权威门内的同一个 deferred SQLite 事务同时读取非负 `LastReadMessageId`、`UnreadCount`、确认消息页和 pending；失败结果不携带可展示边界，outcome 的边界与消息 ID 在 `ToString()` 中脱敏。message selection 只在第一次成功最新页读取时冻结该状态；refresh、读穿、旧异步结果和后续页不得覆盖。零未读立即解析为空，非 `Ready`、切换、撤权和账户终止继续通过既有 selection generation 清空全部 presentation。
+- **决策：** 有未读时只在连续分页事实证明精确位置后解析一次。最新 History 页必须已经无更早页，或其最老 ID 已不大于冻结已读边界；更早 History 页逐页满足同一条件后才解析。Around 页必须从会话起点或跨过冻结边界；若页内存在首条大于边界的他人消息即可精确落点，若没有且仍有更新侧缺口则保持未解析。解析后从有序确认消息中选择第一条 `Id > frozen LastReadMessageId` 且发送者不是当前用户的消息，冻结其服务器 ID；pending 和自己的消息永不显示分割线。宁可暂时不显示，也不显示近似位置。
+- **决策：** WPF 在现有虚拟化消息行内、目标消息卡片之前显示唯一的可访问“新消息”分割线。该标记在 selection 生命周期内保持稳定，即使 read-through 已确认；离开再打开时使用新的原子本地状态重算。它不改变滚动策略、新消息提示按钮、Copy/Reply/链接、未读计数或 read-through 上传。
+- **理由：** selection 冻结区分“用户打开时尚未读”与“当前数据库已读”，避免 UI 回执反过来抹掉自己的定位依据；分页证明把有界加载与精确 UX 连接起来，阻止 History/Around 缺口造成错误标记。复用现有事务、generation 和 presentation，不新增持久状态，也不会在重启后保留陈旧 UI 标记。
+- **影响：** Client 扩展无 schema 的本地页 outcome、selection/presenter 和 WPF 行模板；不改 Shared/Server 协议、SQLite schema/migration、消息合并、通知或依赖。超出当前加载范围且尚未被分页证明的边界暂不显示；真实登录、VPS/双客户端与 Narrator 保留到 M5 Gate。
+- **来源：** 工程落地方案第 9.2–9.4、12.3、12.6–12.8、阶段 8；`DEC-026`、`DEC-027`、`DEC-034`；`docs/ai/tasks/2026-08-04-stage-8-new-message-divider.md`；Fast 788 项与 cache/shell/presenter 52 项初检。Claude #66 因认证源优先级失败，无结论；Codex 固定差异、自审与本机门禁为依据。

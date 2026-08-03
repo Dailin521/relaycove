@@ -875,14 +875,32 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         Assert.Equal([5L, 6L], latest.Messages.Select(message => message.Id));
         Assert.True(latest.HasMoreBefore);
         Assert.Equal(5, latest.NextBeforeMessageId);
+        Assert.Equal(0, latest.LastReadMessageId);
+        Assert.Equal(6, latest.UnreadCount);
         Assert.Equal([3L, 4L], middle.Messages.Select(message => message.Id));
         Assert.True(middle.HasMoreBefore);
         Assert.Equal(3, middle.NextBeforeMessageId);
+        Assert.Equal(latest.LastReadMessageId, middle.LastReadMessageId);
+        Assert.Equal(latest.UnreadCount, middle.UnreadCount);
         Assert.Equal([1L, 2L], oldest.Messages.Select(message => message.Id));
         Assert.False(oldest.HasMoreBefore);
         Assert.Null(oldest.NextBeforeMessageId);
+        Assert.DoesNotContain("LastReadMessageId = 0", latest.ToString(),
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("UnreadCount = 6", latest.ToString(),
+            StringComparison.Ordinal);
         var list = Assert.IsAssignableFrom<IList<MessageDto>>(latest.Messages);
         Assert.Throws<NotSupportedException>(() => list.Add(messages[0]));
+
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.MarkConversationRenderedThroughAsync(conversation.Id, 6));
+        var afterRendered = await cache.ReadMessagePageAsync(
+            conversation.Id,
+            beforeMessageId: null,
+            limit: 2);
+        Assert.Equal(6, afterRendered.LastReadMessageId);
+        Assert.Equal(0, afterRendered.UnreadCount);
     }
 
     [Fact]

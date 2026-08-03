@@ -10,6 +10,7 @@ internal sealed record ClientMessageListItemPresentation(
     string Timestamp,
     string DateSeparatorLabel,
     bool ShowDateSeparator,
+    bool ShowNewMessageSeparator,
     bool IsOwnMessage,
     MessageSendStatus SendStatus,
     string SendStatusLabel,
@@ -29,7 +30,9 @@ internal sealed record ClientMessageListItemPresentation(
         "ClientMessageId = [REDACTED], " +
         "SenderLabel = [REDACTED], Content = [REDACTED], " +
         "Timestamp = [REDACTED], DateSeparatorLabel = [REDACTED], " +
-        $"ShowDateSeparator = {ShowDateSeparator}, IsOwnMessage = {IsOwnMessage}, " +
+        $"ShowDateSeparator = {ShowDateSeparator}, " +
+        $"ShowNewMessageSeparator = {ShowNewMessageSeparator}, " +
+        $"IsOwnMessage = {IsOwnMessage}, " +
         $"SendStatus = {SendStatus}, CanRetry = {CanRetry}, " +
         "ReplyToMessageId = [REDACTED], ReplySenderLabel = [REDACTED], " +
         "ReplyContent = [REDACTED], " +

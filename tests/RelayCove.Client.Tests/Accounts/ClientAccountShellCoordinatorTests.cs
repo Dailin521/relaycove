@@ -1040,6 +1040,233 @@ public sealed class ClientAccountShellCoordinatorTests
     }
 
     [Fact]
+    public async Task SelectConversation_WhenUnreadIsRenderedAndStateRefreshes_KeepsFrozenDivider()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var message = CreateMessage(10, conversationId);
+        var rendered = NewSignal();
+        var pageReads = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 1),
+            MessagePageReadAction = (id, _, _, _) =>
+            {
+                var firstRead = Interlocked.Increment(ref pageReads) == 1;
+                return Task.FromResult(new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [message],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false,
+                    PendingMessages: Array.Empty<LocalPendingMessage>(),
+                    LastReadMessageId: firstRead ? 9 : 10,
+                    UnreadCount: firstRead ? 1 : 0));
+            },
+            MessageHistoryLoadAction = (_, _, _, _) => Task.FromResult(
+                new ClientMessageHistoryPageOutcome(
+                    ClientMessageLoadStatus.Completed,
+                    [message],
+                    NextBeforeMessageId: null,
+                    HasMore: false)),
+            MarkRenderedAction = (_, _, _) =>
+            {
+                rendered.TrySetResult();
+                return Task.FromResult(LocalCacheOperationStatus.Ready);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.UpdateActivity(new ClientActivitySnapshot(
+            true,
+            false,
+            true,
+            OpenConversationId: null));
+
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready && !coordinator.MessageList.IsLoading);
+        var initial = coordinator.MessageList;
+        Assert.True(Assert.Single(initial.Messages).ShowNewMessageSeparator);
+
+        coordinator.AcknowledgeMessageSnapshotApplied(
+            conversationId,
+            initial.Revision,
+            observedThroughMessageId: 10,
+            isAtLatestRegion: true);
+        await rendered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        runtime.RaiseConversationStateChanged(2);
+        await WaitUntilAsync(() => coordinator.MessageList.Revision > initial.Revision);
+
+        Assert.True(Assert.Single(coordinator.MessageList.Messages)
+            .ShowNewMessageSeparator);
+        Assert.True(pageReads >= 2);
+    }
+
+    [Fact]
+    public async Task LoadOlderMessagesAsync_UntilFrozenReadBoundaryIsCovered_DefersThenResolvesDivider()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var latest = Enumerable.Range(51, 50)
+            .Select(id => CreateMessage(id, conversationId))
+            .ToArray();
+        var older = Enumerable.Range(1, 50)
+            .Select(id => CreateMessage(id, conversationId))
+            .ToArray();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 50),
+            MessagePageReadAction = (id, before, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    before.HasValue ? older : latest,
+                    NextBeforeMessageId: before.HasValue ? null : 51,
+                    HasMoreBefore: !before.HasValue,
+                    PendingMessages: Array.Empty<LocalPendingMessage>(),
+                    LastReadMessageId: 50,
+                    UnreadCount: 50)),
+            MessageHistoryLoadAction = (_, before, _, _) => Task.FromResult(
+                new ClientMessageHistoryPageOutcome(
+                    ClientMessageLoadStatus.Completed,
+                    before.HasValue ? older : latest,
+                    NextBeforeMessageId: before.HasValue ? null : 51,
+                    HasMore: !before.HasValue)),
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.CanLoadOlder);
+        Assert.DoesNotContain(
+            coordinator.MessageList.Messages,
+            item => item.ShowNewMessageSeparator);
+
+        await coordinator.LoadOlderMessagesAsync();
+
+        var separator = Assert.Single(
+            coordinator.MessageList.Messages,
+            item => item.ShowNewMessageSeparator);
+        Assert.Equal(51, separator.ServerMessageId);
+        Assert.False(coordinator.MessageList.HasMoreBefore);
+    }
+
+    [Fact]
+    public async Task SelectConversation_WhenAroundPageCrossesFrozenBoundary_ResolvesExactDivider()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var targetMessageId = 96L;
+        var latest = CreateMessage(100, conversationId);
+        var around = new[]
+        {
+            CreateMessage(94, conversationId),
+            CreateMessage(96, conversationId),
+            CreateMessage(97, conversationId),
+        };
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 1),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [latest],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false,
+                    PendingMessages: Array.Empty<LocalPendingMessage>(),
+                    LastReadMessageId: 95,
+                    UnreadCount: 1)),
+            MessageAroundLoadAction = (_, target, _, _, _) => Task.FromResult(
+                new ClientMessageAroundOutcome(
+                    ClientMessageLoadStatus.Completed,
+                    around,
+                    target,
+                    HasMoreBefore: true,
+                    HasMoreAfter: true)),
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+
+        coordinator.SelectConversation(conversationId, targetMessageId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready && !coordinator.MessageList.IsLoading);
+
+        var separator = Assert.Single(
+            coordinator.MessageList.Messages,
+            item => item.ShowNewMessageSeparator);
+        Assert.Equal(targetMessageId, separator.ServerMessageId);
+        Assert.True(coordinator.MessageList.HasMoreBefore);
+        Assert.True(coordinator.MessageList.HasMoreAfter);
+    }
+
+    [Fact]
+    public async Task SelectConversation_WhenAroundPageDoesNotReachFrozenBoundary_HidesApproximation()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var targetMessageId = 99L;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 1),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [CreateMessage(100, id)],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false,
+                    PendingMessages: Array.Empty<LocalPendingMessage>(),
+                    LastReadMessageId: 95,
+                    UnreadCount: 1)),
+            MessageAroundLoadAction = (_, target, _, _, _) => Task.FromResult(
+                new ClientMessageAroundOutcome(
+                    ClientMessageLoadStatus.Completed,
+                    [CreateMessage(98, conversationId), CreateMessage(99, conversationId)],
+                    target,
+                    HasMoreBefore: true,
+                    HasMoreAfter: true)),
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+
+        coordinator.SelectConversation(conversationId, targetMessageId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready && !coordinator.MessageList.IsLoading);
+
+        Assert.DoesNotContain(
+            coordinator.MessageList.Messages,
+            item => item.ShowNewMessageSeparator);
+        Assert.True(coordinator.MessageList.HasMoreBefore);
+        Assert.True(coordinator.MessageList.HasMoreAfter);
+    }
+
+    [Fact]
     public async Task SelectConversation_WhenReplyTargetIsMissing_LoadsAroundAndPublishesTarget()
     {
         var session = CreateSession();

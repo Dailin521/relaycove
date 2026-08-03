@@ -9,12 +9,17 @@ internal static class ClientMessageListPresenter
     public static IReadOnlyList<ClientMessageListItemPresentation> Present(
         IEnumerable<MessageDto> messages,
         Guid currentUserId) =>
-        Present(messages, Array.Empty<LocalPendingMessage>(), currentUserId);
+        Present(
+            messages,
+            Array.Empty<LocalPendingMessage>(),
+            currentUserId,
+            newMessageSeparatorBeforeMessageId: null);
 
     public static IReadOnlyList<ClientMessageListItemPresentation> Present(
         IEnumerable<MessageDto> messages,
         IEnumerable<LocalPendingMessage> pendingMessages,
-        Guid currentUserId)
+        Guid currentUserId,
+        long? newMessageSeparatorBeforeMessageId = null)
     {
         ArgumentNullException.ThrowIfNull(messages);
         ArgumentNullException.ThrowIfNull(pendingMessages);
@@ -23,6 +28,11 @@ internal static class ClientMessageListPresenter
             throw new ArgumentException(
                 "A current user ID cannot be empty.",
                 nameof(currentUserId));
+        }
+        if (newMessageSeparatorBeforeMessageId is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(newMessageSeparatorBeforeMessageId));
         }
 
         var confirmedMessages = messages
@@ -49,6 +59,9 @@ internal static class ClientMessageListPresenter
                     CultureInfo.CurrentCulture),
                 DateSeparatorLabel: string.Empty,
                 ShowDateSeparator: false,
+                ShowNewMessageSeparator:
+                    newMessageSeparatorBeforeMessageId == message.Id &&
+                    message.SenderId != currentUserId,
                 message.SenderId == currentUserId,
                 MessageSendStatus.Sent,
                 SendStatusLabel: string.Empty,
@@ -86,6 +99,7 @@ internal static class ClientMessageListPresenter
                     CultureInfo.CurrentCulture),
                 DateSeparatorLabel: string.Empty,
                 ShowDateSeparator: false,
+                ShowNewMessageSeparator: false,
                 message.SenderId == currentUserId,
                 message.SendStatus,
                 message.SendStatus == MessageSendStatus.Failed ? "发送失败" : "发送中…",

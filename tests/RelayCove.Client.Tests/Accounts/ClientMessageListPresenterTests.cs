@@ -216,6 +216,78 @@ public sealed class ClientMessageListPresenterTests
             StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Present_WhenNewMessageTargetIsConfirmedOtherMessage_ShowsExactlyOneSeparator()
+    {
+        var conversationId = Guid.NewGuid();
+        var otherUserId = Guid.NewGuid();
+        var firstOther = CreateMessage(
+            10,
+            conversationId,
+            otherUserId,
+            "Other",
+            "first other",
+            replyToMessageId: null);
+        var own = CreateMessage(
+            11,
+            conversationId,
+            UserId,
+            "Current User",
+            "own",
+            replyToMessageId: null);
+        var target = CreateMessage(
+            12,
+            conversationId,
+            otherUserId,
+            "Other",
+            "target",
+            replyToMessageId: null);
+        var pending = CreatePending(
+            1,
+            conversationId,
+            MessageSendStatus.Sending,
+            "pending");
+
+        var items = ClientMessageListPresenter.Present(
+            [target, own, firstOther],
+            [pending],
+            UserId,
+            newMessageSeparatorBeforeMessageId: 12);
+
+        var separator = Assert.Single(items, item => item.ShowNewMessageSeparator);
+        Assert.Equal(12, separator.ServerMessageId);
+        Assert.False(items[^1].ShowNewMessageSeparator);
+        Assert.Contains("ShowNewMessageSeparator = True", separator.ToString(),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Present_WhenNewMessageTargetIsOwnOrInvalid_DoesNotShowSeparator()
+    {
+        var conversationId = Guid.NewGuid();
+        var own = CreateMessage(
+            11,
+            conversationId,
+            UserId,
+            "Current User",
+            "own",
+            replyToMessageId: null);
+
+        var items = ClientMessageListPresenter.Present(
+            [own],
+            Array.Empty<LocalPendingMessage>(),
+            UserId,
+            newMessageSeparatorBeforeMessageId: 11);
+
+        Assert.False(Assert.Single(items).ShowNewMessageSeparator);
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            ClientMessageListPresenter.Present(
+                [own],
+                Array.Empty<LocalPendingMessage>(),
+                UserId,
+                newMessageSeparatorBeforeMessageId: 0));
+    }
+
     private static MessageDto CreateMessage(
         long id,
         Guid conversationId,

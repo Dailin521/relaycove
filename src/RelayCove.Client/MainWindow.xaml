@@ -381,6 +381,37 @@
                                                                Foreground="#FF718396"
                                                                FontSize="11" />
                                                 </Border>
+                                                <Grid Margin="0,6,0,8"
+                                                      AutomationProperties.Name="新消息分割线">
+                                                    <Grid.Style>
+                                                        <Style TargetType="Grid">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding ShowNewMessageSeparator}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Grid.Style>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border Height="1"
+                                                            VerticalAlignment="Center"
+                                                            Background="#FFCE6871" />
+                                                    <TextBlock Grid.Column="1"
+                                                               Margin="10,0"
+                                                               Text="新消息"
+                                                               Foreground="#FFB84F5A"
+                                                               FontSize="11"
+                                                               FontWeight="SemiBold" />
+                                                    <Border Grid.Column="2"
+                                                            Height="1"
+                                                            VerticalAlignment="Center"
+                                                            Background="#FFCE6871" />
+                                                </Grid>
                                             <Border Padding="12,9"
                                                     Background="White"
                                                     BorderBrush="#FFE5EBF2"
