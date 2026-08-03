@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 4
-ActiveTask: docs/ai/tasks/2026-08-03-stage-4-message-around-api.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-4-message-sync-api.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 6189e7f3db5536f3ec715fa4243b19cd60f5f6cd
-LatestGreenIntegrationCommit: 98f4925f86697d9b86b26c5e9b9b69753b6c84b1
-NextAction: 仅快进集成 around API 后开始固定上界 Sync 服务端切片
+LatestGreenIntegrationCommit: 9500836415913fd89b1b10f4babff7f821efec34
+NextAction: 实现 DEC-003 固定上界 Sync、权限空洞与单调游标
 ClaudeCalls: 24（软上限 24，硬上限 30）
 ClaudeCostUsd: 5.4229485 confirmed；另有十七次失败/中断调用费用 unavailable
 Blocker: none

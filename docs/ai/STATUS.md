@@ -5,7 +5,7 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 文字消息存储/发送/History/read-through 已合入；around API 已绿色完成并待快进集成
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 文字消息存储/发送/History/read-through/around 已合入；固定上界 Sync API 切片已开始
 - **最近验证通过的状态：** around API 代码 `6189e7f3db5536f3ec715fa4243b19cd60f5f6cd`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — Full、format、181 项测试、around 双侧窗口/目标/mentions/授权重检、read-through/文字消息/会话/认证回归、model drift、漏洞审计与空白检查通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-4-message-around-api`：绿色完成，待仅快进 `agent/v1-integration`。
+- `agent/stage-4-message-sync-api`：实现固定上界、权限空洞和单调游标的服务端同步分页。
 
 ## 已完成
 
@@ -39,7 +39,7 @@
 
 ## 下一任务
 
-快进集成后开始固定上界 Sync 服务端纵向切片。
+完成固定上界 Sync 服务端纵向切片。
 
 ## 阻塞项
 
