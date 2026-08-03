@@ -11,4 +11,11 @@ public sealed record PendingMessage(
     string? Content,
     long? ReplyToMessageId,
     IReadOnlyList<Guid> MentionUserIds,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt)
+{
+    public override string ToString() =>
+        $"{nameof(PendingMessage)} {{ ClientMessageId = {ClientMessageId}, " +
+        $"ConversationId = {ConversationId}, SenderId = {SenderId}, Type = {Type}, " +
+        "SenderDisplayName = [REDACTED], Content = [REDACTED], " +
+        "ReplyToMessageId = [REDACTED], MentionUserIds = [REDACTED] }";
+}

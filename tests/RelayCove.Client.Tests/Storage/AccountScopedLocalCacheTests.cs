@@ -59,6 +59,9 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
             message.MentionUserIds,
             message.CreatedAt.AddMinutes(-1));
 
+        Assert.DoesNotContain(message.Content!, pending.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(pending.SenderDisplayName, pending.ToString(), StringComparison.Ordinal);
+
         Assert.Equal(LocalCacheOperationStatus.Ready, await cache.AddPendingMessageAsync(pending));
         var promoted = await cache.MergeIncomingMessageAsync(message);
         var duplicate = await cache.MergeIncomingMessageAsync(message);
