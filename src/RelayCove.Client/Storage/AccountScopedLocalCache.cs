@@ -23,6 +23,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private readonly ConcurrentDictionary<Guid, byte> authorizedConversations = new();
     private readonly ConcurrentDictionary<Guid, long> authoritativeLastMessageIds = new();
     private readonly ConcurrentDictionary<Guid, byte> deniedConversations;
+    private long authoritativeSnapshotRevision;
     private int authoritativeSnapshotApplied;
     private int disposed;
 
@@ -280,6 +281,80 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
     }
 
+    internal async Task<LocalReadThroughBatchOutcome> ReadPendingReadThroughBatchAsync(
+        Guid? afterConversationId,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        if (afterConversationId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "A read-through continuation conversation ID cannot be empty.",
+                nameof(afterConversationId));
+        }
+
+        if (limit is < 1 or > 200)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit));
+        }
+
+        ThrowIfDisposed();
+        var status = GetSyncStatus();
+        if (status != LocalCacheOperationStatus.Ready)
+        {
+            return LocalReadThroughBatchOutcome.Failure(status);
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(() => ReadPendingReadThroughBatch(afterConversationId, limit))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+    }
+
+    internal async Task<LocalCacheOperationStatus> ApplyReadThroughReceiptAsync(
+        Guid conversationId,
+        long requestedMessageId,
+        long confirmedMessageId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateGuid(conversationId, nameof(conversationId));
+        if (requestedMessageId <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(requestedMessageId));
+        }
+
+        if (confirmedMessageId < requestedMessageId)
+        {
+            throw new ArgumentOutOfRangeException(nameof(confirmedMessageId));
+        }
+
+        ThrowIfDisposed();
+        var initialStatus = GetAccessStatus(conversationId);
+        if (initialStatus != LocalCacheOperationStatus.Ready)
+        {
+            return initialStatus;
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(() => ApplyReadThroughReceipt(
+                    conversationId,
+                    confirmedMessageId))
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+    }
+
     public async Task<LocalCacheOperationStatus> RevokeConversationAccessAsync(
         Guid conversationId,
         CancellationToken cancellationToken = default)
@@ -394,6 +469,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
 
             Volatile.Write(ref authoritativeSnapshotApplied, 1);
             Volatile.Write(ref scopeState.FatalScope, 0);
+            Interlocked.Increment(ref authoritativeSnapshotRevision);
             logger.LogInformation("An authoritative conversation snapshot was committed.");
             return LocalCacheOperationStatus.Ready;
         }
@@ -1023,7 +1099,6 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         // mark read immediately, but the contiguous conversation boundary must not
         // advance beyond the cursor already committed before this transaction.
         var committedSyncCursor = ReadLastSyncCursor(connection, transaction);
-        var safeReadBoundary = Math.Min(message.Id, committedSyncCursor);
         foreach (var uncountedMessageId in uncountedMessageIds)
         {
             UpdateMessageAttention(
@@ -1065,6 +1140,12 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             messagesCommand.ExecuteNonQuery();
         }
 
+        var safeReadBoundary = ReadSafeConversationMessageId(
+            connection,
+            transaction,
+            message.ConversationId,
+            Math.Min(message.Id, committedSyncCursor));
+
         using var conversationCommand = CreateCommand(connection, transaction, """
             UPDATE LocalConversations
             SET LastMessageId = MAX(LastMessageId, $serverMessageId),
@@ -1085,6 +1166,29 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         AddParameter(conversationCommand, "$updatedAt", FormatDateTime(message.CreatedAt));
         AddParameter(conversationCommand, "$conversationId", FormatGuid(message.ConversationId));
         conversationCommand.ExecuteNonQuery();
+    }
+
+    private static long ReadSafeConversationMessageId(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid conversationId,
+        long maximumMessageId)
+    {
+        if (maximumMessageId <= 0)
+        {
+            return 0;
+        }
+
+        using var command = CreateCommand(connection, transaction, """
+            SELECT COALESCE(MAX(ServerMessageId), 0)
+            FROM LocalMessages
+            WHERE ConversationId = $conversationId
+              AND ServerMessageId <= $maximumMessageId
+              AND IsRead = 1;
+            """);
+        AddParameter(command, "$conversationId", FormatGuid(conversationId));
+        AddParameter(command, "$maximumMessageId", maximumMessageId);
+        return Convert.ToInt64(command.ExecuteScalar(), CultureInfo.InvariantCulture);
     }
 
     private LocalCacheReadOutcome ReadMessages(Guid conversationId)
@@ -1127,6 +1231,230 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             .Select(record => ToMessageDto(connection, record))
             .ToArray();
         return new LocalCacheReadOutcome(LocalCacheOperationStatus.Ready, messages);
+    }
+
+    private LocalReadThroughBatchOutcome ReadPendingReadThroughBatch(
+        Guid? afterConversationId,
+        int limit)
+    {
+        var status = GetSyncStatus();
+        if (status != LocalCacheOperationStatus.Ready)
+        {
+            return LocalReadThroughBatchOutcome.Failure(status);
+        }
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                faultInjector?.BeforeReadPendingReadThroughBatch();
+                using var connection = OpenConnection();
+                using var transaction = connection.BeginTransaction(deferred: true);
+                var committedCursor = ReadLastSyncCursor(connection, transaction);
+                using var command = CreateCommand(connection, transaction, """
+                SELECT c.Id,
+                       c.PendingReadThroughMessageId,
+                       EXISTS (
+                           SELECT 1
+                           FROM LocalMessages AS pending
+                           WHERE pending.ConversationId = c.Id
+                             AND pending.ServerMessageId = c.PendingReadThroughMessageId
+                             AND pending.IsRead = 1
+                       ) AS IsRawPendingValid,
+                       (
+                           SELECT MAX(candidate.ServerMessageId)
+                           FROM LocalMessages AS candidate
+                           WHERE candidate.ConversationId = c.Id
+                             AND candidate.IsRead = 1
+                             AND candidate.ServerMessageId <= MIN(
+                                 c.PendingReadThroughMessageId,
+                                 $committedCursor)
+                             AND NOT EXISTS (
+                                 SELECT 1
+                                 FROM LocalMessages AS gap
+                                 WHERE gap.ConversationId = c.Id
+                                   AND gap.ServerMessageId > c.LastReadMessageId
+                                   AND gap.ServerMessageId <= candidate.ServerMessageId
+                                   AND gap.IsRead = 0)
+                       ) AS SafeMessageId
+                FROM LocalConversations AS c
+                WHERE c.PendingReadThroughMessageId IS NOT NULL
+                  AND ($afterConversationId IS NULL OR c.Id > $afterConversationId)
+                ORDER BY c.Id
+                LIMIT $limitPlusOne;
+                """);
+                AddParameter(command, "$committedCursor", committedCursor);
+                AddParameter(
+                    command,
+                    "$afterConversationId",
+                    afterConversationId.HasValue
+                        ? FormatGuid(afterConversationId.Value)
+                        : null);
+                AddParameter(command, "$limitPlusOne", limit + 1);
+                var rows = new List<(
+                    Guid ConversationId,
+                    long RawPendingMessageId,
+                    long? SafeMessageId)>(limit + 1);
+                using (var reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        if (!Guid.TryParseExact(reader.GetString(0), "D", out var conversationId) ||
+                            conversationId == Guid.Empty ||
+                            reader.IsDBNull(1))
+                        {
+                            throw new InvalidDataException(
+                                "The local cache contains invalid read-through state.");
+                        }
+
+                        var rawPendingMessageId = reader.GetInt64(1);
+                        if (rawPendingMessageId <= 0)
+                        {
+                            throw new InvalidDataException(
+                                "The local cache contains an invalid read-through target.");
+                        }
+
+                        if (reader.GetInt64(2) != 1)
+                        {
+                            throw new InvalidDataException(
+                                "The local cache contains an unowned read-through target.");
+                        }
+
+                        long? safeMessageId = null;
+                        if (!reader.IsDBNull(3))
+                        {
+                            safeMessageId = reader.GetInt64(3);
+                            if (safeMessageId.Value <= 0 ||
+                                safeMessageId.Value > rawPendingMessageId ||
+                                safeMessageId.Value > committedCursor)
+                            {
+                                throw new InvalidDataException(
+                                    "The local cache contains an unsafe read-through target.");
+                            }
+                        }
+
+                        rows.Add((conversationId, rawPendingMessageId, safeMessageId));
+                    }
+                }
+
+                var hasMore = rows.Count > limit;
+                if (hasMore)
+                {
+                    rows.RemoveAt(limit);
+                }
+
+                var targets = rows
+                    .Where(row => row.SafeMessageId.HasValue)
+                    .Select(row => new LocalReadThroughUploadTarget(
+                        row.ConversationId,
+                        row.RawPendingMessageId,
+                        row.SafeMessageId!.Value))
+                    .ToArray();
+                transaction.Commit();
+
+                return new LocalReadThroughBatchOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    targets,
+                    hasMore ? rows[^1].ConversationId : null,
+                    Volatile.Read(ref authoritativeSnapshotRevision));
+            }
+            catch (SqliteException exception) when (IsBusy(exception) && attempt < WriteRetryCount)
+            {
+                Thread.Sleep(TimeSpan.FromMilliseconds(25 * attempt));
+            }
+            catch (SqliteException exception) when (IsBusy(exception))
+            {
+                logger.LogWarning(
+                    "Reading pending read-through targets remained busy after bounded retries; " +
+                    "errorType={ExceptionType}.",
+                    exception.GetType().Name);
+                return LocalReadThroughBatchOutcome.Failure(
+                    LocalCacheOperationStatus.TransientFailure);
+            }
+            catch (Exception exception)
+            {
+                Interlocked.Exchange(ref scopeState.FatalScope, 1);
+                logger.LogCritical(
+                    "Local cache scope entered fatal fail-closed state while reading pending read-through targets after an error of type {ExceptionType}.",
+                    exception.GetType().Name);
+                return LocalReadThroughBatchOutcome.Failure(LocalCacheOperationStatus.FatalScope);
+            }
+        }
+    }
+
+    private LocalCacheOperationStatus ApplyReadThroughReceipt(
+        Guid conversationId,
+        long confirmedMessageId)
+    {
+        var status = GetAccessStatus(conversationId);
+        if (status != LocalCacheOperationStatus.Ready)
+        {
+            return status;
+        }
+
+        return ExecuteWriteWithRetry((connection, transaction) =>
+        {
+            var databaseStatus = GetDatabaseAccessStatus(connection, transaction, conversationId);
+            if (databaseStatus != LocalCacheOperationStatus.Ready)
+            {
+                return TransactionResult<LocalCacheOperationStatus>.Rollback(databaseStatus);
+            }
+
+            using var countCommand = CreateCommand(connection, transaction, """
+                SELECT COUNT(*)
+                FROM LocalMessages
+                WHERE ConversationId = $conversationId
+                  AND ServerMessageId > (
+                      SELECT LastReadMessageId
+                      FROM LocalConversations
+                      WHERE Id = $conversationId)
+                  AND ServerMessageId <= $confirmedMessageId
+                  AND IsRead = 0
+                  AND SenderId <> $currentUserId;
+                """);
+            AddParameter(countCommand, "$conversationId", FormatGuid(conversationId));
+            AddParameter(countCommand, "$confirmedMessageId", confirmedMessageId);
+            AddParameter(countCommand, "$currentUserId", FormatGuid(identity.UserId));
+            var newlyReadCount = Convert.ToInt32(countCommand.ExecuteScalar());
+
+            using (var messagesCommand = CreateCommand(connection, transaction, """
+                UPDATE LocalMessages
+                SET IsRead = 1,
+                    IsNotificationHandled = 1
+                WHERE ConversationId = $conversationId
+                  AND ServerMessageId <= $confirmedMessageId
+                  AND (IsRead = 0 OR IsNotificationHandled = 0);
+                """))
+            {
+                AddParameter(messagesCommand, "$conversationId", FormatGuid(conversationId));
+                AddParameter(messagesCommand, "$confirmedMessageId", confirmedMessageId);
+                messagesCommand.ExecuteNonQuery();
+            }
+
+            using var conversationCommand = CreateCommand(connection, transaction, """
+                UPDATE LocalConversations
+                SET LastReadMessageId = MAX(LastReadMessageId, $confirmedMessageId),
+                    PendingReadThroughMessageId = CASE
+                        WHEN PendingReadThroughMessageId IS NOT NULL
+                             AND $confirmedMessageId >= PendingReadThroughMessageId
+                            THEN NULL
+                        ELSE PendingReadThroughMessageId
+                    END,
+                    UnreadCount = MAX(UnreadCount - $newlyReadCount, 0)
+                WHERE Id = $conversationId;
+                """);
+            AddParameter(conversationCommand, "$confirmedMessageId", confirmedMessageId);
+            AddParameter(conversationCommand, "$newlyReadCount", newlyReadCount);
+            AddParameter(conversationCommand, "$conversationId", FormatGuid(conversationId));
+            if (conversationCommand.ExecuteNonQuery() != 1)
+            {
+                throw new InvalidOperationException(
+                    "Applying a read-through receipt did not update exactly one conversation.");
+            }
+
+            return TransactionResult<LocalCacheOperationStatus>.Commit(
+                LocalCacheOperationStatus.Ready);
+        });
     }
 
     private LocalCacheOperationStatus PersistRevocation(Guid conversationId)

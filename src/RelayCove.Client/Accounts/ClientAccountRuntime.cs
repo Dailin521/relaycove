@@ -13,6 +13,7 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
     private readonly ClientAuthenticationSession authenticationSession;
     private readonly IClientAccountRealtimeConnection realtimeConnection;
     private readonly IClientAccountSyncCoordinator syncCoordinator;
+    private readonly IClientAccountReadThroughCoordinator readThroughCoordinator;
     private readonly IAsyncDisposable localCache;
     private readonly ClientActivityState activityState;
     private readonly ILogger<ClientAccountRuntime> logger;
@@ -27,6 +28,7 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
         ClientAuthenticationSession authenticationSession,
         IClientAccountRealtimeConnection realtimeConnection,
         IClientAccountSyncCoordinator syncCoordinator,
+        IClientAccountReadThroughCoordinator readThroughCoordinator,
         IAsyncDisposable localCache,
         ClientActivityState activityState,
         ILogger<ClientAccountRuntime> logger)
@@ -38,6 +40,8 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
             throw new ArgumentNullException(nameof(realtimeConnection));
         this.syncCoordinator = syncCoordinator ??
             throw new ArgumentNullException(nameof(syncCoordinator));
+        this.readThroughCoordinator = readThroughCoordinator ??
+            throw new ArgumentNullException(nameof(readThroughCoordinator));
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
         this.activityState = activityState ?? throw new ArgumentNullException(nameof(activityState));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -398,6 +402,8 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
         await CaptureFailureAsync(() => realtimeConnection.DisposeAsync(), failures)
             .ConfigureAwait(false);
         await CaptureFailureAsync(() => syncCoordinator.DisposeAsync(), failures)
+            .ConfigureAwait(false);
+        await CaptureFailureAsync(() => readThroughCoordinator.DisposeAsync(), failures)
             .ConfigureAwait(false);
 
         Task<ClientAccountRuntimeStartOutcome>? startup;

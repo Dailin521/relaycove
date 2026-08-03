@@ -55,6 +55,38 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task ClientSync_WhenPagesCommit_RequestsReadThroughAfterEveryCursorAdvance()
+    {
+        var identity = CreateIdentity();
+        var conversation = CreateConversation("Read-through");
+        var handler = new ScriptedHttpHandler();
+        handler.EnqueueResponse(Ok(new ConversationListResponse([conversation], Complete: true)));
+        handler.EnqueueResponse(Ok(new SyncResponse(
+            [CreateMessage(1, conversation.Id)],
+            1,
+            2,
+            HasMore: true)));
+        handler.EnqueueResponse(Ok(new SyncResponse(
+            [CreateMessage(2, conversation.Id)],
+            2,
+            2,
+            HasMore: false)));
+        var requests = 0;
+        await using var cache = await CreateCacheAsync(identity);
+        await using var coordinator = CreateCoordinator(
+            identity,
+            handler,
+            new RecordingAuthenticationSession("current-token"),
+            cache,
+            requestReadThroughUpload: () => Interlocked.Increment(ref requests));
+
+        var outcome = await coordinator.TriggerAsync(SyncReason.Startup);
+
+        Assert.Equal(ClientSyncRunStatus.Completed, outcome.Status);
+        Assert.Equal(2, requests);
+    }
+
+    [Fact]
     public async Task ClientSync_WhenPageIsUnauthorized_RefreshesOnceAndRetriesExactPage()
     {
         var identity = CreateIdentity();
@@ -654,7 +686,8 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
         IClientAuthenticationSession authenticationSession,
         AccountScopedLocalCache cache,
         List<TimeSpan>? delays = null,
-        ILogger<ClientSyncCoordinator>? logger = null)
+        ILogger<ClientSyncCoordinator>? logger = null,
+        Action? requestReadThroughUpload = null)
     {
         var httpClient = new HttpClient(handler, disposeHandler: false);
         return new ClientSyncCoordinator(
@@ -669,7 +702,8 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
                 return Task.CompletedTask;
             },
             nextJitter: () => 0,
-            timeProvider: TimeProvider.System);
+            timeProvider: TimeProvider.System,
+            requestReadThroughUpload: requestReadThroughUpload);
     }
 
     private static ConversationDto CreateConversation(string name) => new(

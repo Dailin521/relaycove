@@ -10,6 +10,7 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
     private readonly AccountScopedLocalCache cache;
     private readonly Func<Guid, CancellationToken, Task> requestConversationReconciliationAsync;
     private readonly Func<Guid?> foregroundConversationIdProvider;
+    private readonly Action requestReadThroughUpload;
     private readonly ILogger<LocalCacheRealtimeEventSink> logger;
 
     public LocalCacheRealtimeEventSink(
@@ -20,7 +21,8 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
             cache,
             requestConversationReconciliationAsync,
             foregroundConversationIdProvider: null,
-            logger)
+            logger,
+            requestReadThroughUpload: null)
     {
     }
 
@@ -28,7 +30,8 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
         AccountScopedLocalCache cache,
         Func<Guid, CancellationToken, Task> requestConversationReconciliationAsync,
         Func<Guid?>? foregroundConversationIdProvider,
-        ILogger<LocalCacheRealtimeEventSink> logger)
+        ILogger<LocalCacheRealtimeEventSink> logger,
+        Action? requestReadThroughUpload = null)
     {
         ArgumentNullException.ThrowIfNull(cache);
         ArgumentNullException.ThrowIfNull(requestConversationReconciliationAsync);
@@ -37,6 +40,7 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
         this.requestConversationReconciliationAsync = requestConversationReconciliationAsync;
         this.foregroundConversationIdProvider = foregroundConversationIdProvider ??
             (static () => null);
+        this.requestReadThroughUpload = requestReadThroughUpload ?? (static () => { });
         this.logger = logger;
     }
 
@@ -48,11 +52,12 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
         MessageDto message,
         CancellationToken cancellationToken)
     {
+        var context = new LocalMessageIngestionContext(
+            IncomingMessageSource.Realtime,
+            foregroundConversationIdProvider());
         var outcome = await cache.MergeIncomingMessageAsync(
                 message,
-                new LocalMessageIngestionContext(
-                    IncomingMessageSource.Realtime,
-                    foregroundConversationIdProvider()),
+                context,
                 cancellationToken)
             .ConfigureAwait(false);
         if (outcome.Status == LocalCacheOperationStatus.UnknownConversation)
@@ -62,6 +67,13 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
             await requestConversationReconciliationAsync(message.ConversationId, cancellationToken)
                 .ConfigureAwait(false);
             return;
+        }
+
+        if (outcome.Status == LocalCacheOperationStatus.Ready &&
+            outcome.Result is not IncomingMessageMergeResult.Conflict &&
+            context.IsForegroundConversation(message.ConversationId))
+        {
+            RequestReadThroughUpload();
         }
 
         if (outcome.Status is LocalCacheOperationStatus.RevokedConversation or
@@ -83,6 +95,21 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
         {
             logger.LogCritical(
                 "A realtime access revocation caused the local cache scope to enter fatal fail-closed state.");
+        }
+    }
+
+    private void RequestReadThroughUpload()
+    {
+        try
+        {
+            requestReadThroughUpload();
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Requesting read-through upload after a foreground realtime merge failed; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
         }
     }
 }

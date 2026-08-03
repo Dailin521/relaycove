@@ -12,6 +12,7 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
     private readonly AccountScopedLocalCache localCache;
     private readonly ClientSyncHttpTransport transport;
     private readonly Func<Guid?> foregroundConversationIdProvider;
+    private readonly Action requestReadThroughUpload;
     private readonly ILogger<ClientSyncCoordinator> logger;
     private readonly CancellationTokenSource lifetimeCancellation = new();
     private Task<ClientSyncRunOutcome>? activeFlight;
@@ -36,7 +37,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
             delayAsync: null,
             nextJitter: null,
             timeProvider: null,
-            foregroundConversationIdProvider: null)
+            foregroundConversationIdProvider: null,
+            requestReadThroughUpload: null)
     {
     }
 
@@ -46,7 +48,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
         IClientAuthenticationSession authenticationSession,
         AccountScopedLocalCache localCache,
         ILogger<ClientSyncCoordinator> logger,
-        Func<Guid?> foregroundConversationIdProvider)
+        Func<Guid?> foregroundConversationIdProvider,
+        Action? requestReadThroughUpload = null)
         : this(
             identity,
             httpClient,
@@ -56,7 +59,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
             delayAsync: null,
             nextJitter: null,
             timeProvider: null,
-            foregroundConversationIdProvider)
+            foregroundConversationIdProvider,
+            requestReadThroughUpload)
     {
     }
 
@@ -69,13 +73,15 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
         Func<TimeSpan, CancellationToken, Task>? delayAsync,
         Func<double>? nextJitter,
         TimeProvider? timeProvider,
-        Func<Guid?>? foregroundConversationIdProvider = null)
+        Func<Guid?>? foregroundConversationIdProvider = null,
+        Action? requestReadThroughUpload = null)
     {
         ArgumentNullException.ThrowIfNull(identity);
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.foregroundConversationIdProvider = foregroundConversationIdProvider ??
             (static () => null);
+        this.requestReadThroughUpload = requestReadThroughUpload ?? (static () => { });
         if (!string.Equals(identity.Id, localCache.Identity.Id, StringComparison.Ordinal))
         {
             throw new ArgumentException(
@@ -311,6 +317,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
                 return MapLocalStatus(commitOutcome.Status);
             }
 
+            RequestReadThroughUpload();
+
             snapshotUpperBound ??= page.SnapshotUpperBound;
             cursor = page.NextCursor;
             if (!page.HasMore)
@@ -364,4 +372,19 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
 
     private void ThrowIfDisposed() =>
         ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+
+    private void RequestReadThroughUpload()
+    {
+        try
+        {
+            requestReadThroughUpload();
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Requesting read-through upload after a committed sync page failed; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
+    }
 }

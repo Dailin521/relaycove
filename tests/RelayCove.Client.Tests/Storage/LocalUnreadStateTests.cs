@@ -116,6 +116,39 @@ public sealed class LocalUnreadStateTests : IDisposable
     }
 
     [Fact]
+    public async Task MergeForegroundRealtime_WhenCursorBelongsToAnotherConversation_UsesLocalMessageTarget()
+    {
+        var identity = CreateIdentity();
+        await using var cache = await CreateCacheAsync(identity);
+        var foreground = CreateConversation(lastMessageId: 50, lastReadMessageId: 0, unreadCount: 1);
+        var cursorOwner = CreateConversation(lastMessageId: 60, lastReadMessageId: 60, unreadCount: 0);
+        await ApplySnapshotAsync(cache, foreground, cursorOwner);
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            (await cache.ApplySyncPageAsync(
+                new SyncResponse(
+                    [CreateMessage(50, foreground.Id), CreateMessage(60, cursorOwner.Id)],
+                    60,
+                    60,
+                    HasMore: false),
+                0,
+                null)).Status);
+
+        await cache.MergeIncomingMessageAsync(
+            CreateMessage(63, foreground.Id),
+            new LocalMessageIngestionContext(IncomingMessageSource.Realtime, foreground.Id));
+        var batch = await cache.ReadPendingReadThroughBatchAsync(null, 100);
+
+        Assert.Equal(
+            new ConversationAttention(63, 50, PendingReadThroughMessageId: 63, 0),
+            ReadConversationAttention(identity, foreground.Id));
+        var target = Assert.Single(batch.Targets);
+        Assert.Equal(foreground.Id, target.ConversationId);
+        Assert.Equal(63, target.RawPendingMessageId);
+        Assert.Equal(50, target.SafeMessageId);
+    }
+
+    [Fact]
     public async Task MergeForegroundRealtime_WhenSnapshotAdvancedReadBoundary_DoesNotConsumeExcludedRows()
     {
         var identity = CreateIdentity();

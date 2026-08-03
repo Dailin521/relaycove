@@ -710,7 +710,22 @@ public sealed class ClientAccountRuntimeTests
             order.Enqueue("cache-dispose");
             return ValueTask.CompletedTask;
         });
-        var runtime = CreateRuntime(directory.Path, session, realtime, sync, cache);
+        var readThrough = new FakeReadThroughCoordinator
+        {
+            DisposeAction = () =>
+            {
+                Assert.True(session.IsAuthenticated);
+                order.Enqueue("read-through-dispose");
+                return ValueTask.CompletedTask;
+            },
+        };
+        var runtime = CreateRuntime(
+            directory.Path,
+            session,
+            realtime,
+            sync,
+            cache,
+            readThrough);
         await runtime.StartAsync();
 
         await Task.WhenAll(
@@ -718,7 +733,7 @@ public sealed class ClientAccountRuntimeTests
             runtime.DisposeAsync().AsTask());
 
         Assert.Equal(
-            ["realtime-dispose", "sync-dispose", "cache-dispose"],
+            ["realtime-dispose", "sync-dispose", "read-through-dispose", "cache-dispose"],
             order);
         Assert.True(session.IsDisposeCompleted);
         Assert.False(session.IsAuthenticated);
@@ -999,12 +1014,17 @@ public sealed class ClientAccountRuntimeTests
             {
                 cacheDisposed = true;
                 return ValueTask.CompletedTask;
-            }));
+            }),
+            readThrough: new FakeReadThroughCoordinator
+            {
+                DisposeAction = () => ValueTask.FromException(
+                    new ApplicationException("classified read-through cleanup detail")),
+            });
 
         var exception = await Assert.ThrowsAsync<AggregateException>(() =>
             runtime.DisposeAsync().AsTask());
 
-        Assert.Equal(2, exception.InnerExceptions.Count);
+        Assert.Equal(3, exception.InnerExceptions.Count);
         Assert.True(cacheDisposed);
         Assert.True(session.IsDisposeCompleted);
     }
@@ -1015,12 +1035,14 @@ public sealed class ClientAccountRuntimeTests
         FakeRealtimeConnection realtime,
         FakeSyncCoordinator sync,
         IAsyncDisposable? cache = null,
+        FakeReadThroughCoordinator? readThrough = null,
         ILogger<ClientAccountRuntime>? logger = null) =>
         new(
             AccountScopeIdentity.Create(ServerBaseUri, UserId, rootDirectory),
             session,
             realtime,
             sync,
+            readThrough ?? new FakeReadThroughCoordinator(),
             cache ?? new RecordingAsyncDisposable(() => ValueTask.CompletedTask),
             new ClientActivityState(),
             logger ?? NullLogger<ClientAccountRuntime>.Instance);
@@ -1129,6 +1151,28 @@ public sealed class ClientAccountRuntimeTests
             return TriggerAction?.Invoke(reason, cancellationToken) ??
                 Task.FromResult(Completed(reason));
         }
+
+        public ValueTask DisposeAsync() =>
+            DisposeAction?.Invoke() ?? ValueTask.CompletedTask;
+    }
+
+    private sealed class FakeReadThroughCoordinator : IClientAccountReadThroughCoordinator
+    {
+        public Func<CancellationToken, Task<ClientReadThroughRunOutcome>>? TriggerAction
+        {
+            get;
+            init;
+        }
+
+        public Func<ValueTask>? DisposeAction { get; init; }
+
+        public Task<ClientReadThroughRunOutcome> TriggerAsync(
+            CancellationToken cancellationToken = default) =>
+            TriggerAction?.Invoke(cancellationToken) ??
+            Task.FromResult(new ClientReadThroughRunOutcome(
+                ClientReadThroughRunStatus.Completed,
+                RequestCount: 0,
+                ReceiptCount: 0));
 
         public ValueTask DisposeAsync() =>
             DisposeAction?.Invoke() ?? ValueTask.CompletedTask;

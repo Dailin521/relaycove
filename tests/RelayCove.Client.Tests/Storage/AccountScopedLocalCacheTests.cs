@@ -122,6 +122,31 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task LocalCacheRealtimeEventSink_WhenForegroundMergeCommits_RequestsReadThroughUpload()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        await RegisterAsync(cache, conversation);
+        var uploadRequests = 0;
+        var sink = new LocalCacheRealtimeEventSink(
+            cache,
+            (_, _) => Task.CompletedTask,
+            () => conversation.Id,
+            NullLogger<LocalCacheRealtimeEventSink>.Instance,
+            () => Interlocked.Increment(ref uploadRequests));
+
+        await sink.OnNewMessageAsync(CreateMessage(conversation.Id), CancellationToken.None);
+
+        Assert.Equal(1, uploadRequests);
+        Assert.Equal(
+            1,
+            Scalar(
+                identity,
+                "SELECT COUNT(*) FROM LocalConversations WHERE PendingReadThroughMessageId IS NOT NULL;"));
+    }
+
+    [Fact]
     public async Task RevokeConversationAccess_WhenPersisted_DeletesCascadeAndSurvivesRestart()
     {
         var identity = CreateIdentity(UserId);

@@ -7,4 +7,8 @@ internal interface ILocalCacheFaultInjector
     void BeforeAuthoritativeSnapshotCommit()
     {
     }
+
+    void BeforeReadPendingReadThroughBatch()
+    {
+    }
 }

@@ -73,6 +73,7 @@ internal sealed class ClientAccountRuntimeFactory
             userId.Value,
             accountDataRootDirectory);
         AccountScopedLocalCache? cache = null;
+        ClientReadThroughCoordinator? readThroughCoordinator = null;
         ClientSyncCoordinator? syncCoordinator = null;
         IClientAccountRealtimeConnection? realtimeConnection = null;
         try
@@ -84,13 +85,23 @@ internal sealed class ClientAccountRuntimeFactory
                     cancellationToken)
                 .ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
+            readThroughCoordinator = new ClientReadThroughCoordinator(
+                identity,
+                httpClient,
+                authenticationSession,
+                cache,
+                loggerFactory.CreateLogger<ClientReadThroughCoordinator>());
+            var readThroughRequestor = new ClientReadThroughRequestor(
+                readThroughCoordinator,
+                loggerFactory.CreateLogger<ClientReadThroughRequestor>());
             syncCoordinator = new ClientSyncCoordinator(
                 identity,
                 httpClient,
                 authenticationSession,
                 cache,
                 loggerFactory.CreateLogger<ClientSyncCoordinator>(),
-                activityState.GetForegroundConversationId);
+                activityState.GetForegroundConversationId,
+                readThroughRequestor.Request);
             var syncRequestor = new ClientAccountSyncRequestor(
                 syncCoordinator,
                 loggerFactory.CreateLogger<ClientAccountSyncRequestor>());
@@ -102,7 +113,8 @@ internal sealed class ClientAccountRuntimeFactory
                     return Task.CompletedTask;
                 },
                 activityState.GetForegroundConversationId,
-                loggerFactory.CreateLogger<LocalCacheRealtimeEventSink>());
+                loggerFactory.CreateLogger<LocalCacheRealtimeEventSink>(),
+                readThroughRequestor.Request);
             var realtimeSink = new ClientAccountRealtimeEventSink(cacheSink, syncRequestor);
             realtimeConnection = createRealtimeConnection(
                 identity.CanonicalServerBaseUri,
@@ -116,6 +128,7 @@ internal sealed class ClientAccountRuntimeFactory
                 authenticationSession,
                 realtimeConnection,
                 syncCoordinator,
+                readThroughCoordinator,
                 cache,
                 activityState,
                 loggerFactory.CreateLogger<ClientAccountRuntime>());
@@ -135,6 +148,14 @@ internal sealed class ClientAccountRuntimeFactory
             {
                 await CaptureCleanupFailureAsync(
                         () => syncCoordinator.DisposeAsync(),
+                        cleanupFailures)
+                    .ConfigureAwait(false);
+            }
+
+            if (readThroughCoordinator is not null)
+            {
+                await CaptureCleanupFailureAsync(
+                        () => readThroughCoordinator.DisposeAsync(),
                         cleanupFailures)
                     .ConfigureAwait(false);
             }

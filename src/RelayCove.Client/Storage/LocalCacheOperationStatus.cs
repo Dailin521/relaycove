@@ -10,4 +10,5 @@ public enum LocalCacheOperationStatus
     ProtocolError = 6,
     StaleCursor = 7,
     Conflict = 8,
+    TransientFailure = 9,
 }
