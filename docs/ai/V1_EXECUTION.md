@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 6
-ActiveTask: docs/ai/tasks/2026-08-03-stage-6-client-sync-orchestration.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-6-client-auth-session.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 8f7838baa79f194702cd88d3d4f6134d5f6e9341
-LatestGreenIntegrationCommit: 104b49a6a84125b538c38b9a396f7590ab1db0f0
-NextAction: 快进集成已验证的 Sync HTTP 编排，随后实现客户端认证会话、refresh rotation 与账户 scope 组合
+LatestGreenIntegrationCommit: b8d5955ccacb96c4024b3fbdfcdfbe43ee88af96
+NextAction: 实现并验证真实客户端登录、refresh single-flight rotation 与 logout 会话生命周期
 ClaudeCalls: 30（软上限 24，硬上限 30，已封顶）
 ClaudeCostUsd: 6.710481 confirmed；另有二十一次失败/中断调用费用 unavailable
 Blocker: none

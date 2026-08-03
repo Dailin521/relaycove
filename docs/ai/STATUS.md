@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-6-client-sync-orchestration`：会话快照先行的固定上界 HTTP 循环、一次 401 refresh、有界瞬态重试与账户 single-flight 已完成并验证，待快进集成。
+- `agent/stage-6-client-auth-session`：实现真实登录、内存 token、refresh single-flight rotation，以及与 refresh 串行且先清本地状态的 logout；不混入 DPAPI、UI 或账户组合。
 
 ## 已完成
 
@@ -46,7 +46,7 @@
 
 ## 下一任务
 
-客户端真实认证会话、refresh rotation、凭据生命周期与账户 scope 组合。
+客户端真实认证会话与 refresh rotation；完成后单独实现 DPAPI 凭据生命周期、自动登录与账户 scope 组合。
 
 ## 阻塞项
 

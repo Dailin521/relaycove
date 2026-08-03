@@ -259,3 +259,14 @@
 - **理由：** 固定请求参数和有界重试保留 `DEC-013/020` 的游标真源；长生命 HttpClient 复用连接池，动态 token 与一次 refresh 封住旧凭据重放；single-flight 把多触发变成确定的最多两轮，而不是并发或永不停止的循环。
 - **影响：** Shared 增加 SyncReason，Client 增加同步 coordinator、最小认证会话契约、HTTP 分类/退避和脱敏结果，不新增依赖或服务端变更。账户组合根、真实 refresh token 安全存储、定时/窗口/SignalR 钩子、通知与受控游标重建 UI 由后续切片完成。
 - **来源：** 工程落地方案第 12.4/12.5、阶段 6；`DEC-003`、`DEC-013`、`DEC-018`、`DEC-020`；`docs/ai/tasks/2026-08-03-stage-6-client-sync-orchestration.md`；当前 Shared 错误契约、SyncEndpoints 与 AccountScopedLocalCache；2026-08-03 .NET 10 HttpClient 与 Retry-After 官方文档。
+
+### DEC-022：客户端 refresh rotation 与 logout 线性化边界
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** 服务端 `DEC-006` 已采用单次使用 refresh token 原子轮换，客户端 Sync 也已要求被拒 access token 的 single-flight refresh。若客户端自动重试响应不确定的 refresh，服务端可能已经撤销旧 token 并签发新 token，但客户端重放旧 token 后只能得到 401；若 logout 与 refresh 并发，则可能注销旧 token 后又把新 token 发布回内存，形成表面退出但会话仍有效的竞争。
+- **决策：** 客户端认证会话只在内存锁内保存原始 access/refresh token，任何公共结果、`ToString` 和日志均不暴露敏感身份或服务端地址。相同被拒 access token 的并发 refresh 使用锁内先发布的 TaskCompletionSource 合并为一次请求；调用者取消仅停止自己的等待，会话生命周期取消才取消共享请求。
+- **决策：** login、refresh、logout 均不自动重试。refresh 与 logout 共用异步操作门；refresh 成功时原子替换成同一响应的两枚 token，401 或用户 ID 错配时清空会话，网络/429/5xx/协议失败不部分覆盖。logout 等待在途 refresh 后取得最新 refresh token，先清空本地会话再发幂等请求，远端失败或取消都不恢复本地状态。
+- **理由：** RFC 9700 的 rotation/replay detection 安全性要求客户端尊重单次使用边界；响应丢失后的正确动作是显式重新认证，而不是猜测请求是否提交。单一操作门给 refresh/logout 一个确定顺序，先本地退出保证远端不可用时也不会继续使用凭据。
+- **影响：** Client 新增真实登录和内存认证会话并直接实现 `IClientAuthenticationSession`；不修改 Shared/服务端协议或依赖。DPAPI、自动登录、主动 refresh、账户 scope 组合与 UI 留到后续独立切片。
+- **来源：** `DEC-006`、`DEC-016`、`DEC-021`；工程落地方案第 3.1、8.3、12.4、阶段 6；`docs/ai/tasks/2026-08-03-stage-6-client-auth-session.md`；当前 AuthenticationEndpoints/AuthenticationSessionService；RFC 9700。
