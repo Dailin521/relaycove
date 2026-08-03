@@ -1,7 +1,7 @@
-using System.Security.Cryptography;
 using System.Collections.Concurrent;
-using Microsoft.AspNetCore.Identity;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -25,17 +25,22 @@ public sealed class RelayCoveWebApplicationFactory : WebApplicationFactory<Progr
     private readonly SemaphoreSlim initializationGate = new(1, 1);
     private readonly int loginPermitLimit;
     private readonly int refreshPermitLimit;
+    private readonly int databaseTimeoutSeconds;
     private bool initialized;
 
     public RelayCoveWebApplicationFactory()
-        : this(1_000, 1_000)
+        : this(1_000, 1_000, 5)
     {
     }
 
-    internal RelayCoveWebApplicationFactory(int loginPermitLimit, int refreshPermitLimit)
+    internal RelayCoveWebApplicationFactory(
+        int loginPermitLimit,
+        int refreshPermitLimit,
+        int databaseTimeoutSeconds = 5)
     {
         this.loginPermitLimit = loginPermitLimit;
         this.refreshPermitLimit = refreshPermitLimit;
+        this.databaseTimeoutSeconds = databaseTimeoutSeconds;
         SigningKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         Clock = new MutableTimeProvider(DateTimeOffset.UtcNow.AddTicks(4321));
     }
@@ -116,7 +121,7 @@ public sealed class RelayCoveWebApplicationFactory : WebApplicationFactory<Progr
         var connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = DatabasePath,
-            DefaultTimeout = 5,
+            DefaultTimeout = databaseTimeoutSeconds,
             ForeignKeys = true,
             Pooling = false,
         }.ToString();
@@ -132,6 +137,9 @@ public sealed class RelayCoveWebApplicationFactory : WebApplicationFactory<Progr
         builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(settings));
         builder.ConfigureServices(services =>
         {
+            services.RemoveAll<RelayCoveDbContext>();
+            services.RemoveAll<DbContextOptions<RelayCoveDbContext>>();
+            services.AddDbContext<RelayCoveDbContext>(options => options.UseSqlite(connectionString));
             services.RemoveAll<TimeProvider>();
             services.AddSingleton<TimeProvider>(Clock);
             services.AddSingleton<ILoggerProvider>(_ => new InMemoryLoggerProvider(LogMessages));

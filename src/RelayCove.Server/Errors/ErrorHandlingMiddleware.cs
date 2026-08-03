@@ -1,5 +1,6 @@
-using RelayCove.Shared.Errors;
+using Microsoft.Data.Sqlite;
 using RelayCove.Server.Services;
+using RelayCove.Shared.Errors;
 
 namespace RelayCove.Server.Errors;
 
@@ -33,6 +34,18 @@ public sealed class ErrorHandlingMiddleware(
         catch (AuthenticationStorageUnavailableException exception)
         {
             logger.LogWarning(exception, "Authentication storage is temporarily unavailable for {Method} {Path}.",
+                context.Request.Method,
+                context.Request.Path);
+            await ApiErrorWriter.WriteAsync(
+                context,
+                StatusCodes.Status503ServiceUnavailable,
+                ApiErrorCodes.ServiceUnavailable,
+                "The service is temporarily unavailable.",
+                cancellationToken: context.RequestAborted);
+        }
+        catch (SqliteException exception) when (exception.SqliteErrorCode is 5 or 6)
+        {
+            logger.LogWarning(exception, "SQLite storage is temporarily unavailable for {Method} {Path}.",
                 context.Request.Method,
                 context.Request.Path);
             await ApiErrorWriter.WriteAsync(
