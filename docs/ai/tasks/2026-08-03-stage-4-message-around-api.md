@@ -15,8 +15,9 @@
 - `已验证`：工程方案阶段 4 与搜索跳转流程要求 `messages/around/{messageId}?before=20&after=20`；当前尚无该 endpoint、Shared 响应或验证规则。
 - `已验证`：Message/MessageMention 不可变且 committed ID 使用 SQLite AUTOINCREMENT；History 已提供权限化 MessageDto 投影、mention 聚合和唯一 ID keyset，可复用字段语义但不能冒充 around 响应。
 - `已验证`：Public 对正常用户隐式可见，Private/Direct 只对当前成员提供内容；全局管理员的成员管理覆盖不授予私有内容读取权。未知、删除、不可访问会话统一 403，权限判断必须先于目标信息暴露。
-- `待冻结`：around 响应字段、before/after 范围、目标不存在/跨会话错误、两侧是否还有更多上下文，以及撤权竞态下的 fail-closed 查询边界。
-- `待参考`：按用户要求仅在仓库证据收敛后尝试一次 Claude XHigh 窄审查，最长 60 秒；Claude 只作参考，无结论不重试、不阻塞 Codex。
+- `已验证`：`DEC-012` 冻结 `MessageAroundResponse(Messages, TargetMessageId, HasMoreBefore, HasMoreAfter)`；before/after 默认 20、各为 `0..100`，结果包含目标恰好一次、取最近双侧上下文并严格升序，零窗口仍报告对应更多标志。
+- `已验证`：非正目标/窗口越界稳定 400；先用当前内容权限确认会话，再区分已获访问会话内的不存在/跨会话目标为 400；最终有限投影再次绑定权限且缺少目标时按撤权 fail-closed 为 403。
+- `已验证`：Claude XHigh challenge #24 在 60 秒内因本机认证源优先级禁用 claude.ai connector 而超时，没有返回模型、workspace、费用或结论；按用户要求不重试、不阻塞 Codex，`DEC-012` 由仓库协议/授权/不可变模型证据独立收敛。
 
 ## 范围
 
@@ -67,4 +68,4 @@ dotnet list RelayCove.sln package --vulnerable --include-transitive
 
 ### 下一步
 
-- 冻结 around 专用响应、窗口边界和 fail-closed 查询语义，完成一次 Claude 参考后实现。
+- 按 `DEC-012` 实现 Shared 契约、授权化有限查询、endpoint 与自动化验证。

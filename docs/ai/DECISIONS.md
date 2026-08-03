@@ -145,3 +145,14 @@
 - **理由：** 复用已经承载 actor 水位和生命周期级联的表可避免仅为 Public read state 增加重复 schema；目标存在性验证阻止伪造未来水位；同一立即写事务串行化并发 read、首次 Public 行创建和 Private 撤权，使返回确认具备明确线性化顺序。
 - **影响：** 新增 Shared read 请求/确认、Server read 服务与 endpoint，不新增 migration。around、Sync、SignalR receipt 与客户端 pending read-through 仍由后续切片实现。
 - **来源：** 工程落地方案第 7.4、12.6；`DEC-003`、`DEC-009`、`DEC-010`；`docs/ai/tasks/2026-08-03-stage-4-message-read-api.md`；当前 ConversationAccessQuery、ConversationMember 与 SQLite 写事务实现。
+
+### DEC-012：消息 around 窗口、目标错误与撤权边界
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** 搜索跳转需要按目标消息拉取有限上下文，但工程方案只有 `messages/around/{messageId}?before=20&after=20` 路由，没有冻结响应、窗口范围、目标错误、更多标志或查询期间撤权语义。直接复用 History 游标会混淆“向前翻页”和“双侧定位”两种协议。
+- **决策：** around 响应固定为 `MessageAroundResponse(Messages, TargetMessageId, HasMoreBefore, HasMoreAfter)`；`before`/`after` 默认各 20、各允许 `0..100`，0 表示该侧不返回上下文但仍准确报告是否存在更多。响应必须包含真实目标恰好一次，前文取 ID 小于目标的最近 N 条，后文取 ID 大于目标的最近 N 条，最终按 ID 严格升序；双侧标志分别表示对应返回窗口外仍有消息。
+- **决策：** 非正目标或窗口越界为 `400 ValidationFailed`。服务先以 `ConversationAccessQuery` 判断当前会话内容访问并在同一授权投影中确认目标；未知、删除、不可访问或撤权会话统一 403，只有已获访问的会话内不存在/跨会话目标才返回 400。最终有限 MessageDto/mention 投影再次绑定当前权限并必须包含目标，否则按撤权 fail-closed 为 403；全局管理员成员管理覆盖仍不授予私有内容读取权。
+- **理由：** 专用双侧响应让客户端无需从不足一页猜测是否还能加载上下文；允许零窗口支持只定位目标。权限优先避免用目标 ID 探测私有会话，最终查询重检则在不持有跨请求快照或扩大写锁的前提下封住查询间撤权窗口；消息不可变和 ID 永不复用使目标在两次只读查询之间不会合法消失。
+- **影响：** 新增 Shared around 响应及 Server 验证、endpoint、查询与测试，不新增 migration。Search、固定上界 Sync、客户端跳转/高亮和附件仍是后续切片；允许消息编辑删除、改变 ID 语义或增加写实例时必须重审该边界与 `DEC-003`。
+- **来源：** 工程落地方案第 10.2、12.2–12.4、15.5、阶段 4；`DEC-003`、`DEC-009`、`DEC-010`、`DEC-011`；`docs/ai/tasks/2026-08-03-stage-4-message-around-api.md`；当前 MessageQueryService、ConversationAccessQuery 与 Message/MessageMention 模型。

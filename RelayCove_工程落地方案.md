@@ -1030,6 +1030,8 @@ History 响应使用 `MessageHistoryResponse(Messages, NextBeforeMessageId, HasM
 
 read-through 契约使用 `MarkConversationReadRequest(long MessageId)` 与 `ConversationReadReceipt(Guid ConversationId, long LastReadMessageId)`。`POST /api/conversations/{conversationId}/read` 必须在 Serializable 写事务内先复核当前内容权限，再确认目标消息真实属于该会话，最后保存并返回 `MAX(old, MessageId)`；不存在/跨会话/非正目标稳定 400，不得接受任意极大 ID。Private/Direct 只更新当前成员；Public 正常用户首次成功上报时创建不对成员 API 暴露的个人状态行，Public 的成员管理/list 仍保持类型冲突。
 
+around 契约使用 `MessageAroundResponse(Messages, TargetMessageId, HasMoreBefore, HasMoreAfter)`。`GET /api/conversations/{conversationId}/messages/around/{messageId}?before=20&after=20` 的 `before`/`after` 各允许 `0..100`；返回真实目标、最近的前后消息并按 ID 严格升序，双侧标志表示对应窗口外是否仍有消息。服务端必须先复核当前内容权限，再确认目标属于该会话，并在最终有限投影中再次绑定权限；不可访问会话稳定 403，可访问会话内不存在或跨会话目标稳定 400。
+
 ### AttachmentDto
 
 ```csharp
