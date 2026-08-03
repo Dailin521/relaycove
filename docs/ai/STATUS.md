@@ -5,16 +5,18 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 0 — 仓库初始化
-- **当前分支成果：** 同步、幂等、通知和私有频道权限契约正在落盘；仍未创建业务代码
+- **当前分支成果：** 同步、幂等、通知和私有频道权限契约已冻结并接受 `DEC-003`；仍未创建业务代码
 - **最近验证通过的状态：** 本文件所在提交；使用 `git log -1 --format=%H` 取得准确提交
 - **可构建状态：** `未验证` — `RelayCove.sln` 尚未创建
 - **自动化验证：** `未验证` — 按约定延后到解决方案脚手架完成后
+- **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
+- **本任务 Claude 调用：** `未验证` — challenge 与候选审查均因本机认证源优先而未返回结构化结果；调用前后仓库状态未变，已按规则降级
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
-- 阶段 0 — 冻结消息同步契约（`agent/stage-0-sync-contract`，执行起点 `e1ad7e6fae184d244dffe5d120794f10f391cd33`）
+- 无
 
 ## 已完成
 
@@ -22,6 +24,7 @@
 - 公开仓库、README、MIT License 与基础 `.gitignore`
 - AI 工作流、任务模板、状态页、关键决策索引与独立审查模板
 - Codex 全局与项目 Fast 默认；用户级 Claude Opus XHigh Second Brain（按次支持 Max）；Terra High Explorer 与 Sol High Reviewer
+- 消息同步固定上界分页、INSERT-first 幂等、统一本地合并、通知恢复和私有频道撤权契约（`DEC-003`）
 
 ## 下一任务
 
