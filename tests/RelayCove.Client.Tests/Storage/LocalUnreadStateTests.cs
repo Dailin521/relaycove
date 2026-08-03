@@ -216,6 +216,35 @@ public sealed class LocalUnreadStateTests : IDisposable
         Assert.Equal(0, ReadConversationAttention(identity, conversation.Id).UnreadCount);
     }
 
+    [Fact]
+    public async Task MergeHistoryInsert_WhenRealtimeAdvancedLocalPreview_DoesNotConsumeRealtimeUnread()
+    {
+        var identity = CreateIdentity();
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation(
+            lastMessageId: 100,
+            lastReadMessageId: 100,
+            unreadCount: 0);
+        await ApplySnapshotAsync(cache, conversation);
+        await cache.MergeIncomingMessageAsync(CreateMessage(200, conversation.Id));
+
+        var history = await cache.MergeIncomingMessageAsync(
+            CreateMessage(150, conversation.Id),
+            LocalMessageIngestionContext.Background(IncomingMessageSource.History));
+
+        Assert.Equal(IncomingMessageMergeResult.Inserted, history.Result);
+        Assert.Null(history.NotificationCandidateMessageId);
+        Assert.Equal(
+            new MessageAttention(IsRead: true, IsNotificationHandled: true),
+            ReadMessageAttention(identity, 150));
+        Assert.Equal(
+            new MessageAttention(IsRead: false, IsNotificationHandled: false),
+            ReadMessageAttention(identity, 200));
+        Assert.Equal(
+            new ConversationAttention(200, 100, PendingReadThroughMessageId: null, 1),
+            ReadConversationAttention(identity, conversation.Id));
+    }
+
     [Theory]
     [InlineData(IncomingMessageSource.History, 100)]
     [InlineData(IncomingMessageSource.SendResponse, 101)]

@@ -833,7 +833,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 context.Source == IncomingMessageSource.History &&
                 !ownMessage &&
                 !atOrBelowReadBoundary &&
-                message.Id <= conversationState.LastMessageId &&
+                (mergeResult != IncomingMessageMergeResult.Inserted ||
+                    message.Id <= conversationState.AuthoritativeLastMessageId) &&
                 IsMessageUnread(connection, transaction, message.Id);
             UpdateMessageAttention(
                 connection,
