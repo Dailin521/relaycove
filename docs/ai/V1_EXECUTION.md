@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 1
-ActiveTask: none
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-2-auth-storage.md
+TaskStatus: running
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 35125ef4b1cba453416b915b6fb82fed0b12eb44
-LatestGreenIntegrationCommit: c1f7020f2eb23867ec089d3328ab3cd6645fd5df
-NextAction: 仅快进本地集成头，然后创建服务端认证存储与密码哈希最小纵向任务
+LatestGreenIntegrationCommit: 0e5eefb0c44cdb024e4e455ff91b3eb542adfa8e
+NextAction: 对认证存储、用户名规范化、UTC/GUID 转换与 PasswordHasher 方案执行 Claude XHigh challenge
 ClaudeCalls: 8（软上限 24，硬上限 30）
 ClaudeCostUsd: 1.33388025 confirmed；另有五次失败/中断调用费用 unavailable
 Blocker: none
@@ -32,7 +32,7 @@ RequiredUserGate: none
 | 里程碑 | 状态 | 当前证据 | 下一出口 |
 | --- | --- | --- | --- |
 | M0 | `completed` | 同步契约、`DEC-003`、解决方案和真实 Fast/Full 验证均通过 | 已进入 M1 |
-| M1 | `running` | 可构建骨架与认证共享契约（含 `DEC-004`）已完成 | 认证、会话、权限、文字消息、历史与 SignalR 形成纵向闭环 |
+| M1 | `running` | 可构建骨架与认证共享契约（含 `DEC-004`）已完成；认证存储任务已开始 | 认证、会话、权限、文字消息、历史与 SignalR 形成纵向闭环 |
 | M2 | `pending` | 尚未开始 | Internal Alpha 验收证据完整 |
 | M3 | `pending` | 尚未开始 | Beta 验收证据完整 |
 | M4 | `pending` | 尚未开始 | RC 自动化、包与发布材料完整 |
