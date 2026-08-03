@@ -823,17 +823,22 @@ RelayCove.Client/
 
 ```text
 当前用户
+AccountScopeId
 当前会话
 会话列表
 本地消息缓存
 SignalR 连接状态
-最后同步消息 ID
+LastSyncCursor
+LastReadMessageId / PendingReadThroughMessageId
 未读数量
-通知记录
+IsNotificationHandled 通知状态
+revoked deny-set / tombstone
 登录令牌
 服务器地址
 客户端版本
 ```
+
+本地数据库、文件缓存、同步游标、通知 Group 和撤权状态必须全部按 `AccountScopeId` 隔离；服务器或账户切换时取消旧作用域工作，绝不复用其消息、未读、游标、缓存或通知状态。
 
 ## 9.4 WPF 注意事项
 
@@ -1028,10 +1033,13 @@ ServerNotice(string message)
 
 ```text
 1. 认证
-2. 加入自己有权限的会话组
-3. 调用补拉接口
-4. 更新连接状态
+2. 获取 Complete=true 的权威会话全集并完成本地对账
+3. 按当前权威权限加入会话组
+4. 调用补拉接口
+5. 更新连接状态
 ```
+
+SignalR 连接重建不会保留组成员关系。每次重连都必须重新执行权威对账并按当前权限加组，旧连接的组状态不得用作授权依据。
 
 ---
 
@@ -1312,161 +1320,109 @@ public sealed record SyncResponse(
 
 ## 12.6 未读处理
 
-如果消息满足：
+四种消息来源的到达语义固定如下：
 
-```text
-发送者不是当前用户
-且 当前会话不是正在前台查看的会话
-```
+| 来源 | 本地合并 | 增加未读 | 通知决策 | 推进游标 | 更新会话预览 | 声音/闪烁 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `Realtime` | 统一唯一键合并 | 仅他人消息首次入库、超过已读边界且非当前前台会话 | 提交后交给串行通知分发器 | 否 | 仅较新消息 | 成功通知后本消息最多一次 |
+| `Sync` | 整页事务内统一合并 | 仅他人消息首次入库、超过已读边界且非当前前台会话 | 完整轮次后统一决策 | 随页面事务提交 `NextCursor` | 仅较新消息 | 每轮最多一次 |
+| `History` | 懒加载并统一合并 | 否 | 直接标记已处理 | 否 | 否 | 否 |
+| `SendResponse` | 确认或合并 pending | 否 | 直接标记已处理 | 否 | 仅较新消息 | 否 |
 
-则：
+“当前前台会话”必须同时满足：主窗口可见、未最小化、拥有前台焦点，且当前打开的会话 ID 与消息会话一致。只有满足未读条件的 `Inserted` 才使会话和总未读数各增加一次；重复到达不得再次计数。
 
-```text
-会话未读数 +1
-总未读数 +1
-显示新消息分割线
-```
+- `ConversationDto` 与 `LocalConversations` 都携带 `LastReadMessageId`。消息 `Id <= LastReadMessageId` 时不增加未读、不通知；该字段只表示已读边界，不参与历史可见性授权。
+- `LastReadMessageId` 只能单调前进。`POST /api/conversations/{id}/read` 必须验证当前权限、目标消息属于该会话，并保存 `MAX(old, requested)`，不得接受任意极大 ID。
+- 当前前台会话收到新消息时，在同一本地事务把消息标记为已读、通知已处理，并保存新的 `PendingReadThroughMessageId`，随后异步上报 read-through ID。
+- 同一成员生命周期的有效边界为 `MAX(localLastReadMessageId, serverLastReadMessageId)`，会话刷新不得回退。只有服务端确认值不小于 pending 目标才可清除 `PendingReadThroughMessageId`；失败时以相同最大值幂等重试。撤权清理后的重新加入是新成员生命周期，以服务端新基线初始化。
 
-打开会话时：
+第一版不实现对方已读回执。
 
-```text
-清除本地未读
-调用 POST /api/conversations/{id}/read
-```
+## 12.7 账户作用域与本地隔离
 
-第一版不需要对方已读回执。
+- 稳定作用域键为 `AccountScopeId = Base64UrlNoPadding(SHA256(UTF8(CanonicalServerBaseUri + "\n" + CurrentUserId.ToString("D").ToLowerInvariant())))`。
+- `CanonicalServerBaseUri` 必须是无 user-info、query、fragment 的绝对 HTTP(S) URI：scheme 和 IDN host 小写，移除默认 `80/443` 端口，由 `System.Uri` 消解 dot-segment，保留反向代理子路径，并规范成一个尾斜杠。
+- 数据库目录、缓存目录、Toast Group、激活参数和 `LastSyncCursor` 只使用同一个 `AccountScopeId`，不得各自序列化服务器与用户元组。切换服务器、账户或登出后，旧作用域的消息、游标、未读、缓存与通知状态都不能复用。
+- Toast 激活处理器必须先校验目标 `AccountScopeId` 与当前身份，再确认目标会话的当前权限；旧账户通知或迟到点击不得打开当前账户中碰巧同 ID 的内容。
+
+## 12.8 私有频道历史、加入与撤权
+
+- 用户加入或重新加入私有频道后，只要当前仍是成员，就可经 History/Search 查看全部历史；历史只在打开或定位时懒加载，不全量回填，不增加 `JoinedAtMessageId` 等可见性水位，也不回退全局同步游标。
+- 添加成员、读取该会话当前 `MAX(Messages.Id)`（无消息为 `0`）并写入 `ConversationMembers.LastReadMessageId` 必须处于同一服务端写事务。该值只是不产生加入前未读与通知的基线。重复添加当前有效成员是幂等 no-op，不得重置边界；移除后重新加入才写新加入时间与新基线。
+- 私有频道 Sync 排除 `MessageId <= LastReadMessageId`，所以加入前历史只经 History/Search 返回；客户端也防御性地把任何来源带回的旧消息标记为已读且通知已处理。加入后的消息按普通规则处理。
+- `ConversationAccessRevoked(Guid conversationId)` 是尽力实时事件，不是授权真源。删除成员后，History、Search、附件、发送和后续 Sync 从撤权提交起按当前成员关系拒绝访问；相关 HTTP 请求返回带稳定错误码 `ConversationAccessRevoked` 的 `403`。每轮 Sync 前的权威会话全集对账覆盖事件丢失和离线场景；普通、无法归因撤权的 `403` 不触发破坏性清理。
+- SignalR Group 只做路由优化。每次实时投递用当前权威成员快照；服务端观察到撤权提交后，不得把该用户放入新的接收集合。在撤权前已经排队或在途的帧仍可能迟到，客户端 deny-set 必须拒绝它们且不能复活缓存。
+- 事件、权威列表缺失和稳定撤权 `403` 全部进入幂等 `PurgeConversationAccess`。它先更新进程内 deny-set，再以独立最小事务持久化 revoked tombstone；消息入口、UI、通知激活立即优先拒绝该会话。
+- tombstone 首次持久化失败时，整个 `AccountScopeId` 立即进入 fatal fail-closed，本进程不再展示该作用域缓存。每次冷启动必须先成功获取并提交 `Complete=true` 的权威会话对账，才可加载或展示私有缓存；离线或对账失败只保持隐藏，不能据此删数据。
+- tombstone 提交后才可重试细粒度清理：取消发送、History、上传下载和 UI/内存引用，删除消息、附件元数据、未读、通知候选与本地搜索数据，按会话 Group 清除 Toast，删除或重建可能包含该会话的账户 Summary，最后尽力删除物理缓存。任一步失败都不得移除 deny-set/tombstone 或恢复访问；只有权威列表明确确认重新加入才可清除 tombstone。
+- 统一消息入口不得因未知 `ConversationId` 自动创建会话。未知或 revoked 数据先拒绝入库并触发权威对账，只有权威列表确认重新加入才恢复接收。离线设备无法远程擦除已落盘缓存是第一版已知限制。
 
 ---
 
 # 13. 通知可靠性设计
 
-## 13.1 通知触发条件
+## 13.1 通知唯一真源
 
-新消息满足以下条件时通知：
+逐消息 `IsNotificationHandled` 是唯一通知真源：
 
-```text
-发送者不是当前用户
-且 消息未通知过
-且 客户端未处于免打扰
-且 (
-    是私聊消息
-    或者 是 @ 当前用户 的频道消息
-    或者 是开启通知的普通频道消息
-)
-```
+- `false` 表示尚未完成通知决策，或 Toast 提交遇到可重试临时失败。
+- `true` 表示 Windows 已接受 Toast，或客户端已经明确决定不提醒。
+- 自己发送、History、已读边界内消息、当前前台会话、会话静音、全局免打扰、Windows 通知被禁用和 `NotificationPolicy.None` 都是明确不提醒，在本地事务中置为 `true`，以后不补历史 Toast。
+- 新候选随消息以 `false` 提交。外部 Toast、声音和闪烁只能在本地事务成功后发生；`IsRead=true` 或 `IsNotificationHandled=true` 不能被后到来源重置。
 
-第一版普通频道默认开启通知。
+第一版普通频道默认开启通知；私聊、@ 当前用户和开启通知的频道消息在其他过滤条件通过后成为候选。
 
-## 13.2 不通知条件
+## 13.2 串行 NotificationCoordinator
 
-以下情况不通知：
+- 单实例进程内只有一个串行 `NotificationCoordinator` 可以调用平台 Toast API；Realtime、Sync 和恢复路径只能提交明确的候选 ID，不能各自派发。
+- 派发前再次确认消息仍未读、会话仍有效、未静音、未处于免打扰，且用户没有打开对应前台会话。不再符合条件时，以本地事务标记已处理。
+- `PerMessage` 每成功提交一条就把该条置为 `true`；`Summary` 成功后在一个本地事务把该汇总覆盖的全部消息置为 `true`。部分成功只提交成功部分。
+- Toast API 的可重试临时失败保持 `false`，留到后续后台同步或下一次启动恢复，不能紧循环。明确永久或配置性不可用时记录诊断并置为 `true`。
+- 平台调用无异常只证明“已接受”，不证明用户看见。Toast 被接受后、置位前崩溃可能导致恢复时再提交一次；第一版接受这个 at-least-once 窗口，稳定 Tag/Group 只用于降低用户可见重复，不能宣称严格 exactly-once。
 
-```text
-消息由当前用户发送
-当前正在查看对应会话且窗口在前台
-消息已经通知过
-用户彻底退出客户端
-Windows 系统通知被用户关闭
-```
+## 13.3 同步轮次候选与原子 gate
 
-## 13.3 通知动作
+同步轮次维护两组 ID：本轮由 Sync 首次插入或同步期间由 Realtime 首次插入的 `RoundCandidates`（保留首次来源），以及以前临时失败留下的 `RecoveryCandidates`。
 
-触发通知时执行：
+- 同步运行期间，Realtime 候选不立即弹 Toast。协调器用同一把 gate 原子完成“关闭轮次、截取并清空 RoundCandidates、切换 Realtime 分流状态”：Realtime 在 gate 内看到未关闭就加入本轮，看到已关闭就走提交后即时派发，不存在丢失中间态。
+- `NotificationCoordinator` 只能处理调用方提交的 ID。只有 Startup，或后台 Reconnect/Periodic 已成功提交权威会话对账后，才可扫描当前 `AccountScopeId` 的遗留 `false` 并显式构造 Recovery；Realtime kick 不得全表扫描或提前取走 Sync 候选。
+- 完整轮次结束后统一去重和决策。Startup 处理 Round 与 Recovery 并集；后台 Reconnect/Periodic 在权威列表成功后即可处理并集，即使后续消息分页失败；前台与 WindowActivated 的 `None` 只处理 Round，Recovery 保持 `false`。
+- 轮次失败或取消时，在同一 gate 按首次来源拆分：Realtime 首次插入的候选恢复即时串行派发并完成一次当前状态下的决策；Sync 首次插入的候选保持 `false` 并进入 Recovery。永久 `400`、协议冲突或本地 poison row 不得无限扣住真实实时消息。
+- 最后一页提交后、通知决策前崩溃时，未处理项按恢复规则处理。
 
-```text
-写入本地数据库 IsNotified = true
-弹 Windows 通知
-播放提示音
-必要时任务栏闪烁
-更新托盘未读数
-```
+## 13.4 批量策略
 
-## 13.4 Windows 通知
+| 场景 | 候选处理 |
+| --- | --- |
+| `Startup` | 有候选时只发一条 `Summary` |
+| `WindowActivated` | `None`；仅更新未读并把本轮候选标记为已处理 |
+| `Reconnect` / `Periodic`，窗口在前台 | Round 使用 `None`；Recovery 保留 |
+| `Reconnect` / `Periodic`，窗口不在前台且候选数 `1..10` | `PerMessage` |
+| `Reconnect` / `Periodic`，窗口不在前台且候选数 `>10` | 一条 `Summary` |
 
-通知内容：
+阈值只统计过滤掉本人、已读、静音、免打扰和当前前台会话后的实际候选。同步一轮即使提交多条 Toast，声音和任务栏闪烁最多各触发一次；同步轮次外的 Realtime 单条消息按单条处理。
 
-```text
-标题：发送人 - 会话名
-正文：消息摘要
-参数：conversationId + messageId
-```
+## 13.5 Windows Toast 身份与激活目标
 
-点击通知后：
+- `PerMessage` Group 为 `Base64UrlNoPadding(SHA256(UTF8(AccountScopeId + "\n" + ConversationId.ToString("D").ToLowerInvariant())))`，Tag 为十进制 `ServerMessageId`。
+- `Summary` Group 为 `Base64UrlNoPadding(SHA256(UTF8(AccountScopeId + "\nsummary")))`，Tag 固定为 `unread-summary`。
+- 按会话 Group 清除 Toast 不依赖本地消息行仍存在；读完或撤权时可清除整个会话的陈旧 Toast。账户 Summary 则删除，或按当前未读重建。
+- 激活目标是判别联合：`MessageTarget(AccountScopeId, ConversationId, MessageId)` 或 `UnreadOverviewTarget(AccountScopeId)`。跨会话 Summary 必须使用后者，不能伪造单一消息。
+- `MessageTarget` 通过账户与权限校验后，打开主窗口、取消最小化、激活窗口、切换会话并定位消息；`UnreadOverviewTarget` 打开未读总览。无效、旧账户或已撤权目标只记录诊断，不展示缓存内容。
 
-```text
-打开主窗口
-取消最小化
-激活窗口
-切换到对应会话
-滚动到对应消息附近
-```
+## 13.6 声音、任务栏与托盘
 
-## 13.5 任务栏闪烁
+- Toast 成功后才尝试提示音和 `FlashWindowEx`。声音或闪烁失败只记日志，不能把已成功 Toast 改回未处理，也不能重试 Toast。
+- 主窗口不在前台且存在需要提醒的新消息时可闪烁；窗口被激活或用户打开对应会话时停止。
+- 托盘必须显示图标、总未读数和连接状态，并提供打开主窗口与彻底退出。关闭主窗口默认只隐藏，保留进程、SignalR 和通知能力；彻底退出后不要求实时通知，下次启动由同步恢复。
 
-使用 Windows API：
+## 13.7 单实例与激活转交
 
-```text
-FlashWindowEx
-```
+同一台电脑同时只能有一个 RelayCove.Client 主实例。通知激活探针在实现阶段必须比较 `AppInstance.RedirectActivationToAsync` 与 `Mutex + Named Pipe`，并固定满足以下行为的方案：
 
-触发条件：
-
-```text
-主窗口不在前台
-且 收到需要提醒的新消息
-```
-
-停止闪烁条件：
-
-```text
-用户激活窗口
-用户打开对应会话
-```
-
-## 13.6 托盘
-
-必须实现：
-
-```text
-托盘图标
-托盘总未读数
-打开主窗口
-彻底退出
-连接状态提示
-```
-
-关闭窗口时：
-
-```text
-隐藏窗口
-保留进程
-保留 SignalR 连接
-保留通知能力
-```
-
-## 13.7 单实例运行
-
-必须实现：
-
-```text
-同一台电脑同一时间只能运行一个 RelayCove.Client 实例
-```
-
-再次启动时：
-
-```text
-通知已有实例显示主窗口
-当前新进程退出
-```
-
-可使用：
-
-```text
-Mutex
-Named Pipe
-```
-
-第一版可以只用 Mutex + 激活窗口。
+- 没有已有实例时，新主实例完成账户上下文初始化后在本地处理完整激活目标。
+- 已有实例时，次实例通过选定 IPC/`AppInstance` 转交完整目标，收到主实例确认后退出，不能只尝试激活窗口。
+- 激活处理幂等；重复目标不得创建第二窗口或重复导航。主实例必须重新校验 `AccountScopeId`、当前身份和会话权限。
 
 ---
 
