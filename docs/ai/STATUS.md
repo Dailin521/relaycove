@@ -6,17 +6,17 @@
 
 - **当前阶段：** 阶段 8 — production 账户组合与聊天 UI
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through，以及 Text 输入、durable pending、幂等发送和失败重试已完成
-- **最近验证通过的状态：** Text 发送最终代码提交 `4cad2b3769eb555f009f3f3eaf1e93b2c642a0c6` 已通过全部门禁；完成记录待随本任务提交仅快进到绿色集成分支
+- **最近验证通过的状态：** Text 发送最终代码提交 `4cad2b3769eb555f009f3f3eaf1e93b2c642a0c6` 已通过全部门禁；完成记录 `6d2d2057757267e6a1181eb149d9f5dd375df2da` 已仅快进并推送到绿色集成分支
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — 最终 Fast/Full、format、743 项测试、Client 532/532；发送/pending/回声/coordinator/选择关键集每轮 25 项、连续 10 轮 250/250；真实 Release WPF 非零窗口句柄/响应/单实例/进程清理、既有原生通知/attention/托盘/激活证据、model drift、八项目漏洞审计与空白检查通过；真实登录后的发送视觉、双客户端与 Narrator 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
-- **最近 Claude 调用：** `已验证` — Text 发送 #57 MCP 因认证源优先级失败；#58 本机后台会话 `0cb84cf1` 未收到任务、保持 idle 后由主代理停止；#59 Opus 与 #60 Sonnet 只读 CLI 均因订阅额度 403 失败，无审查结论或费用。失败未冒充通过，最终固定差异与门禁由 Codex 完成
+- **最近 Claude 调用：** `已验证` — WindowActivated/Periodic Sync #61 MCP 只读 challenge 因认证源优先级失败，无 job、模型、费用或结论；失败未冒充通过，本任务由 Codex 继续固定边界、实现与验证
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
-- 阶段 8 下一独立纵向切片待从周期 Sync/持续收敛或 Reply/@ 缺口中选择；当前 Text 发送任务已完成。
+- 阶段 8 WindowActivated / Periodic Sync 自动触发与账户生命周期收敛任务进行中；基准为绿色集成头 `6d2d205`，不读取 VPS 配置。
 
 ## 已完成
 
@@ -60,7 +60,7 @@
 
 ## 下一任务
 
-盘点阶段 8 剩余缺口并建立下一最小纵向任务；真实 VPS/双客户端 Gate 继续保留到 M5。
+完成 WindowActivated / Periodic Sync 自动触发切片并仅快进绿色集成分支；真实 VPS/双客户端 Gate 继续保留到 M5。
 
 ## 阻塞项
 
