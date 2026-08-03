@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-- **当前阶段：** 阶段 7 已完成，准备进入阶段 8 聊天 UI 与 production 账户组合
+- **当前阶段：** 阶段 8 — production 账户组合与聊天 UI
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知传输、固定 AppInstance 单实例、完整激活转交、账户/权限 fail-closed 路由、单轮提示音/任务栏闪烁及托盘关闭隐藏/彻底退出已完成
-- **最近验证通过的状态：** 桌面 attention/托盘最终代码检查点 `93e4740e69049d97d4f9d0871862d80fecb8e740`；待快进的绿色集成头仍为 `c94d9a247557e022ea23556ae34d96b5cb1a185e`
+- **最近验证通过的状态：** 桌面 attention/托盘最终代码检查点 `93e4740e69049d97d4f9d0871862d80fecb8e740` 已随完成记录仅快进到绿色集成头 `de15ef589402050ee1072bd3c7ee6c41e3c07b9c`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — Fast/Full、format、629 项测试、Client 418/418、桌面/通知定向 Release 280/280、复审补丁定向 39/39、activation filter 60/60 与压力 600/600；真实 Windows 优雅交接 30 轮×10 竞争者、冷/运行中/交接后 COM callback、并发冷启动/继任者/强杀恢复、静音 production builder payload/Register/Show/GetAll/Remove、极早关闭隐藏/同 HWND 恢复/托盘彻底退出、真实 MessageBeep/FlashWindowEx Start/STOP、WPF 非阻塞生命周期、既有本地缓存/HTTP/认证/SignalR/服务端回归、model drift、八项目漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-7-desktop-attention-tray`：代码、独立复审与本机门禁已完成，正在提交记录并仅快进集成；真实账户状态接线留给阶段 8。
+- `agent/stage-8-production-account-shell`：接入 production 认证/恢复、单账户 runtime、通知授权 lease、真实连接状态和最小登录/账户壳；会话/消息 UI 留给后续独立切片。
 
 ## 已完成
 
@@ -56,7 +56,7 @@
 
 ## 下一任务
 
-进入阶段 8 production 账户组合与最小登录/会话 UI，接入真实托盘状态、通知导航和会话打开停止闪烁。
+完成 production 账户组合、自动恢复、登录/注销/重试与最小账户壳，再接入账户隔离会话列表和持续未读/连接状态。
 
 ## 阻塞项
 

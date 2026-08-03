@@ -7,13 +7,13 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M1
-CurrentStage: 阶段 7（代码、复审与门禁完成，待仅快进集成）
-ActiveTask: docs/ai/tasks/2026-08-04-stage-7-desktop-attention-tray.md
-TaskStatus: completed
+CurrentStage: 阶段 8
+ActiveTask: docs/ai/tasks/2026-08-04-stage-8-production-account-shell.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 93e4740e69049d97d4f9d0871862d80fecb8e740
-LatestGreenIntegrationCommit: c94d9a247557e022ea23556ae34d96b5cb1a185e
-NextAction: 提交完成记录并仅快进集成，然后进入阶段 8 production 账户组合和最小登录/会话 UI
+LatestGreenIntegrationCommit: de15ef589402050ee1072bd3c7ee6c41e3c07b9c
+NextAction: 实现 production 账户组合、自动恢复、登录/注销/重试与最小账户壳
 ClaudeCalls: 46（全部终态；仅关键用途调用）
 ClaudeCostUsd: 51.78059725 exact confirmed + 25.59 local CLI displayed（#44 12.06 + #45 9.64 + #46 3.89）；另有二十二次失败/中断调用费用 unavailable
 Blocker: none
