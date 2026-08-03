@@ -23,9 +23,22 @@ public sealed class RelayCoveDbContextTests
         try
         {
             await using var context = CreateContext(databasePath);
+            var migrator = context.GetService<IMigrator>();
+            await migrator.MigrateAsync("20260803042614_InitialAuthenticationStorage");
+            var retainedUser = CreateUser(Guid.Parse("67370864-a515-46ee-8554-df49a21902e6"), "retained-user");
+            context.Add(retainedUser);
+            context.Add(CreateToken(
+                Guid.Parse("bc8dc9ff-21d8-4cb8-a327-f714fac9c0e1"),
+                retainedUser.Id,
+                seed: 7,
+                expiresAt: CreatedAt.AddDays(1)));
+            await context.SaveChangesAsync();
+
             await context.Database.MigrateAsync();
 
             Assert.False(context.Database.HasPendingModelChanges());
+            Assert.Equal(1, await context.Users.CountAsync());
+            Assert.Equal(1, await context.RefreshTokens.CountAsync());
             Assert.Equal(
                 ["ConversationMembers", "Conversations", "RefreshTokens", "Users"],
                 await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers') ORDER BY name;"));
@@ -45,9 +58,10 @@ public sealed class RelayCoveDbContextTests
                 ["IX_ConversationMembers_UserId", "IX_Conversations_CreatedByUserId", "IX_Conversations_DirectParticipantKey", "IX_Conversations_Type"],
                 await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'IX_Conversation%' ORDER BY name;"));
 
-            var migrator = context.GetService<IMigrator>();
             await migrator.MigrateAsync("20260803042614_InitialAuthenticationStorage");
 
+            Assert.Equal(1, await context.Users.CountAsync());
+            Assert.Equal(1, await context.RefreshTokens.CountAsync());
             Assert.Equal(
                 ["RefreshTokens", "Users"],
                 await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers') ORDER BY name;"));
