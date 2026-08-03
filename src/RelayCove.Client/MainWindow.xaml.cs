@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
@@ -566,6 +567,27 @@ public partial class MainWindow : Window
         SetLiveText(
             MessageComposerStatusText,
             copied ? "消息正文已复制。" : "剪贴板暂时不可用，请稍后重试。");
+    }
+
+    private void OnMessageLinkClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button
+            {
+                DataContext: ClientMessageLinkPresentation link,
+            } ||
+            displayedMessageSnapshot is not { } snapshot ||
+            !ClientMessageLinkPolicy.IsCurrent(snapshot, link))
+        {
+            return;
+        }
+
+        var opened = ClientExternalLinkLauncher.TryOpen(
+            link,
+            static startInfo => _ = Process.Start(startInfo));
+        SetLiveText(
+            MessageComposerStatusText,
+            opened ? "已交给系统浏览器打开链接。" : "无法打开链接，请检查系统浏览器设置。");
     }
 
     private void OnReplyReferenceClicked(object sender, RoutedEventArgs e)

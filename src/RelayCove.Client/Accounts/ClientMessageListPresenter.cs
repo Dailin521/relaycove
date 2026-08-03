@@ -34,6 +34,7 @@ internal static class ClientMessageListPresenter
         foreach (var message in confirmedMessages)
         {
             var content = PresentContent(message);
+            var links = ClientMessageLinkParser.Parse(content);
             AppendWithDateSeparator(
                 items,
                 ref previousLocalDate,
@@ -60,7 +61,9 @@ internal static class ClientMessageListPresenter
                     message.ReplyToMessageId,
                     messagesById),
                 CanReply: true,
-                CanCopy: !string.IsNullOrEmpty(content)));
+                CanCopy: !string.IsNullOrEmpty(content),
+                links,
+                HasLinks: links.Count != 0));
         }
 
         foreach (var message in pendingMessages
@@ -68,6 +71,7 @@ internal static class ClientMessageListPresenter
             .ThenBy(message => message.LocalId))
         {
             var content = PresentContent(message.Type, message.Content);
+            var links = ClientMessageLinkParser.Parse(content);
             AppendWithDateSeparator(
                 items,
                 ref previousLocalDate,
@@ -94,7 +98,9 @@ internal static class ClientMessageListPresenter
                     message.ReplyToMessageId,
                     messagesById),
                 CanReply: false,
-                CanCopy: !string.IsNullOrEmpty(content)));
+                CanCopy: !string.IsNullOrEmpty(content),
+                links,
+                HasLinks: links.Count != 0));
         }
 
         return items.AsReadOnly();

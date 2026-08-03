@@ -181,6 +181,41 @@ public sealed class ClientMessageListPresenterTests
         Assert.DoesNotContain("2026-08-03", items[0].ToString(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Present_WhenConfirmedAndPendingContainLinks_ExposesRedactedSafeLinks()
+    {
+        var conversationId = Guid.NewGuid();
+        var confirmed = CreateMessage(
+            10,
+            conversationId,
+            UserId,
+            "Sender",
+            "confirmed https://confirmed.example/path",
+            replyToMessageId: null);
+        var pending = CreatePending(
+            1,
+            conversationId,
+            MessageSendStatus.Sending,
+            "pending http://pending.example/path");
+
+        var items = ClientMessageListPresenter.Present(
+            [confirmed],
+            [pending],
+            UserId);
+
+        Assert.All(items, item => Assert.True(item.HasLinks));
+        Assert.Equal(
+            "https://confirmed.example/path",
+            Assert.Single(items[0].Links).AbsoluteUri);
+        Assert.Equal(
+            "http://pending.example/path",
+            Assert.Single(items[1].Links).AbsoluteUri);
+        Assert.DoesNotContain("confirmed.example", items[0].ToString(),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("pending.example", items[1].ToString(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     private static MessageDto CreateMessage(
         long id,
         Guid conversationId,

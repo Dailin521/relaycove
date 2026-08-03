@@ -457,3 +457,14 @@
 - **理由：** 当前 selection 的确认 ID 门把 UI 意图绑定到已授权服务器事实；durable 原目标延续 `DEC-035` 的幂等恢复语义；缺失引用的显式 Around 同时避免请求风暴与伪造摘要。上下文版本解决单纯值比较无法区分 ABA 用户操作的问题。
 - **影响：** Client 扩展无 schema 变化的 send/runtime/shell、transport/incoming 校验、presentation 和 WPF Reply 交互；不改 Shared/Server 协议、SQLite schema/migration、依赖、附件或 Mention。真实服务器/VPS、双客户端、Narrator 与 Reply 视觉端到端留到 M5 Gate；`@用户` 需先冻结普通用户目录/可选成员协议。
 - **来源：** 工程落地方案第 4.2、9.2–9.4、10.4、12.1–12.3、21.2、阶段 8；`DEC-010`、`DEC-012`、`DEC-017`、`DEC-034`、`DEC-035`；`docs/ai/tasks/2026-08-04-stage-8-message-reply.md`；最终 Fast/两次 Full 760 项、Client 549 项、关键集 1,130/1,130、真实 Release WPF 响应窗口/单实例/清理、model drift 与八项目漏洞审计。Claude #63/#64 因认证源优先级失败，无结论；Codex 固定差异与本机门禁为依据。
+
+### DEC-038：有界 HTTP(S) 识别、当前快照授权与参数化 shell 打开
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** 阶段 8 要求链接识别，但当前 Text 正文只按普通文本展示。若把整段正文交给 shell、拼接命令行、允许任意 scheme 或让陈旧 DataTemplate 直接启动，会把聊天输入升级为命令执行/外部协议入口，并可能在账户/会话切换后打开旧 scope 内容。正则回溯、无限链接控件和超长 URL 还会让 4000 scalar 的合法消息形成 UI/CPU 放大。
+- **决策：** parser 以无 regex 的单趟 scheme 扫描和单趟括号平衡处理展示正文，只识别大小写不敏感的 `http://`/`https://`。每条消息最多保留首次出现的 8 个规范 URI，每项候选和规范结果均不超过 2048 字符；必须为绝对 URI、host 非空、user-info 为空，并拒绝反斜杠、空白/控制/Unicode Format 字符。常见中英文句末标点被剥离，只有未匹配的尾部闭括号被剥离；原正文和 Copy 内容不改变。
+- **决策：** link presentation 同时保存原展示 token 与规范绝对 URI，但 `ToString()` 对两者整体脱敏。WPF 只渲染显式按钮，不自动联网、预览或打开；点击值必须仍存在于当前 `Ready` 不可变消息 snapshot。launcher 再执行同一 URI 校验，只构造 `UseShellExecute=true`、`FileName=规范绝对 URI`、空 `Arguments/ArgumentList/Verb/WorkingDirectory` 的 `ProcessStartInfo`，不经 cmd/PowerShell 或字符串命令。Win32/关联缺失等已知启动失败只显示不含 URL 的可恢复状态，未知异常不静默吞掉。
+- **理由：** 双层 scheme/host/载荷校验与当前快照成员门把“不可信聊天文本”降为“当前授权用户显式点击的 URL association 请求”；不拼参数封住 shell metacharacter 注入。固定数量/长度和线性算法让 UI 成本受消息协议上限约束。localhost、IP、内网、query 和 fragment 在显式点击后允许，因为客户端不承担内容信誉或网络分类职责；未来若加入信誉服务必须另行冻结隐私和联网边界。
+- **影响：** Client 增加无依赖、无 schema 的 link parser/presentation/current policy/shell launcher 与 WPF 按钮；不改 Shared/Server、消息正文、Copy、缓存、read-through、通知或日志。`file/mailto/ftp` 等外部协议、inline 富文本、网页预览、信誉检查、点击历史和自动打开明确不做；真实浏览器打开不由自动化触发，保留人工/M5 Gate。
+- **来源：** 工程落地方案第 9.2–9.4、18.4、阶段 8；`DEC-034`、`DEC-037`；`docs/ai/tasks/2026-08-04-stage-8-safe-links.md`；Fast 782 项与 parser/policy/launcher/presenter 19 项初检。Claude #65 因认证源优先级失败，无结论；Codex 威胁建模、固定差异与本机门禁为依据。
