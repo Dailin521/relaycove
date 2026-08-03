@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 8 `@用户` 会话作用域候选协议与授权查询
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `924ac878790a534218ef72b717935c047e59fcb9`
 - **工作分支：** `agent/stage-8-mention-candidates`
 - **相关方案章节：** 8.3、10.4、12.1–12.3、12.6–12.8、阶段 8；`DEC-009`、`DEC-010`、`DEC-035`
@@ -42,10 +42,10 @@
 
 ### 验收标准
 
-- [ ] Shared 响应只含会话 ID、候选身份三字段、`HasMore`，所有 `ToString()` 脱敏。
-- [ ] Public/Private/Direct 结果与消息发送的 `AreMentionsAccessibleAsync` 规则一致；outsider、撤权、禁用、删除与未知会话 fail-closed。
-- [ ] 前缀/limit 校验、大小写、字面 `_`、稳定排序、limit+1/HasMore、空结果和无敏感日志有真实 HTTP/SQLite 证据。
-- [ ] Fast/Full、Shared/validator/service/endpoint 定向与重复、model drift、八项目漏洞审计和空白检查通过。
+- [x] Shared 响应只含会话 ID、候选身份三字段、`HasMore`，所有 `ToString()` 脱敏。
+- [x] Public/Private/Direct 结果与消息发送的 `AreMentionsAccessibleAsync` 规则一致；outsider、撤权、禁用、删除与未知会话 fail-closed。
+- [x] 前缀/limit 校验、大小写、字面 `_`、稳定排序、limit+1/HasMore、空结果和无敏感日志有真实 HTTP/SQLite 证据。
+- [x] Fast/Full、Shared/validator/service/endpoint 定向与重复、model drift、八项目漏洞审计和空白检查通过。
 
 ### 验证命令
 
@@ -78,26 +78,33 @@ query、用户名、昵称、ID 不进入日志、错误和 ToString；无候选
 
 ### 修改摘要
 
-- 待完成。
+- 新增脱敏 `MentionCandidateDto` / `MentionCandidateListResponse`，冻结普通客户端所需的最小候选形状。
+- 新增认证且有界的会话作用域 endpoint、参数 validator 和授权查询服务；候选 SQL 自身绑定活跃 actor、当前会话访问、活跃 candidate 与 Public/Private/Direct 发送授权规则。
+- 规范用户名按大小写不敏感的字面前缀匹配，转义 SQLite `LIKE` 中的 `_/%/\\`，稳定排序并以 `limit+1` 精确生成 `HasMore`；零候选时最小复核当前访问以区分空 200 与撤权 403。
+- 没有新增全局用户目录、schema、migration、依赖或客户端行为；客户端 picker 与 durable 非空提及发送留给下一切片。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 绿色集成头 Fast 基线 | 788/788；Shared 35、Server 175、Client 577、Updater 1。 |
-| `未验证` | 实现与最终门禁 | 任务进行中。 |
+| `已验证` | 最终 Fast 与两次 Full | 固定代码提交 `2b8a3a1d9896dd241c35d164a2e6304c33df075b` 均通过 807/807；Shared 37、Server 192、Client 577、Updater 1；Release 0 警告/0 错误、format 与 `git diff --check` 通过。 |
+| `已验证` | Shared/validator/真实 HTTP endpoint 定向集 | 每轮 19/19，Release 连续 10 轮 190/190；真实 SQLite/TestServer 覆盖 Public、Private、Direct、未认证、动态禁用 actor、outsider/撤权/未知、禁用 candidate、授权空结果、大小写、字面 `_`、稳定排序和 `HasMore`。 |
+| `已验证` | 数据与供应链门禁 | EF `has-pending-model-changes` 无漂移；八项目直接/传递漏洞审计无已知漏洞；无 schema、migration 或依赖变化。 |
+| `已验证` | 日志与独立审查边界 | HTTP 测试证明 query、用户名和昵称不进入日志；Claude #67 因认证源优先级失败，无 job/模型/workspace/费用/结论，未冒充通过；Codex 固定差异与本机门禁完成。 |
+| `不适用` | 真实 WPF smoke | 本切片仅增加 Shared/Server 协议与 HTTP 查询，不改客户端或桌面生命周期；由下一客户端切片复验真实 WPF。 |
 
 ### 文件范围
 
-- 新增：本任务记录。
-- 修改：待完成。
+- 新增：Shared 两个候选契约；Server 查询 validator/service；Shared、Server 定向测试；本任务记录。
+- 修改：Server conversation endpoint 与 DI；`DECISIONS.md`、`STATUS.md`、`V1_EXECUTION.md`。
 - 删除：无。
 
 ### 决策与限制
 
-- 决策：待完成。
+- 决策：`DEC-040` 冻结会话作用域最小候选协议、与发送授权同构的查询边界、字面前缀/有界分页和零结果访问复核。
 - 已知限制：只支持规范用户名前缀，不支持昵称/模糊搜索；客户端闭环留到下一切片。
 
 ### 下一步
 
-- 实现并验证 Shared 契约、服务端授权查询和 HTTP endpoint。
+- 仅快进整合到 `agent/v1-integration`，随后实现客户端 picker、token 编辑语义与 durable 非空 `MentionUserIds` 发送闭环。

@@ -491,4 +491,4 @@
 - **决策：** 允许返回当前用户，因为发送端“当前可访问正常用户”契约本身允许自提及；客户端可在 UX 层降低或隐藏，但不得制造服务端拒绝的伪规则。查询和用户名/昵称不进入应用日志或错误详情；actor/conversation ID 继续作为现有授权审计元数据。SQLite busy/locked 继续由统一错误中间件映射稳定 503。
 - **理由：** 会话作用域 endpoint 同时覆盖 Public 和成员型会话而不改变 `/members`，且候选查询自身绑定授权，避免“先授权、后目录查询”之间把撤权后的数据当成当前结果。限制字段、前缀和结果量把必要的普通用户发现能力压缩到 `@用户` 的实际用途；发送事务仍是最终授权真源，可拒绝搜索后发生的禁用或撤权。
 - **影响：** Shared 增加两个向后兼容响应 record，Server 增加无 schema 的 validator/query service/GET endpoint；不改数据库、迁移、现有成员/消息协议、发送验证、客户端或依赖。客户端候选传输、token 编辑语义和 durable 非空提及发送留在下一切片。
-- **来源：** 工程落地方案第 8.3、10.4、12.1–12.3、12.6–12.8、阶段 8；`DEC-009`、`DEC-010`、`DEC-035`；`docs/ai/tasks/2026-08-04-stage-8-mention-candidates.md`；Fast 807 项与 Shared/validator/真实 HTTP/SQLite endpoint 19 项初检。Claude #67 因认证源优先级失败，无结论；Codex 威胁建模、固定差异与本机门禁为依据。
+- **来源：** 工程落地方案第 8.3、10.4、12.1–12.3、12.6–12.8、阶段 8；`DEC-009`、`DEC-010`、`DEC-035`；`docs/ai/tasks/2026-08-04-stage-8-mention-candidates.md`；最终 Fast/两次 Full 807 项（Shared 37、Server 192、Client 577、Updater 1）、Shared/validator/真实 HTTP/SQLite endpoint 关键集 190/190、model drift、八项目漏洞审计与空白检查。Claude #67 因认证源优先级失败，无结论；Codex 威胁建模、固定差异与本机门禁为依据。

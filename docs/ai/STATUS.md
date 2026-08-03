@@ -5,10 +5,10 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 8 — production 账户组合与聊天 UI
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接，以及稳定新消息分割线已完成
-- **最近验证通过的状态：** 新消息分割线代码 `49d72a3f882c2ea450010bec83a0d18e30a02d26`、完成记录 `924ac87` 已仅快进到远端绿色集成分支；提及候选基线 Fast 788/788
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选协议/接口已完成
+- **最近验证通过的状态：** 提及候选代码 `2b8a3a1d9896dd241c35d164a2e6304c33df075b` 已通过最终门禁，当前等待完成记录后仅快进整合；绿色集成头仍为 `924ac87`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — 最终 Fast 与两次 Full、format、788 项测试、Client 577/577；cache/shell/presenter 新消息边界关键集每轮 52 项、Release 连续 10 轮 520/520；真实 Release WPF 非零窗口句柄/响应/单实例/精确进程清理、model drift、八项目漏洞审计与空白检查通过；真实登录消息视觉、VPS、双客户端与 Narrator 保持未验证
+- **自动化验证：** `已验证` — 提及候选最终 Fast 与两次 Full、format、807 项测试（Shared 37、Server 192、Client 577、Updater 1）；Shared/validator/真实 HTTP/SQLite endpoint 定向集每轮 19 项、Release 连续 10 轮 190/190；Public/Private/Direct、撤权/禁用/未知、字面前缀与稳定上限、model drift、八项目漏洞审计和空白检查通过；本服务端切片不适用 WPF smoke，真实登录消息视觉、VPS、双客户端与 Narrator 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
 - **最近 Claude 调用：** `已验证` — 提及候选协议 #67 MCP 只读安全 challenge 因认证源优先级失败，无 job、模型、费用或结论；失败不冒充通过，Codex 继续实现与验证
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 阶段 8 `@用户` 会话作用域候选协议与授权查询任务进行中；不读取 VPS 配置。
+- 阶段 8 `@用户` 会话作用域候选协议与授权查询已完成，等待仅快进整合；不读取 VPS 配置。
 
 ## 已完成
 
@@ -60,10 +60,11 @@
 - 账户级 WindowActivated 上升沿、五分钟 Periodic 背压调度与旧 scope 终止收敛（`DEC-036`）
 - Reply、消息复制/日期分割，以及安全链接识别与显式打开（`DEC-037/038`）
 - selection 冻结未读边界、分页证明精确位置与新消息分割线（`DEC-039`）
+- 会话作用域最小提及候选、与发送授权同构的 Public/Private/Direct 查询、字面前缀与有界结果（`DEC-040`）
 
 ## 下一任务
 
-完成与真实消息发送授权一致的会话作用域提及候选协议/接口，再进入客户端 picker 与 durable 提及发送；真实 VPS/双客户端 Gate 继续保留到 M5。
+仅快进整合提及候选协议/接口，再进入客户端 picker、token 编辑语义与 durable 提及发送；真实 VPS/双客户端 Gate 继续保留到 M5。
 
 ## 阻塞项
 
