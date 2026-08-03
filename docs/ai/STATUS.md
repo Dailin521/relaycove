@@ -14,7 +14,7 @@
 
 ## 进行中
 
-- 无
+- 阶段 0 — 冻结消息同步契约（`agent/stage-0-sync-contract`，执行起点 `e1ad7e6fae184d244dffe5d120794f10f391cd33`）
 
 ## 已完成
 

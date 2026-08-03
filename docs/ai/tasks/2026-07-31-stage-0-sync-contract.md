@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 0 — 冻结消息同步契约
-- **状态：** 待开始（开工前架构审查已完成）
+- **状态：** 进行中（开工前架构审查已完成）
 - **基准提交：** `f87d8212c6e8600bc5c7d26f8aec52c3ce209f51`
 - **原计划提交：** `0234a6b1d88dde92a958466b93f6e55a0ac04c18`（基准提交的直接子提交）
 - **执行起点：** 本计划最终审查提交；执行者在编辑前用 `git rev-parse HEAD` 记录实际 SHA，避免在文件中自引用 HEAD
@@ -348,7 +348,7 @@ if ($unexpectedPlanDrift.Count -gt 0) {
 
 ### 执行起点
 
-- `ExecutionBase`：待开工 preflight 后填写。
+- `ExecutionBase`：`e1ad7e6fae184d244dffe5d120794f10f391cd33`。
 
 ### 修改摘要
 
