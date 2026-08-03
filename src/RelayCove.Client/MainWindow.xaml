@@ -61,15 +61,18 @@
                     <StackPanel>
                         <TextBlock x:Name="SidebarConnectionText"
                                    Text="实时连接：未连接"
+                                   AutomationProperties.LiveSetting="Polite"
                                    Foreground="#FFE7F0F8"
                                    FontWeight="SemiBold" />
                         <TextBlock x:Name="SidebarSyncText"
                                    Text="同步：尚未完成"
+                                   AutomationProperties.LiveSetting="Polite"
                                    Margin="0,5,0,0"
                                    Foreground="#FF9FB3C8"
                                    TextWrapping="Wrap" />
                         <TextBlock x:Name="SidebarNotificationText"
                                    Text="系统通知：初始化中"
+                                   AutomationProperties.LiveSetting="Polite"
                                    Margin="0,5,0,0"
                                    Foreground="#FF9FB3C8"
                                    TextWrapping="Wrap" />
@@ -84,12 +87,14 @@
                     <TextBlock x:Name="SidebarDisplayNameText"
                                Margin="0,8,0,0"
                                Text="尚未登录"
+                               AutomationProperties.LiveSetting="Polite"
                                Foreground="White"
                                FontSize="16"
                                TextTrimming="CharacterEllipsis" />
                     <TextBlock x:Name="SidebarServerText"
                                Margin="0,5,0,0"
                                Text="—"
+                               AutomationProperties.LiveSetting="Polite"
                                Foreground="#FF9FB3C8"
                                TextWrapping="Wrap"
                                TextTrimming="CharacterEllipsis" />
@@ -112,12 +117,14 @@
             <StackPanel>
                 <TextBlock x:Name="HeadingText"
                            Text="正在启动 RelayCove"
+                           AutomationProperties.LiveSetting="Polite"
                            Foreground="#FF17263A"
                            FontSize="28"
                            FontWeight="SemiBold" />
                 <TextBlock x:Name="DetailText"
                            Margin="0,8,0,0"
                            MaxWidth="680"
+                           AutomationProperties.LiveSetting="Polite"
                            HorizontalAlignment="Left"
                            Text="正在准备本地账户环境。"
                            Foreground="#FF5C6F82"
@@ -127,9 +134,9 @@
 
             <Grid Grid.Row="1" Margin="0,30,0,24">
                 <Border x:Name="LoginPanel"
-                        Width="500"
+                        MaxWidth="500"
                         Padding="34"
-                        HorizontalAlignment="Center"
+                        HorizontalAlignment="Stretch"
                         VerticalAlignment="Center"
                         Background="White"
                         BorderBrush="#FFDCE5EF"
@@ -231,6 +238,7 @@
                                 <TextBlock x:Name="NavigationNoticeText"
                                            Margin="20,9,20,0"
                                            Text="消息视图尚未接入；此页面不会展示伪造的聊天内容。"
+                                           AutomationProperties.LiveSetting="Polite"
                                            HorizontalAlignment="Center"
                                            Foreground="#FF718396"
                                            TextAlignment="Center"
@@ -255,6 +263,7 @@
             <ProgressBar x:Name="BusyIndicator"
                          Grid.Row="2"
                          Height="3"
+                         AutomationProperties.Name="账户操作进行中"
                          IsIndeterminate="True"
                          Visibility="Collapsed" />
         </Grid>

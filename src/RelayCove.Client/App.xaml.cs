@@ -56,7 +56,8 @@ public partial class App : System.Windows.Application
             if (!coldRegistrationReady)
             {
                 Interlocked.Exchange(ref lifecycleStopping, 1);
-                notificationHost.Dispose();
+                await ClientApplicationShutdown.RunBlockingOperationAsync(
+                    notificationHost.Dispose);
                 activationDispatcher.Dispose();
                 notificationActivationRouter.Dispose();
                 singleInstanceHost.Dispose();
@@ -446,11 +447,7 @@ public partial class App : System.Windows.Application
             {
                 if (host is not null)
                 {
-                    await Task.Factory.StartNew(
-                        host.Dispose,
-                        CancellationToken.None,
-                        TaskCreationOptions.LongRunning,
-                        TaskScheduler.Default);
+                    await ClientApplicationShutdown.RunBlockingOperationAsync(host.Dispose);
                 }
             },
             () => singleInstanceHost?.Dispose());

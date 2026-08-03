@@ -2,6 +2,16 @@ namespace RelayCove.Client.Activation;
 
 internal static class ClientApplicationShutdown
 {
+    public static Task RunBlockingOperationAsync(Action operation)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        return Task.Factory.StartNew(
+            operation,
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
+    }
+
     public static async Task StopPrimaryAsync(
         Action stopActivationDispatch,
         Action stopNotificationRouting,

@@ -10,6 +10,8 @@ namespace RelayCove.Client.Accounts;
 internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 {
     private readonly object stateGate = new();
+    // These primitives intentionally remain undisposed after cancellation because queued
+    // operations can still observe the lifetime token while shutdown is converging.
     private readonly SemaphoreSlim operationGate = new(1, 1);
     private readonly CancellationTokenSource lifetimeCancellation = new();
     private readonly IClientPersistentAuthentication authentication;
@@ -417,11 +419,12 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                 if (startOutcome.StartupSyncOutcome.Status ==
                     ClientSyncRunStatus.AuthenticationRequired)
                 {
-                    _ = await CompleteRuntimeLogoutAsync(unownedRuntime)
+                    var logoutStatus = await CompleteRuntimeLogoutAsync(unownedRuntime)
                         .ConfigureAwait(false);
                     unownedRuntime = null;
                     PublishSnapshot(ClientAccountShellSnapshot.SignedOut(
-                        PersistentClientAuthenticationStatus.AuthenticationFailed));
+                        PersistentClientAuthenticationStatus.AuthenticationFailed,
+                        logoutStatus));
                     return;
                 }
 
@@ -466,6 +469,10 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         {
             PublishSnapshot(ClientAccountShellSnapshot.SignedOut());
         }
+        catch (ObjectDisposedException) when (Volatile.Read(ref disposeStarted) != 0)
+        {
+            PublishStoppingSnapshot();
+        }
         catch (Exception exception)
         {
             logger.LogError(
@@ -494,9 +501,12 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
     {
         serverBaseUri = null;
         request = null;
+        var trimmedUserName = userName?.Trim();
         if (string.IsNullOrWhiteSpace(serverAddress) ||
-            string.IsNullOrWhiteSpace(userName) ||
+            string.IsNullOrWhiteSpace(trimmedUserName) ||
+            trimmedUserName.Length > 64 ||
             string.IsNullOrEmpty(password) ||
+            password.Length > 1_024 ||
             !Uri.TryCreate(serverAddress.Trim(), UriKind.Absolute, out var parsed))
         {
             return false;
@@ -516,7 +526,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             }
 
             request = new LoginRequest(
-                userName.Trim(),
+                trimmedUserName,
                 password,
                 deviceName,
                 clientVersion);

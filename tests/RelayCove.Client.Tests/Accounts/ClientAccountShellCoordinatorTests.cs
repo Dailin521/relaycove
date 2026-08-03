@@ -48,6 +48,14 @@ public sealed class ClientAccountShellCoordinatorTests
         await using var coordinator = CreateCoordinator(authentication, new FakeRuntimeFactory(), router);
 
         await coordinator.LoginAsync("not-a-server", " ", "");
+        await coordinator.LoginAsync(
+            ServerBaseUri.AbsoluteUri,
+            new string('u', 65),
+            "secret");
+        await coordinator.LoginAsync(
+            ServerBaseUri.AbsoluteUri,
+            "shell-user",
+            new string('p', 1_025));
 
         Assert.Equal(0, authentication.LoginCount);
         Assert.Equal(ClientAccountShellPhase.SignedOut, coordinator.Snapshot.Phase);
@@ -236,6 +244,8 @@ public sealed class ClientAccountShellCoordinatorTests
                     ClientSyncRunStatus.AuthenticationRequired,
                     SyncReason.Startup,
                     RoundsExecuted: 0)),
+            LogoutAction = _ => Task.FromResult(
+                ClientLogoutStatus.CredentialClearFailed),
         };
         using var router = CreateRouter();
         await using var coordinator = CreateCoordinator(
@@ -251,6 +261,9 @@ public sealed class ClientAccountShellCoordinatorTests
         Assert.Equal(
             PersistentClientAuthenticationStatus.AuthenticationFailed,
             coordinator.Snapshot.AuthenticationStatus);
+        Assert.Equal(
+            ClientLogoutStatus.CredentialClearFailed,
+            coordinator.Snapshot.LastLogoutStatus);
         Assert.Equal(
             ClientNotificationActivationRouteStatus.NoActiveAccount,
             router.TryRoute(ClientNotificationActivationTarget.UnreadOverview(runtime.Identity.Id)));
@@ -556,6 +569,19 @@ public sealed class ClientAccountShellCoordinatorTests
     }
 
     [Fact]
+    public void Presenter_WhenAuthenticationFailsAndCredentialClearFails_ShowsBothFailures()
+    {
+        var snapshot = ClientAccountShellSnapshot.SignedOut(
+            PersistentClientAuthenticationStatus.AuthenticationFailed,
+            ClientLogoutStatus.CredentialClearFailed);
+
+        var presentation = ClientAccountShellPresenter.Present(snapshot);
+
+        Assert.Contains("服务器未接受", presentation.Detail, StringComparison.Ordinal);
+        Assert.Contains("本地凭据清理未完全成功", presentation.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Presenter_WhenAccountIsRetrying_DisablesDuplicateRetryButAllowsLogout()
     {
         var snapshot = new ClientAccountShellSnapshot(
@@ -620,12 +646,11 @@ public sealed class ClientAccountShellCoordinatorTests
             "RelayCove.Composition.Tests",
             Guid.NewGuid().ToString("N")));
         using var router = CreateRouter();
-        using var loggerFactory = NullLoggerFactory.Instance;
         var composition = ClientAccountComposition.Create(
             root,
             router,
             NoOpClientNotificationAttention.Instance,
-            loggerFactory);
+            NullLoggerFactory.Instance);
 
         var first = composition.DisposeAsync().AsTask();
         var second = composition.DisposeAsync().AsTask();
@@ -634,6 +659,24 @@ public sealed class ClientAccountShellCoordinatorTests
         Assert.Same(first, second);
         Assert.DoesNotContain(root, composition.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("[REDACTED]", composition.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Composition_DetachForProcessExit_LeavesAbandonedHttpClientUsable()
+    {
+        using var router = CreateRouter();
+        var coordinator = CreateCoordinator(
+            new FakeAuthentication(),
+            new FakeRuntimeFactory(),
+            router);
+        using var httpClient = new HttpClient(new DelegateHttpHandler());
+        var composition = new ClientAccountComposition(httpClient, coordinator);
+
+        composition.DetachForProcessExit();
+
+        using var response = await httpClient.GetAsync("https://example.com/health");
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        await composition.DisposeAsync();
     }
 
     private static ClientAccountShellCoordinator CreateCoordinator(

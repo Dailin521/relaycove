@@ -10,6 +10,7 @@ namespace RelayCove.Client.Auth;
 internal sealed class ClientCredentialStore
 {
     internal const string CredentialFileName = "relaycove-credential.v1.bin";
+    private const string ClearBarrierFileName = "relaycove-credential.v1.clear-pending";
     private const string TemporaryFileSuffix = ".tmp";
     private const int SchemaVersion = 1;
     private const int MaximumCiphertextLength = 64 * 1024;
@@ -28,6 +29,7 @@ internal sealed class ClientCredentialStore
     private readonly ILogger<ClientCredentialStore> logger;
     private readonly string credentialPath;
     private readonly string temporaryPath;
+    private readonly string clearBarrierPath;
 
     public ClientCredentialStore(
         string rootDirectory,
@@ -45,6 +47,7 @@ internal sealed class ClientCredentialStore
         RootDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootDirectory));
         credentialPath = ResolveChildPath(RootDirectory, CredentialFileName);
         temporaryPath = ResolveChildPath(RootDirectory, CredentialFileName + TemporaryFileSuffix);
+        clearBarrierPath = ResolveChildPath(RootDirectory, ClearBarrierFileName);
     }
 
     public string RootDirectory { get; }
@@ -121,6 +124,11 @@ internal sealed class ClientCredentialStore
 
             await WriteTemporaryFileAsync(ciphertext, cancellationToken).ConfigureAwait(false);
             PublishTemporaryFile();
+            if (!TryDeleteClearBarrier())
+            {
+                return false;
+            }
+
             return true;
         }
         catch (OperationCanceledException)
@@ -160,6 +168,21 @@ internal sealed class ClientCredentialStore
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (ClearBarrierExists())
+            {
+                var filesCleared = TryDeleteCredentialFile();
+                filesCleared = TryDeleteTemporaryFile() && filesCleared;
+                if (filesCleared)
+                {
+                    _ = TryDeleteClearBarrier();
+                }
+
+                logger.LogInformation(
+                    "Credential restore was suppressed by a pending local clear.");
+                return ClientCredentialReadOutcome.Failure(
+                    ClientCredentialReadStatus.NotFound);
+            }
+
             await using var stream = new FileStream(
                 credentialPath,
                 new FileStreamOptions
@@ -259,8 +282,10 @@ internal sealed class ClientCredentialStore
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            File.Delete(credentialPath);
-            return TryDeleteTemporaryFile();
+            _ = TryEnsureClearBarrier();
+            var credentialCleared = TryDeleteCredentialFile();
+            var temporaryCleared = TryDeleteTemporaryFile();
+            return credentialCleared && temporaryCleared;
         }
         catch (OperationCanceledException)
         {
@@ -383,6 +408,72 @@ internal sealed class ClientCredentialStore
             return false;
         }
     }
+
+    private bool TryEnsureClearBarrier()
+    {
+        if (ClearBarrierExists())
+        {
+            return true;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(RootDirectory);
+            using var stream = new FileStream(
+                clearBarrierPath,
+                new FileStreamOptions
+                {
+                    Mode = FileMode.CreateNew,
+                    Access = FileAccess.Write,
+                    Share = FileShare.Read,
+                    BufferSize = 1,
+                    Options = FileOptions.WriteThrough,
+                });
+            stream.WriteByte(1);
+            stream.Flush(flushToDisk: true);
+            return true;
+        }
+        catch (IOException) when (ClearBarrierExists())
+        {
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            LogFailure("ClearBarrierWrite", exception);
+            return false;
+        }
+    }
+
+    private bool TryDeleteCredentialFile()
+    {
+        try
+        {
+            File.Delete(credentialPath);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            LogFailure("ClearCredential", exception);
+            return false;
+        }
+    }
+
+    private bool TryDeleteClearBarrier()
+    {
+        try
+        {
+            File.Delete(clearBarrierPath);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            LogFailure("ClearBarrierDelete", exception);
+            return false;
+        }
+    }
+
+    private bool ClearBarrierExists() =>
+        File.Exists(clearBarrierPath) || Directory.Exists(clearBarrierPath);
 
     private void LogFailure(string operation, Exception exception)
     {

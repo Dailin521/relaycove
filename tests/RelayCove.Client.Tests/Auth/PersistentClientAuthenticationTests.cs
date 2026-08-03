@@ -489,6 +489,48 @@ public sealed class PersistentClientAuthenticationTests
     }
 
     [Fact]
+    public async Task LogoutAsync_WhenLocalClearAndRemoteRevokeFail_SuppressesNextRestore()
+    {
+        using var directory = new TemporaryDirectory();
+        var handler = new DelegateHttpHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/login", StringComparison.Ordinal))
+            {
+                return Task.FromResult(Ok(CreateLoginResponse()));
+            }
+
+            if (request.RequestUri.AbsolutePath.EndsWith("/logout", StringComparison.Ordinal))
+            {
+                return Task.FromException<HttpResponseMessage>(
+                    new HttpRequestException("simulated offline logout"));
+            }
+
+            return Task.FromResult(Ok(CreateRotatedResponse()));
+        });
+        var context = CreateContext(directory.Path, handler);
+        var login = await context.Authentication.LoginAsync(
+            ServerBaseUri,
+            CreateLoginRequest());
+        using var lockedCredential = new FileStream(
+            context.Store.CredentialPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read);
+
+        var logoutStatus = await login.Session!.LogoutAsync();
+        await login.Session.DisposeAsync();
+        var restore = await context.Authentication.RestoreAsync();
+
+        Assert.Equal(ClientLogoutStatus.CredentialClearFailed, logoutStatus);
+        Assert.Equal(
+            PersistentClientAuthenticationStatus.NoStoredCredential,
+            restore.Status);
+        Assert.Null(restore.Session);
+        Assert.Equal(1, handler.RequestCountFor("/logout"));
+        Assert.Equal(0, handler.RequestCountFor("/refresh"));
+    }
+
+    [Fact]
     public async Task DisposeAsync_WhenCredentialIsPersisted_KeepsItForNextRestore()
     {
         using var directory = new TemporaryDirectory();

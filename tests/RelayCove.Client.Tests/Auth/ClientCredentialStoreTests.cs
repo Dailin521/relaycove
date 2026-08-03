@@ -276,6 +276,65 @@ public sealed class ClientCredentialStoreTests
     }
 
     [Fact]
+    public async Task ClearAsync_WhenCredentialFileIsLocked_BlocksRestoreUntilCleanupSucceeds()
+    {
+        using var directory = new TemporaryDirectory();
+        var store = CreateStore(directory.Path);
+        Assert.True(await store.SaveAsync(
+            new Uri(CanonicalServerBaseUri),
+            UserId,
+            RefreshToken));
+        using var lockedCredential = new FileStream(
+            store.CredentialPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read);
+
+        Assert.False(await store.ClearAsync());
+        var restartedStore = CreateStore(directory.Path);
+        var blocked = await restartedStore.LoadAsync();
+
+        Assert.Equal(ClientCredentialReadStatus.NotFound, blocked.Status);
+        Assert.Null(blocked.Credential);
+        Assert.True(File.Exists(store.CredentialPath));
+
+        lockedCredential.Dispose();
+        Assert.Equal(
+            ClientCredentialReadStatus.NotFound,
+            (await restartedStore.LoadAsync()).Status);
+        Assert.False(File.Exists(store.CredentialPath));
+    }
+
+    [Fact]
+    public async Task SaveAsync_AfterPendingClear_PublishesNewCredentialAndReenablesRestore()
+    {
+        using var directory = new TemporaryDirectory();
+        var store = CreateStore(directory.Path);
+        Assert.True(await store.SaveAsync(
+            new Uri(CanonicalServerBaseUri),
+            UserId,
+            RefreshToken));
+        using (var lockedCredential = new FileStream(
+                   store.CredentialPath,
+                   FileMode.Open,
+                   FileAccess.Read,
+                   FileShare.Read))
+        {
+            Assert.False(await store.ClearAsync());
+        }
+
+        var restartedStore = CreateStore(directory.Path);
+        Assert.True(await restartedStore.SaveAsync(
+            new Uri(CanonicalServerBaseUri),
+            UserId,
+            RotatedRefreshToken));
+
+        var loaded = await restartedStore.LoadAsync();
+        Assert.Equal(ClientCredentialReadStatus.Loaded, loaded.Status);
+        Assert.Equal(RotatedRefreshToken, loaded.Credential!.RefreshToken);
+    }
+
+    [Fact]
     public async Task Operations_WhenCanceled_PropagateWithoutChangingCredential()
     {
         using var directory = new TemporaryDirectory();

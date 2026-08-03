@@ -1,4 +1,6 @@
 using System.Windows;
+using System.Windows.Automation.Peers;
+using System.Windows.Controls;
 using RelayCove.Client.Accounts;
 using RelayCove.Client.Notifications;
 
@@ -22,16 +24,16 @@ public partial class MainWindow : Window
     internal void ApplyAccountShellSnapshot(ClientAccountShellSnapshot snapshot)
     {
         var presentation = ClientAccountShellPresenter.Present(snapshot);
-        HeadingText.Text = presentation.Heading;
-        DetailText.Text = presentation.Detail;
-        SidebarConnectionText.Text = presentation.ConnectionLabel;
-        SidebarSyncText.Text = presentation.SyncLabel;
-        SidebarDisplayNameText.Text = string.IsNullOrWhiteSpace(presentation.DisplayName)
+        SetLiveText(HeadingText, presentation.Heading);
+        SetLiveText(DetailText, presentation.Detail);
+        SetLiveText(SidebarConnectionText, presentation.ConnectionLabel);
+        SetLiveText(SidebarSyncText, presentation.SyncLabel);
+        SetLiveText(SidebarDisplayNameText, string.IsNullOrWhiteSpace(presentation.DisplayName)
             ? "尚未登录"
-            : presentation.DisplayName;
-        SidebarServerText.Text = string.IsNullOrWhiteSpace(presentation.ServerAddress)
+            : presentation.DisplayName);
+        SetLiveText(SidebarServerText, string.IsNullOrWhiteSpace(presentation.ServerAddress)
             ? "—"
-            : presentation.ServerAddress;
+            : presentation.ServerAddress);
         LoginPanel.Visibility = presentation.ShowLogin
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -53,18 +55,31 @@ public partial class MainWindow : Window
         ClientNotificationActivationTarget target)
     {
         ArgumentNullException.ThrowIfNull(target);
-        NavigationNoticeText.Text = target.Kind switch
+        SetLiveText(NavigationNoticeText, target.Kind switch
         {
             ClientNotificationActivationKind.Message =>
                 "通知目标已通过账户与缓存授权；消息视图将在下一切片接入。",
             _ => "未读通知已通过账户与缓存授权；会话列表将在下一切片接入。",
-        };
+        });
     }
 
     internal void SetNotificationAvailability(bool? isAvailable)
     {
-        SidebarNotificationText.Text =
-            ClientAccountShellPresenter.DescribeNotificationAvailability(isAvailable);
+        SetLiveText(
+            SidebarNotificationText,
+            ClientAccountShellPresenter.DescribeNotificationAvailability(isAvailable));
+    }
+
+    private static void SetLiveText(TextBlock textBlock, string value)
+    {
+        if (string.Equals(textBlock.Text, value, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        textBlock.Text = value;
+        UIElementAutomationPeer.FromElement(textBlock)?.RaiseAutomationEvent(
+            AutomationEvents.LiveRegionChanged);
     }
 
     private async void OnLoginClicked(object sender, RoutedEventArgs e)

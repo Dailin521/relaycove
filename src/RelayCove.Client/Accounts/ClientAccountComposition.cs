@@ -15,7 +15,7 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
     private Task? disposeTask;
     private bool detachedForProcessExit;
 
-    private ClientAccountComposition(
+    internal ClientAccountComposition(
         HttpClient httpClient,
         ClientAccountShellCoordinator coordinator)
     {
@@ -123,7 +123,8 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
         }
 
         Coordinator.DetachForProcessExit();
-        httpClient.Dispose();
+        // Process-exit detach intentionally abandons the runtime without awaiting it.
+        // Its shared HTTP dependency must remain valid until process termination.
     }
 
     private async Task CompleteDisposeAsync(TaskCompletionSource completion)

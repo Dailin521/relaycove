@@ -5,6 +5,20 @@ namespace RelayCove.Client.Tests.Activation;
 public sealed class ClientApplicationShutdownTests
 {
     [Fact]
+    public async Task RunBlockingOperationAsync_UsesDedicatedBackgroundThread()
+    {
+        var callerThreadId = Environment.CurrentManagedThreadId;
+        var operationThreadId = callerThreadId;
+
+        await ClientApplicationShutdown.RunBlockingOperationAsync(() =>
+        {
+            operationThreadId = Environment.CurrentManagedThreadId;
+        });
+
+        Assert.NotEqual(callerThreadId, operationThreadId);
+    }
+
+    [Fact]
     public async Task StopPrimaryAsync_WhenNotificationStopIsPending_HoldsInstanceKeyUntilCompletion()
     {
         var events = new List<string>();

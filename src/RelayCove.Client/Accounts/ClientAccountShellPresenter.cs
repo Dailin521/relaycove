@@ -92,12 +92,15 @@ internal static class ClientAccountShellPresenter
                 "已有账户会话正在收敛，请稍后重试。",
             PersistentClientAuthenticationStatus.RemoteFailure =>
                 "未能连接服务器，请检查网络后重试。",
-            _ when snapshot.LastLogoutStatus == ClientLogoutStatus.CredentialClearFailed =>
-                "账户已退出，但本地凭据清理未完全成功。",
             _ when snapshot.LastLogoutStatus is not null =>
                 "账户已退出，可登录其他账户。",
             _ => "输入服务器地址和账户凭据以开始。",
         };
+        if (snapshot.LastLogoutStatus == ClientLogoutStatus.CredentialClearFailed)
+        {
+            detail += " 本地凭据清理未完全成功，请检查当前用户的应用数据目录写入权限。";
+        }
+
         return ("登录 RelayCove", detail);
     }
 
