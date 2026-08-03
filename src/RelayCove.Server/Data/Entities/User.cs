@@ -59,6 +59,10 @@ public sealed class User
 
     public ICollection<RefreshToken> RefreshTokens { get; } = new List<RefreshToken>();
 
+    public ICollection<Conversation> CreatedConversations { get; } = new List<Conversation>();
+
+    public ICollection<ConversationMember> ConversationMemberships { get; } = new List<ConversationMember>();
+
     public void SetUserName(string userName, UserNameNormalizer userNameNormalizer)
     {
         ArgumentNullException.ThrowIfNull(userNameNormalizer);

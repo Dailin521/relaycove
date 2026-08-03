@@ -868,6 +868,12 @@ public enum ConversationType
     Direct = 3
 }
 
+public enum ConversationMemberRole
+{
+    Member = 1,
+    Administrator = 2
+}
+
 public enum MessageType
 {
     Text = 1,
@@ -1115,7 +1121,10 @@ CreatedByUserId             TEXT NOT NULL
 CreatedAt                  TEXT NOT NULL
 UpdatedAt                  TEXT NOT NULL
 IsDeleted                  INTEGER NOT NULL
+DirectParticipantKey        TEXT NULL
 ```
+
+频道 `Name` 为 1–100 个 Unicode scalar value；Direct 的 `Name` 固定保存空字符串，响应展示名按当前用户从另一参与者动态生成。`DirectParticipantKey` 仅 Direct 必填，由两个不同参与者的小写标准 `D` GUID 按 ordinal 排序后以 `:` 连接，并在包含软删除行的全表范围永久唯一；重新发起已软删除的一对一会话时恢复原会话，不创建第二条历史线程。
 
 ### ConversationMembers
 
@@ -1129,6 +1138,8 @@ IsMuted                    INTEGER NOT NULL DEFAULT 0
 
 PRIMARY KEY (ConversationId, UserId)
 ```
+
+`Role` 固定为 `Member=1`、`Administrator=2`；它是会话内角色，与 `Users.IsAdmin` 的全局服务管理员权限无关。`LastReadMessageId` 必须非负且只允许单调推进。会话正常删除只设置 `IsDeleted`；创建者用户外键限制硬删除，成员行在会话或成员用户被硬删除时级联清理。Direct 恰好两名 Member、创建者属于参与者，以及加入/重新加入时按当前消息最大 ID 初始化已读边界，由阶段 3 服务事务保证。
 
 ### Messages
 
@@ -1187,6 +1198,7 @@ Users.UserName
 Users.NormalizedUserName
 RefreshTokens.TokenHash
 Conversations.Type
+Conversations.DirectParticipantKey (UNIQUE)
 ConversationMembers.UserId
 Messages.ConversationId, Messages.Id
 Messages.SenderId, Messages.ClientMessageId

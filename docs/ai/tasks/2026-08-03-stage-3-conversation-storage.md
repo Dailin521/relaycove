@@ -19,11 +19,14 @@
 - `已验证`：`DEC-003` 要求 `LastReadMessageId` 只表示单调已读边界，加入或重新加入时由事务初始化为当前会话最大消息 ID；当前成员可懒加载全部历史。Messages 表属于阶段 4，本切片不存在可供该字段引用的外键。
 - `已验证`：现有存储将 GUID 保存为非空小写标准 D 文本、时间保存为毫秒 UTC 文本，并通过实体、EF converter、SQLite CHECK 和真实 migration 测试共同防守；应用启动不自动迁移。
 - `已验证`：公共频道对所有正常用户可见，私有频道只对成员可见，Direct 只对两名参与者可见；这些查询/授权行为属于后续阶段 3 API 切片。
+- `已验证`：[EF Core SQLite limitations](https://learn.microsoft.com/en-us/ef/core/providers/sqlite/limitations) 建议用 UTC `DateTime` 替代不可原生排序的 `DateTimeOffset`，并列明 CreateTable/CreateIndex 与当前 migration 操作受支持；[EF Core cascade delete](https://learn.microsoft.com/en-us/ef/core/saving/cascade-delete) 明确必填关系默认级联、`Restrict` 生成数据库限制，且警告软删除模型不得让普通删除路径触发数据库级联。
+- `已验证`：[EF Core indexes](https://learn.microsoft.com/en-us/ef/core/modeling/indexes) 与 [keys](https://learn.microsoft.com/en-us/ef/core/modeling/keys) 支持唯一索引及复合主键；本切片仍以真实 SQLite migration 和约束冲突测试作为最终证据。
+- `未验证`：Claude XHigh challenge #20 对固定 `ChallengeHead=cd90023` 在 120 秒内因本机认证源优先级禁用 claude.ai connector 而失败，无模型、workspace、费用或结论；按用户要求不重试，Codex 依据仓库与 Microsoft 官方证据收敛 `DEC-008`。
 
 ### 假设
 
 - `假设`：成员角色只冻结 `Member=1` 与 `Administrator=2`；全局 `User.IsAdmin` 与频道内角色相互独立。Direct 成员只能是 Member，此跨表不变量由后续创建服务事务保证。
-- `假设`：频道名称为 1–100 字符；Direct 的展示名未来按当前用户动态生成，数据库 `Name` 保存空字符串。为使一对一创建在并发下可证明单例，Conversations 增加由两个小写排序 GUID 组成的可空 `DirectParticipantKey`，仅 Direct 必填并建立唯一索引。
+- `假设`：频道名称为 1–100 个 Unicode scalar value；Direct 的展示名未来按当前用户动态生成，数据库 `Name` 保存空字符串。为使一对一创建在并发下可证明单例，Conversations 增加由两个小写排序 GUID 组成的可空 `DirectParticipantKey`，仅 Direct 必填并建立覆盖软删除行的永久唯一索引；重新发起时恢复原线程。
 - `假设`：会话以 `IsDeleted` 软删除；硬删除会话级联成员。删除用户级联其成员行，但创建者外键使用 Restrict，避免删除创建者时静默删除整段会话历史；阶段 11 用户删除必须显式处理创建者引用。
 - `假设`：`LastReadMessageId` 为非负 `long`，实体只能单调推进；新成员构造器接收由调用事务计算的初始值，空消息会话使用 0。本切片不查询不存在的 Messages 表。
 
@@ -56,7 +59,7 @@
 - [ ] 新 migration 在真实 SQLite 上创建字段、CHECK、索引和外键，能回滚且 `HasPendingModelChanges()` 为 false。
 - [ ] Conversation 三种类型、频道名称、Direct 参与者键、角色、非空 GUID、毫秒 UTC、布尔值及非负已读边界同时受领域与数据库约束保护。
 - [ ] ConversationMembers 使用 `(ConversationId, UserId)` 复合主键；重复成员、非法外键/枚举/已读值失败，按约定验证会话硬删除级联、用户成员级联和创建者删除限制。
-- [ ] 两个参与者无序等价的 Direct key 在并发持久化边界只能存在一个活动会话；非 Direct 不得携带该键。
+- [ ] 两个参与者无序等价的 Direct key 在并发持久化边界永久只能存在一个会话（含软删除行）；非 Direct 不得携带该键。
 - [ ] 已读边界只允许单调推进；Direct `Name`/频道名称及软删除 `UpdatedAt` round-trip 行为有自动化测试。
 - [ ] Fast、Full、漏洞审计、文件白名单、`git diff --check` 与固定差异独立复核通过或按规则如实记录。
 

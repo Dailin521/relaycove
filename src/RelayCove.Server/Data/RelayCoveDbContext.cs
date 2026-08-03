@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using RelayCove.Server.Data.Entities;
 using RelayCove.Server.Services;
 
@@ -12,6 +13,10 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
     public DbSet<User> Users => Set<User>();
 
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+
+    public DbSet<Conversation> Conversations => Set<Conversation>();
+
+    public DbSet<ConversationMember> ConversationMembers => Set<ConversationMember>();
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
@@ -31,9 +36,11 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
     {
         ConfigureUser(modelBuilder.Entity<User>());
         ConfigureRefreshToken(modelBuilder.Entity<RefreshToken>());
+        ConfigureConversation(modelBuilder.Entity<Conversation>());
+        ConfigureConversationMember(modelBuilder.Entity<ConversationMember>());
     }
 
-    private static void ConfigureUser(Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<User> entity)
+    private static void ConfigureUser(EntityTypeBuilder<User> entity)
     {
         entity.ToTable("Users", table =>
         {
@@ -68,7 +75,7 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
         entity.HasIndex(user => user.NormalizedUserName).IsUnique();
     }
 
-    private static void ConfigureRefreshToken(Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<RefreshToken> entity)
+    private static void ConfigureRefreshToken(EntityTypeBuilder<RefreshToken> entity)
     {
         entity.ToTable("RefreshTokens", table =>
         {
@@ -96,6 +103,83 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
         entity.HasOne(token => token.User)
             .WithMany(user => user.RefreshTokens)
             .HasForeignKey(token => token.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureConversation(EntityTypeBuilder<Conversation> entity)
+    {
+        var directKeyGuidPattern = GuidGlobPattern;
+        entity.ToTable("Conversations", table =>
+        {
+            table.HasCheckConstraint("CK_Conversations_Id_Format", GuidTextCheck("Id"));
+            table.HasCheckConstraint("CK_Conversations_Type_Value", "\"Type\" IN (1, 2, 3)");
+            table.HasCheckConstraint(
+                "CK_Conversations_Name_ByType",
+                "(\"Type\" IN (1, 2) AND length(\"Name\") BETWEEN 1 AND 100 AND length(trim(\"Name\")) > 0) OR (\"Type\" = 3 AND \"Name\" = '')");
+            table.HasCheckConstraint("CK_Conversations_AvatarAttachmentId_Format", NullableGuidTextCheck("AvatarAttachmentId"));
+            table.HasCheckConstraint("CK_Conversations_CreatedByUserId_Format", GuidTextCheck("CreatedByUserId"));
+            table.HasCheckConstraint("CK_Conversations_CreatedAt_Format", UtcTextCheck("CreatedAt"));
+            table.HasCheckConstraint("CK_Conversations_UpdatedAt_Format", UtcTextCheck("UpdatedAt"));
+            table.HasCheckConstraint("CK_Conversations_Update_Order", "\"UpdatedAt\" >= \"CreatedAt\"");
+            table.HasCheckConstraint("CK_Conversations_IsDeleted_Boolean", "\"IsDeleted\" IN (0, 1)");
+            table.HasCheckConstraint(
+                "CK_Conversations_DirectParticipantKey_ByType",
+                $"(\"Type\" IN (1, 2) AND \"DirectParticipantKey\" IS NULL) OR " +
+                $"(\"Type\" = 3 AND \"DirectParticipantKey\" IS NOT NULL AND length(\"DirectParticipantKey\") = 73 AND substr(\"DirectParticipantKey\", 37, 1) = ':' AND " +
+                $"substr(\"DirectParticipantKey\", 1, 36) GLOB '{directKeyGuidPattern}' AND " +
+                $"substr(\"DirectParticipantKey\", 38, 36) GLOB '{directKeyGuidPattern}' AND " +
+                "substr(\"DirectParticipantKey\", 1, 36) <> '00000000-0000-0000-0000-000000000000' AND " +
+                "substr(\"DirectParticipantKey\", 38, 36) <> '00000000-0000-0000-0000-000000000000' AND " +
+                "substr(\"DirectParticipantKey\", 1, 36) < substr(\"DirectParticipantKey\", 38, 36) AND " +
+                "\"CreatedByUserId\" IN (substr(\"DirectParticipantKey\", 1, 36), substr(\"DirectParticipantKey\", 38, 36)))");
+        });
+
+        entity.HasKey(conversation => conversation.Id);
+        entity.Property(conversation => conversation.Id)
+            .HasConversion(SqliteValueConverters.GuidToString)
+            .ValueGeneratedNever();
+        entity.Property(conversation => conversation.Type).HasConversion<int>();
+        entity.Property(conversation => conversation.Name).HasMaxLength(Conversation.MaximumNameLength).IsRequired();
+        entity.Property(conversation => conversation.AvatarAttachmentId).HasConversion(SqliteValueConverters.GuidToString);
+        entity.Property(conversation => conversation.CreatedByUserId).HasConversion(SqliteValueConverters.GuidToString);
+        entity.Property(conversation => conversation.CreatedAt).HasConversion(SqliteValueConverters.UtcDateTimeToString);
+        entity.Property(conversation => conversation.UpdatedAt).HasConversion(SqliteValueConverters.UtcDateTimeToString);
+        entity.Property(conversation => conversation.DirectParticipantKey).HasMaxLength(73);
+        entity.HasIndex(conversation => conversation.Type);
+        entity.HasIndex(conversation => conversation.DirectParticipantKey).IsUnique();
+        entity.HasOne(conversation => conversation.CreatedByUser)
+            .WithMany(user => user.CreatedConversations)
+            .HasForeignKey(conversation => conversation.CreatedByUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureConversationMember(EntityTypeBuilder<ConversationMember> entity)
+    {
+        entity.ToTable("ConversationMembers", table =>
+        {
+            table.HasCheckConstraint("CK_ConversationMembers_ConversationId_Format", GuidTextCheck("ConversationId"));
+            table.HasCheckConstraint("CK_ConversationMembers_UserId_Format", GuidTextCheck("UserId"));
+            table.HasCheckConstraint("CK_ConversationMembers_Role_Value", "\"Role\" IN (1, 2)");
+            table.HasCheckConstraint("CK_ConversationMembers_JoinedAt_Format", UtcTextCheck("JoinedAt"));
+            table.HasCheckConstraint("CK_ConversationMembers_LastReadMessageId_NonNegative", "\"LastReadMessageId\" >= 0");
+            table.HasCheckConstraint("CK_ConversationMembers_IsMuted_Boolean", "\"IsMuted\" IN (0, 1)");
+        });
+
+        entity.HasKey(member => new { member.ConversationId, member.UserId });
+        entity.Property(member => member.ConversationId).HasConversion(SqliteValueConverters.GuidToString);
+        entity.Property(member => member.UserId).HasConversion(SqliteValueConverters.GuidToString);
+        entity.Property(member => member.Role).HasConversion<int>();
+        entity.Property(member => member.JoinedAt).HasConversion(SqliteValueConverters.UtcDateTimeToString);
+        entity.Property(member => member.LastReadMessageId).HasDefaultValue(0L);
+        entity.Property(member => member.IsMuted).HasDefaultValue(false);
+        entity.HasIndex(member => member.UserId);
+        entity.HasOne(member => member.Conversation)
+            .WithMany(conversation => conversation.Members)
+            .HasForeignKey(member => member.ConversationId)
+            .OnDelete(DeleteBehavior.Cascade);
+        entity.HasOne(member => member.User)
+            .WithMany(user => user.ConversationMemberships)
+            .HasForeignKey(member => member.UserId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 
@@ -128,4 +212,7 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
 
     private static string NullableUtcTextCheck(string columnName) =>
         $"\"{columnName}\" IS NULL OR ({UtcTextCheck(columnName)})";
+
+    private static string NullableGuidTextCheck(string columnName) =>
+        $"\"{columnName}\" IS NULL OR ({GuidTextCheck(columnName)})";
 }

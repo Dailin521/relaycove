@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 using RelayCove.Server.Data;
 using RelayCove.Server.Data.Entities;
 using RelayCove.Server.Services;
+using RelayCove.Shared.Conversations;
 
 namespace RelayCove.Server.Tests.Data;
 
@@ -26,21 +27,36 @@ public sealed class RelayCoveDbContextTests
 
             Assert.False(context.Database.HasPendingModelChanges());
             Assert.Equal(
-                ["RefreshTokens", "Users"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens') ORDER BY name;"));
+                ["ConversationMembers", "Conversations", "RefreshTokens", "Users"],
+                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers') ORDER BY name;"));
             Assert.Equal(
                 ["Id", "UserName", "NormalizedUserName", "DisplayName", "AvatarAttachmentId", "PasswordHash", "IsAdmin", "IsDisabled", "CreatedAt", "UpdatedAt", "LastLoginAt", "LastOnlineAt"],
                 await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('Users') ORDER BY cid;"));
             Assert.Equal(
                 ["Id", "UserId", "TokenHash", "DeviceName", "CreatedAt", "ExpiresAt", "RevokedAt"],
                 await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('RefreshTokens') ORDER BY cid;"));
+            Assert.Equal(
+                ["Id", "Type", "Name", "AvatarAttachmentId", "CreatedByUserId", "CreatedAt", "UpdatedAt", "IsDeleted", "DirectParticipantKey"],
+                await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('Conversations') ORDER BY cid;"));
+            Assert.Equal(
+                ["ConversationId", "UserId", "Role", "JoinedAt", "LastReadMessageId", "IsMuted"],
+                await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('ConversationMembers') ORDER BY cid;"));
+            Assert.Equal(
+                ["IX_ConversationMembers_UserId", "IX_Conversations_CreatedByUserId", "IX_Conversations_DirectParticipantKey", "IX_Conversations_Type"],
+                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'IX_Conversation%' ORDER BY name;"));
 
             var migrator = context.GetService<IMigrator>();
+            await migrator.MigrateAsync("20260803042614_InitialAuthenticationStorage");
+
+            Assert.Equal(
+                ["RefreshTokens", "Users"],
+                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers') ORDER BY name;"));
+
             await migrator.MigrateAsync(Migration.InitialDatabase);
 
             Assert.Empty(await ReadStringsAsync(
                 databasePath,
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens') ORDER BY name;"));
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers') ORDER BY name;"));
         }
         finally
         {
@@ -216,6 +232,215 @@ public sealed class RelayCoveDbContextTests
         }
     }
 
+    [Fact]
+    public async Task ConversationPersistence_WhenRoundTripped_PreservesTypesKeysUtcAndMembershipState()
+    {
+        var databasePath = CreateDatabasePath();
+        try
+        {
+            var firstUser = CreateUser(Guid.Parse("6e7f28cf-9471-4f78-b540-fe98457d96ce"), "alice");
+            var secondUser = CreateUser(Guid.Parse("2305c845-d79c-4c37-a26e-91f5b56f5cb2"), "bob");
+            var conversationId = Guid.Parse("62f59380-b206-4515-87d2-92f4871baf94");
+            await using (var context = CreateContext(databasePath))
+            {
+                await context.Database.MigrateAsync();
+                context.AddRange(firstUser, secondUser);
+                var conversation = Conversation.CreateDirect(
+                    conversationId, firstUser.Id, secondUser.Id, firstUser.Id, CreatedAt.AddTicks(8888));
+                conversation.SetAvatarAttachment(
+                    Guid.Parse("8744b2bc-f83f-4e24-90a2-f5b76c34c5e8"),
+                    CreatedAt.AddMinutes(1).AddTicks(1234));
+                context.Add(conversation);
+                context.Add(new ConversationMember(
+                    conversation.Id,
+                    firstUser.Id,
+                    ConversationMemberRole.Member,
+                    CreatedAt.AddSeconds(1).AddTicks(4321),
+                    lastReadMessageId: 42,
+                    isMuted: true));
+                await context.SaveChangesAsync();
+            }
+
+            Assert.Equal(
+                conversationId.ToString("D"),
+                Assert.Single(await ReadStringsAsync(databasePath, "SELECT Id FROM Conversations;")));
+            Assert.Equal(
+                "2305c845-d79c-4c37-a26e-91f5b56f5cb2:6e7f28cf-9471-4f78-b540-fe98457d96ce",
+                Assert.Single(await ReadStringsAsync(databasePath, "SELECT DirectParticipantKey FROM Conversations;")));
+
+            await using var verificationContext = CreateContext(databasePath);
+            var storedConversation = await verificationContext.Conversations.AsNoTracking().SingleAsync();
+            var storedMember = await verificationContext.ConversationMembers.AsNoTracking().SingleAsync();
+
+            Assert.Equal(ConversationType.Direct, storedConversation.Type);
+            Assert.Empty(storedConversation.Name);
+            Assert.Equal(DateTimeKind.Utc, storedConversation.CreatedAt.Kind);
+            Assert.Equal(CreatedAt, storedConversation.CreatedAt);
+            Assert.Equal(CreatedAt.AddMinutes(1), storedConversation.UpdatedAt);
+            Assert.Equal(ConversationMemberRole.Member, storedMember.Role);
+            Assert.Equal(DateTimeKind.Utc, storedMember.JoinedAt.Kind);
+            Assert.Equal(42, storedMember.LastReadMessageId);
+            Assert.True(storedMember.IsMuted);
+        }
+        finally
+        {
+            DeleteDatabaseFiles(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ConversationConstraints_WhenRowsAreInvalid_RejectTypeNameKeyRoleAndReadBoundary()
+    {
+        var databasePath = CreateDatabasePath();
+        try
+        {
+            var user = CreateUser(Guid.Parse("36346aa9-448c-4394-922e-123ee3571e34"), "alice");
+            var conversation = Conversation.CreateChannel(
+                Guid.Parse("c9416526-30e6-4874-9a05-9624bca2f47f"),
+                ConversationType.PublicChannel,
+                "General",
+                user.Id,
+                CreatedAt);
+            await using var context = CreateContext(databasePath);
+            await context.Database.MigrateAsync();
+            context.AddRange(user, conversation);
+            await context.SaveChangesAsync();
+
+            await AssertCheckConstraintAsync(context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO Conversations (Id, Type, Name, AvatarAttachmentId, CreatedByUserId, CreatedAt, UpdatedAt, IsDeleted, DirectParticipantKey)
+                VALUES ({Guid.NewGuid().ToString("D")}, {9}, {"Invalid"}, NULL, {user.Id.ToString("D")}, {"2026-08-03T04:00:00.000Z"}, {"2026-08-03T04:00:00.000Z"}, {0}, NULL);
+                """));
+            await AssertCheckConstraintAsync(context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO Conversations (Id, Type, Name, AvatarAttachmentId, CreatedByUserId, CreatedAt, UpdatedAt, IsDeleted, DirectParticipantKey)
+                VALUES ({Guid.NewGuid().ToString("D")}, {3}, {"not-empty"}, NULL, {user.Id.ToString("D")}, {"2026-08-03T04:00:00.000Z"}, {"2026-08-03T04:00:00.000Z"}, {0}, {"invalid-key"});
+                """));
+            await AssertCheckConstraintAsync(context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO Conversations (Id, Type, Name, AvatarAttachmentId, CreatedByUserId, CreatedAt, UpdatedAt, IsDeleted, DirectParticipantKey)
+                VALUES ({Guid.NewGuid().ToString("D")}, {3}, {string.Empty}, NULL, {user.Id.ToString("D")}, {"2026-08-03T04:00:00.000Z"}, {"2026-08-03T04:00:00.000Z"}, {0}, NULL);
+                """));
+            await AssertCheckConstraintAsync(context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO Conversations (Id, Type, Name, AvatarAttachmentId, CreatedByUserId, CreatedAt, UpdatedAt, IsDeleted, DirectParticipantKey)
+                VALUES ({Guid.NewGuid().ToString("D")}, {3}, {string.Empty}, NULL, {user.Id.ToString("D")}, {"2026-08-03T04:00:00.000Z"}, {"2026-08-03T04:00:00.000Z"}, {0}, {"00000000-0000-0000-0000-000000000001:00000000-0000-0000-0000-000000000002"});
+                """));
+            await AssertCheckConstraintAsync(context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO ConversationMembers (ConversationId, UserId, Role, JoinedAt, LastReadMessageId, IsMuted)
+                VALUES ({conversation.Id.ToString("D")}, {user.Id.ToString("D")}, {9}, {"2026-08-03T04:00:00.000Z"}, {0}, {0});
+                """));
+            await AssertCheckConstraintAsync(context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO ConversationMembers (ConversationId, UserId, Role, JoinedAt, LastReadMessageId, IsMuted)
+                VALUES ({conversation.Id.ToString("D")}, {user.Id.ToString("D")}, {1}, {"2026-08-03T04:00:00.000Z"}, {-1}, {0});
+                """));
+            await AssertCheckConstraintAsync(context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO Conversations (Id, Type, Name, AvatarAttachmentId, CreatedByUserId, CreatedAt, UpdatedAt, IsDeleted, DirectParticipantKey)
+                VALUES ({Guid.NewGuid().ToString("D")}, {1}, {"Invalid boolean"}, NULL, {user.Id.ToString("D")}, {"2026-08-03T04:00:00.000Z"}, {"2026-08-03T04:00:00.000Z"}, {2}, NULL);
+                """));
+            await AssertCheckConstraintAsync(context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO ConversationMembers (ConversationId, UserId, Role, JoinedAt, LastReadMessageId, IsMuted)
+                VALUES ({conversation.Id.ToString("D")}, {user.Id.ToString("D")}, {1}, {"not-a-utc-timestamp"}, {0}, {0});
+                """));
+            await AssertCheckConstraintAsync(context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO ConversationMembers (ConversationId, UserId, Role, JoinedAt, LastReadMessageId, IsMuted)
+                VALUES ({conversation.Id.ToString("D")}, {user.Id.ToString("D")}, {1}, {"2026-08-03T04:00:00.000Z"}, {0}, {2});
+                """));
+            await AssertSqliteConstraintAsync(context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO Conversations (Id, Type, Name, AvatarAttachmentId, CreatedByUserId, CreatedAt, UpdatedAt, IsDeleted, DirectParticipantKey)
+                VALUES ({Guid.NewGuid().ToString("D")}, {1}, {"Missing creator"}, NULL, {Guid.NewGuid().ToString("D")}, {"2026-08-03T04:00:00.000Z"}, {"2026-08-03T04:00:00.000Z"}, {0}, NULL);
+                """), expectedExtendedErrorCode: 787);
+            await AssertSqliteConstraintAsync(context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO ConversationMembers (ConversationId, UserId, Role, JoinedAt, LastReadMessageId, IsMuted)
+                VALUES ({Guid.NewGuid().ToString("D")}, {user.Id.ToString("D")}, {1}, {"2026-08-03T04:00:00.000Z"}, {0}, {0});
+                """), expectedExtendedErrorCode: 787);
+
+            await context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO ConversationMembers (ConversationId, UserId, Role, JoinedAt, LastReadMessageId, IsMuted)
+                VALUES ({conversation.Id.ToString("D")}, {user.Id.ToString("D")}, {1}, {"2026-08-03T04:00:00.000Z"}, {0}, {0});
+                """);
+            await AssertSqliteConstraintAsync(context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO ConversationMembers (ConversationId, UserId, Role, JoinedAt, LastReadMessageId, IsMuted)
+                VALUES ({conversation.Id.ToString("D")}, {user.Id.ToString("D")}, {1}, {"2026-08-03T04:00:00.000Z"}, {0}, {0});
+                """), expectedExtendedErrorCode: 1555);
+        }
+        finally
+        {
+            DeleteDatabaseFiles(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DirectParticipantKey_WhenOrderIsReversedOrConversationIsDeleted_RemainsUnique()
+    {
+        var databasePath = CreateDatabasePath();
+        try
+        {
+            var firstUser = CreateUser(Guid.Parse("51d160eb-f0bb-497a-bfa6-2730ec9665bb"), "alice");
+            var secondUser = CreateUser(Guid.Parse("eb239dfd-e66b-4bc9-880e-3e7d310d3640"), "bob");
+            await using var context = CreateContext(databasePath);
+            await context.Database.MigrateAsync();
+            context.AddRange(firstUser, secondUser);
+            var first = Conversation.CreateDirect(
+                Guid.NewGuid(), firstUser.Id, secondUser.Id, firstUser.Id, CreatedAt);
+            first.MarkDeleted(CreatedAt.AddMinutes(1));
+            context.Add(first);
+            await context.SaveChangesAsync();
+
+            context.Add(Conversation.CreateDirect(
+                Guid.NewGuid(), secondUser.Id, firstUser.Id, secondUser.Id, CreatedAt.AddMinutes(2)));
+
+            var exception = await Assert.ThrowsAsync<DbUpdateException>(() => context.SaveChangesAsync());
+            var sqliteException = Assert.IsType<SqliteException>(exception.InnerException);
+            Assert.Equal(2067, sqliteException.SqliteExtendedErrorCode);
+        }
+        finally
+        {
+            DeleteDatabaseFiles(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ConversationForeignKeys_WhenPrincipalsAreDeleted_CascadeMembersButRestrictCreator()
+    {
+        var databasePath = CreateDatabasePath();
+        try
+        {
+            var creator = CreateUser(Guid.Parse("8233b5d0-76c4-408e-aee3-8cb3e5566c26"), "alice");
+            var memberUser = CreateUser(Guid.Parse("aa5fcc84-e4a1-43a9-a8bb-4ed542611c96"), "bob");
+            var firstConversation = Conversation.CreateChannel(
+                Guid.Parse("659a76a2-09b3-412a-95fe-f117eb8a9ffc"),
+                ConversationType.PublicChannel,
+                "General",
+                creator.Id,
+                CreatedAt);
+            var secondConversation = Conversation.CreateChannel(
+                Guid.Parse("b84a3b5b-fde8-47d1-bc2a-0f33a4369761"),
+                ConversationType.PrivateChannel,
+                "Private",
+                creator.Id,
+                CreatedAt);
+            await using var context = CreateContext(databasePath);
+            await context.Database.MigrateAsync();
+            context.AddRange(creator, memberUser, firstConversation, secondConversation);
+            context.AddRange(
+                new ConversationMember(firstConversation.Id, memberUser.Id, ConversationMemberRole.Member, CreatedAt),
+                new ConversationMember(secondConversation.Id, memberUser.Id, ConversationMemberRole.Member, CreatedAt));
+            await context.SaveChangesAsync();
+
+            await context.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM Conversations WHERE Id = {firstConversation.Id.ToString("D")};");
+            Assert.Single(await context.ConversationMembers.AsNoTracking().ToArrayAsync());
+
+            await context.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM Users WHERE Id = {memberUser.Id.ToString("D")};");
+            Assert.Empty(await context.ConversationMembers.AsNoTracking().ToArrayAsync());
+
+            var creatorDeleteException = await Assert.ThrowsAsync<SqliteException>(() =>
+                context.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM Users WHERE Id = {creator.Id.ToString("D")};"));
+            Assert.Equal(19, creatorDeleteException.SqliteErrorCode);
+            Assert.Equal(1811, creatorDeleteException.SqliteExtendedErrorCode);
+        }
+        finally
+        {
+            DeleteDatabaseFiles(databasePath);
+        }
+    }
+
     private User CreateUser(Guid id, string userName) => new(
         id,
         userName,
@@ -288,5 +513,17 @@ public sealed class RelayCoveDbContextTests
         }
 
         return values.ToArray();
+    }
+
+    private static async Task AssertCheckConstraintAsync(Task operation)
+    {
+        await AssertSqliteConstraintAsync(operation, expectedExtendedErrorCode: 275);
+    }
+
+    private static async Task AssertSqliteConstraintAsync(Task operation, int expectedExtendedErrorCode)
+    {
+        var exception = await Assert.ThrowsAsync<SqliteException>(() => operation);
+        Assert.Equal(19, exception.SqliteErrorCode);
+        Assert.Equal(expectedExtendedErrorCode, exception.SqliteExtendedErrorCode);
     }
 }

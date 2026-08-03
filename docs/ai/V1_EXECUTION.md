@@ -14,8 +14,8 @@ IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 419ef00069c86c85b097a7961cebe95a16730cc5
 LatestGreenIntegrationCommit: db92a5b0ac307d6d221a5880d64eee87082b348e
 NextAction: 冻结 Conversations/ConversationMembers 数据库语义并实现实体、SQLite migration 与真实约束测试
-ClaudeCalls: 19（软上限 24，硬上限 30）
-ClaudeCostUsd: 5.4229485 confirmed；另有十二次失败/中断调用费用 unavailable
+ClaudeCalls: 20（软上限 24，硬上限 30）
+ClaudeCostUsd: 5.4229485 confirmed；另有十三次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -70,9 +70,10 @@ RequiredUserGate: none
 | 17 | 2026-08-03 | 认证端点 | safe-mode 只读 CLI 定向 challenge | Opus / XHigh | 同一 ChallengeHead，实际 `claude-opus-5`；完整返回 7 项 `REVISE` 修正，经本地代码与 Microsoft.Data.Sqlite 事务证据核对后纳入 `DEC-006` | `$0.57057225` |
 | 18 | 2026-08-03 | 认证端点 | 最终 MCP review | Opus / XHigh | `ReviewHead=b72194a`；本机 `ANTHROPIC_API_KEY`/其他认证源优先于 claude.ai 登录，connector 被禁用，未返回模型、workspace、费用或审查结论；按用户要求未重复耗时调用，降级 Codex 固定差异自审 | `unavailable` |
 | 19 | 2026-08-03 | 管理员引导 | 前置 challenge | Opus / XHigh | `ChallengeHead=0480b01`；120 秒上限后因同一认证源优先级禁用 claude.ai connector 而超时，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库、NIST 与 Microsoft 官方证据收敛 `DEC-007` | `unavailable` |
+| 20 | 2026-08-03 | 会话成员存储 | 前置 challenge | Opus / XHigh | `ChallengeHead=cd90023`；120 秒窗口内因本机认证源优先级禁用 claude.ai connector 而失败，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库与 Microsoft EF Core 官方证据收敛 `DEC-008` | `unavailable` |
 
-- 调用计数：`19 / 24 soft / 30 hard`。
-- 已确认费用合计：`$5.4229485`；其余十二次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`20 / 24 soft / 30 hard`。
+- 已确认费用合计：`$5.4229485`；其余十三次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - Claude 恢复可用后，每次调用必须记录返回的 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；达到调用或费用硬上限时降级为 Codex 独立复核，不停止开发。
 
 ## 阻塞与用户 Gate

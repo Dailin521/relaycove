@@ -95,3 +95,15 @@
 - **理由：** 空表而不是“没有管理员”作为唯一引导条件，使遗留普通账号不能被配置意外升级；外部一次性凭据与显式 migration 避免仓库后门和隐式 schema 变更。动态授权加事务内复核使禁用/降权可即时收敛；长口令、无组合规则和弱密码拒绝与当前 NIST 指南一致，同时不引入外部身份或大型联网依赖。
 - **影响：** 没有用户且未启用 bootstrap 的服务可以启动但无法登录，属于明确运维状态；非空但无管理员的库不会自愈，必须通过受控数据恢复流程处理。禁用、删除、改角色、重置密码、用户列表、首次改密、完整泄漏密码服务和管理员 UI 仍属于阶段 11/部署后续任务，不得借本决策提前实现。
 - **来源：** 工程落地方案第 7.1、8.2、17.4、18.2、阶段 2；`docs/ai/tasks/2026-08-03-stage-2-admin-bootstrap.md`；2026-08-03 NIST SP 800-63B-4 password verifier、ASP.NET Core 10 hosted service 与 authorization handler DI 官方文档。
+
+### DEC-008：会话成员存储、Direct 唯一身份与删除边界
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** 工程方案给出 Conversations/ConversationMembers 基本字段，但未定义一对一会话如何在并发和软删除后保持单例、Direct 名称如何面向两个用户展示、成员角色数值或用户/会话硬删除时的引用行为；若留到 API 层再决定，会产生无法由数据库阻止的重复历史线程和迁移兼容问题。
+- **决策：** `ConversationType` 固定为 PublicChannel=1、PrivateChannel=2、Direct=3；会话内 `ConversationMemberRole` 固定为 Member=1、Administrator=2，与全局 `Users.IsAdmin` 分离。频道名称为 1–100 个有效 Unicode scalar value且拒绝控制字符/全空白；Direct 数据库 `Name` 固定为空，未来 DTO 按当前用户动态使用另一参与者昵称。`LastReadMessageId` 为非负 64 位整数，实体只允许单调推进；加入/重新加入时仍按 `DEC-003` 由服务写事务传入当前会话最大消息 ID，当前无消息时为 0。
+- **决策：** Conversations 增加内部可空 `DirectParticipantKey`：两个不同参与者的小写标准 D GUID 按 ordinal 排序并以冒号连接；仅 Direct 必填，唯一索引覆盖软删除行。软删除后重新发起同一对话必须恢复原会话，而不是创建第二条线程。数据库 CHECK 固定类型、名称/key 对应关系、GUID/毫秒 UTC、更新时间顺序、布尔值、角色和非负已读；ConversationMembers 使用 `(ConversationId, UserId)` 复合主键并按 UserId 建索引。
+- **决策：** 会话正常删除只设置 `IsDeleted`。创建者是必填 User 外键且使用 Restrict，避免硬删用户静默删除会话历史；成员行是会话从属数据，会话硬删或成员用户硬删时级联。Direct 恰好两个 Member、创建者属于参与者以及加入初始化的消息水位是跨表/未来 Messages 不变量，必须由后续阶段 3 Serializable 写事务验证，不能声称当前 CHECK 已覆盖。
+- **理由：** 永久 canonical pair key 把并发单例交给唯一索引并保留一对一历史连续性；Direct 名称动态派生避免同一字段无法同时表达双方视角；显式 Restrict/Cascade 防止 EF 必填关系的默认级联误删会话，同时保留从属成员清理。没有提前创建 Messages 表或触碰同步协议。
+- **影响：** 后续创建/获取 Direct 必须 INSERT-first 或在等效写事务中处理唯一冲突，并在发现软删除记录时恢复同一 ID；频道/成员 API 必须维护会话角色与全局管理员的区分。阶段 11 用户硬删除必须先处理其创建者引用，常规账号删除宜通过现有 `IsDisabled` 收敛。未来 Attachments migration 加 Avatar FK 前仍需处理孤儿值。
+- **来源：** 工程落地方案第 7.2、7.3、10.1、11.1、11.2、阶段 3；`DEC-003`、`DEC-005`；`docs/ai/tasks/2026-08-03-stage-3-conversation-storage.md`；2026-08-03 Microsoft EF Core 10 SQLite limitations、keys/indexes 与 cascade delete 官方文档。
