@@ -30,6 +30,12 @@ internal sealed class WindowsDesktopNotificationAttention : IClientNotificationA
             var window = windowState.Current;
             if (window.IsForeground || window.WindowHandle == nint.Zero)
             {
+                if (window.WindowHandle == nint.Zero)
+                {
+                    logger.LogDebug(
+                        "Skipping taskbar notification flashing because no window handle is available.");
+                }
+
                 StopFlashingCore();
                 return;
             }

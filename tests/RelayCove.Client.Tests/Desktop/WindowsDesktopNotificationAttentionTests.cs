@@ -37,6 +37,45 @@ public sealed class WindowsDesktopNotificationAttentionTests
     }
 
     [Fact]
+    public void SignalAcceptedToast_WhenWindowHandleIsMissing_PlaysSoundWithoutFlashAndLogsState()
+    {
+        var windowState = new WindowsMainWindowState();
+        var native = new RecordingNative();
+        var logger = new RecordingLogger<WindowsDesktopNotificationAttention>();
+        var attention = new WindowsDesktopNotificationAttention(windowState, logger, native);
+
+        attention.SignalAcceptedToast();
+
+        Assert.Equal(1, native.SoundCount);
+        Assert.Empty(native.StartHandles);
+        Assert.Empty(native.StopHandles);
+        Assert.Contains(
+            logger.Entries,
+            entry => entry.Contains("no window handle", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void SignalAcceptedToast_WhenSoundReturnsFalse_StillStartsFlashAndLogsFailure()
+    {
+        var windowState = new WindowsMainWindowState();
+        windowState.Update((nint)42, isForeground: false);
+        var native = new RecordingNative
+        {
+            SoundResult = false,
+        };
+        var logger = new RecordingLogger<WindowsDesktopNotificationAttention>();
+        var attention = new WindowsDesktopNotificationAttention(windowState, logger, native);
+
+        attention.SignalAcceptedToast();
+
+        Assert.Equal(1, native.SoundCount);
+        Assert.Equal([(nint)42], native.StartHandles);
+        Assert.Contains(
+            logger.Entries,
+            entry => entry.Contains("sound failed", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void SignalAcceptedToast_WhenSoundThrows_StillStartsFlashAndLogsTypeOnly()
     {
         var windowState = new WindowsMainWindowState();

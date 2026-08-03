@@ -109,6 +109,13 @@ public partial class App : System.Windows.Application
         // flow through the real close path so they cannot leave the session waiting.
         Interlocked.Exchange(ref explicitExitRequested, 1);
         base.OnSessionEnding(e);
+        if (e.Cancel)
+        {
+            // A later SessionEnding handler may cancel logoff/shutdown. The process
+            // then remains interactive, so restore the normal close-to-tray and
+            // explicit Exit behavior instead of leaving a stale shutdown latch.
+            Interlocked.Exchange(ref explicitExitRequested, 0);
+        }
     }
 
     private static void NavigateNotificationTarget(

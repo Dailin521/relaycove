@@ -283,6 +283,29 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task Dispatch_WhenCallsUseIndependentGates_SignalsAttentionForEachCall()
+    {
+        var prepared = await PrepareAsync(messageCount: 2);
+        await using var cache = prepared.Cache;
+        var attention = new RecordingNotificationAttention();
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            new FakeNotificationPlatform(),
+            notificationAttention: attention);
+
+        var first = await coordinator.DispatchAsync(
+            [1],
+            ClientNotificationDispatchMode.PerMessage);
+        var second = await coordinator.DispatchAsync(
+            [2],
+            ClientNotificationDispatchMode.PerMessage);
+
+        Assert.Equal(1, first.AcceptedCount);
+        Assert.Equal(1, second.AcceptedCount);
+        Assert.Equal(2, attention.SignalCount);
+    }
+
+    [Fact]
     public async Task DispatchSummary_WhenToastIsAccepted_SignalsAttentionOnce()
     {
         var prepared = await PrepareAsync(messageCount: 12);
