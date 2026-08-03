@@ -215,35 +215,58 @@ internal sealed class WindowsClientNotificationHost : IDisposable
     {
         _ = registration.ContinueWith(
             static (completed, state) =>
-            {
-                var host = (WindowsClientNotificationHost)state!;
-                try
-                {
-                    if (completed.Status == TaskStatus.RanToCompletion &&
-                        completed.Result.IsSupported)
-                    {
-                        host.manager.Unregister();
-                    }
-                }
-                catch (Exception exception)
-                {
-                    host.logger.LogWarning(
-                        "Cleaning a late Windows notification registration failed; " +
-                        "errorType={ErrorType}.",
-                        exception.GetType().Name);
-                }
-                finally
-                {
-                    lock (host.stateGate)
-                    {
-                        host.registrationUncertain = false;
-                    }
-                }
-            },
+                ((WindowsClientNotificationHost)state!)
+                    .CompleteLateRegistrationCleanupAsync(completed),
             this,
             CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
+            TaskContinuationOptions.None,
+            TaskScheduler.Default)
+            .Unwrap();
+    }
+
+    private async Task CompleteLateRegistrationCleanupAsync(
+        Task<RegistrationResult> registration)
+    {
+        try
+        {
+            if (registration.Status == TaskStatus.RanToCompletion &&
+                registration.Result.IsSupported)
+            {
+                var unregistration = Task.Factory.StartNew(
+                    manager.Unregister,
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning,
+                    TaskScheduler.Default);
+                try
+                {
+                    await unregistration
+                        .WaitAsync(nativeOperationTimeout)
+                        .ConfigureAwait(false);
+                }
+                catch (TimeoutException exception)
+                {
+                    logger.LogWarning(
+                        "Cleaning a late Windows notification registration timed out; " +
+                        "errorType={ErrorType}.",
+                        exception.GetType().Name);
+                    await unregistration.ConfigureAwait(false);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Cleaning a late Windows notification registration failed; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
+        finally
+        {
+            lock (stateGate)
+            {
+                registrationUncertain = false;
+            }
+        }
     }
 
     private sealed record RegistrationResult(

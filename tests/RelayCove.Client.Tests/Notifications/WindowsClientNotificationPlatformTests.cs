@@ -262,17 +262,27 @@ public sealed class WindowsClientNotificationPlatformTests
 
         show.SetResult();
         await WaitUntilAsync(() => manager.RemovedTagGroups.Count == 1);
-        var retry = await platform.ClearConversationAsync(
-            AccountScopeId,
-            ConversationId,
-            CancellationToken.None);
+        var retry = ClientNotificationPlatformResult.TransientFailure;
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            retry = await platform.ClearConversationAsync(
+                AccountScopeId,
+                ConversationId,
+                CancellationToken.None);
+            if (retry.Status != ClientNotificationPlatformStatus.TransientFailure)
+            {
+                break;
+            }
+
+            await Task.Delay(10);
+        }
 
         Assert.Equal(ClientNotificationPlatformStatus.Accepted, retry.Status);
         Assert.Single(manager.RemovedGroups);
     }
 
     [Fact]
-    public async Task ClearConversation_AfterUncertainCleanupFails_RecoversSubmissionCircuit()
+    public async Task Submit_AfterUncertainCleanupFails_RetriesExactCleanupAndRecoversCircuit()
     {
         var show = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -303,18 +313,65 @@ public sealed class WindowsClientNotificationPlatformTests
             (await platform.SubmitAsync(request, CancellationToken.None)).Status);
         show.SetResult();
         await WaitUntilAsync(() => Volatile.Read(ref cleanupAttempts) == 1);
+        var retry = await platform.SubmitAsync(request, CancellationToken.None);
+
+        Assert.Equal(ClientNotificationPlatformStatus.Accepted, retry.Status);
+        Assert.Equal(2, cleanupAttempts);
+        Assert.Equal(2, manager.RemovedTagGroups.Count);
+        Assert.Equal(2, manager.ShowCount);
+    }
+
+    [Fact]
+    public async Task Submit_WhenUncertainCleanupRetryHangs_DoesNotAccumulateNativeRemovals()
+    {
+        var show = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var retryRemoval = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleanupAttempts = 0;
+        var manager = new FakeWindowsAppNotificationManager
+        {
+            ShowAction = (_, _) => show.Task,
+            RemoveTagAction = (_, _, _) =>
+            {
+                var attempt = Interlocked.Increment(ref cleanupAttempts);
+                return attempt switch
+                {
+                    1 => Task.FromException(new IOException("cleanup failed")),
+                    2 => retryRemoval.Task,
+                    _ => throw new InvalidOperationException("Unexpected cleanup retry."),
+                };
+            },
+        };
+        var platform = CreatePlatform(
+            manager,
+            nativeSubmissionTimeout: TimeSpan.FromMilliseconds(20),
+            nativeRemovalTimeout: TimeSpan.FromMilliseconds(20));
+        var request = new ClientNotificationRequest(
+            AccountScopeId,
+            NotificationPolicy.PerMessage,
+            [CreateMessage(1)]);
+
         Assert.Equal(
             ClientNotificationPlatformStatus.TransientFailure,
             (await platform.SubmitAsync(request, CancellationToken.None)).Status);
+        show.SetResult();
+        await WaitUntilAsync(() => Volatile.Read(ref cleanupAttempts) == 1);
 
-        var clear = ClientNotificationPlatformResult.TransientFailure;
+        var firstRetry = await platform.SubmitAsync(request, CancellationToken.None);
+        var secondRetry = await platform.SubmitAsync(request, CancellationToken.None);
+
+        Assert.Equal(ClientNotificationPlatformStatus.TransientFailure, firstRetry.Status);
+        Assert.Equal(ClientNotificationPlatformStatus.TransientFailure, secondRetry.Status);
+        Assert.Equal(2, cleanupAttempts);
+        Assert.Equal(1, manager.ShowCount);
+
+        retryRemoval.SetResult();
+        var recovered = ClientNotificationPlatformResult.TransientFailure;
         for (var attempt = 0; attempt < 100; attempt++)
         {
-            clear = await platform.ClearConversationAsync(
-                AccountScopeId,
-                ConversationId,
-                CancellationToken.None);
-            if (clear.Status != ClientNotificationPlatformStatus.TransientFailure)
+            recovered = await platform.SubmitAsync(request, CancellationToken.None);
+            if (recovered.Status != ClientNotificationPlatformStatus.TransientFailure)
             {
                 break;
             }
@@ -322,10 +379,8 @@ public sealed class WindowsClientNotificationPlatformTests
             await Task.Delay(10);
         }
 
-        Assert.Equal(ClientNotificationPlatformStatus.Accepted, clear.Status);
-        Assert.Equal(
-            ClientNotificationPlatformStatus.Accepted,
-            (await platform.SubmitAsync(request, CancellationToken.None)).Status);
+        Assert.Equal(ClientNotificationPlatformStatus.Accepted, recovered.Status);
+        Assert.Equal(2, cleanupAttempts);
         Assert.Equal(2, manager.ShowCount);
     }
 

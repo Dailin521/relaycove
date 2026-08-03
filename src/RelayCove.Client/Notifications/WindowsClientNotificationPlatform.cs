@@ -20,6 +20,7 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
     private DateTimeOffset settingsSnapshotExpiresAt = DateTimeOffset.MinValue;
     private Task<ClientNotificationSettingsSnapshot>? settingsRefresh;
     private Task<bool>? uncertainSubmissionCleanup;
+    private string? uncertainSubmissionTag;
     private string? uncertainSubmissionGroup;
 
     public WindowsClientNotificationPlatform(
@@ -131,12 +132,10 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
         await submissionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            lock (stateGate)
+            if (!await TryRecoverUncertainSubmissionAsync(cancellationToken)
+                    .ConfigureAwait(false))
             {
-                if (uncertainSubmissionCleanup is not null)
-                {
-                    return ClientNotificationPlatformResult.TransientFailure;
-                }
+                return ClientNotificationPlatformResult.TransientFailure;
             }
 
             Task? submission = null;
@@ -387,9 +386,74 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
                 notification.Tag,
                 notification.Group);
             uncertainSubmissionCleanup = cleanup;
+            uncertainSubmissionTag = notification.Tag;
             uncertainSubmissionGroup = notification.Group;
         }
 
+        AttachUncertainCleanupCompletion(cleanup);
+    }
+
+    private async Task<bool> TryRecoverUncertainSubmissionAsync(
+        CancellationToken cancellationToken)
+    {
+        Task<bool>? cleanup;
+        string? tag;
+        string? group;
+        lock (stateGate)
+        {
+            cleanup = uncertainSubmissionCleanup;
+            if (cleanup is null)
+            {
+                return true;
+            }
+
+            if (!cleanup.IsCompleted)
+            {
+                return false;
+            }
+
+            if (cleanup.Status == TaskStatus.RanToCompletion && cleanup.Result)
+            {
+                ClearUncertainSubmission(cleanup);
+                return true;
+            }
+
+            tag = uncertainSubmissionTag;
+            group = uncertainSubmissionGroup;
+            if (tag is null || group is null)
+            {
+                return false;
+            }
+
+            cleanup = CleanupKnownNotificationAsync(tag, group);
+            uncertainSubmissionCleanup = cleanup;
+        }
+
+        AttachUncertainCleanupCompletion(cleanup);
+        try
+        {
+            var recovered = await cleanup
+                .WaitAsync(nativeRemovalTimeout, timeProvider, cancellationToken)
+                .ConfigureAwait(false);
+            if (recovered)
+            {
+                ClearUncertainSubmission(cleanup);
+            }
+
+            return recovered;
+        }
+        catch (TimeoutException exception)
+        {
+            logger.LogWarning(
+                "Retrying an uncertain Windows notification cleanup timed out; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+            return false;
+        }
+    }
+
+    private void AttachUncertainCleanupCompletion(Task<bool> cleanup)
+    {
         _ = cleanup.ContinueWith(
             static (completed, state) =>
             {
@@ -399,14 +463,7 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
                     return;
                 }
 
-                lock (platform.stateGate)
-                {
-                    if (ReferenceEquals(platform.uncertainSubmissionCleanup, completed))
-                    {
-                        platform.uncertainSubmissionCleanup = null;
-                        platform.uncertainSubmissionGroup = null;
-                    }
-                }
+                platform.ClearUncertainSubmission(completed);
             },
             this,
             CancellationToken.None,
@@ -428,13 +485,17 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
             return true;
         }
 
+        return await CleanupKnownNotificationAsync(tag, group).ConfigureAwait(false);
+    }
+
+    private async Task<bool> CleanupKnownNotificationAsync(string tag, string group)
+    {
         try
         {
             await manager.RemoveByTagAndGroupAsync(
                     tag,
                     group,
                     CancellationToken.None)
-                .WaitAsync(nativeRemovalTimeout, timeProvider)
                 .ConfigureAwait(false);
             return true;
         }
@@ -459,8 +520,24 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
                 uncertainSubmissionCleanup is { IsCompleted: true })
             {
                 uncertainSubmissionCleanup = null;
+                uncertainSubmissionTag = null;
                 uncertainSubmissionGroup = null;
             }
+        }
+    }
+
+    private void ClearUncertainSubmission(Task<bool> cleanup)
+    {
+        lock (stateGate)
+        {
+            if (!ReferenceEquals(uncertainSubmissionCleanup, cleanup))
+            {
+                return;
+            }
+
+            uncertainSubmissionCleanup = null;
+            uncertainSubmissionTag = null;
+            uncertainSubmissionGroup = null;
         }
     }
 
