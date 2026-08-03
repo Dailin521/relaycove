@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 7
-ActiveTask: docs/ai/tasks/2026-08-04-stage-7-single-instance-activation.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-04-stage-7-desktop-attention-tray.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: b8589669e6015b884f171456cc5d34fd402e4212
-LatestGreenIntegrationCommit: ff9e50f6ec3fb250c32f99a7234c40be4b90c92f
-NextAction: 推送完成提交，快进集成并清理任务分支，然后开始声音、任务栏与托盘生命周期切片
+LatestGreenIntegrationCommit: c94d9a247557e022ea23556ae34d96b5cb1a185e
+NextAction: 实现 Toast Accepted 后单次提示音/闪烁与 NotifyIcon 关闭隐藏/彻底退出生命周期
 ClaudeCalls: 44（全部终态；仅关键用途调用）
 ClaudeCostUsd: 51.78059725 exact confirmed + 12.06 local CLI displayed；另有二十二次失败/中断调用费用 unavailable
 Blocker: none
