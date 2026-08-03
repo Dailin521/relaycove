@@ -338,32 +338,43 @@ public sealed class WindowsClientNotificationPlatformTests
     }
 
     [Fact]
-    public void GetSettingsSnapshot_WhenNativeProbeIsSlow_ReturnsBoundedCachedUnavailable()
+    public async Task GetSettingsSnapshot_WhenNativeProbeIsSlow_ReturnsBoundedCachedUnavailable()
     {
+        using var release = new ManualResetEventSlim();
         var manager = new FakeWindowsAppNotificationManager
         {
             IsSupportedAction = () =>
             {
-                Thread.Sleep(100);
+                release.Wait();
                 return true;
             },
         };
         var platform = CreatePlatform(
             manager,
-            settingsProbeTimeout: TimeSpan.FromMilliseconds(20));
-        var startedAt = DateTime.UtcNow;
+            settingsProbeTimeout: TimeSpan.FromMilliseconds(200));
 
-        var first = platform.GetSettingsSnapshot();
-        var second = platform.GetSettingsSnapshot();
+        try
+        {
+            var first = platform.GetSettingsSnapshot();
+            var secondCall = Task.Run(platform.GetSettingsSnapshot);
+            var completed = await Task.WhenAny(
+                secondCall,
+                Task.Delay(TimeSpan.FromMilliseconds(75)));
 
-        Assert.Equal(
-            ClientNotificationPlatformAvailability.Unavailable,
-            first.PlatformAvailability);
-        Assert.Equal(
-            ClientNotificationPlatformAvailability.Unavailable,
-            second.PlatformAvailability);
-        Assert.True(DateTime.UtcNow - startedAt < TimeSpan.FromSeconds(1));
-        Assert.Equal(1, manager.IsSupportedCount);
+            Assert.Same(secondCall, completed);
+            Assert.Equal(
+                ClientNotificationPlatformAvailability.Unavailable,
+                first.PlatformAvailability);
+            var second = await secondCall;
+            Assert.Equal(
+                ClientNotificationPlatformAvailability.Unavailable,
+                second.PlatformAvailability);
+            Assert.Equal(1, manager.IsSupportedCount);
+        }
+        finally
+        {
+            release.Set();
+        }
     }
 
     private static WindowsClientNotificationPlatform CreatePlatform(

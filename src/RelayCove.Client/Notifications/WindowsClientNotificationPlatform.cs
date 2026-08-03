@@ -64,20 +64,25 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
         var attachCompletion = false;
         lock (stateGate)
         {
-            if (settingsSnapshotExpiresAt > timeProvider.GetUtcNow())
+            var now = timeProvider.GetUtcNow();
+            if (settingsSnapshotExpiresAt > now)
             {
                 return settingsSnapshot;
             }
 
-            if (settingsRefresh is null)
+            if (settingsRefresh is not null)
             {
-                settingsRefresh = Task.Factory.StartNew(
-                    ReadSettingsSnapshot,
-                    CancellationToken.None,
-                    TaskCreationOptions.LongRunning,
-                    TaskScheduler.Default);
-                attachCompletion = true;
+                settingsSnapshotExpiresAt = now.Add(settingsCacheDuration);
+                return settingsSnapshot;
             }
+
+            settingsRefresh = Task.Factory.StartNew(
+                ReadSettingsSnapshot,
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+            settingsSnapshotExpiresAt = now.Add(settingsCacheDuration);
+            attachCompletion = true;
 
             refresh = settingsRefresh;
         }
