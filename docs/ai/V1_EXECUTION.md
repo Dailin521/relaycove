@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 2
 ActiveTask: docs/ai/tasks/2026-08-03-stage-2-admin-bootstrap.md
-TaskStatus: running
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: b72194a168ba99a5268661df8f8cac7c48578fc4
+LatestGreenCodeCommit: 419ef00069c86c85b097a7961cebe95a16730cc5
 LatestGreenIntegrationCommit: 80bb74270e5b15a47fb4bbc7ae19deacd47f22ec
-NextAction: 固定 admin bootstrap ChallengeHead，反证凭据、密码策略、动态授权与并发边界
+NextAction: 将管理员引导完成提交仅快进合入 agent/v1-integration，并启动 Conversations/ConversationMembers 存储切片
 ClaudeCalls: 19（软上限 24，硬上限 30）
 ClaudeCostUsd: 5.4229485 confirmed；另有十二次失败/中断调用费用 unavailable
 Blocker: none
@@ -32,7 +32,7 @@ RequiredUserGate: none
 | 里程碑 | 状态 | 当前证据 | 下一出口 |
 | --- | --- | --- | --- |
 | M0 | `completed` | 同步契约、`DEC-003`、解决方案和真实 Fast/Full 验证均通过 | 已进入 M1 |
-| M1 | `running` | 可构建骨架、认证共享契约/存储（`DEC-004/005`）与认证 HTTP/轮换闭环（`DEC-006`）已完成 | 管理员用户生命周期、权限、文字消息、历史与 SignalR 形成纵向闭环 |
+| M1 | `running` | 可构建骨架、认证共享契约/存储/HTTP/轮换（`DEC-004/005/006`）与管理员引导/创建用户（`DEC-007`）已完成 | 会话成员、权限、文字消息、历史与 SignalR 形成纵向闭环 |
 | M2 | `pending` | 尚未开始 | Internal Alpha 验收证据完整 |
 | M3 | `pending` | 尚未开始 | Beta 验收证据完整 |
 | M4 | `pending` | 尚未开始 | RC 自动化、包与发布材料完整 |
@@ -43,7 +43,7 @@ RequiredUserGate: none
 ## 集成与绿色状态
 
 - `agent/v1-integration` 是本地最新绿色集成头；任务分支只有完成验证和交接提交后，才允许仅快进该分支。
-- 当前认证端点代码检查点 `b72194a168ba99a5268661df8f8cac7c48578fc4` 已通过 Fast、Full、73 项测试、真实 SQLite 并发/锁库、JWT 负向、限流、日志与依赖漏洞审计；候选 Claude MCP 未取得结论，已如实降级记录 Codex 固定差异自审。
+- 当前管理员引导代码检查点 `419ef00069c86c85b097a7961cebe95a16730cc5` 已通过 Fast、Full、100 项测试、真实 bootstrap/动态管理员授权/同名并发、密码与日志边界及依赖漏洞审计；Claude 无候选结论，已如实降级记录 Codex 固定差异自审。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确授权绿色任务的常规 push、合入集成分支与任务分支清理，无需二次确认；`main`、Tag、Release、真实发布和生产部署仍须满足对应里程碑与发布 Gate，不由该授权自动放宽。
 
