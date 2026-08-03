@@ -6,7 +6,7 @@
 
 - **当前阶段：** 阶段 8 — production 账户组合与聊天 UI
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步，以及当前确认消息 Reply 已完成
-- **最近验证通过的状态：** Reply 最终代码提交 `239d1ce` 已通过全部门禁；完成记录待仅快进到绿色集成分支
+- **最近验证通过的状态：** Reply 最终代码提交 `239d1ce` 与完成记录 `b1bf9c3` 已仅快进到远端绿色集成分支
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — 最终 Fast 与两次 Full、format、760 项测试、Client 549/549；Reply send/presenter/shell/cache/sync 关键集每轮 113 项、Release 连续 10 轮 1,130/1,130；真实 Release WPF 非零窗口句柄/响应/单实例/精确进程清理、model drift、八项目漏洞审计与空白检查通过；真实 VPS、双客户端、Narrator 与 Reply 视觉端到端保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- Reply 切片已完成并等待仅快进绿色集成；随后继续阶段 8 下一独立切片。`@用户` 因缺普通用户目录/公共频道解析协议拆分后续，不读取 VPS 配置。
+- 阶段 8 消息复制与本地日期分割线任务进行中；链接识别、`@用户` 与新消息分割线保持独立，不读取 VPS 配置。
 
 ## 已完成
 
