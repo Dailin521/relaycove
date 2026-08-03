@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M0
 CurrentStage: 阶段 0
-ActiveTask: none（下一个任务尚未创建）
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-0-buildable-scaffold.md
+TaskStatus: running
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: none（尚未创建业务代码）
-LatestGreenIntegrationCommit: a458f7c40589b50d26518f7c43465a2088785203
-NextAction: 创建可构建解决方案和真实 Fast/Full 验证脚本任务
+LatestGreenIntegrationCommit: 1dd6eb08c1f839bf651a433e9dc647347ef68469
+NextAction: 创建并验证 .NET 10 可构建解决方案、四个源项目、四个测试项目和 Fast/Full 脚本
 ClaudeCalls: 2（软上限 24，硬上限 30）
 ClaudeCostUsd: unavailable（两次失败调用均未返回 cost_usd，不能推定为 0）
 Blocker: none
@@ -43,7 +43,7 @@ RequiredUserGate: none
 ## 集成与绿色状态
 
 - `agent/v1-integration` 是本地最新绿色集成头；任务分支只有完成验证和交接提交后，才允许仅快进该分支。
-- 当前绿色集成提交 `a458f7c40589b50d26518f7c43465a2088785203` 只包含文档契约，不是绿色代码提交。
+- 当前绿色集成提交 `1dd6eb08c1f839bf651a433e9dc647347ef68469` 只包含文档契约与执行账本，不是绿色代码提交。
 - `LatestGreenCodeCommit` 保持 `none`，直到真实源代码、构建和对应自动化测试同时存在并通过。
 - 未经用户明确授权，不 push、不合并 `main`、不创建 PR/Tag/Release、不部署，也不删除远端分支。
 
