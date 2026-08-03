@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 8 Text 消息 HTTP(S) 链接识别、当前快照授权与外部浏览器打开
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `c55cebb4a31a15c6cd38580afdab6c7bfaa468f8`
 - **工作分支：** `agent/stage-8-safe-links`
 - **相关方案章节：** 9.2–9.4、18.4、阶段 8；`DEC-034`、`DEC-037`
@@ -41,10 +41,10 @@
 
 ### 验收标准
 
-- [ ] parser 只产出最多 8 个、<=2048 字符、无 user-info 的绝对 HTTP(S) 链接；畸形/自定义协议与明确尾标点被拒绝或剥离，正文保持原样。
-- [ ] 只有当前 Ready snapshot 中仍授权的 link 可触发 launcher；陈旧、篡改、非 Ready/撤权行不启动进程。
-- [ ] launcher 只把规范绝对 URI 放入 `ProcessStartInfo.FileName`，`UseShellExecute=true` 且不使用 Arguments/Verb/WorkingDirectory；已知 shell 失败如实反馈且不泄露 URL。
-- [ ] Fast/Full、parser/policy/launcher/presenter 定向与重复、model drift、八项目漏洞审计、空白检查和真实 Windows WPF smoke 通过；自动化不实际打开浏览器。
+- [x] parser 只产出最多 8 个、<=2048 字符、无 user-info 的绝对 HTTP(S) 链接；畸形/自定义协议与明确尾标点被拒绝或剥离，正文保持原样。
+- [x] 只有当前 Ready snapshot 中仍授权的 link 可触发 launcher；陈旧、篡改、非 Ready/撤权行不启动进程。
+- [x] launcher 只把规范绝对 URI 放入 `ProcessStartInfo.FileName`，`UseShellExecute=true` 且不使用 Arguments/Verb/WorkingDirectory；已知 shell 失败如实反馈且不泄露 URL。
+- [x] Fast/Full、parser/policy/launcher/presenter 定向与重复、model drift、八项目漏洞审计、空白检查和真实 Windows WPF smoke 通过；自动化不实际打开浏览器。
 
 ### 验证命令
 
@@ -76,25 +76,35 @@ parser 保持线性且不改正文；launcher 必须二次校验并禁止 Argume
 
 ### 修改摘要
 
-- 待完成。
+- 新增无 regex 的有界链接 parser：只接受绝对 HTTP(S)、非空 host、空 user-info，限制每条消息最多 8 个去重链接和每项 2048 字符；剥离明确尾标点及未匹配闭括号，同时保留正文和 Copy 原值。
+- presentation 暴露脱敏的不可变链接值，WPF 在正文下方渲染显式按钮；点击前重新核对值仍属于当前 `Ready` 消息快照。
+- 新增二次校验 launcher，仅把规范 URI 放入 `ProcessStartInfo.FileName` 并启用 Windows shell association；已知失败只返回脱敏状态，自动化通过注入启动动作保证不实际打开浏览器。
+- Codex 固定差异自审发现初版尾括号平衡会对每个候选重复扫描并形成二次复杂度，已重构为候选内单次计数后复验。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
-| `未验证` | 实现与最终门禁 | 任务进行中。 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast` | 782/782：Shared 35、Server 175、Client 571、Updater 1。 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full` | 同一代码树提交前及固定代码提交 `018df9840fcb35a6a5ee41b21191b129792a2f2f` 各通过一次；Release 构建 0 警告/0 错误、format、782/782 与 `git diff --check` 通过。 |
+| `已验证` | parser/policy/launcher/presenter Release 定向重复 | 每轮 19 项，连续 10 轮共 190/190；自动化使用注入动作，未打开真实浏览器。 |
+| `已验证` | EF model drift 与依赖审计 | `has-pending-model-changes` 无差异；解决方案 8 个项目含传递依赖均无已知漏洞。 |
+| `已验证` | 敏感链接日志检索 | URL/正文进入日志的匹配数为 0；presentation 与状态输出保持脱敏。 |
+| `已验证` | 真实 Release WPF smoke | 主进程 PID 27556、非零窗口句柄 91360668、`Responding=True`；第二实例 PID 54112 正常退出、匹配实例保持 1，精确清理后为 0。 |
+| `未验证` | 真实外部浏览器打开、VPS/真实登录视觉/双客户端/Narrator | 浏览器自动打开刻意排除；其余保留到 M5 Gate。 |
+| `未验证` | Claude #65 独立安全 challenge | MCP 因本机认证源优先级失败，无 job、模型、workspace、费用或结论；不冒充通过，Codex 威胁建模与本机门禁为最终依据。 |
 
 ### 文件范围
 
-- 新增：待完成。
-- 修改：待完成。
+- 新增：`ClientMessageLinkPresentation`、`ClientMessageLinkParser`、`ClientMessageLinkPolicy`、`ClientExternalLinkLauncher` 及三组对应测试。
+- 修改：消息行 presentation/presenter、`MainWindow.xaml(.cs)`、presenter 测试，以及任务/状态/执行/决策记录。
 - 删除：无。
 
 ### 决策与限制
 
-- 决策：待完成。
+- 决策：接受 `DEC-038`，冻结有界 HTTP(S) 识别、当前快照授权与参数化 shell 打开边界。
 - 已知限制：不做网页预览、信誉判断或非 HTTP(S) 外部协议；真实浏览器不由自动化打开。
 
 ### 下一步
 
-- 完成安全链接识别、显式打开、门禁和绿色集成。
+- 将完成提交仅快进到 `agent/v1-integration`，随后进入阶段 8 新消息分割线切片。
