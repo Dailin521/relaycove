@@ -270,3 +270,14 @@
 - **理由：** RFC 9700 的 rotation/replay detection 安全性要求客户端尊重单次使用边界；响应丢失后的正确动作是显式重新认证，而不是猜测请求是否提交。单一操作门给 refresh/logout 一个确定顺序，先本地退出保证远端不可用时也不会继续使用凭据。
 - **影响：** Client 新增真实登录和内存认证会话并直接实现 `IClientAuthenticationSession`；不修改 Shared/服务端协议或依赖。DPAPI、自动登录、主动 refresh、账户 scope 组合与 UI 留到后续独立切片。
 - **来源：** `DEC-006`、`DEC-016`、`DEC-021`；工程落地方案第 3.1、8.3、12.4、阶段 6；`docs/ai/tasks/2026-08-03-stage-6-client-auth-session.md`；当前 AuthenticationEndpoints/AuthenticationSessionService；RFC 9700。
+
+### DEC-023：CurrentUser DPAPI 单一 refresh 凭据文件
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** `DEC-022` 的认证会话只在内存保存 token，进程退出后无法安全恢复；工程方案要求 DPAPI 本地加密。access token 仅 15 分钟且可重新签发，密码不应持久化，真正需要跨进程保存的是可轮换 refresh token 与其服务器/用户归属。若用 LocalMachine，本机其他账户也可解密；若直接覆盖目标文件，中断可能同时丢失新旧凭据。
+- **决策：** 客户端只保存一个 versioned payload：canonical server base URI、非空 user ID 和 refresh token；不保存密码、access token、用户名、显示名或设备名。payload 使用固定应用/schema entropy 与 Windows DPAPI `DataProtectionScope.CurrentUser` 加密，明文 byte buffer 使用后清零；磁盘固定文件名和日志不含身份或服务器信息。
+- **决策：** ciphertext 在同目录临时文件完整写入并 flush 后，已有目标使用 `File.Replace`，首次保存使用同卷 `File.Move` 发布；单实例内 Save/Load/Clear 串行。读取在解密前后都有大小上限，并严格校验 schema、canonical URI、user ID 和 refresh token；篡改、错误用户、截断或非法字段返回 Corrupt，不自动信任、删除或覆盖正式文件。Clear 幂等，但权限/I/O 失败必须返回失败。
+- **理由：** CurrentUser 把可解密范围限制到当前 Windows 用户，DPAPI 自带完整性保护且无需应用持有密钥；只保存 refresh token 减少长期秘密面。先落 ciphertext 再原子发布使失败保留上一个完整轮换点，严格恢复验证避免损坏数据进入自动认证。
+- **影响：** Client 增加 Windows-only 凭据 store 与真实 DPAPI/磁盘测试，不新增包、Shared/服务端协议、数据库或 migration。相同用户上下文中的恶意进程仍可能调用 DPAPI，离线设备也不能被远程擦除；自动 refresh、损坏提示与账户 runtime 在后续切片实现。
+- **来源：** 工程落地方案第 3.1、9.3、阶段 6；`DEC-006`、`DEC-022`；`docs/ai/tasks/2026-08-03-stage-6-client-credential-store.md`；2026-08-03 Microsoft ProtectedData、DataProtectionScope、File.Replace 官方文档与本机 WindowsDesktop 参考程序集证据。

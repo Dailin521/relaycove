@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-6-client-auth-session`：真实登录、内存 token、refresh single-flight rotation，以及与 refresh 串行且先清本地状态的 logout 已完成并验证，待快进集成。
+- `agent/stage-6-client-credential-store`：实现 Windows DPAPI CurrentUser 的单一 refresh 凭据文件、原子替换、严格恢复校验与幂等清除；不接自动登录或账户 runtime。
 
 ## 已完成
 
@@ -47,7 +47,7 @@
 
 ## 下一任务
 
-DPAPI 凭据安全存储与恢复；完成后单独实现自动登录和账户 scope 运行时组合。
+DPAPI refresh 凭据安全存储与恢复；完成后单独实现自动登录和账户 scope 运行时组合。
 
 ## 阻塞项
 

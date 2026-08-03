@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 6
-ActiveTask: docs/ai/tasks/2026-08-03-stage-6-client-auth-session.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-6-client-credential-store.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 821d8598c8936376ba31e586bd8cfd4d23beda40
-LatestGreenIntegrationCommit: b8d5955ccacb96c4024b3fbdfcdfbe43ee88af96
-NextAction: 快进集成客户端认证会话，随后实现 DPAPI 凭据安全存储与恢复
+LatestGreenIntegrationCommit: dc31a9c76d7e26cdc02abd907ac1a76f3f985d2d
+NextAction: 实现并验证 DPAPI CurrentUser refresh 凭据安全存储与恢复
 ClaudeCalls: 30（软上限 24，硬上限 30，已封顶）
 ClaudeCostUsd: 6.710481 confirmed；另有二十一次失败/中断调用费用 unavailable
 Blocker: none
