@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 2
-ActiveTask: docs/ai/tasks/2026-08-03-stage-2-auth-storage.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-2-auth-endpoints.md
+TaskStatus: running
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 6b0c85e35cb3ed56f58646b569908a8d61958876
-LatestGreenIntegrationCommit: 0e5eefb0c44cdb024e4e455ff91b3eb542adfa8e
-NextAction: 完成认证存储交接提交，仅快进本地集成头，然后启动登录/refresh/current-user 最小纵向切片
+LatestGreenIntegrationCommit: cd8f33afafe4956658792b0036cd229c29277412
+NextAction: 固定认证端点 ChallengeHead，执行 JWT/refresh rotation/错误 oracle/事务/限流 XHigh challenge
 ClaudeCalls: 15（软上限 24，硬上限 30）
 ClaudeCostUsd: 4.0273085 confirmed；另有十次失败/中断调用费用 unavailable
 Blocker: none

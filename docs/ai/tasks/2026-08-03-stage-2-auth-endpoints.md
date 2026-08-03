@@ -1,0 +1,122 @@
+# 阶段 2：认证端点与 Token 轮换
+
+## 任务定义
+
+- **任务名称：** 阶段 2 — 登录、refresh 轮换、logout 与 current-user 最小闭环
+- **状态：** 进行中（前置证据与 challenge）
+- **基准提交：** `cd8f33afafe4956658792b0036cd229c29277412`
+- **工作分支：** `agent/stage-2-auth-endpoints`
+- **相关方案章节：** `RelayCove_工程落地方案.md` 第 7.1、8.2、10.2、11.1、18.4、阶段 2；`DEC-004`、`DEC-005`
+
+### 目标
+
+提供可由真实 HTTP 客户端验证的认证闭环：有效账号可登录并获得短期 access token 与一次性 refresh token，access token 可调用 `/api/auth/me`，refresh 只能成功轮换一次，logout 可幂等撤销 refresh token；未知用户、错误密码、禁用用户和无效机密不产生账号或 Token oracle。
+
+### 已知事实
+
+- `已验证`：基准 `cd8f33a` 的 Fast 通过，Debug 0 警告、0 错误；Server 30、Shared 9、Client/Updater 各 1，共 41 项测试通过，工作树干净。
+- `已验证`：工程方案冻结 `POST /api/auth/login|refresh|logout`、`GET /api/auth/me`，登录成功返回 `LoginResponse`，未知用户、错误密码和禁用用户统一为 `401 AuthenticationFailed`。
+- `已验证`：基准已有唯一 `NormalizedUserName`、IdentityV3 密码验证、固定 UTC/GUID、hash-only RefreshTokens 与真实 SQLite migration；应用启动不自动迁移。
+- `已验证`：[ASP.NET Core 10 JWT bearer 官方文档](https://learn.microsoft.com/en-us/aspnet/core/security/authentication/configure-jwt-bearer-authentication?view=aspnetcore-10.0)要求 API 完整验证签名、issuer、audience 与 expiration；[CA5404](https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca5404)要求保留 issuer/audience/lifetime/expiration 验证。
+- `已验证`：[RFC 8725](https://www.rfc-editor.org/rfc/rfc8725.html)要求固定允许算法、足够密钥熵、issuer/subject/audience 验证和不同 JWT 用途的显式类型；[RFC 9700](https://datatracker.ietf.org/doc/rfc9700/)要求公共客户端 refresh token 使用 sender constraint 或 rotation。
+- `已验证`：[Microsoft.AspNetCore.Authentication.JwtBearer 10.0.10](https://www.nuget.org/packages/microsoft.aspnetcore.authentication.jwtbearer)面向 `net10.0`；ASP.NET Core 自带 rate limiter 支持按 endpoint/IP 分区、无队列拒绝与 `Retry-After`。
+- `已验证`：Microsoft 官方不建议生产系统自行从用户名/密码签发 access token，而工程方案明确要求封闭自托管 WPF 客户端采用该流程；本任务必须把偏离标准身份提供方的风险与部署密钥边界写入决策，而不能把它描述为通用 OAuth/OIDC 实现。
+
+### 假设
+
+- `假设`：单服务 v1 使用 HS256 access JWT；Base64 signing key 至少 32 随机字节，只从 User Secrets/环境或部署配置注入，缺失/畸形时启动失败，仓库不提供默认密钥。固定 `typ=at+jwt`、issuer、audience、`sub/jti/iat/exp`，validation 只允许 HS256，clock skew 为 30 秒。
+- `假设`：access 生命周期 15 分钟，refresh 生命周期 30 天；由受限 `TimeProvider` 生成毫秒 UTC 时间。access token 不携带可变管理员权限，JWT 验证后从数据库确认用户仍存在且未禁用。
+- `假设`：新增 `RefreshTokenRequest(RefreshToken)`、`LogoutRequest(RefreshToken)` 与 `CurrentUserResponse(UserId, UserName, DisplayName, IsAdmin)`；refresh 复用脱敏 `LoginResponse`，logout 对缺失、畸形、未知、过期或已撤销 token 统一返回 `204`，refresh 对这些情况统一返回 `401 AuthenticationFailed`。
+- `假设`：refresh 在单 SQLite 事务内以 `RevokedAt IS NULL AND ExpiresAt > now` 条件更新旧 token 并插入新 token；只有一个并发请求可成功。v1 不新增 token-family 列，已撤销 token 重放不做全账号撤销，记录无机密诊断并统一失败。
+- `假设`：登录成功原子更新 `LastLoginAt`、`LastOnlineAt`、`UpdatedAt`，refresh 更新 `LastOnlineAt`、`UpdatedAt`；rehash-needed 在同一成功事务更新密码哈希。原始 token 与 hash 使用不同强类型/结果对象，禁止同为 `string` 的调用点互换。
+- `假设`：login 使用按 remote IP 的内存 fixed-window 10 次/分钟、queue 0；refresh 为 60 次/分钟，返回 `429 RateLimitExceeded` 与 `Retry-After`。真实反向代理可信转发头与分布式限流属于部署切片，当前不信任客户端自报 IP header。
+
+### 范围
+
+- 必须实现：
+  - Shared 的 refresh/logout/me 契约、脱敏 `ToString()` 与 `RateLimitExceeded` 稳定错误码。
+  - 强类型 JWT/refresh token 签发服务与验证配置，启动时校验非机密参数和 signing key，不向日志、错误或 `ToString()` 暴露完整 Token。
+  - `/api/auth/login`、`/api/auth/refresh`、`/api/auth/logout`、`/api/auth/me`；统一 `ApiErrorResponse`、JWT challenge/forbidden 与 validation 错误形状。
+  - 登录 dummy verify、禁用检查、rehash、用户活动时间更新；refresh 条件撤销 + 轮换事务；logout 幂等撤销；me 读取当前数据库状态。
+  - 仅对认证敏感端点应用可配置的内存限流；拒绝响应不得回显用户名、密码或 Token。
+  - 使用真实临时 SQLite migration 和 `WebApplicationFactory` 验证成功路径、统一失败、JWT tamper/issuer/audience/expiry、禁用后 access 拒绝、refresh 并发单赢、logout 幂等、错误 envelope、限流与无机密日志边界。
+  - 新增 `DEC-006`，冻结闭源自托管认证偏差、JWT validation、生命周期、rotation、logout/me 和限流边界。
+- 允许修改：
+  - `src/RelayCove.Shared/**`
+  - `src/RelayCove.Server/**`
+  - `tests/RelayCove.Shared.Tests/**`
+  - `tests/RelayCove.Server.Tests/**`
+  - `RelayCove_工程落地方案.md`
+  - `docs/ai/DECISIONS.md`
+  - `docs/ai/STATUS.md`
+  - `docs/ai/V1_EXECUTION.md`
+  - `CLAUDE.md`
+  - 本任务文件
+- 明确不做：
+  - 不实现默认管理员、管理员创建/禁用用户、注册、改密、profile、客户端 token 存储或 UI。
+  - 不实现完整 OAuth/OIDC authorization server、cookie、外部身份提供方、DPoP/mTLS、RSA/JWKS、多签名 key rotation 或 refresh token family schema。
+  - 不在应用启动时自动迁移，不提交开发/生产 signing key、数据库或真实账号机密。
+  - 不实现反向代理可信网段配置、分布式限流、账号锁定、验证码或部署层防暴力策略。
+
+### 验收标准
+
+- [ ] 合法登录返回脱敏 `LoginResponse`，数据库只出现 refresh hash；密码、原始 refresh 和 access token 不进入日志/错误/持久化明文。
+- [ ] 未知/非法用户名、错误密码和禁用用户使用相同 `401 AuthenticationFailed` 形状，缺失或无效 bearer 使用 `401 AuthenticationRequired`，无账号状态 oracle。
+- [ ] access JWT 只接受固定算法、类型、签名、issuer、audience 与 lifetime；有效 token 可调用 me，篡改/错误 claim/过期 token 和登录后禁用账号被拒绝。
+- [ ] refresh 原子轮换且并发只能一个成功；旧/未知/畸形/过期 token 统一失败，新 token 可继续轮换，数据库只存 hash。
+- [ ] logout 对任意 token 输入统一 `204` 且有效 token 被撤销；用户活动时间、password rehash 与成功操作在同一事务推进。
+- [ ] login/refresh 限流、`Retry-After` 与 `RateLimitExceeded` envelope 有自动化证据，其他端点不被同一策略误限。
+- [ ] Fast、Full、包漏洞审计、文件白名单、`git diff --check`、Claude challenge 与候选独立复核均通过或按规则如实记录。
+
+### 验证命令
+
+```powershell
+pwsh ./scripts/verify.ps1 -Mode Fast
+dotnet test tests/RelayCove.Server.Tests/RelayCove.Server.Tests.csproj --configuration Release
+pwsh ./scripts/verify.ps1 -Mode Full
+dotnet list RelayCove.sln package --vulnerable --include-transitive
+git diff --check 'cd8f33afafe4956658792b0036cd229c29277412..HEAD'
+```
+
+### 停止并询问
+
+- challenge 或实现证据要求改变工程方案的用户名/密码登录产品边界、单服务/单 SQLite 架构，或必须引入外部身份服务、refresh family schema 等范围外公共兼容变更。
+- signing key、生产账号或数据库等真实机密进入工作树；测试无法在不提交默认密钥的情况下启动；轮换无法证明并发单赢。
+- 同时遵守 `AGENTS.md` 与 `docs/ai/WORKFLOW.md` 的通用停止条件。
+
+## 执行提示词
+
+```text
+只实现 login/refresh/logout/me 的真实 HTTP 纵向闭环，不实现管理员、客户端或消息功能。
+先固定干净 ChallengeHead，用 Claude XHigh challenge 反证 JWT、rotation、错误 oracle、事务和限流假设；独立判断后再写 DEC-006 和代码。
+所有机密只在进程内短暂存在，测试使用临时随机 key 与 SQLite；应用启动不得自动迁移。
+Fast 后形成代码检查点，Full 后固定 ReviewHead 做候选复核；不得 push、合并 main 或部署。
+```
+
+## 任务结果
+
+### 修改摘要
+
+- 待实现。
+
+### 验证证据
+
+| 状态 | 命令或场景 | 结果 |
+| --- | --- | --- |
+| `已验证` | 基准 Fast | Debug 0 警告、0 错误；41 项测试通过 |
+| `未验证` | Claude challenge | 待固定 ChallengeHead 后执行 |
+
+### 文件范围
+
+- 新增：本任务文件。
+- 修改：`docs/ai/STATUS.md`、`docs/ai/V1_EXECUTION.md`。
+- 删除：无。
+
+### 决策与限制
+
+- 决策：待 challenge 后记录于 `DEC-006`。
+- 已知限制：见“明确不做”；任务开始时尚无实现证据。
+
+### 下一步
+
+- challenge 后冻结 DEC-006 并实现认证 HTTP 闭环。

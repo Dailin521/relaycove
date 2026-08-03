@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 无；正在完成阶段 2 交接并准备登录/refresh/current-user 纵向切片。
+- 阶段 2 — 登录、refresh 轮换、logout 与 current-user（`agent/stage-2-auth-endpoints`，基准 `cd8f33afafe4956658792b0036cd229c29277412`）。
 
 ## 已完成
 
@@ -32,7 +32,7 @@
 
 ## 下一任务
 
-启动登录、refresh token 签发/轮换与 current-user 最小纵向切片，优先封装 token 原始值/哈希的类型边界，并确保认证相关时间更新原子推进 `UpdatedAt`。
+完成 JWT/refresh rotation/错误 oracle/事务/限流前置 challenge，独立判断后冻结 `DEC-006` 并实现真实 HTTP 认证闭环。
 
 ## 阻塞项
 
