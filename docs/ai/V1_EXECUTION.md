@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M0
 CurrentStage: 阶段 0
-ActiveTask: docs/ai/tasks/2026-08-03-stage-0-v1-execution.md
-TaskStatus: validating
+ActiveTask: none（下一个任务尚未创建）
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: none（尚未创建业务代码）
 LatestGreenIntegrationCommit: a458f7c40589b50d26518f7c43465a2088785203
-NextAction: 验证并完成外层执行账本任务，然后创建可构建解决方案和真实 Fast/Full 验证脚本任务
+NextAction: 创建可构建解决方案和真实 Fast/Full 验证脚本任务
 ClaudeCalls: 2（软上限 24，硬上限 30）
 ClaudeCostUsd: unavailable（两次失败调用均未返回 cost_usd，不能推定为 0）
 Blocker: none
