@@ -6,7 +6,7 @@
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认，阶段 7 Windows 原生通知传输、稳定身份和 WPF 注册生命周期已完成
-- **最近验证通过的状态：** Windows 通知平台最终代码检查点 `bb4ae92dbdc1332ecc7283619b78567b44a62f04`，待快进的绿色集成头仍为 `7cf908eb127ddf8551853d3ce9897c90b554e78c`
+- **最近验证通过的状态：** Windows 通知平台最终代码检查点 `bb4ae92dbdc1332ecc7283619b78567b44a62f04`，绿色集成头 `ff9e50f6ec3fb250c32f99a7234c40be4b90c92f`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — Fast/Full、format、555 项测试、通知定向集 830/830、最终 host/platform 修复集 320/320、安装态 production builder payload/Register/Show/GetAll/Remove smoke、WPF 非阻塞启停、真实磁盘 AccountScope/SQLite/清理确认、会话 read-through/未读/候选/游标事务、HTTP Sync、客户端认证与 DPAPI、单账户 runtime、客户端与服务端 SignalR、既有消息/会话/认证回归、model drift、八项目漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-7-windows-notification-platform`：代码与门禁已绿色，正在提交任务记录并快进集成；单实例导航、托盘、声音和闪烁仍按后续独立切片推进。
+- `agent/stage-7-single-instance-activation`：实现 AppInstance 完整激活转交、唯一窗口/进程、成功目标去重，以及旧账户/撤权/未知/fatal 的 fail-closed 路由；不提前实现阶段 8 聊天 UI。
 
 ## 已完成
 
@@ -54,7 +54,7 @@
 
 ## 下一任务
 
-快进集成当前 Windows 通知平台切片，再接单实例激活转交和账户/权限 fail-closed 路由。
+完成单实例激活转交和账户/权限 fail-closed 路由，再进入声音、任务栏与托盘生命周期切片。
 
 ## 阻塞项
 

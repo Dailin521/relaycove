@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 7
-ActiveTask: docs/ai/tasks/2026-08-03-stage-7-windows-notification-platform.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-04-stage-7-single-instance-activation.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: bb4ae92dbdc1332ecc7283619b78567b44a62f04
-LatestGreenIntegrationCommit: 7cf908eb127ddf8551853d3ce9897c90b554e78c
-NextAction: 快进集成 Windows 通知平台，再启动单实例激活转交与 fail-closed 路由切片
+LatestGreenIntegrationCommit: ff9e50f6ec3fb250c32f99a7234c40be4b90c92f
+NextAction: 实现 AppInstance 完整激活转交、成功目标去重和账户/撤权 fail-closed 路由
 ClaudeCalls: 42（全部终态；仅关键用途调用）
 ClaudeCostUsd: 48.7578675 confirmed；另有二十二次失败/中断调用费用 unavailable
 Blocker: none
