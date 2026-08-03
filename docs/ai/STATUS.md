@@ -5,7 +5,7 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片已合入；阶段 5 SignalR 服务端 NewMessage 已绿色完成并等待快进集成
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 SignalR NewMessage 已合入；ConversationAccessRevoked 事件切片已开始
 - **最近验证通过的状态：** SignalR NewMessage 代码 `5556899ca699bab097acae0003983943b4ca92d9`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — Full、format、202 项测试、SignalR 认证/分组/用户路由/NewMessage/撤权/并发幂等/故障隔离/日志、既有消息/会话/认证回归、model drift、漏洞审计与空白检查通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-5-signalr-new-message`：认证 Hub、当前权限分组与提交后 NewMessage 尽力实时投递已绿色完成，等待仅快进集成。
+- `agent/stage-5-signalr-access-revoked`：实现真实成员删除提交后的 ConversationAccessRevoked 尽力事件。
 
 ## 已完成
 
@@ -41,7 +41,7 @@
 
 ## 下一任务
 
-仅快进集成 SignalR NewMessage 绿色提交，然后实现 `ConversationAccessRevoked` 提交后事件与撤权实时收敛切片。
+完成 `ConversationAccessRevoked` 提交后事件与撤权实时收敛切片。
 
 ## 阻塞项
 

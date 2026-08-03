@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 5
-ActiveTask: docs/ai/tasks/2026-08-03-stage-5-signalr-new-message.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-5-signalr-access-revoked.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 5556899ca699bab097acae0003983943b4ca92d9
-LatestGreenIntegrationCommit: 8f7c074b6889ad35f517e13738755097f1492a89
-NextAction: 仅快进集成 SignalR NewMessage 绿色提交，然后实现 ConversationAccessRevoked 提交后事件
+LatestGreenIntegrationCommit: 82f0a2f5950b5094fd39e78aa113367b83bf0f45
+NextAction: 实现真实成员删除提交后的 ConversationAccessRevoked 尽力事件
 ClaudeCalls: 26（软上限 24，硬上限 30）
 ClaudeCostUsd: 5.4229485 confirmed；另有十九次失败/中断调用费用 unavailable
 Blocker: none
