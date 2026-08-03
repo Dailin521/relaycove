@@ -65,6 +65,35 @@ public sealed class ConversationQueryService(
                 ConversationOperationStatus.AccessRevoked);
         }
 
+        var visibleType = await (
+                from actor in dbContext.Users.AsNoTracking()
+                where actor.Id == actorUserId && !actor.IsDisabled
+                from conversation in dbContext.Conversations.AsNoTracking()
+                where conversation.Id == conversationId &&
+                    !conversation.IsDeleted &&
+                    (conversation.Type == ConversationType.PublicChannel ||
+                     conversation.Type == ConversationType.PrivateChannel &&
+                     (actor.IsAdmin || conversation.Members.Any(member => member.UserId == actorUserId)) ||
+                     conversation.Type == ConversationType.Direct &&
+                     conversation.Members.Any(member => member.UserId == actorUserId))
+                select (ConversationType?)conversation.Type)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (visibleType is null)
+        {
+            logger.LogInformation(
+                "Conversation member list read by {ActorUserId} for {ConversationId} was denied.",
+                actorUserId,
+                conversationId);
+            return new ConversationOperationResult<ConversationMemberListResponse>(
+                ConversationOperationStatus.AccessRevoked);
+        }
+
+        if (visibleType == ConversationType.PublicChannel)
+        {
+            return new ConversationOperationResult<ConversationMemberListResponse>(
+                ConversationOperationStatus.ConversationTypeConflict);
+        }
+
         var rows = await (
                 from actor in dbContext.Users.AsNoTracking()
                 where actor.Id == actorUserId && !actor.IsDisabled
@@ -99,12 +128,6 @@ public sealed class ConversationQueryService(
                 conversationId);
             return new ConversationOperationResult<ConversationMemberListResponse>(
                 ConversationOperationStatus.AccessRevoked);
-        }
-
-        if (rows[0].Type == ConversationType.PublicChannel)
-        {
-            return new ConversationOperationResult<ConversationMemberListResponse>(
-                ConversationOperationStatus.ConversationTypeConflict);
         }
 
         var members = rows

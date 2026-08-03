@@ -6,6 +6,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using RelayCove.Server.Data;
+using RelayCove.Server.Services;
 using RelayCove.Server.Tests.Infrastructure;
 using RelayCove.Shared.Auth;
 using RelayCove.Shared.Conversations;
@@ -93,6 +94,32 @@ public sealed class MessageReadEndpointTests(
         Assert.Equal(second.Id, (await MarkReadAsync(readerClient, conversation.Id, second.Id)).LastReadMessageId);
         Assert.Equal(third.Id, (await MarkReadAsync(readerClient, conversation.Id, third.Id)).LastReadMessageId);
         Assert.Equal(0, (await GetConversationAsync(readerClient, conversation.Id)).UnreadCount);
+
+        await using (var isolationScope = factory.Services.CreateAsyncScope())
+        {
+            var queryService = isolationScope.ServiceProvider.GetRequiredService<ConversationQueryService>();
+            var queryLogOffset = factory.LogMessages.Count;
+            var memberListResult = await queryService.ListMembersAsync(
+                readerId,
+                conversation.Id,
+                CancellationToken.None);
+            Assert.Equal(ConversationOperationStatus.ConversationTypeConflict, memberListResult.Status);
+            Assert.DoesNotContain(
+                GetSelectCommandsSince(queryLogOffset),
+                command => command.Contains("JOIN \"ConversationMembers\"", StringComparison.Ordinal));
+
+            var commandService = isolationScope.ServiceProvider.GetRequiredService<ConversationCommandService>();
+            var commandLogOffset = factory.LogMessages.Count;
+            var memberWriteResult = await commandService.UpsertMemberAsync(
+                readerId,
+                conversation.Id,
+                new UpsertConversationMemberRequest(readerId, ConversationMemberRole.Member),
+                CancellationToken.None);
+            Assert.Equal(ConversationOperationStatus.ConversationTypeConflict, memberWriteResult.Status);
+            Assert.DoesNotContain(
+                GetSelectCommandsSince(commandLogOffset),
+                command => command.Contains("JOIN \"ConversationMembers\"", StringComparison.Ordinal));
+        }
 
         using (var membersResponse = await readerClient.GetAsync(
                    $"/api/conversations/{conversation.Id:D}/members"))
@@ -385,6 +412,14 @@ public sealed class MessageReadEndpointTests(
         Assert.Equal(expectedCode, error!.Code);
         Assert.False(string.IsNullOrWhiteSpace(error.TraceId));
     }
+
+    private string[] GetSelectCommandsSince(int logOffset) =>
+        factory.LogMessages
+            .Skip(logOffset)
+            .Where(message =>
+                message.Contains("Executed DbCommand", StringComparison.Ordinal) &&
+                message.Contains("SELECT", StringComparison.Ordinal))
+            .ToArray();
 
     private static string CreateUserName(string prefix) => $"{prefix}-{Guid.NewGuid():N}";
 }

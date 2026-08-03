@@ -52,11 +52,16 @@ public sealed class ConversationCommandService(
             return new ConversationOperationResult<ConversationMemberDto>(ConversationOperationStatus.AccessDenied);
         }
 
-        var conversation = await dbContext.Conversations
-            .Include(candidate => candidate.Members)
-            .SingleOrDefaultAsync(
-                candidate => candidate.Id == conversationId && !candidate.IsDeleted,
-                cancellationToken);
+        var conversation = await dbContext.Conversations.SingleOrDefaultAsync(
+            candidate => candidate.Id == conversationId && !candidate.IsDeleted,
+            cancellationToken);
+        if (conversation is not null && conversation.Type != ConversationType.PublicChannel)
+        {
+            await dbContext.Entry(conversation)
+                .Collection(candidate => candidate.Members)
+                .LoadAsync(cancellationToken);
+        }
+
         var authorization = GetMemberWriteAuthorization(conversation, actor);
         if (authorization != ConversationOperationStatus.Success)
         {
@@ -141,11 +146,16 @@ public sealed class ConversationCommandService(
             return ConversationOperationStatus.AccessDenied;
         }
 
-        var conversation = await dbContext.Conversations
-            .Include(candidate => candidate.Members)
-            .SingleOrDefaultAsync(
-                candidate => candidate.Id == conversationId && !candidate.IsDeleted,
-                cancellationToken);
+        var conversation = await dbContext.Conversations.SingleOrDefaultAsync(
+            candidate => candidate.Id == conversationId && !candidate.IsDeleted,
+            cancellationToken);
+        if (conversation is not null && conversation.Type != ConversationType.PublicChannel)
+        {
+            await dbContext.Entry(conversation)
+                .Collection(candidate => candidate.Members)
+                .LoadAsync(cancellationToken);
+        }
+
         var authorization = GetMemberWriteAuthorization(conversation, actor);
         if (authorization != ConversationOperationStatus.Success)
         {
