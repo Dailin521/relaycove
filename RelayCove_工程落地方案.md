@@ -1417,6 +1417,7 @@ public sealed record SyncResponse(
 - 添加成员、读取该会话当前 `MAX(Messages.Id)`（无消息为 `0`）并写入 `ConversationMembers.LastReadMessageId` 必须处于同一服务端写事务。该值只是不产生加入前未读与通知的基线。重复添加当前有效成员是幂等 no-op，不得重置边界；移除后重新加入才写新加入时间与新基线。
 - 私有频道 Sync 排除 `MessageId <= LastReadMessageId`，所以加入前历史只经 History/Search 返回；客户端也防御性地把任何来源带回的旧消息标记为已读且通知已处理。加入后的消息按普通规则处理。
 - `ConversationAccessRevoked(Guid conversationId)` 是尽力实时事件，不是授权真源。删除成员后，History、Search、附件、发送和后续 Sync 从撤权提交起按当前成员关系拒绝访问；相关 HTTP 请求返回带稳定错误码 `ConversationAccessRevoked` 的 `403`。每轮 Sync 前的权威会话全集对账覆盖事件丢失和离线场景；普通、无法归因撤权的 `403` 不触发破坏性清理。
+- 私有成员 DELETE 的权威事务必须返回内部“是否真实删除”事实。只有实际删除并提交的请求向目标 user ID 的全部现有连接尝试一次 `ConversationAccessRevoked`；重复/并发删除仍可幂等返回 204，但不得重复推送。目标即使在提交后被禁用，也不因活跃用户过滤而丢掉对既有连接的清理信号；投递失败不回滚撤权、不改变 204、不在请求内重试。
 - SignalR Group 只做路由优化。每次实时投递用当前权威成员快照；服务端观察到撤权提交后，不得把该用户放入新的接收集合。在撤权前已经排队或在途的帧仍可能迟到，客户端 deny-set 必须拒绝它们且不能复活缓存。
 - 事件、权威列表缺失和稳定撤权 `403` 全部进入幂等 `PurgeConversationAccess`。它先更新进程内 deny-set，再以独立最小事务持久化 revoked tombstone；消息入口、UI、通知激活立即优先拒绝该会话。
 - tombstone 首次持久化失败时，整个 `AccountScopeId` 立即进入 fatal fail-closed，本进程不再展示该作用域缓存。每次冷启动必须先成功获取并提交 `Complete=true` 的权威会话对账，才可加载或展示私有缓存；离线或对账失败只保持隐藏，不能据此删数据。

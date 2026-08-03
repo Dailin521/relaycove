@@ -14,8 +14,8 @@ IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 5556899ca699bab097acae0003983943b4ca92d9
 LatestGreenIntegrationCommit: 82f0a2f5950b5094fd39e78aa113367b83bf0f45
 NextAction: 实现真实成员删除提交后的 ConversationAccessRevoked 尽力事件
-ClaudeCalls: 26（软上限 24，硬上限 30）
-ClaudeCostUsd: 5.4229485 confirmed；另有十九次失败/中断调用费用 unavailable
+ClaudeCalls: 27（软上限 24，硬上限 30）
+ClaudeCostUsd: 5.4229485 confirmed；另有二十次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -84,9 +84,10 @@ RequiredUserGate: none
 | 24 | 2026-08-03 | around API | 前置 challenge | Opus / XHigh | `ChallengeHead=acbd34b`；60 秒窗口内因本机认证源优先级禁用 claude.ai connector 而超时，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库协议、授权与不可变模型证据收敛 `DEC-012` | `unavailable` |
 | 25 | 2026-08-03 | 固定上界 Sync API | 前置 challenge | Opus / XHigh | `ChallengeHead=0c7c767`；60 秒窗口内因本机认证源优先级禁用 claude.ai connector 而超时，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合冻结协议、本地 Microsoft.Data.Sqlite API 与当前模型证据收敛 `DEC-013` | `unavailable` |
 | 26 | 2026-08-03 | SignalR NewMessage | 前置 challenge | Opus / XHigh | `ChallengeHead=cb5a4d6`；60 秒窗口内因本机认证源优先级禁用 claude.ai connector 而超时；调用前后 HEAD 与干净状态不变，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库事务/权限与 ASP.NET Core 10 官方证据收敛 `DEC-014` | `unavailable` |
+| 27 | 2026-08-03 | SignalR ConversationAccessRevoked | 前置 challenge | Opus / XHigh | `ChallengeHead=ca6fec7`；60 秒窗口内因本机认证源优先级禁用 claude.ai connector 而超时；调用前后 HEAD 与干净状态不变，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库事务/撤权与用户路由证据收敛 `DEC-015` | `unavailable` |
 
-- 调用计数：`26 / 24 soft / 30 hard`。
-- 已确认费用合计：`$5.4229485`；其余十九次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`27 / 24 soft / 30 hard`。
+- 已确认费用合计：`$5.4229485`；其余二十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - Claude 恢复可用后，每次调用必须记录返回的 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；达到调用或费用硬上限时降级为 Codex 独立复核，不停止开发。
 
 ## 阻塞与用户 Gate

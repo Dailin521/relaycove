@@ -11,7 +11,7 @@
 - **自动化验证：** `已验证` — Full、format、202 项测试、SignalR 认证/分组/用户路由/NewMessage/撤权/并发幂等/故障隔离/日志、既有消息/会话/认证回归、model drift、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
-- **最近 Claude 调用：** `未验证` — SignalR NewMessage XHigh challenge #26 对 `ChallengeHead=cb5a4d6` 因本机认证源覆盖 claude.ai 登录在 60 秒内超时；未取得审查结论且按用户要求未重试，`DEC-014` 由 Codex 结合仓库事务/权限事实与 ASP.NET Core 10 官方证据独立收敛
+- **最近 Claude 调用：** `未验证` — SignalR ConversationAccessRevoked XHigh challenge #27 对 `ChallengeHead=ca6fec7` 因本机认证源覆盖 claude.ai 登录在 60 秒内超时；未取得审查结论且按用户要求未重试，`DEC-015` 由 Codex 结合仓库事务/撤权/用户路由证据独立收敛
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中

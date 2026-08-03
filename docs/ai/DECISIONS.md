@@ -179,3 +179,14 @@
 - **理由：** 以数据库收件人快照而非可能陈旧的组状态裁决每次敏感投递，能保证撤权提交后开始的发布不再选择该用户，同时接受撤权前已排队帧属于既有客户端 deny-set 威胁模型。提交后状态分支把一次实时事件绑定到唯一持久行；失败隔离保持 HTTP 与数据库为可靠真源。Hub 限域查询 token 与 Hosting 日志过滤封住最直接的凭据泄露路径。
 - **影响：** Server 增加 ChatHub、`IUserIdProvider`、当前收件人发布器和 SignalR 注册；Server.Tests 增加同版本 Microsoft SignalR .NET client 依赖以运行真实连接测试，不新增产品运行时包或 migration。`ConversationAccessRevoked` 事件、主动移组/断连、客户端重连/同步/deny-set、跨实例 backplane/outbox 和真实 HTTPS/WebSocket 部署验收属于后续切片。
 - **来源：** 工程落地方案第 10.3、12.1/12.2、12.5、阶段 5；`DEC-003`、`DEC-006`、`DEC-009`、`DEC-010`、`DEC-013`；`docs/ai/tasks/2026-08-03-stage-5-signalr-new-message.md`；2026-08-03 ASP.NET Core 10 SignalR authentication/authorization、security、users/groups 与 strongly typed Hub 官方文档。
+
+### DEC-015：成员删除提交与实时撤权事件
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** `DEC-003` 已固定 `ConversationAccessRevoked` 只是客户端尽快 fail-closed 的信号，`DEC-014` 已确保新消息不用陈旧组做授权；但当前私有成员 DELETE 无论成员是否存在都返回同一 204，endpoint 无法判断是否应发事件。若每次 204 都推送，会让重复/并发重试产生虚假撤权；若事务内推送，失败或回滚会让事件先于权威状态。
+- **决策：** 私有成员删除命令保留现有非 deferred Serializable 权威写事务和外部 204/error 契约，但内部结果增加 `RemovedUserId`：只有事务内找到成员、删除保存并成功提交时为目标 GUID；幂等无成员的 204 以及全部失败状态为 null。Endpoint 仅在 `NoContent + RemovedUserId` 后调用发布，因此顺序或并发同目标删除只有真实提交的获胜者发布一次。
+- **决策：** 强类型 Hub 客户端增加 `ConversationAccessRevoked(Guid conversationId)`。Publisher 直接使用标准 `D` 目标 user ID 向其所有现有连接发送，不读取当前活跃状态、不依赖或修改 conversation group；目标在撤权后禁用也仍可收到清理信号。发布使用独立于 request-abort 的取消边界，transport 任意异常被吸收，只记录 target/conversation ID 与失败元数据，不回滚删除、不改变 204、不重试。
+- **理由：** 以事务返回的真实删除事实作为唯一发布资格，能把一次事件绑定到一次已提交权限变化，同时保持 DELETE 幂等。按用户路由覆盖多设备且无需不可靠的 server connection registry；组仍只优化未来路由。事件丢失、离线和撤权前在途帧继续由权威全集/403/Sync 与客户端 deny-set/tombstone 收敛。
+- **影响：** 修改 ConversationCommandService 的内部返回形状、Conversation endpoint 和强类型 Hub 契约，增加撤权 publisher/transport 与真实连接测试；不改变 HTTP/数据库/Shared 契约，不新增 migration 或依赖。客户端 purge、主动移组/断连、重新加入解封和真实 WebSocket 验收仍为后续切片。
+- **来源：** 工程落地方案第 10.3、12.8、阶段 5；`DEC-003`、`DEC-009`、`DEC-014`；`docs/ai/tasks/2026-08-03-stage-5-signalr-access-revoked.md`；当前 ConversationCommandService、ConversationEndpoints 与 SignalR user routing 实现。

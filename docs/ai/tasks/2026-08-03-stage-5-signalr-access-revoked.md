@@ -17,6 +17,7 @@
 - `已验证`：`DEC-003` 固定撤权事件仅为尽力加速，权威 `Complete=true` 会话全集、稳定 403 与 Sync 负责丢失/离线补偿；客户端必须先 deny-set/tombstone 再清理，但客户端实现不属于本切片。
 - `已验证`：`DEC-014` 已保证 NewMessage 每次按当前数据库收件人快照而非组投递，所以成员删除提交后开始的新消息发布不会选择旧连接；撤权前已排队帧仍属于后续客户端 deny-set 边界。
 - `已验证`：现有 SignalR 用户标识是标准 `sub` GUID，`Clients.User(userId)` 可向同一用户全部连接投递；目标用户即使随后禁用，已存在的连接仍应收到撤权清理信号，因此事件投递不做活跃用户过滤。
+- `已验证`：Claude XHigh challenge #27 在 60 秒内因本机认证源优先级禁用 claude.ai connector 而超时；调用前后 HEAD 均为 `ca6fec7` 且工作区干净，未返回模型、workspace、费用或结论，按用户要求不重试、不阻塞 Codex。
 
 ## 范围
 
