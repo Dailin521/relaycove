@@ -27,7 +27,7 @@
 - `已验证`：Shared 固定 `MessageType` 为 Text=1、Image=2、File=3、System=4；本切片的用户发送只接受 Text。Image/File 等附件存储完成后开放，System 只允许未来受控服务端生成；非 Text 请求返回稳定 `409 MessageTypeUnsupported`。
 - `已验证`：Text `Content` 保留原始有效 UTF-16/换行语义，要求 1–4000 Unicode scalar value且至少一个非空白字符；允许 `TAB/CR/LF`，拒绝其他 Unicode Control。幂等比较使用保存后的精确字符串，不 trim、不规范化。
 - `已验证`：MentionUserIds 作为无序集合比较，最多 20 个、不得含空值或重复；目标必须是当前正常用户且对该会话有内容访问权。ReplyToMessageId 必须大于 0并属于同一会话。附件 ID 列表在本切片必须为空。
-- `已验证`：Messages 的 Sender/User 与 Reply 外键使用 Restrict，Conversation 硬删 Cascade；MessageMentions 随 Message 硬删 Cascade、MentionedUser 使用 Restrict，避免用户硬删改变不可变消息载荷。常规会话仍只软删，消息不提供编辑、撤回或删除端点。
+- `已验证`：Messages 的 Sender/User 外键使用 Restrict，Reply 使用 NO ACTION（阻止单独删除被回复消息，同时允许 Conversation 硬删在语句末级联整组消息），Conversation 硬删 Cascade；MessageMentions 随 Message 硬删 Cascade、MentionedUser 使用 Restrict，避免用户硬删改变不可变消息载荷。常规会话仍只软删，消息不提供编辑、撤回或删除端点。
 - `已验证`：`GET /api/conversations/{id}/messages?beforeMessageId=&limit=` 默认 50、范围 1..100，以 `Id < before` 读取 `limit+1` 条；响应按 ID 升序，`NextBeforeMessageId` 指向本页最旧 ID，`HasMore` 明确是否可继续。
 - `已验证`：发送/历史 MessageDto 的 Attachments 在本切片固定为空集合；新消息提交时更新 Conversation.UpdatedAt。会话列表的 LastMessageId 取当前最大 ID，UnreadCount 只统计他人且超过当前成员水位的消息；Public 无状态行时水位为 0。
 

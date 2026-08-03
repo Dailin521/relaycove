@@ -22,6 +22,7 @@ public sealed class ApiErrorContractTests
         "SyncCursorInvalid",
         "IdempotencyKeyReuse",
         "ConversationAccessRevoked",
+        "MessageTypeUnsupported",
     ];
 
     [Fact]

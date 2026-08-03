@@ -18,6 +18,10 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
 
     public DbSet<ConversationMember> ConversationMembers => Set<ConversationMember>();
 
+    public DbSet<Message> Messages => Set<Message>();
+
+    public DbSet<MessageMention> MessageMentions => Set<MessageMention>();
+
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         ValidateUtcDateTimes();
@@ -38,6 +42,8 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
         ConfigureRefreshToken(modelBuilder.Entity<RefreshToken>());
         ConfigureConversation(modelBuilder.Entity<Conversation>());
         ConfigureConversationMember(modelBuilder.Entity<ConversationMember>());
+        ConfigureMessage(modelBuilder.Entity<Message>());
+        ConfigureMessageMention(modelBuilder.Entity<MessageMention>());
     }
 
     private static void ConfigureUser(EntityTypeBuilder<User> entity)
@@ -181,6 +187,71 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
             .WithMany(user => user.ConversationMemberships)
             .HasForeignKey(member => member.UserId)
             .OnDelete(DeleteBehavior.Cascade);
+    }
+
+    private static void ConfigureMessage(EntityTypeBuilder<Message> entity)
+    {
+        entity.ToTable("Messages", table =>
+        {
+            table.HasCheckConstraint("CK_Messages_Id_Positive", "\"Id\" > 0");
+            table.HasCheckConstraint("CK_Messages_ClientMessageId_Format", GuidTextCheck("ClientMessageId"));
+            table.HasCheckConstraint("CK_Messages_ConversationId_Format", GuidTextCheck("ConversationId"));
+            table.HasCheckConstraint("CK_Messages_SenderId_Format", GuidTextCheck("SenderId"));
+            table.HasCheckConstraint("CK_Messages_Type_Value", "\"Type\" IN (1, 2, 3, 4)");
+            table.HasCheckConstraint(
+                "CK_Messages_Content_ByType",
+                "(\"Type\" IN (1, 4) AND \"Content\" IS NOT NULL AND length(\"Content\") BETWEEN 1 AND 4000 AND length(trim(\"Content\")) > 0) OR " +
+                "(\"Type\" IN (2, 3) AND (\"Content\" IS NULL OR (length(\"Content\") BETWEEN 1 AND 4000 AND length(trim(\"Content\")) > 0)))");
+            table.HasCheckConstraint(
+                "CK_Messages_ReplyToMessageId_Positive",
+                "\"ReplyToMessageId\" IS NULL OR \"ReplyToMessageId\" > 0");
+            table.HasCheckConstraint("CK_Messages_CreatedAt_Format", UtcTextCheck("CreatedAt"));
+        });
+
+        entity.HasKey(message => message.Id);
+        entity.Property(message => message.Id).UseAutoincrement();
+        entity.Property(message => message.ClientMessageId).HasConversion(SqliteValueConverters.GuidToString);
+        entity.Property(message => message.ConversationId).HasConversion(SqliteValueConverters.GuidToString);
+        entity.Property(message => message.SenderId).HasConversion(SqliteValueConverters.GuidToString);
+        entity.Property(message => message.Type).HasConversion<int>();
+        entity.Property(message => message.Content).HasMaxLength(Message.MaximumContentLength);
+        entity.Property(message => message.CreatedAt).HasConversion(SqliteValueConverters.UtcDateTimeToString);
+        entity.HasIndex(message => new { message.ConversationId, message.Id });
+        entity.HasIndex(message => new { message.SenderId, message.ClientMessageId }).IsUnique();
+        entity.HasIndex(message => message.CreatedAt);
+        entity.HasOne(message => message.Conversation)
+            .WithMany(conversation => conversation.Messages)
+            .HasForeignKey(message => message.ConversationId)
+            .OnDelete(DeleteBehavior.Cascade);
+        entity.HasOne(message => message.Sender)
+            .WithMany(user => user.SentMessages)
+            .HasForeignKey(message => message.SenderId)
+            .OnDelete(DeleteBehavior.Restrict);
+        entity.HasOne(message => message.ReplyToMessage)
+            .WithMany(message => message.Replies)
+            .HasForeignKey(message => message.ReplyToMessageId)
+            .OnDelete(DeleteBehavior.NoAction);
+    }
+
+    private static void ConfigureMessageMention(EntityTypeBuilder<MessageMention> entity)
+    {
+        entity.ToTable("MessageMentions", table =>
+        {
+            table.HasCheckConstraint("CK_MessageMentions_MessageId_Positive", "\"MessageId\" > 0");
+            table.HasCheckConstraint("CK_MessageMentions_MentionedUserId_Format", GuidTextCheck("MentionedUserId"));
+        });
+
+        entity.HasKey(mention => new { mention.MessageId, mention.MentionedUserId });
+        entity.Property(mention => mention.MentionedUserId).HasConversion(SqliteValueConverters.GuidToString);
+        entity.HasIndex(mention => mention.MentionedUserId);
+        entity.HasOne(mention => mention.Message)
+            .WithMany(message => message.Mentions)
+            .HasForeignKey(mention => mention.MessageId)
+            .OnDelete(DeleteBehavior.Cascade);
+        entity.HasOne(mention => mention.MentionedUser)
+            .WithMany(user => user.MessageMentions)
+            .HasForeignKey(mention => mention.MentionedUserId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 
     private void ValidateUtcDateTimes()

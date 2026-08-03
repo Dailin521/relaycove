@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using RelayCove.Server.Data;
 
@@ -10,9 +11,11 @@ using RelayCove.Server.Data;
 namespace RelayCove.Server.Data.Migrations
 {
     [DbContext(typeof(RelayCoveDbContext))]
-    partial class RelayCoveDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260803064621_AddMessageStorage")]
+    partial class AddMessageStorage
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.10");

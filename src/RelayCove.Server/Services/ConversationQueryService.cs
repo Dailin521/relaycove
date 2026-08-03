@@ -156,7 +156,16 @@ public sealed class ConversationQueryService(
                 conversation.Members
                     .Where(member => member.UserId == actorUserId)
                     .Select(member => (long?)member.LastReadMessageId)
-                    .FirstOrDefault() ?? 0L));
+                    .FirstOrDefault() ?? 0L,
+                conversation.Messages
+                    .Select(message => (long?)message.Id)
+                    .Max() ?? 0L,
+                conversation.Messages.Count(message =>
+                    message.SenderId != actorUserId &&
+                    message.Id > (conversation.Members
+                        .Where(member => member.UserId == actorUserId)
+                        .Select(member => (long?)member.LastReadMessageId)
+                        .FirstOrDefault() ?? 0L))));
 
     private static ConversationDto ToConversationDto(ConversationProjection conversation) =>
         new(
@@ -168,9 +177,9 @@ public sealed class ConversationQueryService(
                 : null,
             new DateTimeOffset(conversation.CreatedAt),
             new DateTimeOffset(conversation.UpdatedAt),
-            LastMessageId: 0,
+            conversation.LastMessageId,
             conversation.LastReadMessageId,
-            UnreadCount: 0);
+            conversation.UnreadCount);
 
     private sealed record ConversationProjection(
         Guid Id,
@@ -179,7 +188,9 @@ public sealed class ConversationQueryService(
         Guid? AvatarAttachmentId,
         DateTime CreatedAt,
         DateTime UpdatedAt,
-        long LastReadMessageId);
+        long LastReadMessageId,
+        long LastMessageId,
+        int UnreadCount);
 
     private sealed record ConversationMemberProjection(
         Guid ConversationId,

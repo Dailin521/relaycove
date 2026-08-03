@@ -63,6 +63,10 @@ public sealed class User
 
     public ICollection<ConversationMember> ConversationMemberships { get; } = new List<ConversationMember>();
 
+    public ICollection<Message> SentMessages { get; } = new List<Message>();
+
+    public ICollection<MessageMention> MessageMentions { get; } = new List<MessageMention>();
+
     public void SetUserName(string userName, UserNameNormalizer userNameNormalizer)
     {
         ArgumentNullException.ThrowIfNull(userNameNormalizer);

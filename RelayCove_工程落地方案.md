@@ -1168,7 +1168,7 @@ UNIQUE(SenderId, ClientMessageId)
 
 第一版消息一经写入不可编辑、撤回或删除。所有 GUID 在 SQLite 中使用 `Guid.ToString("D").ToLowerInvariant()` 的规范文本；未来若支持消息变更，必须新增独立变更流，不能复用只向前扫描的新消息游标。
 
-`Id` 必须实际生成 `INTEGER PRIMARY KEY AUTOINCREMENT`，保证已提交消息 ID 在数据库生命周期内不复用；空洞合法。Conversation 硬删级联 Messages，Sender 与 Reply 外键 Restrict。Text 的数据库 CHECK 固定 Type/Content 对应、1–4000 长度和非空；完整 Unicode scalar、空白和控制字符语义由唯一写入实体/服务防守。
+`Id` 必须实际生成 `INTEGER PRIMARY KEY AUTOINCREMENT`，保证已提交消息 ID 在数据库生命周期内不复用；空洞合法。Conversation 硬删级联 Messages，Sender 外键 Restrict，Reply 外键使用 NO ACTION：单独删除被回复消息仍失败，而同一条 Conversation 硬删语句可在语句末完成整组级联。Text 的数据库 CHECK 固定 Type/Content 对应、1–4000 长度和非空；完整 Unicode scalar、空白和控制字符语义由唯一写入实体/服务防守。
 
 ### MessageMentions
 

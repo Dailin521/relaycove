@@ -11,7 +11,7 @@ public sealed class ConversationCommandService(
     ServerClock clock,
     ILogger<ConversationCommandService> logger)
 {
-    // Stage 4 must replace this with transaction-local MAX(Messages.Id) when Messages exist.
+    // Newly created conversations do not have messages yet.
     private const long EmptyConversationJoinWatermark = 0;
 
     public async Task<ConversationOperationResult<ConversationDto>> CreateAsync(
@@ -84,12 +84,16 @@ public sealed class ConversationCommandService(
         if (existingMember is null)
         {
             var now = clock.UtcNow;
+            var joinWatermark = await dbContext.Messages
+                .Where(message => message.ConversationId == conversation.Id)
+                .Select(message => (long?)message.Id)
+                .MaxAsync(cancellationToken) ?? EmptyConversationJoinWatermark;
             existingMember = new ConversationMember(
                 conversation.Id,
                 target.Id,
                 request.Role,
                 now,
-                lastReadMessageId: EmptyConversationJoinWatermark);
+                lastReadMessageId: joinWatermark);
             dbContext.ConversationMembers.Add(existingMember);
             conversation.Touch(now);
             status = ConversationOperationStatus.Created;

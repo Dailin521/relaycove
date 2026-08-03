@@ -67,6 +67,8 @@ public sealed class Conversation
 
     public ICollection<ConversationMember> Members { get; } = new List<ConversationMember>();
 
+    public ICollection<Message> Messages { get; } = new List<Message>();
+
     public static Conversation CreateChannel(
         Guid id,
         ConversationType type,
