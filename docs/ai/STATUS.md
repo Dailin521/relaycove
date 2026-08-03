@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-6-client-session-restore`：无 UI 持久认证入口、启动单次 refresh、后续 rotation 持久化、logout 清理和旧会话所有权门已完成并验证，待快进集成。
+- `agent/stage-6-account-runtime`：组合认证 session、AccountScopeIdentity、本地 cache、Realtime 与 Sync，并冻结启动、重连、logout、Dispose 和账户切换顺序。
 
 ## 已完成
 
@@ -49,7 +49,7 @@
 
 ## 下一任务
 
-组合认证会话、AccountScopeIdentity、本地缓存、SignalR 和 Sync 的账户 runtime，并冻结切换账户时的 Dispose 顺序。
+完成账户 runtime 后，实现未读/通知协调、窗口前后台触发与 Windows 通知可靠性入口。
 
 ## 阻塞项
 

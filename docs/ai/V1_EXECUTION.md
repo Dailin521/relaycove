@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 6
-ActiveTask: docs/ai/tasks/2026-08-03-stage-6-client-session-restore.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-6-account-runtime.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 5dece6b577734649ef75f36c68ea25ec82b08703
-LatestGreenIntegrationCommit: b722a6a75e5ef15b1f9e95ef02436499f3180fc0
-NextAction: 快进集成持久会话恢复，随后组合账户 runtime 与切换/Dispose 生命周期
+LatestGreenIntegrationCommit: 711de0b57acba6788cf834e052b1d31b3a695068
+NextAction: 实现并验证单账户 runtime 的启动、重连、logout、Dispose 与账户切换顺序
 ClaudeCalls: 30（软上限 24，硬上限 30，已封顶）
 ClaudeCostUsd: 6.710481 confirmed；另有二十一次失败/中断调用费用 unavailable
 Blocker: none
