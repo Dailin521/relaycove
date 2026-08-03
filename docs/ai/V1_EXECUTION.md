@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 3
-ActiveTask: docs/ai/tasks/2026-08-03-stage-3-conversation-storage.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-3-conversation-api.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 1a3c49289940d625182237fddcd1954fc40983e9
-LatestGreenIntegrationCommit: db92a5b0ac307d6d221a5880d64eee87082b348e
-NextAction: 将会话存储完成提交仅快进合入 agent/v1-integration，并启动阶段 3 会话访问与管理 API 切片
+LatestGreenIntegrationCommit: 9c4f4d4eab931d03071c21fcf6c19de440fcd661
+NextAction: 冻结并实现阶段 3 会话创建、权威列表、私有成员管理与动态访问校验
 ClaudeCalls: 20（软上限 24，硬上限 30）
 ClaudeCostUsd: 5.4229485 confirmed；另有十三次失败/中断调用费用 unavailable
 Blocker: none
