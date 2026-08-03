@@ -6,14 +6,14 @@
 
 ```text
 ExecutionStatus: running
-CurrentMilestone: M0
-CurrentStage: 阶段 0
-ActiveTask: docs/ai/tasks/2026-08-03-stage-0-buildable-scaffold.md
-TaskStatus: running
+CurrentMilestone: M1
+CurrentStage: 阶段 1
+ActiveTask: none（下一个任务尚未创建）
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: none（尚未创建业务代码）
+LatestGreenCodeCommit: b1da3ea38678ed85a6e59cd9566879d3f7b0ee92
 LatestGreenIntegrationCommit: 1dd6eb08c1f839bf651a433e9dc647347ef68469
-NextAction: 创建并验证 .NET 10 可构建解决方案、四个源项目、四个测试项目和 Fast/Full 脚本
+NextAction: 创建 M1 共享协议最小纵向切片任务
 ClaudeCalls: 2（软上限 24，硬上限 30）
 ClaudeCostUsd: unavailable（两次失败调用均未返回 cost_usd，不能推定为 0）
 Blocker: none
@@ -31,8 +31,8 @@ RequiredUserGate: none
 
 | 里程碑 | 状态 | 当前证据 | 下一出口 |
 | --- | --- | --- | --- |
-| M0 | `running` | 同步契约与 `DEC-003` 已完成；解决方案尚不存在 | 可构建骨架的 Fast/Full 验证通过 |
-| M1 | `pending` | 尚未开始 | 认证、会话、权限、文字消息、历史与 SignalR 形成纵向闭环 |
+| M0 | `completed` | 同步契约、`DEC-003`、解决方案和真实 Fast/Full 验证均通过 | 已进入 M1 |
+| M1 | `pending` | 可构建骨架已就绪，尚未创建首个协议任务 | 认证、会话、权限、文字消息、历史与 SignalR 形成纵向闭环 |
 | M2 | `pending` | 尚未开始 | Internal Alpha 验收证据完整 |
 | M3 | `pending` | 尚未开始 | Beta 验收证据完整 |
 | M4 | `pending` | 尚未开始 | RC 自动化、包与发布材料完整 |
@@ -43,8 +43,8 @@ RequiredUserGate: none
 ## 集成与绿色状态
 
 - `agent/v1-integration` 是本地最新绿色集成头；任务分支只有完成验证和交接提交后，才允许仅快进该分支。
-- 当前绿色集成提交 `1dd6eb08c1f839bf651a433e9dc647347ef68469` 只包含文档契约与执行账本，不是绿色代码提交。
-- `LatestGreenCodeCommit` 保持 `none`，直到真实源代码、构建和对应自动化测试同时存在并通过。
+- 当前任务代码检查点 `b1da3ea38678ed85a6e59cd9566879d3f7b0ee92` 已通过 Fast、Full、4 个测试、负向验证与进程烟测；任务完成后才允许仅快进集成头。
+- `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 未经用户明确授权，不 push、不合并 `main`、不创建 PR/Tag/Release、不部署，也不删除远端分支。
 
 ## Claude 使用账本

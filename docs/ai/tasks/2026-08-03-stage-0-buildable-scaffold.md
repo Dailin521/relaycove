@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 0 — 创建可构建解决方案和真实验证脚本
-- **状态：** 进行中
+- **状态：** 已完成
 - **基准提交：** `1dd6eb08c1f839bf651a433e9dc647347ef68469`
 - **工作分支：** `agent/stage-0-buildable-scaffold`
 - **相关方案章节：** `RelayCove_工程落地方案.md` 第 3、5、6 节与阶段 0；`docs/ai/WORKFLOW.md`
@@ -40,6 +40,7 @@
   - `Directory.Build.props`
   - `.editorconfig`
   - `.gitignore`
+  - `CLAUDE.md`
   - `README.md`
   - `src/RelayCove.Client/**`
   - `src/RelayCove.Server/**`
@@ -110,21 +111,26 @@ Fast 和 Full 必须真实执行构建与测试，任何 native 命令非零都�
 
 ### 修改摘要
 
-- 待实施后填写。
+- 创建 .NET 10 解决方案、四个源项目和四个镜像 xUnit 测试项目，引用方向与 Windows/跨平台 TFM 边界已固定。
+- 新增共享构建属性、编辑器规则和真实 `Fast` / `Full` PowerShell 验证脚本；移除模板占位与未要求的覆盖率依赖。
+- 服务端使用框架内置单行控制台日志，WPF 与 Updater 保持最小可启动入口；四个程序集测试均可发现并通过。
+- README、CLAUDE 指引、STATUS 与 V1 外层账本已同步到可构建事实。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
-| `未验证` | `verify.ps1 -Mode Fast` | 待运行 |
-| `未验证` | `verify.ps1 -Mode Full` | 待运行 |
-| `未验证` | 缺失解决方案负向验证 | 待运行 |
-| `未验证` | 项目数、测试数、输出与文件范围 | 待运行 |
+| `已验证` | `verify.ps1 -Mode Fast` | restore、Debug build 与 4 个测试通过；0 警告、0 错误 |
+| `已验证` | `verify.ps1 -Mode Full` | format verify、Release build、4 个测试与 `git diff --check` 通过；0 警告、0 错误 |
+| `已验证` | 缺失解决方案负向验证 | `-SolutionPath ./missing.sln` 退出码为 `1`，明确报告文件不存在 |
+| `已验证` | 项目数、测试数、输出与文件范围 | 解决方案 8 个项目；每个测试程序集 1 项通过；`bin/obj/TestResults` 均未跟踪 |
+| `已验证` | 可运行性烟测 | Updater 退出码 `0`；Server 真实监听随机 loopback 端口并对未映射根路径返回 `404` |
+| `已验证` | NuGet 漏洞审计 | 8 个项目的直接与传递依赖均未发现已知易受攻击包 |
 
 ### 文件范围
 
-- 新增：待填写。
-- 修改：待填写。
+- 新增：`RelayCove.sln`、`global.json`、`Directory.Build.props`、`.editorconfig`、`scripts/verify.ps1`、四个源项目及四个测试项目、本任务文件。
+- 修改：`README.md`、`CLAUDE.md`、`docs/ai/STATUS.md`、`docs/ai/V1_EXECUTION.md`。
 - 删除：无。
 
 ### 决策与限制

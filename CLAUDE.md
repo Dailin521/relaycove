@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 仓库现状
 
-RelayCove 处于**设计先行**阶段，尚无业务代码：没有 `RelayCove.sln`、没有 `src/`、`tests/`、`scripts/`。仓库目前包含规格文档、AI 执行约定，以及唯一可运行的组件 `tools/claude-second-brain`（Node.js MCP）。
+RelayCove 已完成**可构建工程骨架**：`RelayCove.sln` 包含 Client、Server、Shared、Updater 四个源项目和四个镜像 xUnit 测试项目。当前只有最小启动入口与程序集基线测试，尚未实现登录、消息、同步、通知等业务功能。
 
-在解决方案脚手架建立之前，**不得声称项目可以构建或测试通过**，也不得创建“总是成功”的占位验证脚本。当前阶段、可构建状态和下一任务以 `docs/ai/STATUS.md` 为准，不要依赖历史聊天。
+统一验证脚本会真实执行还原、构建和测试；只有实际运行成功的模式才能标成通过。当前阶段、绿色提交和下一任务以 `docs/ai/V1_EXECUTION.md`、`docs/ai/STATUS.md` 与活动任务为准，不要依赖历史聊天。
 
 ## 常用命令
 
-### Claude Second Brain MCP（当前唯一可运行组件）
+### Claude Second Brain MCP
 
 ```powershell
 cd tools/claude-second-brain
@@ -29,20 +29,20 @@ node --test --test-name-pattern "<用例名>" test/claude-runner.test.mjs
 `smoke` 可用环境变量覆盖档位、预算和超时（默认 `opus` / `low` / `$0.10` / 60 秒）：
 `CLAUDE_SECOND_BRAIN_SMOKE_MODEL`、`..._SMOKE_EFFORT`、`..._SMOKE_MAX_BUDGET_USD`、`..._SMOKE_TIMEOUT_SECONDS`。
 
-### .NET 验证（脚手架完成后才可用）
+### .NET 验证
 
 ```powershell
 pwsh ./scripts/verify.ps1 -Mode Fast    # 开发循环：还原、Debug 构建、测试
 pwsh ./scripts/verify.ps1 -Mode Full    # 提交与阶段验收：格式检查、Release 构建、全部测试、git diff --check
 ```
 
-`scripts/verify.ps1` 目前**不存在**，属于阶段 0 脚手架待办项。在它建立之前，验证只能依赖上面的 npm 命令和文档检查。
+`Fast` 用于开发循环；`Full` 是提交和任务完成前的基线。脚本任一底层命令非零都会失败；不得用单独的窄检查替代任务要求的模式。
 
 ## 架构要点
 
 规格文档 `RelayCove_工程落地方案.md` 是产品与架构的唯一真源（约 2600 行，25 节）。按需读取相关章节，不要整份加载。
 
-### 计划中的四个项目
+### 四个项目
 
 | 项目 | 职责 | 边界 |
 | --- | --- | --- |
