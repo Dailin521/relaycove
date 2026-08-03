@@ -13,9 +13,9 @@ TaskStatus: running
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 35125ef4b1cba453416b915b6fb82fed0b12eb44
 LatestGreenIntegrationCommit: 0e5eefb0c44cdb024e4e455ff91b3eb542adfa8e
-NextAction: 对认证存储、用户名规范化、UTC/GUID 转换与 PasswordHasher 方案执行 Claude XHigh challenge
-ClaudeCalls: 8（软上限 24，硬上限 30）
-ClaudeCostUsd: 1.33388025 confirmed；另有五次失败/中断调用费用 unavailable
+NextAction: 按 DEC-005 实现认证存储、首个迁移、固定转换与密码/refresh token 哈希服务
+ClaudeCalls: 12（软上限 24，硬上限 30）
+ClaudeCostUsd: 1.67582775 confirmed；另有八次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -59,9 +59,13 @@ RequiredUserGate: none
 | 6 | 2026-08-03 | 认证共享契约 | 只读 CLI 回退 | Opus / XHigh | 实际 `claude-opus-5`；在形成结论前触及预算，`terminal_reason=budget_exhausted` | `$0.5187985` |
 | 7 | 2026-08-03 | 认证共享契约 | 只读 CLI 候选 review | Opus / XHigh | `workspace=E:\WorkSpace\RelayCove`（CLI 限域）、实际 `claude-opus-5`、mismatch=`false`、固定 ReviewHead 不变；`FIX_REQUIRED`，发现已修正 | `$0.666895` |
 | 8 | 2026-08-03 | 认证共享契约 | 只读 CLI 定向复审 | Opus / XHigh | `ReviewHead=836d1e223d2cd9026fdf935be9cb16affbf45cf8`、实际 `claude-opus-5`、mismatch=`false`；五项原发现关闭，`PASS`；新增非阻塞 P3 已本地修正验证 | `$0.14818675` |
+| 9 | 2026-08-03 | 认证存储 | 前置 challenge | Opus / XHigh | `claude_second_brain` 仓库只读调用在 300 秒工具上限被截断，无结构化结果 | `unavailable` |
+| 10 | 2026-08-03 | 认证存储 | 只读 CLI challenge | Opus / XHigh | 仓库限域 CLI 在 300 秒外层上限被截断，无终局结果 | `unavailable` |
+| 11 | 2026-08-03 | 认证存储 | 无仓库 MCP challenge | Opus / XHigh | 已提供仓库事实但仍在 300 秒 MCP 上限被截断，无结构化结果 | `unavailable` |
+| 12 | 2026-08-03 | 认证存储 | 无工具 CLI challenge | Opus / XHigh | 实际 `claude-opus-5`、mismatch=`false`、提供事实对应 `ChallengeHead=6b821f1e9ba23b005630a3781fd407737e579684`；`REVISE`，有效发现纳入 `DEC-005` | `$0.3419475` |
 
-- 调用计数：`8 / 24 soft / 30 hard`。
-- 已确认费用合计：`$1.33388025`；其余五次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`12 / 24 soft / 30 hard`。
+- 已确认费用合计：`$1.67582775`；其余八次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - Claude 恢复可用后，每次调用必须记录返回的 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；达到调用或费用硬上限时降级为 Codex 独立复核，不停止开发。
 
 ## 阻塞与用户 Gate

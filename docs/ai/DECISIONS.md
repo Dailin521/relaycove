@@ -60,3 +60,13 @@
 - **理由：** 字符串码便于跨版本、跨语言稳定分支；把诊断文本与机器码分离可以修改或本地化提示而不破坏客户端。统一认证失败和默认脱敏降低枚举与日志泄露风险。
 - **影响：** 后续 Controller、客户端 HTTP 层、测试和文档必须按 HTTP 状态与 `Code` 组合判断，不得解析 `Message`。新增或替代公共错误码需要在对应任务更新本决策或新增替代决策。
 - **来源：** 工程落地方案第 8.2、10.2、18.4 节；`docs/ai/tasks/2026-08-03-stage-1-auth-contracts.md`。
+
+### DEC-005：认证存储规范化、时间与机密哈希边界
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** Users/RefreshTokens 首个 SQLite schema 必须在 Windows 开发机与 Linux VPS 上保持相同身份键、时间比较和机密存储语义；SQLite 不执行 `MaxLength`，`DateTimeOffset` 排序受限，Unicode 大小写又会随全球化后端变化。
+- **决策：** v1 登录名只允许 3–64 个 ASCII 字母、数字、点、下划线和连字符；保留原始 `UserName`，由同一实体方法同步生成 invariant-uppercase `NormalizedUserName`，唯一性覆盖禁用用户和全部历史行。GUID 统一为小写 `D` 文本；时间统一为固定 24 字符 UTC 文本并拒绝非 UTC 写入。密码使用 DI 配置的 ASP.NET Core IdentityV3 `PasswordHasher`（100000 iterations），包装器归一化畸形输入并保留 rehash-needed，不向领域边界暴露 Identity 枚举。refresh token 原始值未来固定为 32 字节 CSPRNG，数据库只存 `Base64Url(SHA-256(raw bytes))` 的 43 字符确定性哈希，v1 不加 pepper。首个迁移由显式运维/部署动作应用，应用启动不得隐式改库。
+- **理由：** ASCII 登录标识配合 Unicode `DisplayName` 避免 ICU/NLS、不可见和双向控制字符造成跨环境账号漂移；固定文本格式使 SQLite 字典序等于 UTC 时间序；框架版本化密码格式支持升级重哈希；高熵 refresh token 的快速确定性哈希既能按值查找又不暴露原文。
+- **影响：** schema 增加内部 `NormalizedUserName`；关键长度、格式、布尔值和非空要求必须用 SQLite CHECK 验证，不能依赖 `HasMaxLength`。测试必须真实运行 migration up/down、`HasPendingModelChanges`、外键/级联、UTC Kind/比较和约束冲突。`AvatarAttachmentId` 在 Attachments 切片前只保留可空文本，不建外键；后续迁移加 FK 前必须处理孤儿值。默认管理员、保留用户名、密码策略、Token 签发/轮换/保留和 WAL/备份另行决策。
+- **来源：** 工程落地方案第 7.1、11.1、11.2、18.4、19.4、阶段 2；`docs/ai/tasks/2026-08-03-stage-2-auth-storage.md`；2026-08-03 Microsoft EF Core SQLite 与 PasswordHasher 官方文档。

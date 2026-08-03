@@ -11,7 +11,7 @@
 - **自动化验证：** `已验证` — Fast/Full、format、12 项测试、文件白名单、依赖边界、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
-- **本任务 Claude 调用：** `已验证` — MCP 仍受旧认证环境影响；等价只读 CLI 的首轮审查 `FIX_REQUIRED`，定向复审在固定 `ReviewHead=836d1e2...` 返回 `PASS`，实际模型与费用已记入 `V1_EXECUTION.md`
+- **本任务 Claude 调用：** `已验证` — 认证存储 challenge 的 MCP/限域 CLI 三次被时长上限截断；无工具 CLI 以 `claude-opus-5` / XHigh 返回 `REVISE`，有效发现已独立核对并写入 `DEC-005`，费用见 `V1_EXECUTION.md`
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
@@ -33,8 +33,8 @@
 
 完成服务端认证存储与密码哈希最小纵向切片：
 
-1. 用 Claude challenge 冻结用户名规范化、UTC/GUID、refresh token hash-only 和迁移应用边界。
-2. 实现 Users/RefreshTokens、首个 SQLite 迁移与 `PasswordHasher` 包装，不实现端点。
+1. 已用 Claude challenge 与 `DEC-005` 冻结 ASCII 登录标识、UTC/GUID、refresh token hash-only 和迁移应用边界。
+2. 实现 Users/RefreshTokens、首个 SQLite 迁移、密码与 token 哈希服务，不实现端点。
 3. 用真实迁移/约束测试、Fast/Full 和候选独立复核验证后再进入登录端点。
 
 ## 阻塞项

@@ -6,7 +6,7 @@
 - **状态：** 进行中
 - **基准提交：** `0e5eefb0c44cdb024e4e455ff91b3eb542adfa8e`
 - **工作分支：** `agent/stage-2-auth-storage`
-- **相关方案章节：** `RelayCove_工程落地方案.md` 第 3.2、5.4、7.1、8.1、11.1、11.2、18.4、19.4、阶段 2；`DEC-001`、`DEC-004`
+- **相关方案章节：** `RelayCove_工程落地方案.md` 第 3.2、5.4、7.1、8.1、11.1、11.2、18.4、19.4、阶段 2；`DEC-001`、`DEC-004`、`DEC-005`
 
 ### 目标
 
@@ -16,16 +16,18 @@
 
 - `已验证`：工程方案已固定单 ASP.NET Core 服务、单 SQLite 主库、EF Core、Users/RefreshTokens 字段和 `/opt/relaycove/data/relaycove.db` 生产连接串。
 - `已验证`：当前 Server 只有 Web 骨架且无外部包；基准 Fast 通过，Debug 0 警告、0 错误，12 项测试通过。
-- `已验证`：本机为 .NET SDK `10.0.101` / runtime `10.0.1`；NuGet 官方页在 2026-08-03 显示 EF Core SQLite/Design 最新稳定 `10.0.10`，均以 `net10.0` 为目标。
-- `已验证`：Microsoft 官方文档要求新密码登录应用使用 `PasswordHasher`，不直接用低层 `KeyDerivation.Pbkdf2` 自定义格式。
-- `已验证`：EF Core SQLite 官方文档说明 `DateTimeOffset` 比较/排序受限并建议持久化 UTC `DateTime`；schema 的时间列仍以 SQLite `TEXT` 保存。
+- `已验证`：本机为 .NET SDK `10.0.101` / runtime `10.0.1`；[NuGet 官方页](https://www.nuget.org/packages/Microsoft.EntityFrameworkCore.Sqlite)在 2026-08-03 显示 EF Core SQLite/Design 最新稳定 `10.0.10`，均以 `net10.0` 为目标。
+- `已验证`：[Microsoft 密码哈希文档](https://learn.microsoft.com/en-us/aspnet/core/security/data-protection/consumer-apis/password-hashing)要求新密码登录应用使用 `PasswordHasher`，不直接用低层 `KeyDerivation.Pbkdf2` 自定义格式。
+- `已验证`：[EF Core SQLite 限制文档](https://learn.microsoft.com/en-us/ef/core/providers/sqlite/limitations)说明 `DateTimeOffset` 比较/排序受限并建议持久化 UTC `DateTime`；schema 的时间列仍以 SQLite `TEXT` 保存。
+- `已验证`：Claude XHigh challenge 返回 `REVISE`；其 UTC Kind、迁移漂移、用户名原子更新、SQLite CHECK、Token hash 格式、PasswordHasher 配置与 FK 发现经 Codex 独立判断成立。
 
 ### 假设
 
-- `假设`：保留原始 `UserName`，新增内部 `NormalizedUserName` 作为唯一登录查找键；使用 Unicode Form KC + invariant uppercase 生成，避免仅依赖 SQLite ASCII `NOCASE`。
-- `假设`：所有 GUID 通过 converter 写为小写标准 `D` 文本，所有持久化时间使用 UTC `DateTime`；违反 UTC 前提的输入应在进入数据库前被拒绝。
-- `假设`：`PasswordHasher<User>` 的自描述版本化格式和 `SuccessRehashNeeded` 足以覆盖本阶段，不自定义迭代次数或哈希协议。
-- `假设`：应用只注册 DbContext；自动执行迁移、备份和启动锁属于部署/启动任务，本任务不在进程启动时隐式改库。
+- `假设`：v1 登录名限制为 3–64 个 ASCII 字母、数字、点、下划线或连字符；保留原始 `UserName`，唯一 `NormalizedUserName` 使用 invariant uppercase。Unicode 姓名只进入 `DisplayName`，避免 ICU/NLS 与不可见字符造成跨环境身份漂移。
+- `假设`：GUID 通过 converter 写为小写标准 `D` 文本；时间通过固定 24 字符 UTC 格式 `yyyy-MM-ddTHH:mm:ss.fffZ` 写入 SQLite `TEXT`，读回标记 `Utc`，SaveChanges 拒绝非 UTC 值。
+- `假设`：`PasswordHasher<User>` 固定 IdentityV3/100000 iterations，并由 DI options 构造；包装器用本地枚举保留 rehash-needed，畸形 hash 统一失败。
+- `假设`：refresh token 原始值由下一任务生成 32 字节 CSPRNG；本任务固定 `TokenHash=Base64Url(SHA-256(raw bytes))`，43 字符、无 salt/pepper。
+- `假设`：应用只注册 DbContext；自动执行迁移、WAL、备份和启动锁属于后续启动/部署任务，本任务不在进程启动时隐式改库。
 
 ### 范围
 
@@ -33,10 +35,11 @@
   - 为 Server 引入 `Microsoft.EntityFrameworkCore.Sqlite` 与私有设计时 `Microsoft.EntityFrameworkCore.Design`，固定为稳定 `10.0.10`；加入同版本本地 `dotnet-ef` 工具清单。
   - `User`、`RefreshToken` 服务端实体和 `RelayCoveDbContext`，字段、外键、唯一约束、索引、GUID/UTC 持久化语义与工程方案一致。
   - 仅创建 Users/RefreshTokens 的首个迁移；迁移必须能应用到真实 SQLite 数据库并可回滚。
-  - 用户名规范化服务以及原始名/规范化名唯一性；Token 只存 `TokenHash`，不得出现明文 token 列。
-  - 基于 ASP.NET Core `IPasswordHasher<User>` 的 `PasswordService`，支持 hash、verify 和 rehash-needed 结果，不记录密码或哈希输入。
+  - ASCII 用户名规范化服务以及原始名/规范化名原子更新和唯一性；非法输入返回验证失败，不产生 Unicode/控制符异常。
+  - Refresh token 确定性 SHA-256 hasher；数据库只存 43 字符 `TokenHash`，不得出现明文 token 列。
+  - 基于 ASP.NET Core `IPasswordHasher<User>` 的 `PasswordService`，支持 hash、verify、dummy verify 和 rehash-needed 本地结果，不记录密码或哈希输入；畸形输入不抛出到调用方。
   - 注册 DbContext、PasswordHasher 与 PasswordService；连接串来自配置，开发默认值不得是生产路径。
-  - 迁移结构、外键/唯一约束、GUID 小写、UTC、密码随机盐、正确/错误验证和依赖边界测试。
+  - 迁移结构、pending model、up/down、外键/唯一/CHECK 约束、GUID 小写、UTC Kind/比较、密码随机盐、正确/错误/rehash/畸形验证和依赖边界测试。
   - 新增 `DEC-005` 冻结用户名规范化、GUID/时间、密码哈希、refresh token 仅存哈希和迁移应用边界。
 - 允许修改：
   - `.config/dotnet-tools.json`
@@ -58,10 +61,10 @@
 ### 验收标准
 
 - [ ] 首个迁移只创建 Users、RefreshTokens 和 EF migration history，列类型、外键、唯一键与索引可由 SQLite metadata 验证。
-- [ ] `NormalizedUserName` 对大小写/兼容等价输入给出同一结果，数据库拒绝重复规范化名；原始 `UserName` 可保留用于诊断。
-- [ ] User/RefreshToken GUID 以小写 `D` 文本保存；所有时间为 UTC，SQLite 中可稳定比较过期时间。
-- [ ] RefreshTokens 只有 `TokenHash`，哈希唯一且 User 删除可清理其 Token；schema 和日志路径无明文 Token/Password 列。
-- [ ] 同一密码两次 hash 不同，正确密码验证成功、错误密码失败，并保留 `SuccessRehashNeeded` 语义。
+- [ ] `NormalizedUserName` 对 ASCII 大小写给出同一结果，数据库拒绝重复规范化名；原始名只能经实体方法更新且非法/不可见/Unicode 登录名被拒绝。
+- [ ] User/RefreshToken GUID 以小写 `D` 文本保存；时间以固定 UTC 文本保存、读回 `Kind=Utc`，非 UTC 写入失败，LINQ 过期比较正确。
+- [ ] RefreshTokens 只有 43 字符 `TokenHash`，SHA-256 结果稳定且唯一，非法长度被 CHECK 拒绝，User 删除可清理其 Token。
+- [ ] 同一密码两次 hash 不同，正确/错误/畸形验证与 dummy verify 不泄漏异常，并以本地结果保留 `SuccessRehashNeeded` 语义。
 - [ ] Server 运行时依赖不包含 Design 包资产；Shared 不新增依赖；包版本与官方证据一致且漏洞审计无已知漏洞。
 - [ ] Claude challenge、Fast、Full、迁移 up/down、文件白名单、`git diff --check` 和候选独立复核通过或按规则如实降级记录。
 
@@ -105,7 +108,7 @@ Fast 后创建代码检查点，Full 后固定 ReviewHead 做候选复核；不�
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 基准 `pwsh ./scripts/verify.ps1 -Mode Fast` | Debug 0 警告、0 错误；Shared 9 项，Client/Server/Updater 各 1 项，共 12 项通过 |
-| `未验证` | Claude challenge | 待固定任务元数据后执行 |
+| `已验证` | Claude challenge | MCP #9/#11 在 300 秒上限无结果，CLI #10 也被外层上限截断；无工具 CLI #12 以实际 `claude-opus-5` / XHigh 完成，费用 `$0.3419475`，结论 `REVISE`；`ChallengeHead=6b821f1e9ba23b005630a3781fd407737e579684` 且调用前后工作树干净 |
 | `未验证` | Fast / Full / SQLite 迁移 | 待实现后执行 |
 | `未验证` | 候选独立复核 | 待固定 ReviewHead 后执行 |
 
@@ -117,7 +120,7 @@ Fast 后创建代码检查点，Full 后固定 ReviewHead 做候选复核；不�
 
 ### 决策与限制
 
-- 决策：待 challenge 与实现证据确认后写入 `DEC-005`。
+- 决策：challenge 后采用 ASCII 登录标识、固定 UTC/GUID 文本、hash-only refresh token、显式 IdentityV3 参数和显式迁移应用边界；详见 `DEC-005`。
 - 已知限制：本任务不提供任何可调用认证端点，也不证明 Token 签发或会话轮换安全性。
 
 ### 下一步
