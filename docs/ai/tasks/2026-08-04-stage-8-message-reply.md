@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 8 当前会话 Reply 选择、durable 发送、引用展示与导航
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `a919992d6cdd7c646adf4b933b119e089dc79fce`
 - **工作分支：** `agent/stage-8-message-reply`
 - **相关方案章节：** 4.2、9.2–9.4、10.4、12.1–12.3、21.2、阶段 8；`DEC-010`、`DEC-017`、`DEC-034`、`DEC-035`
@@ -44,11 +44,11 @@
 
 ### 验收标准
 
-- [ ] 只有当前 Ready 会话中的 confirmed 正 ID 行可进入 Reply；pending/旧会话/旧账户/缺失行被拒绝。composer 可见显示发送者与正文摘要并可取消。
-- [ ] 新回复 pending 在 HTTP 前原子保存精确 ReplyToMessageId；201/200、response/realtime/sync 竞争只提升同一行，失败重试复用原目标，Sent 不回退。
-- [ ] 已加载回复目标在消息行显示被回复发送者与正文；未加载目标明确提示且点击后用 Around 定位，非 Ready/撤权不显示缓存引用。
-- [ ] PendingCommitted 后只清除仍未改变的输入与 reply context；发送期间新选择、会话/账户切换和迟到结果不覆盖当前 UI。
-- [ ] Fast/Full、send/presenter/shell/WPF 定向与竞态重复、model drift、八项目漏洞审计、空白检查和真实 Windows 进程 smoke 通过；真实服务器/VPS/第二客户端如实保留未验证。
+- [x] 只有当前 Ready 会话中的 confirmed 正 ID 行可进入 Reply；pending/旧会话/旧账户/缺失行被拒绝。composer 可见显示发送者与正文摘要并可取消。
+- [x] 新回复 pending 在 HTTP 前原子保存精确 ReplyToMessageId；201/200、response/realtime/sync 竞争只提升同一行，失败重试复用原目标，Sent 不回退。
+- [x] 已加载回复目标在消息行显示被回复发送者与正文；未加载目标明确提示且点击后用 Around 定位，非 Ready/撤权不显示缓存引用。
+- [x] PendingCommitted 后只清除仍未改变的输入与 reply context；发送期间新选择、会话/账户切换和迟到结果不覆盖当前 UI。
+- [x] Fast/Full、send/presenter/shell/WPF 定向与竞态重复、model drift、八项目漏洞审计、空白检查和真实 Windows 进程 smoke 通过；真实服务器/VPS/第二客户端如实保留未验证。
 
 ### 验证命令
 
@@ -81,25 +81,34 @@ git diff --check
 
 ### 修改摘要
 
-- 待完成。
+- `ClientMessageSendCoordinator`、runtime 与账户 shell 现在接受 nullable 正 Reply ID；shell 只在当前 Ready selection 锁内接受已加载确认消息，HTTP transport 不再误拒合法 Reply，incoming/pending 继续拒绝非正值。
+- durable pending 在 POST 前保存精确目标；201/200、Realtime 与 Sync promotion、失败显式重试继续复用同一请求键和 Reply 载荷，Sent 不被迟到失败降级。
+- 消息 presentation 展示已加载引用发送者/正文，缺失目标如实提示并复用 Around；确认行提供“回复”，composer 提供引用摘要/取消，pending 只展示引用而不能成为新目标。
+- composer 使用会话、Ready 与 Reply 操作的单调上下文版本抵御 ABA；迟到发送结果只有在内容、会话、目标与版本均未改变且 pending 已提交时才清空。
+- `DEC-037` 冻结上述边界；`@用户` 因无普通用户目录继续拆分后续任务，无 Shared/Server/schema/migration/依赖变化。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
-| `未验证` | 实现与最终门禁 | 任务进行中。 |
+| `已验证` | Fast / Full | Fast 及固定代码提交 `239d1ce` 上的两次 Full 均通过；Release 0 警告、0 错误，Shared 35 + Server 175 + Client 549 + Updater 1 = 760/760。 |
+| `已验证` | Reply 可靠性定向 | send/presenter/shell/cache/sync 关键集每轮 113 项；Release 连续 10 轮 1,130/1,130，覆盖合法/非法目标、durable-before-HTTP、201/200、Realtime/Sync promotion、原键重试、缺失目标 Around、选择切换与脱敏。 |
+| `已验证` | EF / NuGet / 空白 | EF Core 报告无 pending model changes；8 个 source/test 项目均无已知 vulnerable package；`git diff --check` 通过。 |
+| `已验证` | 真实 Windows WPF smoke | Release 主进程 PID 31528 取得非零句柄 46859264 且 `Responding=True`；第二实例 PID 36216 在 10 秒内退出码 0，同路径进程数保持 1；只清理本次精确 PID 后残留 0。 |
+| `已验证` | Claude / Codex 复核 | Claude #63/#64 均因认证源优先级失败，无结论或费用；Codex 固定差异复核发现并修正 transport 误拒合法 Reply、incoming 非正 Reply 与 composer ABA 清理缺口，随后以上门禁通过。 |
+| `未验证` | 真实 VPS / 双客户端 / Narrator | 按 M5 Gate 保留；本任务未读取 VPS 配置，也不以本机 smoke 冒充真实服务端 Reply 端到端。 |
 
 ### 文件范围
 
-- 新增：待完成。
-- 修改：待完成。
+- 新增：无。
+- 修改：Client Accounts send/runtime/shell/presentation、MainWindow XAML/code-behind、Storage incoming 校验、Sync send coordinator/transport；对应 shell/presenter/cache/sync 测试；`DECISIONS.md`、`STATUS.md`、`V1_EXECUTION.md` 与本任务记录。
 - 删除：无。
 
 ### 决策与限制
 
-- 决策：待完成。
+- 决策：`DEC-037`；当前 Ready 确认 ID 门、durable 原目标、缺失目标 Around 和版本化 composer context 是本切片冻结边界。
 - 已知限制：`@用户` 需普通用户目录/公共频道解析协议，明确不在本任务；真实 VPS/双客户端留到 M5 Gate。
 
 ### 下一步
 
-- 完成 Reply 客户端闭环、复核、门禁和绿色集成。
+- 仅快进集成 `239d1ce` 及本完成记录，然后继续阶段 8 下一独立切片；`@用户` 必须先冻结普通用户目录协议。

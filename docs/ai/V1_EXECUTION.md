@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 8
 ActiveTask: docs/ai/tasks/2026-08-04-stage-8-message-reply.md
-TaskStatus: in_progress
+TaskStatus: complete
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 64f6985a48f1aaeec48af36bd64f17d87b0f8341
+LatestGreenCodeCommit: 239d1ceccf0c532cffddee1a4d8dcd376195803d
 LatestGreenIntegrationCommit: a919992d6cdd7c646adf4b933b119e089dc79fce
-NextAction: 实现并验证 Reply 选择、durable 发送、引用展示与 Around 导航
+NextAction: 仅快进集成 Reply 完成记录并继续阶段 8 下一独立切片
 ClaudeCalls: 64（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64 失败；仅关键用途调用）
 ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有三十一次失败/中断调用费用 unavailable
 Blocker: none
