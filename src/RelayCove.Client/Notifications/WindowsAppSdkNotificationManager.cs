@@ -6,11 +6,13 @@ namespace RelayCove.Client.Notifications;
 
 internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotificationManager
 {
-    private readonly AppNotificationManager manager = AppNotificationManager.Default;
+    private readonly Lazy<AppNotificationManager> manager;
 
     private WindowsAppSdkNotificationManager()
     {
-        manager.NotificationInvoked += OnNotificationInvoked;
+        manager = new Lazy<AppNotificationManager>(
+            CreateManager,
+            LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     public static WindowsAppSdkNotificationManager Shared { get; } = new();
@@ -18,13 +20,13 @@ internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotification
     public event Action<string>? NotificationInvoked;
 
     public WindowsClientNotificationSetting Setting =>
-        manager.Setting == AppNotificationSetting.Enabled
+        manager.Value.Setting == AppNotificationSetting.Enabled
             ? WindowsClientNotificationSetting.Enabled
             : WindowsClientNotificationSetting.Disabled;
 
     public bool IsSupported() => AppNotificationManager.IsSupported();
 
-    public void Register() => manager.Register();
+    public void Register() => manager.Value.Register();
 
     public string? GetCurrentActivationArgument()
     {
@@ -35,7 +37,7 @@ internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotification
                 : null;
     }
 
-    public void Unregister() => manager.Unregister();
+    public void Unregister() => manager.Value.Unregister();
 
     public Task ShowAsync(
         WindowsClientNotification notification,
@@ -61,7 +63,7 @@ internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotification
                 appNotification.Expiration = notification.Expiration;
                 appNotification.ExpiresOnReboot = notification.ExpiresOnReboot;
                 cancellationToken.ThrowIfCancellationRequested();
-                manager.Show(appNotification);
+                manager.Value.Show(appNotification);
             },
             CancellationToken.None,
             TaskCreationOptions.LongRunning,
@@ -69,13 +71,20 @@ internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotification
     }
 
     public Task RemoveByGroupAsync(string group, CancellationToken cancellationToken) =>
-        manager.RemoveByGroupAsync(group).AsTask(cancellationToken);
+        manager.Value.RemoveByGroupAsync(group).AsTask(cancellationToken);
 
     public Task RemoveByTagAndGroupAsync(
         string tag,
         string group,
         CancellationToken cancellationToken) =>
-        manager.RemoveByTagAndGroupAsync(tag, group).AsTask(cancellationToken);
+        manager.Value.RemoveByTagAndGroupAsync(tag, group).AsTask(cancellationToken);
+
+    private AppNotificationManager CreateManager()
+    {
+        var nativeManager = AppNotificationManager.Default;
+        nativeManager.NotificationInvoked += OnNotificationInvoked;
+        return nativeManager;
+    }
 
     private void OnNotificationInvoked(
         AppNotificationManager sender,
