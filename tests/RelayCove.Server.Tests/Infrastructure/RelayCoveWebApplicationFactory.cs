@@ -26,21 +26,24 @@ public sealed class RelayCoveWebApplicationFactory : WebApplicationFactory<Progr
     private readonly int loginPermitLimit;
     private readonly int refreshPermitLimit;
     private readonly int databaseTimeoutSeconds;
+    private readonly IReadOnlyDictionary<string, string?> configurationOverrides;
     private bool initialized;
 
     public RelayCoveWebApplicationFactory()
-        : this(1_000, 1_000, 5)
+        : this(1_000, 1_000, 5, null)
     {
     }
 
     internal RelayCoveWebApplicationFactory(
         int loginPermitLimit,
         int refreshPermitLimit,
-        int databaseTimeoutSeconds = 5)
+        int databaseTimeoutSeconds = 5,
+        IReadOnlyDictionary<string, string?>? configurationOverrides = null)
     {
         this.loginPermitLimit = loginPermitLimit;
         this.refreshPermitLimit = refreshPermitLimit;
         this.databaseTimeoutSeconds = databaseTimeoutSeconds;
+        this.configurationOverrides = configurationOverrides ?? new Dictionary<string, string?>();
         SigningKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         Clock = new MutableTimeProvider(DateTimeOffset.UtcNow.AddTicks(4321));
     }
@@ -64,10 +67,15 @@ public sealed class RelayCoveWebApplicationFactory : WebApplicationFactory<Progr
             }
 
             Directory.CreateDirectory(databaseDirectory);
+            var dbContextOptions = new DbContextOptionsBuilder<RelayCoveDbContext>()
+                .UseSqlite(CreateConnectionString())
+                .Options;
+            await using (var migrationContext = new RelayCoveDbContext(dbContextOptions))
+            {
+                await migrationContext.Database.MigrateAsync();
+            }
+
             _ = CreateClient();
-            await using var scope = Services.CreateAsyncScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<RelayCoveDbContext>();
-            await dbContext.Database.MigrateAsync();
             initialized = true;
         }
         finally
@@ -118,13 +126,7 @@ public sealed class RelayCoveWebApplicationFactory : WebApplicationFactory<Progr
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        var connectionString = new SqliteConnectionStringBuilder
-        {
-            DataSource = DatabasePath,
-            DefaultTimeout = databaseTimeoutSeconds,
-            ForeignKeys = true,
-            Pooling = false,
-        }.ToString();
+        var connectionString = CreateConnectionString();
         Dictionary<string, string?> settings = new(StringComparer.Ordinal)
         {
             ["ConnectionStrings:Default"] = connectionString,
@@ -132,6 +134,10 @@ public sealed class RelayCoveWebApplicationFactory : WebApplicationFactory<Progr
             ["Authentication:LoginPermitLimit"] = loginPermitLimit.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["Authentication:RefreshPermitLimit"] = refreshPermitLimit.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
+        foreach (var pair in configurationOverrides)
+        {
+            settings[pair.Key] = pair.Value;
+        }
 
         builder.UseEnvironment("Testing");
         builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(settings));
@@ -155,6 +161,14 @@ public sealed class RelayCoveWebApplicationFactory : WebApplicationFactory<Progr
         });
         return new PasswordService(new PasswordHasher<User>(options));
     }
+
+    private string CreateConnectionString() => new SqliteConnectionStringBuilder
+    {
+        DataSource = DatabasePath,
+        DefaultTimeout = databaseTimeoutSeconds,
+        ForeignKeys = true,
+        Pooling = false,
+    }.ToString();
 
     protected override void Dispose(bool disposing)
     {

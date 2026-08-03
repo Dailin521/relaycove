@@ -1,13 +1,16 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using RelayCove.Server.Authentication;
+using RelayCove.Server.Authorization;
 using RelayCove.Server.Data;
 using RelayCove.Server.Data.Entities;
 using RelayCove.Server.Endpoints;
 using RelayCove.Server.Errors;
+using RelayCove.Server.Hosting;
 using RelayCove.Server.Options;
 using RelayCove.Server.RateLimiting;
 using RelayCove.Server.Services;
@@ -28,12 +31,18 @@ builder.Services.AddOptions<AuthenticationOptions>()
     .Bind(builder.Configuration.GetSection(AuthenticationOptions.SectionName))
     .ValidateOnStart();
 builder.Services.AddSingleton<IValidateOptions<AuthenticationOptions>, AuthenticationOptionsValidator>();
+builder.Services.AddOptions<BootstrapAdminOptions>()
+    .Bind(builder.Configuration.GetSection(BootstrapAdminOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<BootstrapAdminOptions>, BootstrapAdminOptionsValidator>();
 builder.Services.Configure<PasswordHasherOptions>(options =>
 {
     options.CompatibilityMode = PasswordHasherCompatibilityMode.IdentityV3;
     options.IterationCount = 100_000;
 });
 builder.Services.AddSingleton<UserNameNormalizer>();
+builder.Services.AddSingleton<PasswordPolicy>();
+builder.Services.AddSingleton<NewUserValidator>();
 builder.Services.AddSingleton<RefreshTokenHasher>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ServerClock>();
@@ -41,10 +50,20 @@ builder.Services.AddSingleton<IPasswordHasher<User>, PasswordHasher<User>>();
 builder.Services.AddSingleton<PasswordService>();
 builder.Services.AddSingleton<AccessTokenService>();
 builder.Services.AddScoped<AuthenticationSessionService>();
+builder.Services.AddScoped<AdminUserService>();
 builder.Services.AddScoped<RelayCoveJwtBearerEvents>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy(AuthorizationPolicies.Administrator, policy =>
+    {
+        policy.RequireAuthenticatedUser();
+        policy.AddRequirements(AdministratorRequirement.Instance);
+    });
+});
+builder.Services.AddScoped<IAuthorizationHandler, AdministratorAuthorizationHandler>();
+builder.Services.AddHostedService<BootstrapAdminHostedService>();
 builder.Services.AddSingleton<IConfigureOptions<Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerOptions>, ConfigureJwtBearerOptions>();
 builder.Services.AddRateLimiter(_ => { });
 builder.Services.AddSingleton<IConfigureOptions<RateLimiterOptions>, ConfigureAuthenticationRateLimitingOptions>();
@@ -59,6 +78,7 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapAuthenticationEndpoints();
+app.MapAdminUserEndpoints();
 
 app.Run();
 

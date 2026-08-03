@@ -16,6 +16,7 @@ public sealed class ApiErrorContractTests
         "RateLimitExceeded",
         "ServiceUnavailable",
         "InternalServerError",
+        "UserNameAlreadyExists",
         "SyncCursorInvalid",
         "IdempotencyKeyReuse",
         "ConversationAccessRevoked",
