@@ -111,6 +111,76 @@ public sealed class ClientMessageListPresenterTests
         Assert.DoesNotContain("Target Sender", pending.ToString(), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Present_WhenLocalDateChanges_ShowsOnlyFirstAndChangedDateSeparators()
+    {
+        var conversationId = Guid.NewGuid();
+        var firstLocalDateTime = new DateTime(
+            2026,
+            8,
+            3,
+            10,
+            0,
+            0,
+            DateTimeKind.Unspecified);
+        var firstLocal = new DateTimeOffset(
+            firstLocalDateTime,
+            TimeZoneInfo.Local.GetUtcOffset(firstLocalDateTime));
+        var first = CreateMessage(
+            10,
+            conversationId,
+            UserId,
+            "Sender",
+            "first",
+            replyToMessageId: null) with
+        {
+            CreatedAt = firstLocal,
+        };
+        var sameDay = CreateMessage(
+            11,
+            conversationId,
+            UserId,
+            "Sender",
+            "same day",
+            replyToMessageId: null) with
+        {
+            CreatedAt = firstLocal.AddHours(1),
+        };
+        var nextDayPending = CreatePending(
+            1,
+            conversationId,
+            MessageSendStatus.Sending,
+            "next day") with
+        {
+            CreatedAt = firstLocal.AddDays(1),
+        };
+        var samePendingDay = CreatePending(
+            2,
+            conversationId,
+            MessageSendStatus.Failed,
+            "same pending day") with
+        {
+            CreatedAt = firstLocal.AddDays(1).AddHours(1),
+        };
+
+        var items = ClientMessageListPresenter.Present(
+            [sameDay, first],
+            [samePendingDay, nextDayPending],
+            UserId);
+
+        Assert.Equal(4, items.Count);
+        Assert.True(items[0].ShowDateSeparator);
+        Assert.Equal("2026-08-03", items[0].DateSeparatorLabel);
+        Assert.False(items[1].ShowDateSeparator);
+        Assert.Equal("2026-08-03", items[1].DateSeparatorLabel);
+        Assert.True(items[2].ShowDateSeparator);
+        Assert.Equal("2026-08-04", items[2].DateSeparatorLabel);
+        Assert.False(items[3].ShowDateSeparator);
+        Assert.Equal("2026-08-04", items[3].DateSeparatorLabel);
+        Assert.All(items, item => Assert.True(item.CanCopy));
+        Assert.DoesNotContain("2026-08-03", items[0].ToString(), StringComparison.Ordinal);
+    }
+
     private static MessageDto CreateMessage(
         long id,
         Guid conversationId,

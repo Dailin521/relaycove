@@ -29,15 +29,25 @@ internal static class ClientMessageListPresenter
             .OrderBy(message => message.Id)
             .ToArray();
         var messagesById = confirmedMessages.ToDictionary(message => message.Id);
-        var items = confirmedMessages
-            .Select(message => new ClientMessageListItemPresentation(
+        var items = new List<ClientMessageListItemPresentation>();
+        DateTime? previousLocalDate = null;
+        foreach (var message in confirmedMessages)
+        {
+            var content = PresentContent(message);
+            AppendWithDateSeparator(
+                items,
+                ref previousLocalDate,
+                message.CreatedAt,
+                new ClientMessageListItemPresentation(
                 ServerMessageId: message.Id,
                 message.ClientMessageId,
                 message.SenderId == currentUserId ? "我" : message.SenderDisplayName,
-                PresentContent(message),
+                content,
                 message.CreatedAt.ToLocalTime().ToString(
                     "MM-dd HH:mm",
                     CultureInfo.CurrentCulture),
+                DateSeparatorLabel: string.Empty,
+                ShowDateSeparator: false,
                 message.SenderId == currentUserId,
                 MessageSendStatus.Sent,
                 SendStatusLabel: string.Empty,
@@ -49,19 +59,29 @@ internal static class ClientMessageListPresenter
                 IsReplyTargetAvailable: ReplyTargetIsAvailable(
                     message.ReplyToMessageId,
                     messagesById),
-                CanReply: true))
-            .ToList();
-        items.AddRange(pendingMessages
+                CanReply: true,
+                CanCopy: !string.IsNullOrEmpty(content)));
+        }
+
+        foreach (var message in pendingMessages
             .OrderBy(message => message.CreatedAt)
-            .ThenBy(message => message.LocalId)
-            .Select(message => new ClientMessageListItemPresentation(
+            .ThenBy(message => message.LocalId))
+        {
+            var content = PresentContent(message.Type, message.Content);
+            AppendWithDateSeparator(
+                items,
+                ref previousLocalDate,
+                message.CreatedAt,
+                new ClientMessageListItemPresentation(
                 ServerMessageId: null,
                 message.ClientMessageId,
                 message.SenderId == currentUserId ? "我" : message.SenderDisplayName,
-                PresentContent(message.Type, message.Content),
+                content,
                 message.CreatedAt.ToLocalTime().ToString(
                     "MM-dd HH:mm",
                     CultureInfo.CurrentCulture),
+                DateSeparatorLabel: string.Empty,
+                ShowDateSeparator: false,
                 message.SenderId == currentUserId,
                 message.SendStatus,
                 message.SendStatus == MessageSendStatus.Failed ? "发送失败" : "发送中…",
@@ -73,8 +93,29 @@ internal static class ClientMessageListPresenter
                 IsReplyTargetAvailable: ReplyTargetIsAvailable(
                     message.ReplyToMessageId,
                     messagesById),
-                CanReply: false)));
+                CanReply: false,
+                CanCopy: !string.IsNullOrEmpty(content)));
+        }
+
         return items.AsReadOnly();
+    }
+
+    private static void AppendWithDateSeparator(
+        ICollection<ClientMessageListItemPresentation> items,
+        ref DateTime? previousLocalDate,
+        DateTimeOffset createdAt,
+        ClientMessageListItemPresentation item)
+    {
+        var localCreatedAt = createdAt.ToLocalTime();
+        var localDate = localCreatedAt.Date;
+        items.Add(item with
+        {
+            DateSeparatorLabel = localCreatedAt.ToString(
+                "yyyy-MM-dd",
+                CultureInfo.CurrentCulture),
+            ShowDateSeparator = previousLocalDate != localDate,
+        });
+        previousLocalDate = localDate;
     }
 
     private static string ReplySenderLabel(

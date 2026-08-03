@@ -361,6 +361,26 @@
                                     </ListBox.ItemContainerStyle>
                                     <ListBox.ItemTemplate>
                                         <DataTemplate>
+                                            <StackPanel>
+                                                <Border Margin="0,5,0,7"
+                                                        Padding="9,3"
+                                                        HorizontalAlignment="Center"
+                                                        Background="#FFE9EEF4"
+                                                        CornerRadius="9">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding ShowDateSeparator}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <TextBlock Text="{Binding DateSeparatorLabel}"
+                                                               Foreground="#FF718396"
+                                                               FontSize="11" />
+                                                </Border>
                                             <Border Padding="12,9"
                                                     Background="White"
                                                     BorderBrush="#FFE5EBF2"
@@ -431,6 +451,21 @@
                                                                    VerticalAlignment="Center"
                                                                    Foreground="#FFB05A32"
                                                                    FontSize="11" />
+                                                        <Button Content="复制"
+                                                                Margin="0,0,6,0"
+                                                                Padding="8,2"
+                                                                Click="OnCopyMessageClicked">
+                                                            <Button.Style>
+                                                                <Style TargetType="Button">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding CanCopy}" Value="True">
+                                                                            <Setter Property="Visibility" Value="Visible" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </Button.Style>
+                                                        </Button>
                                                         <Button Content="回复"
                                                                 Margin="0,0,6,0"
                                                                 Padding="8,2"
@@ -465,6 +500,7 @@
                                                     </StackPanel>
                                                 </StackPanel>
                                             </Border>
+                                            </StackPanel>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>

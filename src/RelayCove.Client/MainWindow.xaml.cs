@@ -545,6 +545,29 @@ public partial class MainWindow : Window
         MessageComposerTextBox.Focus();
     }
 
+    private void OnCopyMessageClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button
+            {
+                DataContext: ClientMessageListItemPresentation item,
+            } ||
+            displayedMessageSnapshot is not { } snapshot ||
+            !ClientMessageCopyPolicy.TryResolveContent(snapshot, item, out var content))
+        {
+            return;
+        }
+
+        var copied = ClientClipboardWriter.TryWrite(
+            content,
+            static value => System.Windows.Clipboard.SetText(
+                value,
+                System.Windows.TextDataFormat.UnicodeText));
+        SetLiveText(
+            MessageComposerStatusText,
+            copied ? "消息正文已复制。" : "剪贴板暂时不可用，请稍后重试。");
+    }
+
     private void OnReplyReferenceClicked(object sender, RoutedEventArgs e)
     {
         _ = e;
