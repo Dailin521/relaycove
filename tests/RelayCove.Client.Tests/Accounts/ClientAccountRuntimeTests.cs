@@ -424,6 +424,123 @@ public sealed class ClientAccountRuntimeTests
     }
 
     [Fact]
+    public async Task AutomaticSync_WhenRuntimeStarts_UsesInitialActivityAsBaseline()
+    {
+        using var directory = new TemporaryDirectory();
+        var sync = new FakeSyncCoordinator();
+        var scheduler = new ClientAutomaticSyncScheduler(
+            sync,
+            NullLogger<ClientAutomaticSyncScheduler>.Instance,
+            delayAsync: static (_, cancellationToken) =>
+                Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken));
+        var runtime = CreateRuntime(
+            directory.Path,
+            CreateSession(),
+            new FakeRealtimeConnection(),
+            sync,
+            automaticSyncScheduler: scheduler);
+        var foreground = new ClientActivitySnapshot(
+            IsMainWindowVisible: true,
+            IsMainWindowMinimized: false,
+            HasForegroundFocus: true,
+            OpenConversationId: null);
+        runtime.UpdateActivity(foreground);
+
+        await runtime.StartAsync();
+        runtime.UpdateActivity(foreground);
+        runtime.UpdateActivity(ClientActivitySnapshot.Inactive);
+        runtime.UpdateActivity(foreground);
+
+        Assert.Equal(
+            [SyncReason.Startup, SyncReason.WindowActivated],
+            sync.Reasons);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task AutomaticSync_WhenStartupIsPending_DoesNotStartPeriodicClock()
+    {
+        using var directory = new TemporaryDirectory();
+        var releaseStartup = new TaskCompletionSource<ClientSyncRunOutcome>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var sync = new FakeSyncCoordinator
+        {
+            TriggerAction = (reason, _) => reason == SyncReason.Startup
+                ? releaseStartup.Task
+                : Task.FromResult(Completed(reason)),
+        };
+        var clockStarted = NewSignal();
+        var scheduler = new ClientAutomaticSyncScheduler(
+            sync,
+            NullLogger<ClientAutomaticSyncScheduler>.Instance,
+            delayAsync: (_, cancellationToken) =>
+            {
+                clockStarted.TrySetResult();
+                return Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            });
+        var runtime = CreateRuntime(
+            directory.Path,
+            CreateSession(),
+            new FakeRealtimeConnection(),
+            sync,
+            automaticSyncScheduler: scheduler);
+
+        var startup = runtime.StartAsync();
+        await WaitUntilAsync(() => sync.Reasons.Count == 1);
+        Assert.False(clockStarted.Task.IsCompleted);
+        releaseStartup.TrySetResult(Completed(SyncReason.Startup));
+        await startup;
+        await clockStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task DisposeAsync_CancelsAutomaticClockBeforeRealtimeAndSyncCleanup()
+    {
+        using var directory = new TemporaryDirectory();
+        var order = new ConcurrentQueue<string>();
+        var clockStarted = NewSignal();
+        var sync = new FakeSyncCoordinator
+        {
+            DisposeAction = () =>
+            {
+                order.Enqueue("sync-dispose");
+                return ValueTask.CompletedTask;
+            },
+        };
+        var scheduler = new ClientAutomaticSyncScheduler(
+            sync,
+            NullLogger<ClientAutomaticSyncScheduler>.Instance,
+            delayAsync: (_, cancellationToken) =>
+            {
+                clockStarted.TrySetResult();
+                return WaitForClockCancellationAsync(cancellationToken, order);
+            });
+        var runtime = CreateRuntime(
+            directory.Path,
+            CreateSession(),
+            new FakeRealtimeConnection
+            {
+                DisposeAction = () =>
+                {
+                    order.Enqueue("realtime-dispose");
+                    return ValueTask.CompletedTask;
+                },
+            },
+            sync,
+            automaticSyncScheduler: scheduler);
+        await runtime.StartAsync();
+        await clockStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await runtime.DisposeAsync();
+
+        Assert.Equal(
+            ["automatic-clock-canceled", "realtime-dispose", "sync-dispose"],
+            order);
+    }
+
+    [Fact]
     public async Task RealtimeSink_WhenAutomaticReconnect_ReturnsWithoutWaitingForRequestedSync()
     {
         var inner = new RecordingRealtimeSink();
@@ -1298,7 +1415,8 @@ public sealed class ClientAccountRuntimeTests
         FakeReadThroughCoordinator? readThrough = null,
         ILogger<ClientAccountRuntime>? logger = null,
         IAsyncDisposable? notificationCoordinator = null,
-        Func<ClientNotificationActivationTarget, bool>? notificationTargetAuthorizer = null) =>
+        Func<ClientNotificationActivationTarget, bool>? notificationTargetAuthorizer = null,
+        ClientAutomaticSyncScheduler? automaticSyncScheduler = null) =>
         new(
             AccountScopeIdentity.Create(ServerBaseUri, UserId, rootDirectory),
             session,
@@ -1309,6 +1427,10 @@ public sealed class ClientAccountRuntimeTests
             cache ?? new RecordingAsyncDisposable(() => ValueTask.CompletedTask),
             new ClientActivityState(),
             logger ?? NullLogger<ClientAccountRuntime>.Instance,
+            automaticSyncScheduler ??
+                new ClientAutomaticSyncScheduler(
+                    sync,
+                    NullLogger<ClientAutomaticSyncScheduler>.Instance),
             notificationTargetAuthorizer);
 
     private static ClientAuthenticationSession CreateSession(
@@ -1376,6 +1498,30 @@ public sealed class ClientAccountRuntimeTests
 
     private static TaskCompletionSource NewSignal() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private static async Task WaitUntilAsync(Func<bool> predicate)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!predicate())
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(10), timeout.Token);
+        }
+    }
+
+    private static async Task WaitForClockCancellationAsync(
+        CancellationToken cancellationToken,
+        ConcurrentQueue<string> order)
+    {
+        try
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            order.Enqueue("automatic-clock-canceled");
+            throw;
+        }
+    }
 
     private sealed class FakeRealtimeConnection : IClientAccountRealtimeConnection
     {

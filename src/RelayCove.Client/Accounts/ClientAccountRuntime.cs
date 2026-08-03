@@ -17,6 +17,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
     private readonly IClientAccountReadThroughCoordinator readThroughCoordinator;
     private readonly ClientMessageHistoryCoordinator? messageHistoryCoordinator;
     private readonly ClientMessageSendCoordinator? messageSendCoordinator;
+    private readonly ClientAutomaticSyncScheduler automaticSyncScheduler;
     private readonly IAsyncDisposable notificationCoordinator;
     private readonly IAsyncDisposable localCache;
     private readonly AccountScopedLocalCache? conversationSource;
@@ -41,6 +42,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         IAsyncDisposable localCache,
         ClientActivityState activityState,
         ILogger<ClientAccountRuntime> logger,
+        ClientAutomaticSyncScheduler automaticSyncScheduler,
         Func<ClientNotificationActivationTarget, bool>? notificationTargetAuthorizer = null,
         AccountScopedLocalCache? conversationSource = null,
         ClientAccountRuntimeStateHub? stateHub = null,
@@ -62,6 +64,8 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         this.conversationSource = conversationSource;
         this.messageHistoryCoordinator = messageHistoryCoordinator;
         this.messageSendCoordinator = messageSendCoordinator;
+        this.automaticSyncScheduler = automaticSyncScheduler ??
+            throw new ArgumentNullException(nameof(automaticSyncScheduler));
         this.activityState = activityState ?? throw new ArgumentNullException(nameof(activityState));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.stateHub = stateHub ?? new ClientAccountRuntimeStateHub(logger);
@@ -129,6 +133,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         {
             ThrowIfTerminating();
             activityState.Update(snapshot);
+            automaticSyncScheduler.UpdateActivity(snapshot.IsMainWindowForeground);
         }
     }
 
@@ -468,6 +473,16 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         var outcome = new ClientAccountRuntimeStartOutcome(
             realtimeConnection.State,
             syncOutcome);
+        lock (stateGate)
+        {
+            if (terminalMode == TerminalMode.None &&
+                !lifetimeCancellation.IsCancellationRequested)
+            {
+                automaticSyncScheduler.Start(
+                    activityState.Snapshot.IsMainWindowForeground);
+            }
+        }
+
         logger.LogInformation(
             "Account runtime start completed; realtimeState={RealtimeState}; " +
             "syncStatus={SyncStatus}.",
@@ -581,6 +596,8 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
             failures.Add(exception);
         }
 
+        await CaptureFailureAsync(() => automaticSyncScheduler.DisposeAsync(), failures)
+            .ConfigureAwait(false);
         await CaptureFailureAsync(() => realtimeConnection.DisposeAsync(), failures)
             .ConfigureAwait(false);
         await CaptureFailureAsync(() => syncCoordinator.DisposeAsync(), failures)

@@ -433,3 +433,15 @@
 - **理由：** durable-first 把客户端崩溃恢复与服务端幂等键连接为同一个可证明状态；不自动重发不确定 POST 避免隐藏写放大，显式原键重试让 200 replay 安全收敛。条件化状态转换、严格响应发送者和统一 merge 覆盖响应/回声/同步/终止竞态，nullable 服务端身份避免 UI 把尚未确认的本地事实冒充服务器事实。
 - **影响：** Client 增加无 schema 变化的 pending mutation/read/recovery、发送 transport/coordinator、runtime/shell 接线和 WPF 输入/重试；不改 Shared/Server 协议、SQLite schema/migration、通知编码或依赖。Reply、@、附件、草稿持久化、编辑/撤回、搜索和周期 Sync 仍留给后续切片；真实账户/VPS/双客户端、网络断连视觉和 Narrator 留到 M5 Gate。
 - **来源：** 工程落地方案第 4.2、9.2–9.4、10.4、12.1–12.3、12.6–12.8、阶段 8；`DEC-010`、`DEC-014`、`DEC-017`、`DEC-025`、`DEC-026`、`DEC-027`、`DEC-034`；`docs/ai/tasks/2026-08-04-stage-8-text-send-flow.md`；最终 Fast/Full 743 项、Client 532 项、关键集 250/250、真实 Release WPF 窗口句柄/响应/单实例 smoke、model drift 与八项目漏洞审计。Claude #57–#60 均因认证/额度或空闲调度无结论；Codex 固定差异自审发现并修正发送者响应校验与同进程恢复竞态后由本机自动化复验。
+
+### DEC-036：账户级窗口激活与五分钟周期 Sync 调度
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-014/016/021/025/028/032` 已提供尽力投递的 SignalR、重连 Sync、账户 single-flight、通知轮次和 production runtime，但 production 只接通了 Startup/Retry/Realtime 的同步原因。工程方案明确要求 Periodic 补偿推送失败，并把 WindowActivated 定义为独立原因；若 WPF 直接创建 timer 或另跑同步循环，窗口事件噪声、托盘驻留、长同步与账户切换会产生重复请求、旧 scope 迟到触发或绕开现有通知策略。
+- **决策：** 每个 `ClientAccountRuntime` 独占一个 `ClientAutomaticSyncScheduler`，调度器只向既有 `ClientSyncCoordinator` 请求原因，不实现网络、游标、重试、通知或第二同步循环。Startup Sync 完成后才启动调度；启动时当前 `IsMainWindowForeground` 只建立基线，之后仅 `false -> true` 上升沿请求一次 `WindowActivated`，重复 Activated/StateChanged/VisibilityChanged 不重复。账户创建期间的最新 activity 仍由 shell 在 runtime 接管后重放，因此启动中发生且最终仍有效的前台变化可形成上升沿。
+- **决策：** Periodic 默认间隔固定为 5 分钟，首次从 runtime 启动完成后计时；每次自动请求观察结束后才等待下一间隔。长同步期间不积累 timer tick，若 tick 与其他原因重叠则继续由 `DEC-021` 的 single-flight、pending mask 和既有优先级裁决。同步返回失败或抛出异常只记录原因/状态/异常类型，下一周期继续；时钟本身异常记录后停止，避免故障 delay 形成热循环。间隔等待可在测试中注入，不新增配置、服务端状态或依赖。
+- **决策：** 调度器拥有自己的取消源和被观察任务集合，但不拥有 Sync coordinator。runtime 注销、切换或退出先取消并等待调度 delay/观察者，再释放 realtime、Sync coordinator、cache 与 session；观察者取消只停止等待，不取消共享 Sync flight，随后 coordinator Dispose 按既有账户生命周期取消真正循环。停止后 activity 更新 fail-closed，不能向旧账户请求新同步。
+- **理由：** runtime 是账户资源和托盘存活期的现有所有者，把自动触发放在此处可覆盖窗口隐藏期间的周期补偿并沿用统一终止顺序。上升沿过滤吸收 WPF 多事件噪声；完成后再计时形成天然背压，避免在网络长故障时积压任务。五分钟是在规范未给数值时兼顾聊天收敛延迟与小型服务端轮询负载的明确假设，未来若要外部配置必须另行冻结校验与部署口径。
+- **影响：** Client 新增无依赖、无 schema 的自动 Sync 调度器并接入 runtime factory/activity/termination；不改 Shared/Server 协议、Sync 原因数值/优先级、HTTP retry、通知策略、DPAPI 或 WPF 布局。真实丢推送/VPS/双客户端与五分钟壁钟端到端行为留到 M5；本切片以注入时钟和真实 Windows 进程 smoke 验证本地调度与生命周期。
+- **来源：** 工程落地方案第 4.2、9.2–9.4、12.4–12.8、21.2、阶段 8；`DEC-014`、`DEC-016`、`DEC-021`、`DEC-025`、`DEC-028`、`DEC-032`；`docs/ai/tasks/2026-08-04-stage-8-sync-triggers.md`；最终 Fast/Full 751 项、Client 540 项、关键集 670/670、真实 Release WPF 响应窗口/单实例/清理、model drift 与八项目漏洞审计。Claude #61 因认证源优先级失败，无结论；Codex 固定差异和本机门禁为最终依据。

@@ -104,6 +104,7 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
         ClientReadThroughCoordinator? readThroughCoordinator = null;
         ClientMessageHistoryCoordinator? messageHistoryCoordinator = null;
         ClientMessageSendCoordinator? messageSendCoordinator = null;
+        ClientAutomaticSyncScheduler? automaticSyncScheduler = null;
         ClientSyncCoordinator? syncCoordinator = null;
         IClientNotificationRoundCoordinator? unownedNotificationRoundCoordinator = null;
         IClientAccountRealtimeConnection? realtimeConnection = null;
@@ -193,6 +194,9 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                     .ConfigureAwait(false),
                 realtimeSink,
                 loggerFactory.CreateLogger<ClientRealtimeConnection>());
+            automaticSyncScheduler = new ClientAutomaticSyncScheduler(
+                syncCoordinator,
+                loggerFactory.CreateLogger<ClientAutomaticSyncScheduler>());
 
             var runtime = new ClientAccountRuntime(
                 identity,
@@ -204,6 +208,7 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                 cache,
                 activityState,
                 loggerFactory.CreateLogger<ClientAccountRuntime>(),
+                automaticSyncScheduler,
                 target => target.Kind switch
                 {
                     ClientNotificationActivationKind.Message =>
@@ -219,11 +224,19 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                 messageHistoryCoordinator,
                 messageSendCoordinator);
             unownedNotificationRoundCoordinator = null;
+            automaticSyncScheduler = null;
             return runtime;
         }
         catch (Exception creationFailure)
         {
             var cleanupFailures = new List<Exception>();
+            if (automaticSyncScheduler is not null)
+            {
+                await CaptureCleanupFailureAsync(
+                        () => automaticSyncScheduler.DisposeAsync(),
+                        cleanupFailures)
+                    .ConfigureAwait(false);
+            }
             if (realtimeConnection is not null)
             {
                 await CaptureCleanupFailureAsync(
