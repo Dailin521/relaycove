@@ -5,18 +5,18 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 8 — production 账户组合与聊天 UI
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知传输、固定 AppInstance 单实例、完整激活转交、账户/权限 fail-closed 路由、单轮提示音/任务栏闪烁及托盘关闭隐藏/彻底退出已完成
-- **最近验证通过的状态：** 桌面 attention/托盘最终代码检查点 `93e4740e69049d97d4f9d0871862d80fecb8e740` 已随完成记录仅快进到绿色集成头 `de15ef589402050ee1072bd3c7ee6c41e3c07b9c`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、自动恢复、登录/重试/注销、授权 lease、最小账户壳和凭据清理 barrier 已完成
+- **最近验证通过的状态：** production 账户壳最终代码检查点 `93d8fd5883a45ef154ef4612da7e7fcb8b9f6dc7` 已通过全部门禁；绿色集成头仍为 `de15ef589402050ee1072bd3c7ee6c41e3c07b9c`，等待本完成记录提交后仅快进
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Fast/Full、format、629 项测试、Client 418/418、桌面/通知定向 Release 280/280、复审补丁定向 39/39、activation filter 60/60 与压力 600/600；真实 Windows 优雅交接 30 轮×10 竞争者、冷/运行中/交接后 COM callback、并发冷启动/继任者/强杀恢复、静音 production builder payload/Register/Show/GetAll/Remove、极早关闭隐藏/同 HWND 恢复/托盘彻底退出、真实 MessageBeep/FlashWindowEx Start/STOP、WPF 非阻塞生命周期、既有本地缓存/HTTP/认证/SignalR/服务端回归、model drift、八项目漏洞审计与空白检查通过
+- **自动化验证：** `已验证` — 最终 Fast/Full、format、658 项测试、Client 447/447；review-fix 定向 71/71、关键 60/60，完整 Client 在 SQLite 隔离检查点 2,205 次与 review-fix 检查点 2,230 次重复全绿；真实 Release WPF 登录/不可达失败/密码即时清空/关闭隐藏/同 HWND 恢复、既有原生通知/attention/托盘/激活证据、model drift、八项目漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
-- **最近 Claude 调用：** `已验证` — #46 本机后台 job `819c9403` 使用 Claude Code 2.1.220、实际 `claude-opus-5`/XHigh、Read/Glob/Grep 只读，对固定代码检查点复审 740546 ms 后返回 `PASS`，无 P0/P1。四项非阻断 P2 已由 Codex 复算并在 `93e4740` 补齐诊断、测试、取消会话结束闭锁恢复与限制记录；Claude 仍只作第二意见
+- **最近 Claude 调用：** `已验证` — #50 本机后台 job `1aa031c1`、session `1aa031c1-7f38-4d11-95a4-69dc96389b54` 使用 Claude Code 2.1.220、实际 `claude-opus-5`/XHigh、只读复核 16 分 31 秒；barrier/崩溃窗口、跨 store、新登录解除、无障碍事件和清理失败文案成立项均由 Codex 在 `93d8fd5`/`DEC-032` 收敛，最终 Fast/Full 与 WPF 再验证通过；Claude 仍只作第二意见
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
-- `agent/stage-8-production-account-shell`：接入 production 认证/恢复、单账户 runtime、通知授权 lease、真实连接状态和最小登录/账户壳；会话/消息 UI 留给后续独立切片。
+- `agent/stage-8-production-account-shell`：代码、验证、独立复核和完成记录均已收敛，待 push 并仅快进 `agent/v1-integration`；随后直接创建会话列表切片。
 
 ## 已完成
 
@@ -53,10 +53,11 @@
 - Windows App SDK 2.3.1 unpackaged 原生通知、账户隔离 Tag/Group、严格分号激活参数、注册就绪门、有界原生调用与不确定提交精确恢复（`DEC-029`）
 - 固定 AppInstance key、完整 activation redirect、继任者回收、通知注销/key 释放顺序、授权路由与进程内去重（`DEC-030`）
 - Toast 后同步轮共享 attention gate、静音原生 Toast、MessageBeep/FlashWindowEx STOP 所有权、NotifyIcon 状态与关闭隐藏/彻底退出（`DEC-031`）
+- production 单账户组合、自动恢复/登录/重试/注销、权威缓存后 activation lease、真实 activity/托盘边界状态、最小 WPF 账户壳、凭据清理 barrier 与无障碍 live region（`DEC-032`）
 
 ## 下一任务
 
-完成 production 账户组合、自动恢复、登录/注销/重试与最小账户壳，再接入账户隔离会话列表和持续未读/连接状态。
+接入账户隔离的会话列表读取 facade、持续连接/总未读状态与双栏主窗口会话列表。
 
 ## 阻塞项
 

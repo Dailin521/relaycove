@@ -291,6 +291,7 @@
 - **决策：** 启动 Restore 只读取一个凭据并发一次 refresh，响应 user ID 必须等于持久 user ID；401、身份错配或无法形成可信轮换结果的 2xx 响应同时清内存和凭据。附加 store 的会话在后续 rotation 中先尝试保存新 refresh token，再原子发布内存响应；成功响应后的本地保存不受 Dispose 取消，保存失败清旧凭据并标记未持久化。持久认证入口在旧会话完成 Dispose 前拒绝新 Login/Restore，避免单一凭据文件被不同账户会话交叉覆盖。logout 先清内存与凭据；若凭据清除失败，即使调用者取消也仍以会话生命周期尝试一次远端 revoke，并返回 `CredentialClearFailed`，不重试。
 - **理由：** 服务端 rotation 是唯一权威提交点，客户端无法把网络与 DPAPI 合成分布式事务。保留当前已验证内存会话维持可用性，同时删除已知失效磁盘 token并显式降级持久状态；logout 的条件性不可取消 revoke 缩小“有效 token 留在不可删除文件中”的窗口。
 - **影响：** Client 增加串行持久认证入口、内部 Restore HTTP 和会话 credential persistence 状态，扩展客户端 logout 状态；不改变 Shared/服务端协议、DPAPI 格式或依赖。进程在服务端轮换成功但收到响应前终止仍只能在下次 401 时清理旧 token，这是单次使用 rotation 的固有限制。
+- **后续收窄：** `DEC-032` 追加无敏感信息的持久 clear barrier，使文件级占用导致正式凭据暂时无法删除时，后续进程仍拒绝自动恢复；认证目录整体不可写且远端 revoke 同时失败仍保留本决策的 `CredentialClearFailed` 降级边界。
 - **来源：** `DEC-006`、`DEC-022`、`DEC-023`；工程落地方案第 9.3、12.5、18.1；`docs/ai/tasks/2026-08-03-stage-6-client-session-restore.md`；当前 ClientAuthenticationSession 与 ClientCredentialStore 实现。
 
 ### DEC-025：单账户 runtime 的启动、重连与终止所有权
@@ -380,3 +381,18 @@
 - **理由：** 共享 gate 与 Toast 静音把用户可观察的声音/闪烁口径绑定到已提交同步轮次，而非平台 Toast 数；明确 STOP 所有权覆盖窗口激活之外的未来会话打开入口。先建立托盘再显示窗口封住 `Window.Show()` 可能泵入极早 WM_CLOSE 的竞态，显式退出继续服从 `DEC-030` 的单实例交接安全顺序。
 - **影响：** Client 启用 SDK 自带 Windows Forms 支持，增加无外部依赖的 desktop attention/tray 适配器、状态格式化和 WPF 生命周期接线；不改 Shared/Server 协议、SQLite schema/migration 或包依赖。当前 production App 尚未构造真实账户 runtime/chat UI，托盘只显示 `0 / Disconnected`，真实总未读/连接更新、会话打开 STOP 与消息端到端声音/闪烁必须在阶段 8 接线并保持 `未验证`，不能用 fake 或原生适配器 smoke 冒充。窗口隐藏到托盘时没有任务栏按钮，`FLASHW_TRAY` 无用户可见效果；系统注销/关机只完成代码级顺序复核，未执行破坏当前交互会话的实机探针。
 - **来源：** 工程落地方案第 13.4、13.6、13.7 与阶段 7；`DEC-028`、`DEC-029`、`DEC-030`；`docs/ai/tasks/2026-08-04-stage-7-desktop-attention-tray.md`；最终 Fast/Full 629 项、Client 418 项、桌面/通知定向 280/280、复审补丁定向 39/39、安装态静音 Toast Register/Show/GetAll/Remove、真实极早关闭隐藏/次实例同 HWND 恢复/托盘 Exit、原生 MessageBeep/FlashWindowEx Start/STOP 探针；Claude #45 challenge 中经 Codex 复算并修正的 per-round gate、Toast 默认音频和 FlashWindowEx 返回语义发现，以及 #46 固定检查点 `PASS` 后补齐的零句柄诊断、独立 gate/声音 false 测试、取消会话结束闭锁恢复和显式限制。
+
+### DEC-032：Production 账户壳的单一所有权、授权 lease 与退出顺序
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-022/024/025/028/030/031` 已分别提供真实认证、持久恢复、单账户 runtime、通知协调、授权激活与桌面驻留，但 production WPF 进程尚未组合这些组件。若窗口直接持有 session/runtime，重复登录、恢复与注销会产生重叠所有者；若在权威缓存就绪前建立通知授权，旧 Toast 可越过 fail-closed 门；若退出先拆通知/实例键再停止账户工作，迟到回调和缓存写入会跨越进程交接边界。
+- **决策：** 主实例选举成功后才创建一个 production composition：一个 30 秒超时的 `HttpClient`、当前用户 LocalAppData 下分离的 Authentication/Accounts 根、`PersistentClientAuthentication`、注入真实 desktop attention 的 `ClientAccountRuntimeFactory`，以及一个 `ClientAccountShellCoordinator`。协调器以串行操作门独占至多一个认证操作、session、runtime 和 activation lease；调用者取消只影响尚未完成所有权转移的当前操作，Dispose/退出取消共享生命周期并等待已取得的账户所有权收敛。创建失败的 session/runtime 仍由当前调用路径释放，成功转移后只有协调器终止链可释放。
+- **决策：** 启动先自动 Restore，无凭据、无效凭据、认证失败、网络/协议/限流失败都回到可操作登录态；登录输入先做绝对 HTTP(S) URI、用户名/密码和设备/版本长度校验，密码从 `PasswordBox` 取出后立即清空。runtime Start 或 Retry 只有在 Startup Sync 已完成并确认权威缓存可用时才建立账户 activation lease；暂不可用时保持目标停放，后续成功 Retry 建 lease 并异步重放。Startup/Retry 返回 `AuthenticationRequired` 时先撤 lease，再由 runtime Logout 清凭据并回到认证失败登录态。
+- **决策：** 最新窗口 activity 在账户尚未创建时缓冲，runtime 接管前后各重放一次；可见、最小化和前台状态进入现有通知/未读判定，当前会话在本切片固定为空。Start/Retry/Logout 的真实连接与同步结果同时更新账户壳和托盘；没有持续状态事件时不得把边界快照宣称为实时状态。系统通知注册失败只在壳中显示可见降级，不阻断账户，候选继续保持可恢复。通知授权 sink 一律经 WPF Dispatcher 异步排队，避免 pending replay 在账户操作门内同步泵窗口消息。
+- **决策：** Logout 顺序固定为 activation lease → runtime Logout/Dispose → 登录态；显式应用退出先停止账户 composition，再停止 activation dispatcher/router、注销 native notification，最后释放 AppInstance key。`OnExit` 只作为不能异步等待时的进程退出 detach 后备。账户快照、presentation、composition、runtime 与 `AccountScopeIdentity` 的 `ToString()` 必须脱敏；日志只记录错误类型，不记录服务器、用户名、scope、密码、令牌或本地路径。
+- **决策：** logout 本地清理使用三个固定文件语义：DPAPI 正式凭据 `relaycove-credential.v1.bin`、原子发布临时文件 `.bin.tmp`，以及只以“存在即待清理”为含义、仅写单字节且不含身份/服务器/token 的 `relaycove-credential.v1.clear-pending`。`ClearAsync` 必须先 durable 建立 barrier，再删除正式/临时凭据；`LoadAsync` 见 barrier 时不得解密或发起 refresh，而是继续尽力清文件，仅在两者都清除后移除 barrier 并返回无凭据。该触发源不同于 `DEC-023` 的未知篡改/校验失败，不改变后者“不自动删除损坏正式文件”的边界。
+- **决策：** 新 login/refresh 保存必须先原子发布新 DPAPI 凭据，后删除 barrier；两步之间崩溃会在下次启动丢弃一份有效新凭据并要求重新登录，但保持 fail-closed。若反序，崩溃可能让已注销旧 token 越过 barrier，因此禁止。barrier 写入与凭据删除若因认证目录整体只读、ACL deny 或不可用而同时失败，文件系统层无法再提供更强保证；必须返回并显示 `CredentialClearFailed`、记录脱敏 `ClearBarrierWrite` 类型，同时仍尽力远端 revoke。该残留与真实 ACL/只读卷组合保持 `未验证`，不得宣称绝对清除。
+- **理由：** 单一协调器把认证与账户资源的所有权转移、授权建立和终止顺序收敛在可测试边界；权威缓存就绪门延续私有数据 fail-closed 语义，异步 UI sink 避免 WPF 消息泵重入。可见通知降级和明确边界快照让最小壳如实呈现当前能力，不以占位数据冒充聊天已接通。
+- **影响：** Client 增加 production account composition/coordinator/presenter、最小登录/账户 WPF 壳与无 schema 的凭据 clear barrier。barrier 使 `LoadAsync` 在显式待清理状态下可删除正式文件；保存发布后、barrier 删除前崩溃会牺牲一次持久登录以换取 fail-closed。不改 Shared/Server 协议、DPAPI payload、SQLite schema/migration 或依赖。总未读仍显式为 `0（未接线）`，通知导航只进入受控占位入口；真实会话列表、持续连接/总未读、消息列表/发送、周期 Sync、真实服务器双客户端登录恢复、隐藏托盘闪烁和系统注销/关机实机仍属后续切片或 M5 Gate。
+- **来源：** 工程落地方案第 9.2–9.4、12.5–12.8、阶段 8；`DEC-022`、`DEC-023`、`DEC-024`、`DEC-025`、`DEC-028`、`DEC-030`、`DEC-031`；`docs/ai/tasks/2026-08-04-stage-8-production-account-shell.md`；账户壳状态机/并发/取消/授权/activity/脱敏自动化、跨 store 凭据 barrier/文件锁/双失败回归、真实 Release WPF 登录/失败/托盘/单实例 smoke、SQLite 隔离重复回归与 Claude #47–#50 只读 challenge/review 中经 Codex 复算的发现。

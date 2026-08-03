@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 8 production 账户组合、登录/恢复与最小账户壳
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `de15ef589402050ee1072bd3c7ee6c41e3c07b9c`
 - **工作分支：** `agent/stage-8-production-account-shell`
 - **相关方案章节：** 9.2–9.4、12.7–12.8、阶段 8；`DEC-022`、`DEC-025`、`DEC-028`、`DEC-030`、`DEC-031`
@@ -46,12 +46,12 @@
 
 ### 验收标准
 
-- [ ] 无凭据首次启动显示登录页；有效凭据自动进入账户壳；损坏、过期、服务不可用与取消均可恢复到明确且可重试的 UI 状态，UI 线程不被网络/数据库阻塞。
-- [ ] 登录输入校验、重复提交、成功/失败状态均有测试；密码/令牌/账户 scope/服务器 URI 不进入日志、异常文本、`ToString()` 或托盘。
-- [ ] 同一时刻最多一个认证操作、session、runtime 与 activation lease；创建/start 失败、注销和 App 退出均按所有权安全清理，不残留旧账户授权或跨账户数据。
-- [ ] 成功 start/retry 的真实 `ConnectionState` 同时更新账户壳和托盘；未读保持显式 `0（未接线）`，不能标记为端到端已验证。
-- [ ] 窗口可见/最小化/前台变化发布到当前 runtime；授权通知可恢复窗口并进入受控导航入口，当前无会话 UI 时只停在账户壳且不展示伪造缓存内容。
-- [ ] Fast/Full、关键并发/失败定向重复、model drift、八项目漏洞审计、空白检查、真实 Windows smoke 与独立复核通过。
+- [x] 无凭据首次启动显示登录页；有效凭据自动进入账户壳；损坏、过期、服务不可用与取消均可恢复到明确且可重试的 UI 状态，UI 线程不被网络/数据库阻塞。
+- [x] 登录输入校验、重复提交、成功/失败状态均有测试；密码/令牌/账户 scope/服务器 URI 不进入日志、异常文本、`ToString()` 或托盘。
+- [x] 同一时刻最多一个认证操作、session、runtime 与 activation lease；创建/start 失败、注销和 App 退出均按所有权安全清理，不残留旧账户授权或跨账户数据。
+- [x] 成功 start/retry 的真实 `ConnectionState` 同时更新账户壳和托盘；未读保持显式 `0（未接线）`，不能标记为端到端已验证。
+- [x] 窗口可见/最小化/前台变化发布到当前 runtime；授权通知可恢复窗口并进入受控导航入口，当前无会话 UI 时只停在账户壳且不展示伪造缓存内容。
+- [x] Fast/Full、关键并发/失败定向重复、model drift、八项目漏洞审计、空白检查、真实 Windows smoke 与独立复核通过。
 
 ### 验证命令
 
@@ -83,19 +83,39 @@ Codex 负责实现与验收；Claude 仅做持久只读 challenge/review，结�
 
 ### 修改摘要
 
-- 待完成。
+- 最终代码检查点 `93d8fd5883a45ef154ef4612da7e7fcb8b9f6dc7`（账户壳主体 `3aaa93c26263b308ef57d089383bc00e8c8ae7b3`、SQLite 隔离 `1619024036f8094c8f117d658096dcb6a7977c48`）增加 production `ClientAccountComposition`、账户 shell coordinator/presenter 与窄生命周期接口。主实例才创建单一 HttpClient、DPAPI 持久认证和 runtime factory；Restore/Login/Retry/Logout/Dispose 串行拥有至多一个 session、runtime 和授权 lease。
+- runtime 只有在权威 Startup Sync 可用时建立 notification activation lease；失败时目标继续停放，成功 Retry 后建立 lease 并异步重放。Startup/Retry 的 `AuthenticationRequired` 先撤 lease，再 logout 清凭据回登录态；窗口 activity 在 runtime 创建前缓冲，创建后重放。
+- `App` 接入真实 LocalAppData 组合、desktop attention、账户快照、托盘连接状态、通知注册可见降级与账户优先的异步退出顺序。最小 WPF 登录/账户壳立即清空 PasswordBox，区分恢复/登录/启动/重试/注销状态，并明确显示总未读 `0（尚未接线）` 和下一切片的会话占位。
+- Claude #47 challenge 的 `AuthenticationRequired` 僵死、通知降级不可见、授权重放消息泵重入、排队操作与原语 Dispose 竞争、无锁 validation 快照、注销 activity 噪声和 scope `ToString()` 泄漏均由 Codex 复算、修正并补回归；`SignedOut=0` 保持安全默认值，不按风格建议改为可误表示的 1-based 默认。
+- 两次独立 Full 在阶段 7/8 均暴露同一既有 Client SQLite 全局 pool 清理竞态；`1619024` 以一个 `DisableParallelization` xUnit collection 覆盖全部 11 个直接使用 SQLite 的 Client 测试类，不改 production、schema 或依赖。
+- Claude #49 固定检查点复核提出的 process-exit `HttpClient` 所有权、冷通知注销线程、停机分类、登录长度、无障碍与登出双失败均已复算。`93d8fd5` 让 detach 保留 runtime 依赖、阻塞原生调用离开 UI 线程，并用无敏感信息的 durable clear barrier 阻断文件锁 + 远端 revoke 失败后的跨进程自动恢复；成功新登录先发布凭据再解除 barrier。动态状态只在文本真实变化时抛 `LiveRegionChanged`，`CredentialClearFailed` 与认证失败同时显示。
+- 冻结 `DEC-032`；持续连接事件、真实会话/消息导航、总未读、周期 Sync 和真实服务器双客户端仍留在后续切片，不用边界快照或占位文案冒充完成。
 
 ### 验证证据
 
-- 待完成。
+- `已验证`：最终 Fast 通过；Shared 35、Server 175、Client 447、Updater 1，共 658/658，Debug 构建 0 警告、0 错误。最终 Full 的 Release 构建、658/658、format 与空白检查通过。
+- `已验证`：账户壳定向状态机/并发/取消/授权/activity/脱敏、凭据文件锁/跨 store 重启/新登录解除 barrier、detach 依赖、后台原生调用和双失败文案回归通过；最终相关定向集 71/71。六条 review-fix 关键回归连续 10 轮 60/60；SQLite 隔离检查点完整 Client 441/441 连续 5 轮 2,205 次，后续 review-fix 检查点完整 Client 446/446 连续 5 轮 2,230 次全部通过，最终新增 presenter 回归由 447 项 Full 覆盖。
+- `已验证`：首次 Stage 8 Full 仅在既有 `NotificationRecoveryTests.AuthoritativeSnapshot_AfterRestart_ReemitsUntilPlatformClearIsAcknowledged` 出现一次 `ObjectDisposedException`。根因为其他并行测试 teardown 的进程级 `SqliteConnection.ClearAllPools()` 关闭该测试正在使用的 native handle；11 个 SQLite 测试类进入独占 collection 后，完整 Client 5 轮与 Full 均通过。
+- `已验证`：最终 EF Core `has-pending-model-changes` 报告 model 无变化；`dotnet list RelayCove.sln package --vulnerable --include-transitive` 对 8 个项目均无已知漏洞；`git diff --check` 通过。
+- `已验证`：真实 Release WPF 无凭据启动显示登录页和“系统通知：可用”；空提交显示输入格式错误。向不可达本机地址提交时密码只显示掩码并在请求前清空，`SigningIn` 保持禁用登录面板，随后显示服务器暂不可用而不误进账户壳。普通 Close 隐藏到托盘，第二次启动退出并恢复同一窗口；探针后精确终止被测 executable，残留进程 0，LocalAppData 下未产生账户缓存或凭据目录。
+- `已验证`：Stage 7 已实机证明同一托盘 host 的 Exit 可彻底退出；本切片以 coordinator/composition 自动化和代码序复核证明账户先于 notification/router/AppInstance 收敛。当前桌面自动化不能直接操作 Windows notification area，因此没有把本轮精确 `Stop-Process` 冒充新的托盘 Exit 实机证据。
+- `已验证`：最终 review-fix 后真实 Release WPF 再启动成功，登录页布局与 UI Automation 树完整，系统通知可用；前一轮不可达本机地址 smoke 证明 password 提交前清空、SigningIn 禁用控件且可见 busy 名称、失败后恢复可操作。关闭隐藏后次实例恢复同一 HWND；最终精确终止被测 executable，残留进程 0，Authentication/Accounts 目录均不存在。
+- `已验证`：Claude #47 job `199dd547`（17 分 26 秒，`$8.26`）完成 challenge；#48 job `4a674abb`（11 分 24 秒，`$2.67`）确认 11 个 SQLite 类覆盖完整且当前 collection 方案可交付；#49 job `87982d3f`（12 分 47 秒，`$4.44`）给出有条件合并项；#50 job `1aa031c1`、session `1aa031c1-7f38-4d11-95a4-69dc96389b54` 使用 Claude Code 2.1.220、实际 `claude-opus-5`/XHigh，16 分 31 秒、显示费用 `$5.01`，复核 barrier/崩溃顺序/跨 store/新登录、生命周期与无障碍。所有成立项均由 Codex 复算、修正并以最终 Fast/Full/实机 smoke 验证；Narrator 实际播报仍未验证，不能由静态 UIA 事件冒充。
+- `未验证`：未读取 M5 VPS 配置，也未用真实服务器凭据做端到端恢复/登录、真实 SignalR 持续状态、双客户端通知点击聊天导航或总未读；认证目录整体只读/ACL deny、Narrator 实际播报、系统注销/关机和隐藏托盘时不可见的任务栏闪烁仍保留明确限制。
 
 ### 文件范围
 
-- 待完成。
+- `src/RelayCove.Client/Accounts/`、`Auth/`、`Storage/AccountScopeIdentity.cs`、`App.xaml.cs`、`MainWindow.xaml(.cs)`。
+- `tests/RelayCove.Client.Tests/Accounts/ClientAccountShellCoordinatorTests.cs`、scope 脱敏回归及 11 个 SQLite 测试类/共享 collection。
+- `docs/ai/DECISIONS.md`、`STATUS.md`、`V1_EXECUTION.md` 与本任务记录。
 
 ### 决策与限制
 
-- 待完成。
+- production 只支持当前进程一个账户；旧账户必须先完整终止才能建立新 runtime。凭据目录与账户缓存目录分离，日志、异常和对象格式化不包含路径、服务器、用户、scope、密码或令牌。
+- notification registration 的冷启动门仍服从 `DEC-029/030`；普通环境失败只显示“系统通知不可用”并让账户继续工作，不能永久完成尚未派发的候选。
+- 账户壳只在 start/retry/logout 边界读取真实 `ConnectionState`；没有持续事件时不宣称实时。总未读固定显式 `0（未接线）`，通知授权只进入受控占位入口，不展示缓存内容。
+- SQLite collection 是对进程级 `ClearAllPools()` 的最小测试隔离；以后任何直接或间接打开 Client SQLite 的新测试类都必须加入该 collection。当前 client suite 墙钟约 7 秒，可靠性收益高于已测得的并行度损失。
+- clear barrier 只收窄文件级占用导致的删除失败；若整个认证目录不可写且远端 revoke 同时失败，只能返回 `CredentialClearFailed`、记录脱敏类型并要求用户修复目录权限，不能声称旧 token 已绝对清除。
 
 ### 下一步
 
