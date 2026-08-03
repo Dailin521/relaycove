@@ -66,6 +66,7 @@ public sealed class MessageStorageTests
             Assert.Equal(mentioned.Id, Assert.Single(stored[0].Mentions).MentionedUserId);
             Assert.Equal(stored[0].Id, stored[1].ReplyToMessageId);
             Assert.All(stored, message => Assert.Equal(DateTimeKind.Utc, message.CreatedAt.Kind));
+            Assert.Throws<InvalidOperationException>(() => stored[0].AddMention(Guid.NewGuid()));
 
             await using var connection = new SqliteConnection(CreateConnectionString(databasePath));
             await connection.OpenAsync();
@@ -161,6 +162,9 @@ public sealed class MessageStorageTests
             var mentionedDelete = await Assert.ThrowsAsync<SqliteException>(() =>
                 context.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM Users WHERE Id = {mentioned.Id.ToString("D")};"));
             Assert.Equal(19, mentionedDelete.SqliteErrorCode);
+            var repliedMessageDelete = await Assert.ThrowsAsync<SqliteException>(() =>
+                context.Database.ExecuteSqlInterpolatedAsync($"DELETE FROM Messages WHERE Id = {root.Id};"));
+            Assert.Equal(19, repliedMessageDelete.SqliteErrorCode);
 
             await context.Database.ExecuteSqlInterpolatedAsync(
                 $"DELETE FROM Conversations WHERE Id = {conversation.Id.ToString("D")};");

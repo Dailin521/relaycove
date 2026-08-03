@@ -34,11 +34,28 @@ public sealed class RelayCoveDbContextTests
                 expiresAt: CreatedAt.AddDays(1)));
             await context.SaveChangesAsync();
 
+            await migrator.MigrateAsync("20260803055556_AddConversationStorage");
+            var retainedConversation = Conversation.CreateChannel(
+                Guid.Parse("95f3fb21-f5c6-48a8-a6ab-b51077681a2a"),
+                ConversationType.PrivateChannel,
+                "Retained conversation",
+                retainedUser.Id,
+                CreatedAt);
+            context.Add(retainedConversation);
+            context.Add(new ConversationMember(
+                retainedConversation.Id,
+                retainedUser.Id,
+                ConversationMemberRole.Administrator,
+                CreatedAt));
+            await context.SaveChangesAsync();
+
             await context.Database.MigrateAsync();
 
             Assert.False(context.Database.HasPendingModelChanges());
             Assert.Equal(1, await context.Users.CountAsync());
             Assert.Equal(1, await context.RefreshTokens.CountAsync());
+            Assert.Equal(1, await context.Conversations.CountAsync());
+            Assert.Equal(1, await context.ConversationMembers.CountAsync());
             Assert.Equal(
                 ["ConversationMembers", "Conversations", "MessageMentions", "Messages", "RefreshTokens", "Users"],
                 await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions') ORDER BY name;"));
@@ -63,6 +80,16 @@ public sealed class RelayCoveDbContextTests
             Assert.Equal(
                 ["IX_ConversationMembers_UserId", "IX_Conversations_CreatedByUserId", "IX_Conversations_DirectParticipantKey", "IX_Conversations_Type"],
                 await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'IX_Conversation%' ORDER BY name;"));
+
+            await migrator.MigrateAsync("20260803055556_AddConversationStorage");
+
+            Assert.Equal(1, await context.Users.CountAsync());
+            Assert.Equal(1, await context.RefreshTokens.CountAsync());
+            Assert.Equal(1, await context.Conversations.CountAsync());
+            Assert.Equal(1, await context.ConversationMembers.CountAsync());
+            Assert.Equal(
+                ["ConversationMembers", "Conversations", "RefreshTokens", "Users"],
+                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions') ORDER BY name;"));
 
             await migrator.MigrateAsync("20260803042614_InitialAuthenticationStorage");
 

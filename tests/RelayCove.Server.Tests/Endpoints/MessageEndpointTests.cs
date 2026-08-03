@@ -229,22 +229,26 @@ public sealed class MessageEndpointTests(
         var adminName = CreateUserName("history-admin");
         var readerName = CreateUserName("history-reader");
         await factory.CreateUserAsync(adminName, ExistingPassword, isAdmin: true);
-        await factory.CreateUserAsync(readerName, ExistingPassword);
+        var readerId = await factory.CreateUserAsync(readerName, ExistingPassword);
         using var adminClient = await CreateAuthenticatedClientAsync(adminName);
         using var readerClient = await CreateAuthenticatedClientAsync(readerName);
         var conversation = await CreateChannelAsync(adminClient, ConversationType.PublicChannel, "History");
         var sent = new List<MessageDto>();
         for (var index = 1; index <= 5; index++)
         {
-            sent.Add(await SendAsync(
-                adminClient,
-                CreateSendRequest(conversation.Id, $"message {index}"),
-                HttpStatusCode.Created));
+            var request = CreateSendRequest(conversation.Id, $"message {index}");
+            if (index == 5)
+            {
+                request = request with { MentionUserIds = [readerId] };
+            }
+
+            sent.Add(await SendAsync(adminClient, request, HttpStatusCode.Created));
         }
 
         var firstPage = await GetHistoryAsync(readerClient, conversation.Id, limit: 2);
         Assert.True(firstPage.HasMore);
         Assert.Equal(sent[^2..].Select(message => message.Id), firstPage.Messages.Select(message => message.Id));
+        Assert.Equal([readerId], firstPage.Messages[^1].MentionUserIds);
         Assert.Equal(firstPage.Messages[0].Id, firstPage.NextBeforeMessageId);
         var secondPage = await GetHistoryAsync(
             readerClient, conversation.Id, firstPage.NextBeforeMessageId, limit: 2);

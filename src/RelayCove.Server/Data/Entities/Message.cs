@@ -86,6 +86,11 @@ public sealed class Message
 
     public void AddMention(Guid mentionedUserId)
     {
+        if (Id != 0)
+        {
+            throw new InvalidOperationException("Persisted messages cannot be changed.");
+        }
+
         if (mentionedUserId == Guid.Empty)
         {
             throw new ArgumentException("Mentioned user IDs cannot be empty.", nameof(mentionedUserId));
