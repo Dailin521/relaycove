@@ -479,4 +479,4 @@
 - **决策：** WPF 在现有虚拟化消息行内、目标消息卡片之前显示唯一的可访问“新消息”分割线。该标记在 selection 生命周期内保持稳定，即使 read-through 已确认；离开再打开时使用新的原子本地状态重算。它不改变滚动策略、新消息提示按钮、Copy/Reply/链接、未读计数或 read-through 上传。
 - **理由：** selection 冻结区分“用户打开时尚未读”与“当前数据库已读”，避免 UI 回执反过来抹掉自己的定位依据；分页证明把有界加载与精确 UX 连接起来，阻止 History/Around 缺口造成错误标记。复用现有事务、generation 和 presentation，不新增持久状态，也不会在重启后保留陈旧 UI 标记。
 - **影响：** Client 扩展无 schema 的本地页 outcome、selection/presenter 和 WPF 行模板；不改 Shared/Server 协议、SQLite schema/migration、消息合并、通知或依赖。超出当前加载范围且尚未被分页证明的边界暂不显示；真实登录、VPS/双客户端与 Narrator 保留到 M5 Gate。
-- **来源：** 工程落地方案第 9.2–9.4、12.3、12.6–12.8、阶段 8；`DEC-026`、`DEC-027`、`DEC-034`；`docs/ai/tasks/2026-08-04-stage-8-new-message-divider.md`；Fast 788 项与 cache/shell/presenter 52 项初检。Claude #66 因认证源优先级失败，无结论；Codex 固定差异、自审与本机门禁为依据。
+- **来源：** 工程落地方案第 9.2–9.4、12.3、12.6–12.8、阶段 8；`DEC-026`、`DEC-027`、`DEC-034`；`docs/ai/tasks/2026-08-04-stage-8-new-message-divider.md`；最终 Fast/两次 Full 788 项、Client 577 项、cache/shell/presenter 关键集 520/520、真实 Release WPF 响应窗口/单实例/精确清理、model drift、八项目漏洞审计与空白检查。Claude #66 因认证源优先级失败，无结论；Codex 固定差异、自审与本机门禁为依据。

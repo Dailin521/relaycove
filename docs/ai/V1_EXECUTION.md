@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 8
 ActiveTask: docs/ai/tasks/2026-08-04-stage-8-new-message-divider.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 018df9840fcb35a6a5ee41b21191b129792a2f2f
+LatestGreenCodeCommit: 49d72a3f882c2ea450010bec83a0d18e30a02d26
 LatestGreenIntegrationCommit: 4b201b656f1e7675fb397ee609cdf84b35247279
-NextAction: 实现并验证打开时冻结、分页可证明精确的新消息分割线
+NextAction: 将新消息分割线完成提交仅快进到绿色集成分支，然后冻结 @用户最小协议与客户端闭环
 ClaudeCalls: 66（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66 失败；仅关键用途调用）
 ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有三十三次失败/中断调用费用 unavailable
 Blocker: none
@@ -73,6 +73,7 @@ RequiredUserGate: none
 - 当前 WindowActivated / Periodic Sync 最终代码检查点 `64f6985a48f1aaeec48af36bd64f17d87b0f8341` 已通过最终 Fast/Full 751 项、Client 540/540、scheduler/runtime/既有 Sync coordinator 关键集 670/670 重复、真实 Release WPF 非零窗口句柄/响应/单实例/进程清理、model drift 与八项目漏洞审计。Startup 后前台上升沿、五分钟完成后节拍、既有 single-flight 复用和旧 scope 终止顺序冻结为 `DEC-036`；Claude #61–#62 均未读取代码或形成结论，Codex 固定提交自审无剩余发现。真实丢推送、五分钟壁钟与 VPS/双客户端保持 M5 Gate。
 - 当前消息复制与日期分割最终代码检查点 `ab564319aa39a160f63de54fc03e8dce23f339d5` 已通过最终 Fast/两次 Full 766 项、Client 555/555、presentation/Copy/Clipboard writer 关键集 80/80、真实 Release WPF 响应窗口/单实例/清理、model drift 与八项目漏洞审计。当前 Ready 快照成员门、逐字 Unicode Copy、Clipboard 占用可恢复分类及绝对本地日期分组已收敛；自动化刻意不覆盖用户真实 Clipboard。链接、`@用户`、新消息分割线与真实登录视觉保持后续/M5 Gate。
 - 当前安全链接最终代码检查点 `018df9840fcb35a6a5ee41b21191b129792a2f2f` 已通过最终 Fast/两次 Full 782 项、Client 571/571、parser/policy/launcher/presenter 关键集 190/190、真实 Release WPF 响应窗口/单实例/精确清理、model drift、八项目漏洞审计、敏感日志检索与空白检查。有界绝对 HTTP(S) 识别、当前 Ready 快照成员门和无命令拼接的 Windows shell association 已收敛为 `DEC-038`；真实浏览器打开刻意不自动化，`@用户`、新消息分割线与真实登录视觉保持后续/M5 Gate。
+- 当前新消息分割线最终代码检查点 `49d72a3f882c2ea450010bec83a0d18e30a02d26` 已通过最终 Fast/两次 Full 788 项、Client 577/577、cache/shell/presenter 关键集 520/520、真实 Release WPF 响应窗口/单实例/精确清理、model drift、八项目漏洞审计与空白检查。同事务打开状态、selection 冻结和 History/Around 分页证明已收敛为 `DEC-039`；真实登录数据下视觉/Narrator 保持 M5 Gate，`@用户` 仍需先冻结普通用户目录协议。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 

@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 8 打开会话时的稳定新消息边界与分割线
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `4b201b656f1e7675fb397ee609cdf84b35247279`
 - **工作分支：** `agent/stage-8-new-message-divider`
 - **相关方案章节：** 9.2–9.4、12.3、12.6–12.8、阶段 8；`DEC-026`、`DEC-027`、`DEC-034`
@@ -42,10 +42,10 @@
 
 ### 验收标准
 
-- [ ] 成功页在同一只读事务返回有效的已读/未读状态；非 Ready/撤权/失败不带可显示边界，日志与 `ToString()` 不泄露 ID 或内容。
-- [ ] 每个 Ready selection 最多一个分割线，只位于冻结边界后的首条他人确认消息前；零未读、pending、自己的消息和未解析分页不显示。
-- [ ] 首屏 read-through、refresh、加载更早页、Around、账户/会话切换、非 Ready 和迟到回调均保持稳定或 fail-closed。
-- [ ] Fast/Full、cache/shell/presenter 定向与重复、model drift、八项目漏洞审计、空白检查和真实 Windows WPF smoke 通过。
+- [x] 成功页在同一只读事务返回有效的已读/未读状态；非 Ready/撤权/失败不带可显示边界，日志与 `ToString()` 不泄露 ID 或内容。
+- [x] 每个 Ready selection 最多一个分割线，只位于冻结边界后的首条他人确认消息前；零未读、pending、自己的消息和未解析分页不显示。
+- [x] 首屏 read-through、refresh、加载更早页、Around、账户/会话切换、非 Ready 和迟到回调均保持稳定或 fail-closed。
+- [x] Fast/Full、cache/shell/presenter 定向与重复、model drift、八项目漏洞审计、空白检查和真实 Windows WPF smoke 通过。
 
 ### 验证命令
 
@@ -77,26 +77,34 @@ git diff --check
 
 ### 修改摘要
 
-- 待完成。
+- 本地消息页在既有 deferred SQLite 只读事务中一并读取并校验 `LastReadMessageId` / `UnreadCount`，成功 outcome 携带原子状态，失败与 `ToString()` 不暴露可复用边界。
+- message selection 在第一次成功最新页读取时冻结状态；History 与 Around 分别按连续页事实单调证明精确边界，refresh 与渲染后的 read-through 不覆盖冻结值。
+- presentation 只在冻结边界后的首条他人确认消息前设置一次标记，pending、自己的消息、零未读和未解析分页保持隐藏；WPF 虚拟化行内新增可访问“新消息”分割线。
+- 接受 `DEC-039`，明确宁可暂不显示也不显示分页缺口下的近似位置。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 绿色集成头 Fast 基线 | 782/782；Shared 35、Server 175、Client 571、Updater 1。 |
-| `未验证` | 实现与最终门禁 | 任务进行中。 |
+| `已验证` | 最终 Fast / 两次 Full | 同一代码树提交前与固定代码提交 `49d72a3f882c2ea450010bec83a0d18e30a02d26` 上均通过；Release 0 警告/0 错误、format、Shared 35 + Server 175 + Client 577 + Updater 1 = 788/788，`git diff --check` 通过。 |
+| `已验证` | cache/shell/presenter Release 关键集 | 每轮 52 项，连续 10 轮共 520/520；覆盖事务页状态、读穿后刷新稳定、分页延迟/跨界解析、Around 精确/未解析、本人/pending 排除与脱敏。 |
+| `已验证` | EF model drift 与 NuGet 漏洞 | EF Core 无 pending model changes；解决方案 8 个 source/test 项目含传递依赖均无已知漏洞。 |
+| `已验证` | 真实 Release WPF smoke | 主进程 PID 26076、非零窗口句柄 27856744、`Responding=True`；第二实例 PID 56588 退出码 0、同路径运行中仅 1 个实例，精确 PID 清理后为 0。Release XAML 编译覆盖新分割线绑定。 |
+| `未验证` | 真实登录数据下的分割线视觉 / Narrator / VPS / 双客户端 | 空登录壳 smoke 不冒充真实消息视觉；保留到 M5 Gate，本任务未读取 VPS 配置。 |
+| `未验证` | Claude #66 独立可靠性 challenge | MCP 因认证源优先级失败，无 job、模型、workspace、费用或结论；不冒充通过，Codex 固定差异与本机门禁为依据。 |
 
 ### 文件范围
 
 - 新增：本任务记录。
-- 修改：待完成。
+- 修改：本地消息页 outcome/cache、账户 shell selection、消息 presentation、`MainWindow.xaml`、三组 Client 测试及状态/执行/决策记录。
 - 删除：无。
 
 ### 决策与限制
 
-- 决策：待完成。
+- 决策：接受 `DEC-039`，冻结 selection 初始未读状态并只在分页事实证明精确后显示唯一分割线。
 - 已知限制：边界未被当前加载窗口证明精确时不显示近似分割线；真实 VPS/双客户端与 Narrator 留到 M5。
 
 ### 下一步
 
-- 实现并验证稳定新消息边界与 WPF 分割线。
+- 将完成提交仅快进到 `agent/v1-integration`，随后冻结并实现阶段 8 `@用户` 所需的最小普通用户目录/提及闭环。
