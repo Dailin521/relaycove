@@ -20,7 +20,7 @@ public sealed class PasswordPolicy
         "passwordpassword1",
         "qwertyuiopqwerty",
         "relaycoverelaycove",
-        "welcomecomewelcome",
+        "welcomewelcomewelcome",
     };
 
     private static readonly string[] CommonSuffixes = ["123", "1234", "2026", "password"];

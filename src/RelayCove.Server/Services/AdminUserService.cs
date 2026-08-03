@@ -43,6 +43,9 @@ public sealed class AdminUserService(
             if (!actorIsAdministrator)
             {
                 await transaction.RollbackAsync(cancellationToken);
+                logger.LogWarning(
+                    "User {ActorUserId} failed the in-transaction administrator recheck.",
+                    actorUserId);
                 return new AdminUserCreationResult(AdminUserCreationStatus.ActorNotAdministrator);
             }
 
