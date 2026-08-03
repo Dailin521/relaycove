@@ -6,6 +6,10 @@ internal interface IWindowsAppNotificationManager
 
     bool IsSupported();
 
+    bool IsRegistered { get; }
+
+    void SetRegistrationReady(bool isReady);
+
     WindowsClientNotificationSetting Setting { get; }
 
     void Register();

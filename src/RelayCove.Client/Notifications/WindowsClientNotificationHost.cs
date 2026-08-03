@@ -75,6 +75,7 @@ internal sealed class WindowsClientNotificationHost : IDisposable
                     }
 
                     registered = true;
+                    manager.SetRegistrationReady(true);
                     currentActivationArgument = result.ActivationArgument;
                     if (result.ActivationReadException is not null)
                     {
@@ -125,6 +126,7 @@ internal sealed class WindowsClientNotificationHost : IDisposable
             }
 
             manager.NotificationInvoked -= OnNotificationInvoked;
+            manager.SetRegistrationReady(false);
             try
             {
                 var unregistration = Task.Factory.StartNew(

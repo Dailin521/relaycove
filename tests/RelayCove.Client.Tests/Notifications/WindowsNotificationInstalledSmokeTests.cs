@@ -1,3 +1,4 @@
+using System.Xml.Linq;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Windows.AppNotifications;
 using RelayCove.Client.Notifications;
@@ -43,6 +44,7 @@ public sealed class WindowsNotificationInstalledSmokeTests
 
         try
         {
+            AssertNativeBuilderActivationRoundTrip(conversationId, messageId);
             var result = await platform.SubmitAsync(
                 new ClientNotificationRequest(
                     AccountScopeId,
@@ -104,6 +106,38 @@ public sealed class WindowsNotificationInstalledSmokeTests
         {
             await AppNotificationManager.Default.RemoveAllAsync();
         }
+    }
+
+    private static void AssertNativeBuilderActivationRoundTrip(
+        Guid conversationId,
+        long messageId)
+    {
+        var target = ClientNotificationActivationTarget.Message(
+            AccountScopeId,
+            conversationId,
+            messageId);
+        var envelope = new WindowsClientNotification(
+            "RelayCove",
+            "原生 launch 参数验证",
+            WindowsNotificationActivationCodec.Encode(target),
+            WindowsNotificationIdentity.GetMessageTag(messageId),
+            WindowsNotificationIdentity.GetConversationGroup(
+                AccountScopeId,
+                conversationId),
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            ExpiresOnReboot: true);
+
+        var native = WindowsAppSdkNotificationManager.BuildNotification(envelope);
+        var launch = XDocument.Parse(native.Payload)
+            .Root?
+            .Attribute("launch")?
+            .Value;
+
+        Assert.NotNull(launch);
+        Assert.Contains(';', launch);
+        Assert.DoesNotContain('&', launch);
+        Assert.True(WindowsNotificationActivationCodec.TryDecode(launch, out var decoded));
+        Assert.Equal(target, decoded);
     }
 
     private static ClientNotificationMessage CreateMessage(

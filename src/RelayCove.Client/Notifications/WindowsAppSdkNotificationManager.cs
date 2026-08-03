@@ -7,6 +7,7 @@ namespace RelayCove.Client.Notifications;
 internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotificationManager
 {
     private readonly Lazy<AppNotificationManager> manager;
+    private int registered;
 
     private WindowsAppSdkNotificationManager()
     {
@@ -18,6 +19,11 @@ internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotification
     public static WindowsAppSdkNotificationManager Shared { get; } = new();
 
     public event Action<string>? NotificationInvoked;
+
+    public bool IsRegistered => Volatile.Read(ref registered) != 0;
+
+    public void SetRegistrationReady(bool isReady) =>
+        Volatile.Write(ref registered, isReady ? 1 : 0);
 
     public WindowsClientNotificationSetting Setting =>
         manager.Value.Setting == AppNotificationSetting.Enabled
@@ -37,7 +43,11 @@ internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotification
                 : null;
     }
 
-    public void Unregister() => manager.Value.Unregister();
+    public void Unregister()
+    {
+        Volatile.Write(ref registered, 0);
+        manager.Value.Unregister();
+    }
 
     public Task ShowAsync(
         WindowsClientNotification notification,
@@ -48,20 +58,7 @@ internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotification
             () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var builder = new AppNotificationBuilder();
-                foreach (var argument in notification.ActivationArguments)
-                {
-                    builder.AddArgument(argument.Key, argument.Value);
-                }
-
-                var appNotification = builder
-                    .AddText(notification.Title)
-                    .AddText(notification.Body)
-                    .BuildNotification();
-                appNotification.Tag = notification.Tag;
-                appNotification.Group = notification.Group;
-                appNotification.Expiration = notification.Expiration;
-                appNotification.ExpiresOnReboot = notification.ExpiresOnReboot;
+                var appNotification = BuildNotification(notification);
                 cancellationToken.ThrowIfCancellationRequested();
                 manager.Value.Show(appNotification);
             },
@@ -71,13 +68,56 @@ internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotification
     }
 
     public Task RemoveByGroupAsync(string group, CancellationToken cancellationToken) =>
-        manager.Value.RemoveByGroupAsync(group).AsTask(cancellationToken);
+        Task.Factory.StartNew(
+                () =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return manager.Value
+                        .RemoveByGroupAsync(group)
+                        .AsTask(cancellationToken);
+                },
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default)
+            .Unwrap();
 
     public Task RemoveByTagAndGroupAsync(
         string tag,
         string group,
         CancellationToken cancellationToken) =>
-        manager.Value.RemoveByTagAndGroupAsync(tag, group).AsTask(cancellationToken);
+        Task.Factory.StartNew(
+                () =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return manager.Value
+                        .RemoveByTagAndGroupAsync(tag, group)
+                        .AsTask(cancellationToken);
+                },
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default)
+            .Unwrap();
+
+    internal static AppNotification BuildNotification(
+        WindowsClientNotification notification)
+    {
+        ArgumentNullException.ThrowIfNull(notification);
+        var builder = new AppNotificationBuilder();
+        foreach (var argument in notification.ActivationArguments)
+        {
+            builder.AddArgument(argument.Key, argument.Value);
+        }
+
+        var appNotification = builder
+            .AddText(notification.Title)
+            .AddText(notification.Body)
+            .BuildNotification();
+        appNotification.Tag = notification.Tag;
+        appNotification.Group = notification.Group;
+        appNotification.Expiration = notification.Expiration;
+        appNotification.ExpiresOnReboot = notification.ExpiresOnReboot;
+        return appNotification;
+    }
 
     private AppNotificationManager CreateManager()
     {

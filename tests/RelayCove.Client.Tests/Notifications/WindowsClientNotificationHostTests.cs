@@ -22,6 +22,7 @@ public sealed class WindowsClientNotificationHostTests
 
         Assert.Equal(1, manager.RegisterCount);
         Assert.Equal(1, manager.SubscriberCount);
+        Assert.True(manager.IsRegistered);
     }
 
     [Fact]
@@ -132,6 +133,7 @@ public sealed class WindowsClientNotificationHostTests
         await WaitUntilAsync(() => manager.UnregisterCount == 1);
 
         Assert.Equal(0, manager.SubscriberCount);
+        Assert.False(manager.IsRegistered);
     }
 
     [Fact]
@@ -171,6 +173,7 @@ public sealed class WindowsClientNotificationHostTests
 
         Assert.Equal(1, manager.UnregisterCount);
         Assert.Equal(0, manager.SubscriberCount);
+        Assert.False(manager.IsRegistered);
     }
 
     [Fact]
@@ -234,6 +237,7 @@ public sealed class WindowsClientNotificationHostTests
     private sealed class FakeWindowsAppNotificationManager : IWindowsAppNotificationManager
     {
         private Action<string>? notificationInvoked;
+        private bool registered;
 
         public event Action<string>? NotificationInvoked
         {
@@ -250,6 +254,10 @@ public sealed class WindowsClientNotificationHostTests
         }
 
         public int SubscriberCount { get; private set; }
+
+        public bool IsRegistered => registered;
+
+        public void SetRegistrationReady(bool isReady) => registered = isReady;
 
         public bool IsSupportedValue { get; init; } = true;
 
@@ -282,6 +290,8 @@ public sealed class WindowsClientNotificationHostTests
             {
                 throw RegisterException;
             }
+
+            registered = true;
         }
 
         public string? GetCurrentActivationArgument()
@@ -297,6 +307,7 @@ public sealed class WindowsClientNotificationHostTests
 
         public void Unregister()
         {
+            registered = false;
             UnregisterCount++;
             UnregisterAction?.Invoke();
         }

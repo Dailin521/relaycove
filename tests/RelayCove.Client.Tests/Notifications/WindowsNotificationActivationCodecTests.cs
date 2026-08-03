@@ -19,8 +19,8 @@ public sealed class WindowsNotificationActivationCodecTests
                 42));
 
         Assert.Equal(
-            "v=1&target=message&account=" + AccountScopeId +
-            "&conversation=11111111-2222-3333-4444-555555555555&message=42",
+            "v=1;target=message;account=" + AccountScopeId +
+            ";conversation=11111111-2222-3333-4444-555555555555;message=42",
             argument);
         Assert.True(WindowsNotificationActivationCodec.TryDecode(argument, out var decoded));
         Assert.Equal(ClientNotificationActivationKind.Message, decoded!.Kind);
@@ -35,7 +35,7 @@ public sealed class WindowsNotificationActivationCodecTests
         var argument = WindowsNotificationActivationCodec.EncodeToArgument(
             ClientNotificationActivationTarget.UnreadOverview(AccountScopeId));
 
-        Assert.Equal("v=1&target=unread&account=" + AccountScopeId, argument);
+        Assert.Equal("v=1;target=unread;account=" + AccountScopeId, argument);
         Assert.True(WindowsNotificationActivationCodec.TryDecode(argument, out var decoded));
         Assert.Equal(ClientNotificationActivationKind.UnreadOverview, decoded!.Kind);
         Assert.Null(decoded.ConversationId);
@@ -70,20 +70,21 @@ public sealed class WindowsNotificationActivationCodecTests
         {
             null,
             "",
-            "v=2&target=unread&account=" + AccountScopeId,
-            "v=1&v=1&target=unread&account=" + AccountScopeId,
-            "v=1&target=unread&account=" + AccountScopeId + "&message=1",
-            "v=1&target=message&account=" + AccountScopeId +
-                "&conversation=11111111-2222-3333-4444-555555555555&message=0",
-            "v=1&target=message&account=" + AccountScopeId +
-                "&conversation=11111111-2222-3333-4444-555555555555&message=01",
-            "v=1&target=message&account=" + AccountScopeId +
-                "&conversation=11111111-2222-3333-4444-55555555555A&message=1",
-            "v=1&target=unread&account=%41" + new string('A', 42),
-            "v=1&target=unread&account=" + new string('A', 42),
-            "v=1&target=unread&account=" + new string('A', 42) + "+",
-            "v=1&target=unread&account=" + new string('A', 42) + "B",
-            "v=1&target=unread&account=" + new string('A', 42) + "%",
+            "v=1&target=unread&account=" + AccountScopeId,
+            "v=2;target=unread;account=" + AccountScopeId,
+            "v=1;v=1;target=unread;account=" + AccountScopeId,
+            "v=1;target=unread;account=" + AccountScopeId + ";message=1",
+            "v=1;target=message;account=" + AccountScopeId +
+                ";conversation=11111111-2222-3333-4444-555555555555;message=0",
+            "v=1;target=message;account=" + AccountScopeId +
+                ";conversation=11111111-2222-3333-4444-555555555555;message=01",
+            "v=1;target=message;account=" + AccountScopeId +
+                ";conversation=11111111-2222-3333-4444-55555555555A;message=1",
+            "v=1;target=unread;account=%41" + new string('A', 42),
+            "v=1;target=unread;account=" + new string('A', 42),
+            "v=1;target=unread;account=" + new string('A', 42) + "+",
+            "v=1;target=unread;account=" + new string('A', 42) + "B",
+            "v=1;target=unread;account=" + new string('A', 42) + "%",
             new string('a', 2049),
         };
 }

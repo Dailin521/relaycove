@@ -20,6 +20,7 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
     private DateTimeOffset settingsSnapshotExpiresAt = DateTimeOffset.MinValue;
     private Task<ClientNotificationSettingsSnapshot>? settingsRefresh;
     private Task<bool>? uncertainSubmissionCleanup;
+    private string? uncertainSubmissionGroup;
 
     public WindowsClientNotificationPlatform(
         IWindowsAppNotificationManager manager,
@@ -223,8 +224,21 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        await submissionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            lock (stateGate)
+            {
+                if (string.Equals(
+                        uncertainSubmissionGroup,
+                        group,
+                        StringComparison.Ordinal) &&
+                    uncertainSubmissionCleanup is { IsCompleted: false })
+                {
+                    return ClientNotificationPlatformResult.TransientFailure;
+                }
+            }
+
             if (GetSettingsSnapshot().PlatformAvailability ==
                 ClientNotificationPlatformAvailability.Unavailable)
             {
@@ -237,6 +251,7 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
             await removal
                 .WaitAsync(nativeRemovalTimeout, timeProvider, cancellationToken)
                 .ConfigureAwait(false);
+            ClearCompletedUncertainSubmission(group);
             return ClientNotificationPlatformResult.Accepted;
         }
         catch (OperationCanceledException)
@@ -257,6 +272,10 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
                 "errorType={ErrorType}.",
                 exception.GetType().Name);
             return ClientNotificationPlatformResult.TransientFailure;
+        }
+        finally
+        {
+            submissionGate.Release();
         }
     }
 
@@ -368,6 +387,7 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
                 notification.Tag,
                 notification.Group);
             uncertainSubmissionCleanup = cleanup;
+            uncertainSubmissionGroup = notification.Group;
         }
 
         _ = cleanup.ContinueWith(
@@ -384,6 +404,7 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
                     if (ReferenceEquals(platform.uncertainSubmissionCleanup, completed))
                     {
                         platform.uncertainSubmissionCleanup = null;
+                        platform.uncertainSubmissionGroup = null;
                     }
                 }
             },
@@ -413,6 +434,7 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
                     tag,
                     group,
                     CancellationToken.None)
+                .WaitAsync(nativeRemovalTimeout, timeProvider)
                 .ConfigureAwait(false);
             return true;
         }
@@ -426,11 +448,27 @@ internal sealed class WindowsClientNotificationPlatform : IClientNotificationPla
         }
     }
 
+    private void ClearCompletedUncertainSubmission(string group)
+    {
+        lock (stateGate)
+        {
+            if (string.Equals(
+                    uncertainSubmissionGroup,
+                    group,
+                    StringComparison.Ordinal) &&
+                uncertainSubmissionCleanup is { IsCompleted: true })
+            {
+                uncertainSubmissionCleanup = null;
+                uncertainSubmissionGroup = null;
+            }
+        }
+    }
+
     private ClientNotificationSettingsSnapshot ReadSettingsSnapshot()
     {
         try
         {
-            if (!manager.IsSupported())
+            if (!manager.IsSupported() || !manager.IsRegistered)
             {
                 return ClientNotificationSettingsSnapshot.Unavailable;
             }

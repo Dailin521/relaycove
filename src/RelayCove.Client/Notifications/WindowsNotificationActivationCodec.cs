@@ -37,7 +37,7 @@ internal static class WindowsNotificationActivationCodec
 
     internal static string EncodeToArgument(ClientNotificationActivationTarget target) =>
         string.Join(
-            '&',
+            ';',
             Encode(target).Select(pair =>
                 Uri.EscapeDataString(pair.Key) + "=" + Uri.EscapeDataString(pair.Value)));
 
@@ -54,7 +54,7 @@ internal static class WindowsNotificationActivationCodec
         }
 
         var values = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var segment in argument.Split('&'))
+        foreach (var segment in argument.Split(';'))
         {
             var separator = segment.IndexOf('=', StringComparison.Ordinal);
             if (separator <= 0 ||

@@ -159,6 +159,24 @@ public sealed class WindowsClientNotificationPlatformTests
     }
 
     [Fact]
+    public async Task Submit_WhenNotificationHostIsNotRegistered_IsTransient()
+    {
+        var manager = new FakeWindowsAppNotificationManager();
+        manager.SetRegistrationReady(false);
+        var platform = CreatePlatform(manager);
+
+        var result = await platform.SubmitAsync(
+            new ClientNotificationRequest(
+                AccountScopeId,
+                NotificationPolicy.PerMessage,
+                [CreateMessage(1)]),
+            CancellationToken.None);
+
+        Assert.Equal(ClientNotificationPlatformStatus.TransientFailure, result.Status);
+        Assert.Empty(manager.Shown);
+    }
+
+    [Fact]
     public async Task Submit_WhenNativeShowDoesNotComplete_TimesOutAndBlocksSameIdentityRetry()
     {
         var never = new TaskCompletionSource(
@@ -209,6 +227,105 @@ public sealed class WindowsClientNotificationPlatformTests
             [("1", "xzXuM4KwnuCXvzCWGT65Ptnpk0W6_yV678dFK5IRi20")],
             manager.RemovedTagGroups);
         Assert.Equal(ClientNotificationPlatformStatus.Accepted, retry.Status);
+        Assert.Equal(2, manager.ShowCount);
+    }
+
+    [Fact]
+    public async Task ClearConversation_WhileSameGroupShowIsUncertain_RemainsPending()
+    {
+        var show = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var manager = new FakeWindowsAppNotificationManager
+        {
+            ShowAction = (_, _) => show.Task,
+        };
+        var platform = CreatePlatform(
+            manager,
+            nativeSubmissionTimeout: TimeSpan.FromMilliseconds(20));
+
+        var submit = await platform.SubmitAsync(
+            new ClientNotificationRequest(
+                AccountScopeId,
+                NotificationPolicy.PerMessage,
+                [CreateMessage(1)]),
+            CancellationToken.None);
+        var blockedClear = await platform.ClearConversationAsync(
+            AccountScopeId,
+            ConversationId,
+            CancellationToken.None);
+
+        Assert.Equal(ClientNotificationPlatformStatus.TransientFailure, submit.Status);
+        Assert.Equal(
+            ClientNotificationPlatformStatus.TransientFailure,
+            blockedClear.Status);
+        Assert.Empty(manager.RemovedGroups);
+
+        show.SetResult();
+        await WaitUntilAsync(() => manager.RemovedTagGroups.Count == 1);
+        var retry = await platform.ClearConversationAsync(
+            AccountScopeId,
+            ConversationId,
+            CancellationToken.None);
+
+        Assert.Equal(ClientNotificationPlatformStatus.Accepted, retry.Status);
+        Assert.Single(manager.RemovedGroups);
+    }
+
+    [Fact]
+    public async Task ClearConversation_AfterUncertainCleanupFails_RecoversSubmissionCircuit()
+    {
+        var show = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleanupAttempts = 0;
+        var manager = new FakeWindowsAppNotificationManager
+        {
+            ShowAction = (_, _) => show.Task,
+            RemoveTagAction = (_, _, _) =>
+            {
+                if (Interlocked.Increment(ref cleanupAttempts) == 1)
+                {
+                    throw new IOException("cleanup failed");
+                }
+
+                return Task.CompletedTask;
+            },
+        };
+        var platform = CreatePlatform(
+            manager,
+            nativeSubmissionTimeout: TimeSpan.FromMilliseconds(20));
+        var request = new ClientNotificationRequest(
+            AccountScopeId,
+            NotificationPolicy.PerMessage,
+            [CreateMessage(1)]);
+
+        Assert.Equal(
+            ClientNotificationPlatformStatus.TransientFailure,
+            (await platform.SubmitAsync(request, CancellationToken.None)).Status);
+        show.SetResult();
+        await WaitUntilAsync(() => Volatile.Read(ref cleanupAttempts) == 1);
+        Assert.Equal(
+            ClientNotificationPlatformStatus.TransientFailure,
+            (await platform.SubmitAsync(request, CancellationToken.None)).Status);
+
+        var clear = ClientNotificationPlatformResult.TransientFailure;
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            clear = await platform.ClearConversationAsync(
+                AccountScopeId,
+                ConversationId,
+                CancellationToken.None);
+            if (clear.Status != ClientNotificationPlatformStatus.TransientFailure)
+            {
+                break;
+            }
+
+            await Task.Delay(10);
+        }
+
+        Assert.Equal(ClientNotificationPlatformStatus.Accepted, clear.Status);
+        Assert.Equal(
+            ClientNotificationPlatformStatus.Accepted,
+            (await platform.SubmitAsync(request, CancellationToken.None)).Status);
         Assert.Equal(2, manager.ShowCount);
     }
 
@@ -406,7 +523,7 @@ public sealed class WindowsClientNotificationPlatformTests
 
     private static string Serialize(
         IReadOnlyList<KeyValuePair<string, string>> arguments) =>
-        string.Join('&', arguments.Select(pair => pair.Key + "=" + pair.Value));
+        string.Join(';', arguments.Select(pair => pair.Key + "=" + pair.Value));
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
@@ -439,6 +556,10 @@ public sealed class WindowsClientNotificationPlatformTests
 
         public bool IsSupportedValue { get; init; } = true;
 
+        public bool IsRegistered { get; private set; } = true;
+
+        public void SetRegistrationReady(bool isReady) => IsRegistered = isReady;
+
         public Exception? IsSupportedException { get; init; }
 
         public Func<bool>? IsSupportedAction { get; init; }
@@ -455,6 +576,12 @@ public sealed class WindowsClientNotificationPlatformTests
         }
 
         public Func<string, CancellationToken, Task>? RemoveAction { get; init; }
+
+        public Func<string, string, CancellationToken, Task>? RemoveTagAction
+        {
+            get;
+            init;
+        }
 
         public IReadOnlyCollection<WindowsClientNotification> Shown => shown.ToArray();
 
@@ -522,7 +649,8 @@ public sealed class WindowsClientNotificationPlatformTests
             CancellationToken cancellationToken)
         {
             removedTagGroups.Enqueue((tag, group));
-            return Task.CompletedTask;
+            return RemoveTagAction?.Invoke(tag, group, cancellationToken) ??
+                Task.CompletedTask;
         }
 
         public void Raise(string argument) => NotificationInvoked?.Invoke(argument);
