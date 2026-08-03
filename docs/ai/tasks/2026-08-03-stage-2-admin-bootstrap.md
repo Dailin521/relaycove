@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 2 — 一次性默认管理员引导与管理员创建用户
-- **状态：** 进行中（仓库与官方证据已收集，等待 challenge）
+- **状态：** 进行中（challenge 已尝试，决策已冻结，待实现）
 - **基准提交：** `80bb74270e5b15a47fb4bbc7ae19deacd47f22ec`
 - **工作分支：** `agent/stage-2-admin-bootstrap`
 - **相关方案章节：** `RelayCove_工程落地方案.md` 第 7.1、8.2、17.4、18.2、阶段 2；`DEC-004`–`DEC-006`
@@ -20,6 +20,7 @@
 - `已验证`：[NIST SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b/authenticators/)要求单因子密码至少 15 个字符、建议允许至少 64 个字符、不得附加字符类型组合规则，并要求建立常见/上下文弱密码 blocklist；密码应完整验证而不是截断。
 - `已验证`：[ASP.NET Core 10 hosted service 官方文档](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/host/hosted-services?view=aspnetcore-10.0)说明 `StartAsync` 默认在服务开始处理请求前执行且应保持短小；hosted service 为单例，使用 scoped 数据库服务时必须显式创建 scope。
 - `已验证`：[ASP.NET Core 10 授权 handler DI 官方文档](https://learn.microsoft.com/en-us/aspnet/core/security/authorization/dependencyinjection?view=aspnetcore-10.0)明确使用 EF 的 authorization handler 不得注册为 singleton；本任务应从数据库动态读取 `IsAdmin`，而不是把可变权限固化进 access token。
+- `未验证`：Claude XHigh challenge #19 对固定 `ChallengeHead=0480b01` 在 120 秒上限内未返回结论；本机认证源优先级禁用了 claude.ai connector。按用户要求未重试，以下决策由 Codex 根据仓库、NIST 与 Microsoft 官方证据独立收敛。
 
 ### 假设
 
@@ -100,6 +101,7 @@ Fast 后形成代码检查点，Full 后固定 ReviewHead；绿色后按用户�
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 基准 Fast | Debug 0 警告、0 错误；73 项测试通过 |
+| `未验证` | Claude challenge #19 | `claude_second_brain` 在 120 秒后因 connector 被本机认证源禁用而超时；无模型、workspace、费用或审查结论，ChallengeHead 与工作树保持不变 |
 
 ### 文件范围
 
@@ -109,9 +111,9 @@ Fast 后形成代码检查点，Full 后固定 ReviewHead；绿色后按用户�
 
 ### 决策与限制
 
-- 决策：待 challenge 与本地核对后写入新决策。
+- 决策：采用默认关闭、外部凭据、整表空库一次性的 bootstrap；15–128 Unicode scalar、无组合规则、带最小弱密码/上下文拒绝的共享密码策略；scoped 动态管理员 handler 与事务内 actor 复核；详见 `DEC-007`。
 - 已知限制：见“明确不做”；任务开始时尚无实现证据。
 
 ### 下一步
 
-- 固定 ChallengeHead，独立反证 bootstrap、动态管理员授权、密码策略、并发与机密边界。
+- 实现 bootstrap、密码策略、动态管理员 policy 与管理员创建用户 HTTP 闭环。

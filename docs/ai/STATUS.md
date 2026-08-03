@@ -11,7 +11,7 @@
 - **自动化验证：** `已验证` — Fast/Full、format、73 项测试、真实 SQLite migration/并发轮换/锁库、JWT 负向、限流、日志泄漏、发布依赖、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
-- **本任务 Claude 调用：** `部分验证` — 两次 safe-mode 只读 `claude-opus-5` / XHigh challenge 对 `ChallengeHead=87ff08a` 返回 `REVISE`，有效发现已纳入 `DEC-006`；候选 MCP review 因本机认证源覆盖 claude.ai 登录而未取得结论，已按规则降级为 Codex 固定差异自审
+- **最近 Claude 调用：** `未验证` — 管理员引导 XHigh challenge 对 `ChallengeHead=0480b01` 因本机认证源覆盖 claude.ai 登录在 120 秒后超时；未取得审查结论且按用户要求未重试，`DEC-007` 由 Codex 结合仓库、NIST 与 Microsoft 官方证据独立收敛
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中

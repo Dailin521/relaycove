@@ -83,3 +83,15 @@
 - **理由：** 固定 token 类型、算法和 claims 消除默认映射与算法混淆；短期 access 加每请求用户状态检查使禁用即时生效；条件写而非 read-modify-write 让 refresh rotation 在单库中可证明单赢；强类型和统一响应降低误存明文与枚举风险；端点级限流限制高成本密码尝试且不影响已认证 API。
 - **影响：** appsettings 可以提交 issuer/audience/生命周期和限流非机密值，但不得提交 signing key；开发和测试必须显式注入临时 key，生产由部署 Gate 提供。无 token family、无 `kid`/key rotation、单进程限流、反代前共享 IP 和 15 分钟内 access 不可主动撤销是已知 v1 限制；可信代理、分布式限流、密钥轮换与重放族追踪另行决策。
 - **来源：** 工程落地方案第 8.2、10.2、11.1、18.4、阶段 2；`docs/ai/tasks/2026-08-03-stage-2-auth-endpoints.md`；2026-08-03 ASP.NET Core 10 JWT bearer/rate limiter、Microsoft.Data.Sqlite transaction 文档；RFC 8725、RFC 9700。
+
+### DEC-007：一次性管理员引导、密码策略与动态管理员授权
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** 阶段 2 需要在不开放注册的前提下创建首个管理员并允许管理员创建账号；若仓库携带默认凭据、启动时覆盖既有账号、信任 JWT 中的旧角色或在授权检查后不再确认 actor，都会形成持久后门或 TOCTOU 提权窗口。
+- **决策：** `BootstrapAdmin` 默认关闭且仓库不提供用户名、密码或占位机密。启用时完整凭据只能由 User Secrets、环境或受控部署配置注入；缺失、畸形，或关闭开关但仍注入凭据时启动失败且不得回显密码。运维必须先显式应用 migration；短 `IHostedService.StartAsync` 在服务监听前以 scoped DbContext 和默认非 deferred/Serializable SQLite 事务检查整个 Users 表，只在零行时创建一个管理员。已有任意用户时一律 no-op，不创建、覆盖、提权或改密；schema 缺失、锁定或写入失败使启动失败。成功后运维必须移除凭据并关闭开关。
+- **决策：** 新密码统一由共享 `PasswordPolicy` 验证：按 Unicode scalar value 计数 15–128 个字符，允许空格和 Unicode，不要求大小写、数字或符号组合；拒绝控制字符、常见弱密码以及与用户名、昵称或 `RelayCove` 相同或直接派生的上下文密码。完整原始字符串交给 IdentityV3 hasher 和 verifier，不截断、不写日志，也不在本兼容切片改变既有密码的 Unicode 规范化语义。v1 使用小型内置弱密码集合与上下文规则，不声称覆盖完整泄漏语料库。
+- **决策：** `POST /api/admin/users` 接受用户名、昵称、密码和 `IsAdmin`，成功返回不含密码/哈希的用户响应；结构/密码错误为 `400 ValidationFailed`，规范化用户名冲突为稳定 `409 UserNameAlreadyExists`。管理员 policy 以 scoped EF handler 每次从数据库确认 bearer `sub` 对应用户仍存在、未禁用且 `IsAdmin=true`；服务层在 SQLite 写事务内再次确认 actor 后才检查唯一名、哈希密码并插入。并发同名创建只允许一个成功，其他请求归一化为 409；审计日志只记录 actor/user ID、角色标志和结果，不记录请求对象、用户名、昵称、密码或哈希。
+- **理由：** 空表而不是“没有管理员”作为唯一引导条件，使遗留普通账号不能被配置意外升级；外部一次性凭据与显式 migration 避免仓库后门和隐式 schema 变更。动态授权加事务内复核使禁用/降权可即时收敛；长口令、无组合规则和弱密码拒绝与当前 NIST 指南一致，同时不引入外部身份或大型联网依赖。
+- **影响：** 没有用户且未启用 bootstrap 的服务可以启动但无法登录，属于明确运维状态；非空但无管理员的库不会自愈，必须通过受控数据恢复流程处理。禁用、删除、改角色、重置密码、用户列表、首次改密、完整泄漏密码服务和管理员 UI 仍属于阶段 11/部署后续任务，不得借本决策提前实现。
+- **来源：** 工程落地方案第 7.1、8.2、17.4、18.2、阶段 2；`docs/ai/tasks/2026-08-03-stage-2-admin-bootstrap.md`；2026-08-03 NIST SP 800-63B-4 password verifier、ASP.NET Core 10 hosted service 与 authorization handler DI 官方文档。

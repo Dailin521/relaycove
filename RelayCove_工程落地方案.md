@@ -728,6 +728,8 @@ GET    /api/admin/status
 PUT    /api/admin/settings/upload
 ```
 
+`POST /api/admin/users` 的 v1 请求包含 `UserName`、`DisplayName`、`Password`、`IsAdmin`；成功返回不含密码与哈希的用户响应。未认证为 401、数据库当前非管理员为 403、结构或密码策略失败为 400、规范化用户名重复为稳定 409。同名并发创建必须只有一个成功，管理员审计日志不得包含请求对象、用户名、昵称、密码或哈希。
+
 ### 更新接口
 
 ```text
@@ -960,7 +962,7 @@ public sealed record ApiErrorResponse(
 ```
 
 - `Code` 是客户端分支的稳定字符串；`Message` 只用于人类诊断或显示，不是兼容性键。`Details` 的键使用 Web camelCase 请求字段名，每个字段可包含多个错误。
-- 第一批稳定错误码为 `ValidationFailed`、`AuthenticationFailed`、`AuthenticationRequired`、`AccessDenied`、`SyncCursorInvalid`、`IdempotencyKeyReuse`、`ConversationAccessRevoked`。
+- 第一批稳定错误码为 `ValidationFailed`、`AuthenticationFailed`、`AuthenticationRequired`、`AccessDenied`、`RateLimitExceeded`、`ServiceUnavailable`、`InternalServerError`、`UserNameAlreadyExists`、`SyncCursorInvalid`、`IdempotencyKeyReuse`、`ConversationAccessRevoked`。
 - 未知用户名、密码错误和账号禁用统一返回 `401 AuthenticationFailed`，响应不得揭示账号是否存在或禁用；精确原因只进入不含机密的服务端诊断。
 - 缺少或无效认证返回 `401 AuthenticationRequired`；身份有效但普通权限不足返回 `403 AccessDenied`；已撤销会话权限继续使用 `403 ConversationAccessRevoked`。
 - 请求校验失败返回 `400 ValidationFailed`；同步游标和幂等键冲突使用各自已冻结的 `409` 错误码。错误响应、日志和 TraceId 都不得包含密码、完整 Token 或密钥。
@@ -1099,6 +1101,8 @@ v1 登录名限制为 3–64 个 ASCII 字母、数字、点、下划线或连�
 服务端 GUID 以小写标准 `D` 文本保存；时间以固定 `yyyy-MM-ddTHH:mm:ss.fffZ` UTC 文本保存并拒绝非 UTC 写入。refresh token 原始值由 32 字节 CSPRNG 产生，表中只保存 `Base64Url(SHA-256(raw bytes))` 的 43 字符哈希；不得保存明文 token。密码使用 ASP.NET Core 版本化 `PasswordHasher` 格式，不自定义低层 PBKDF2 存储协议。
 
 认证 token 细节遵循 `DEC-006`：access JWT 固定 `typ=at+jwt`、HS256、issuer/audience 与 `sub/jti/iat/exp`，有效期 15 分钟并仅接受 30 秒时钟偏差；签名 key 至少 32 个随机字节且不得进入仓库。refresh token 有效期 30 天，每次使用都在 SQLite 非 deferred 写事务内条件撤销旧 token 并原子插入新 token；并发只有一个请求成功。JWT 验证后仍查库确认用户存在且未禁用，logout 对任意 token 输入幂等返回 204。
+
+管理员引导与创建账号遵循 `DEC-007`：bootstrap 默认关闭且凭据只从外部配置注入，运维先显式迁移数据库；启动服务只在整个 Users 表为空时创建首个管理员，已有任意用户时不得覆盖、提权或改密。新密码按 Unicode scalar value 要求 15–128 个字符，允许空格/Unicode、不加字符组合规则，并拒绝控制字符、常见弱密码和直接上下文派生。管理员权限不写入 access token；每次管理请求从数据库动态校验，并在创建用户写事务中再次确认 actor。
 
 ### Conversations
 
@@ -1971,6 +1975,8 @@ dotnet build 通过
 7. 实现当前用户接口；
 8. 启动时支持创建默认管理员；
 9. 实现管理员创建用户。
+
+默认管理员不是仓库内置账号：bootstrap 默认关闭，凭据由部署环境一次性注入，只在已迁移且 Users 表为空时创建；成功后必须移除凭据。非空库永不由 bootstrap 自动覆盖、提权或改密。阶段 2 的管理员接口只实现创建用户，禁用、删除和重置密码仍在阶段 11 实现。
 
 验收：
 

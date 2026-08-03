@@ -14,8 +14,8 @@ IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: b72194a168ba99a5268661df8f8cac7c48578fc4
 LatestGreenIntegrationCommit: 80bb74270e5b15a47fb4bbc7ae19deacd47f22ec
 NextAction: 固定 admin bootstrap ChallengeHead，反证凭据、密码策略、动态授权与并发边界
-ClaudeCalls: 18（软上限 24，硬上限 30）
-ClaudeCostUsd: 5.4229485 confirmed；另有十一次失败/中断调用费用 unavailable
+ClaudeCalls: 19（软上限 24，硬上限 30）
+ClaudeCostUsd: 5.4229485 confirmed；另有十二次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -69,9 +69,10 @@ RequiredUserGate: none
 | 16 | 2026-08-03 | 认证端点 | safe-mode 只读 CLI challenge | Opus / XHigh | `ChallengeHead=87ff08aa5c7258a0b48cd37733a9b6fcd1d0b8d9`；实际 `claude-opus-5`，返回 `REVISE`；确认毫秒时钟和并发轮换阻塞项，中段本地输出被截断 | `$0.82506775` |
 | 17 | 2026-08-03 | 认证端点 | safe-mode 只读 CLI 定向 challenge | Opus / XHigh | 同一 ChallengeHead，实际 `claude-opus-5`；完整返回 7 项 `REVISE` 修正，经本地代码与 Microsoft.Data.Sqlite 事务证据核对后纳入 `DEC-006` | `$0.57057225` |
 | 18 | 2026-08-03 | 认证端点 | 最终 MCP review | Opus / XHigh | `ReviewHead=b72194a`；本机 `ANTHROPIC_API_KEY`/其他认证源优先于 claude.ai 登录，connector 被禁用，未返回模型、workspace、费用或审查结论；按用户要求未重复耗时调用，降级 Codex 固定差异自审 | `unavailable` |
+| 19 | 2026-08-03 | 管理员引导 | 前置 challenge | Opus / XHigh | `ChallengeHead=0480b01`；120 秒上限后因同一认证源优先级禁用 claude.ai connector 而超时，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库、NIST 与 Microsoft 官方证据收敛 `DEC-007` | `unavailable` |
 
-- 调用计数：`18 / 24 soft / 30 hard`。
-- 已确认费用合计：`$5.4229485`；其余十一次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`19 / 24 soft / 30 hard`。
+- 已确认费用合计：`$5.4229485`；其余十二次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - Claude 恢复可用后，每次调用必须记录返回的 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；达到调用或费用硬上限时降级为 Codex 独立复核，不停止开发。
 
 ## 阻塞与用户 Gate
