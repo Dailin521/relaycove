@@ -190,3 +190,15 @@
 - **理由：** 以事务返回的真实删除事实作为唯一发布资格，能把一次事件绑定到一次已提交权限变化，同时保持 DELETE 幂等。按用户路由覆盖多设备且无需不可靠的 server connection registry；组仍只优化未来路由。事件丢失、离线和撤权前在途帧继续由权威全集/403/Sync 与客户端 deny-set/tombstone 收敛。
 - **影响：** 修改 ConversationCommandService 的内部返回形状、Conversation endpoint 和强类型 Hub 契约，增加撤权 publisher/transport 与真实连接测试；不改变 HTTP/数据库/Shared 契约，不新增 migration 或依赖。客户端 purge、主动移组/断连、重新加入解封和真实 WebSocket 验收仍为后续切片。
 - **来源：** 工程落地方案第 10.3、12.8、阶段 5；`DEC-003`、`DEC-009`、`DEC-014`；`docs/ai/tasks/2026-08-03-stage-5-signalr-access-revoked.md`；当前 ConversationCommandService、ConversationEndpoints 与 SignalR user routing 实现。
+
+### DEC-016：客户端实时连接生命周期与串行事件入口
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** 服务端 `DEC-014/015` 已提供提交后 NewMessage 和成员撤权事件，但 WPF 客户端仍是空骨架。若连接层自行缓存 token、直接改 UI/数据库或并发调用多个消费者，会把认证轮换、事件顺序、撤权 fail-closed 和 UI 线程混在一个不可测边界；若把 SignalR 的默认重连误当成初始连接或永久重试，又会隐藏明确的不可用状态。
+- **决策：** 客户端使用与服务端一致的 `Microsoft.AspNetCore.SignalR.Client 10.0.10`，只接受无 user-info/query/fragment 的绝对 HTTP(S) 服务端基址并组合固定 `hubs/chat`。`AccessTokenProvider` 每次从调用方读取当前 token，不在连接/状态/日志中缓存或暴露 token。公共客户端状态采用工程方案既定数值：Disconnected=0、Connecting=1、Connected=2、Reconnecting=3、ServerUnavailable=4。
+- **决策：** 显式 Start 映射 Connecting→Connected；初始失败映射 ServerUnavailable 并向调用者保留异常。已建立连接启用 SignalR 默认 0/2/10/30 秒自动重连，Reconnecting/Reconnected 映射为 Reconnecting/Connected；尝试耗尽或非主动 Closed 为 ServerUnavailable，主动 Stop/Dispose 为 Disconnected。连接层不隐藏无限重启，后续账户与同步 orchestrator 可显式再次 Start；Reconnected 后的权威会话对账和 Sync 由状态消费者触发。
+- **决策：** `NewMessage`、`ConversationAccessRevoked` 与状态变化只进入一个 FIFO 串行 sink，撤权处理完成前不处理随后入队的消息。sink 在后台异步线程执行，不假设 WPF Dispatcher；下一层适配器负责 UI marshal。单次 sink 异常只记录事件种类、message/conversation ID、状态与异常元数据并继续消费，不记录 token、正文、显示名或用户名；撤权的安全处理仍要求后续 sink 先更新 deny-set/tombstone 再做可失败清理。
+- **理由：** 动态 token provider 允许 refresh 后的新 HTTP/重连请求取新凭据；显式状态区分初始失败、短暂重连、永久不可用和主动停止，避免 UI 展示虚假在线。单一串行入口为 Realtime、未来 Sync/History/SendResponse 的唯一合并路径提供确定顺序，并封住撤权事件之后迟到消息越过清理的竞争窗口。
+- **影响：** Shared 增加 ConnectionState；Client 增加 SignalR 运行时依赖、实时 sink/连接组件和真实内存 Hub 测试。不实现认证 UI、本地数据库、deny-set、Sync 或 MainWindow 接线；这些后续消费者必须复用该 sink 边界而非旁路注册 Hub handler。改变事件顺序、重连策略或 token 生命周期时必须新增决策重审。
+- **来源：** 工程落地方案第 3.1、10.1、10.3、12.3–12.8、阶段 5；`DEC-003`、`DEC-006`、`DEC-014`、`DEC-015`；`docs/ai/tasks/2026-08-03-stage-5-client-realtime.md`；2026-08-03 ASP.NET Core 10 SignalR .NET client、HubConnection events 与 AccessTokenProvider 官方文档。

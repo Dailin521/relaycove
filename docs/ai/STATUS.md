@@ -6,17 +6,17 @@
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 SignalR NewMessage 与服务端 ConversationAccessRevoked 已完成
-- **最近验证通过的状态：** SignalR ConversationAccessRevoked 代码 `709a2b5a6ccd54f2a293070998c6f98734ae3d93`
+- **最近验证通过的状态：** SignalR ConversationAccessRevoked 集成 `8c811cfe69e09f919d27114b543d23c683b846b9`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — Full、format、206 项测试、SignalR 认证/分组/用户路由/NewMessage/ConversationAccessRevoked/撤权后当前收件人、并发幂等/故障隔离/日志、既有消息/会话/认证回归、model drift、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
-- **最近 Claude 调用：** `未验证` — 按用户指引启动的本机只读 CLI review #28 已实际调用 `claude-opus-5`，证明本机 API 可用；约 291 秒后因 `$1` 预算耗尽而未返回 verdict/findings，不能标记为通过，当前候选由 Codex 固定差异与自动化证据收敛
+- **最近 Claude 调用：** `未验证` — 本机只读 CLI #28 已证明 API 可调用 `claude-opus-5`；随后客户端实时边界 XHigh challenge #29 的 `claude_second_brain` MCP wrapper 仍因认证源优先级在 60 秒超时，无模型、费用或结论；两者均不替代 Codex 与自动化证据
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
-- 当前切片已完成验证，正在交接至 `agent/v1-integration` 并调查阶段 5 客户端 SignalR 接收边界。
+- `agent/stage-5-client-realtime`：实现客户端 SignalR 接收、串行 sink 和连接状态边界。
 
 ## 已完成
 
@@ -42,7 +42,7 @@
 
 ## 下一任务
 
-冻结并实现客户端 SignalR 接收、连接生命周期和状态边界，随后接入本地唯一合并与撤权 deny-set。
+完成客户端 SignalR 接收、连接生命周期和状态切片，随后接入本地唯一合并与撤权 deny-set。
 
 ## 阻塞项
 

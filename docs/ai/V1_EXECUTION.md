@@ -8,14 +8,14 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 5
-ActiveTask: docs/ai/tasks/2026-08-03-stage-5-signalr-access-revoked.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-5-client-realtime.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 709a2b5a6ccd54f2a293070998c6f98734ae3d93
-LatestGreenIntegrationCommit: 82f0a2f5950b5094fd39e78aa113367b83bf0f45
-NextAction: 冻结并实现阶段 5 客户端 SignalR 接收、连接生命周期和状态边界
-ClaudeCalls: 28（软上限 24，硬上限 30）
-ClaudeCostUsd: 6.438276 confirmed；另有二十次失败/中断调用费用 unavailable
+LatestGreenIntegrationCommit: 8c811cfe69e09f919d27114b543d23c683b846b9
+NextAction: 实现客户端 SignalR 接收、串行 sink 和连接状态边界
+ClaudeCalls: 29（软上限 24，硬上限 30）
+ClaudeCostUsd: 6.438276 confirmed；另有二十一次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -87,9 +87,10 @@ RequiredUserGate: none
 | 26 | 2026-08-03 | SignalR NewMessage | 前置 challenge | Opus / XHigh | `ChallengeHead=cb5a4d6`；60 秒窗口内因本机认证源优先级禁用 claude.ai connector 而超时；调用前后 HEAD 与干净状态不变，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库事务/权限与 ASP.NET Core 10 官方证据收敛 `DEC-014` | `unavailable` |
 | 27 | 2026-08-03 | SignalR ConversationAccessRevoked | 前置 challenge | Opus / XHigh | `ChallengeHead=ca6fec7`；60 秒窗口内因本机认证源优先级禁用 claude.ai connector 而超时；调用前后 HEAD 与干净状态不变，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库事务/撤权与用户路由证据收敛 `DEC-015` | `unavailable` |
 | 28 | 2026-08-03 | SignalR ConversationAccessRevoked | 本机后台只读 CLI review | Opus / XHigh | 从 `E:\WorkSpace\RelayCove` 启动且工具限于 `Read/Glob/Grep`；实际主要模型 `claude-opus-5`（CLI 含少量 `claude-sonnet-5` 开销），返回未提供 `workspace_root/model_mismatch`；约 `290742 ms` 后 `terminal_reason=budget_exhausted`，未形成 verdict/findings，不能标记通过，固定候选由 Codex 复核 | `$1.0153275` |
+| 29 | 2026-08-03 | 客户端 SignalR 接收与连接状态 | 前置 challenge | Opus / XHigh | `ChallengeHead=8c811cf`；60 秒内 `claude_second_brain` MCP wrapper 仍因本机认证源优先级禁用 claude.ai connector 而超时；无模型、workspace、费用、结论或发现，不重试，由 Codex 结合仓库与 ASP.NET Core 10 官方证据收敛 | `unavailable` |
 
-- 调用计数：`28 / 24 soft / 30 hard`。
-- 已确认费用合计：`$6.438276`；其余二十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`29 / 24 soft / 30 hard`。
+- 已确认费用合计：`$6.438276`；其余二十一次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - Claude 恢复可用后，每次调用必须记录返回的 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；达到调用或费用硬上限时降级为 Codex 独立复核，不停止开发。
 
 ## 阻塞与用户 Gate

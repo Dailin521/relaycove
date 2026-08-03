@@ -1085,6 +1085,10 @@ SignalR 连接重建不会保留组成员关系。每次重连都必须重新执
 
 每个新连接都从数据库重新读取当前可见会话并加入对应连接组；组只用于路由优化，不是授权真源。`NewMessage` 每次发布前另以一个数据库查询计算当前正常用户中的权威收件人：Public 为全部正常用户，Private/Direct 为当前成员。服务端按用户 ID 投递到其所有连接，因此发送者的其他设备也收到回声；撤权提交前已经形成的在途帧仍由客户端 deny-set 防御，撤权提交后才开始的收件人查询不得包含该用户。
 
+客户端实时入口使用与服务端一致的 `Microsoft.AspNetCore.SignalR.Client 10.0.10`。连接 URI 只能由无 user-info、query、fragment 的绝对 HTTP(S) 服务端基址组合固定相对路径 `hubs/chat`；`AccessTokenProvider` 每次从当前认证会话读取最新 access token，不把 token 固化在连接对象、状态或日志中。客户端显式启动时报告 Connecting→Connected；初始连接失败报告 ServerUnavailable 并把异常返回调用者。已建立连接使用 SignalR 默认 0/2/10/30 秒自动重连并报告 Reconnecting→Connected，默认次数耗尽或非主动 Closed 报告 ServerUnavailable，主动 Stop/Dispose 报告 Disconnected；后续账户/同步 orchestrator 可显式再次启动，不在连接层隐藏无限重试。
+
+`NewMessage`、`ConversationAccessRevoked` 和连接状态进入同一个进程内串行 sink。连接回调只按接收顺序排队，单消费者执行下一层处理；撤权回调完成前不得处理随后到达的消息。sink 异常必须记录不含 token、正文、显示名或用户名的元数据并允许队列继续，安全性的 fail-closed deny-set/tombstone 由下一层在处理撤权时先更新。连接层不直接访问 WPF Dispatcher、本地数据库、通知或 UI，具体适配器自行切回 UI 线程。
+
 ---
 
 # 11. 数据库设计
