@@ -9,6 +9,7 @@ using RelayCove.Client.Notifications;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
 using RelayCove.Shared.Auth;
+using RelayCove.Shared.Conversations;
 using RelayCove.Shared.Messages;
 using RelayCove.Shared.Realtime;
 
@@ -93,6 +94,100 @@ public sealed class ClientAccountShellCoordinatorTests
         Assert.Equal(ClientSyncRunStatus.Completed, coordinator.Snapshot.LastSyncStatus);
         Assert.Equal(ClientNotificationActivationRouteStatus.Accepted, routeStatus);
         Assert.Equal(1, navigated);
+    }
+
+    [Fact]
+    public async Task LoginAsync_WhenConversationListIsReady_PublishesUnreadAndContinuousConnection()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(
+                conversationId,
+                totalUnreadCount: 7),
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        var listPublished = NewSignal();
+        coordinator.ConversationListChanged += outcome =>
+        {
+            if (outcome.Status == LocalCacheOperationStatus.Ready)
+            {
+                listPublished.TrySetResult();
+            }
+        };
+
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await listPublished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        runtime.RaiseConnectionStateChanged(ConnectionState.Reconnecting);
+
+        Assert.Equal(7, coordinator.ConversationList.TotalUnreadCount);
+        Assert.Equal(7, coordinator.Snapshot.TotalUnreadCount);
+        Assert.Equal(ConnectionState.Reconnecting, coordinator.Snapshot.ConnectionState);
+        Assert.Equal(ClientAccountShellPhase.Active, coordinator.Snapshot.Phase);
+        Assert.Equal(conversationId, Assert.Single(coordinator.ConversationList.Conversations).Id);
+    }
+
+    [Fact]
+    public async Task LogoutAsync_WhenRuntimeRaisesLateState_DetachesWithoutDeadlockOrResurrection()
+    {
+        var session = CreateSession();
+        var runtime = new FakeRuntime(session);
+        runtime.LogoutAction = _ =>
+        {
+            runtime.RaiseConnectionStateChanged(ConnectionState.Disconnected);
+            runtime.RaiseConversationStateChanged(20);
+            return Task.FromResult(ClientLogoutStatus.LoggedOut);
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+
+        await coordinator.LogoutAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        runtime.RaiseConnectionStateChanged(ConnectionState.Connected);
+        runtime.RaiseConversationStateChanged(21);
+
+        Assert.Equal(ClientAccountShellPhase.SignedOut, coordinator.Snapshot.Phase);
+        Assert.Equal(ConnectionState.Disconnected, coordinator.Snapshot.ConnectionState);
+        Assert.Equal(0, coordinator.Snapshot.TotalUnreadCount);
+        Assert.Equal(
+            LocalCacheOperationStatus.AuthoritativeSnapshotRequired,
+            coordinator.ConversationList.Status);
+        Assert.Empty(coordinator.ConversationList.Conversations);
+    }
+
+    [Fact]
+    public async Task RetryAsync_WhenRuntimeRaisesStateInline_CompletesWithoutGateDeadlock()
+    {
+        var session = CreateSession();
+        var runtime = new FakeRuntime(session);
+        runtime.RetryAction = _ =>
+        {
+            runtime.RaiseConnectionStateChanged(ConnectionState.Reconnecting);
+            runtime.RaiseConversationStateChanged(30);
+            return Task.FromResult(new ClientSyncRunOutcome(
+                ClientSyncRunStatus.Completed,
+                SyncReason.Reconnect,
+                RoundsExecuted: 1));
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+
+        await coordinator.RetryAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(ClientAccountShellPhase.Active, coordinator.Snapshot.Phase);
+        Assert.Equal(ClientSyncRunStatus.Completed, coordinator.Snapshot.LastSyncStatus);
     }
 
     [Fact]
@@ -729,6 +824,28 @@ public sealed class ClientAccountShellCoordinatorTests
                 SyncReason.Startup,
                 RoundsExecuted: 1));
 
+    private static LocalConversationListReadOutcome CreateConversationListOutcome(
+        Guid conversationId,
+        int totalUnreadCount) =>
+        new(
+            LocalCacheOperationStatus.Ready,
+            [
+                new LocalConversationListItem(
+                    conversationId,
+                    ConversationType.PrivateChannel,
+                    "Conversation",
+                    null,
+                    10,
+                    MessageType.Text,
+                    "preview",
+                    Now,
+                    totalUnreadCount,
+                    false,
+                    Now),
+            ],
+            totalUnreadCount,
+            Revision: 1);
+
     private static TaskCompletionSource NewSignal() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -809,11 +926,29 @@ public sealed class ClientAccountShellCoordinatorTests
 
         public ClientAuthenticationSession Session { get; }
 
+        public event Action<ConnectionState>? ConnectionStateChanged;
+
+        public event Action<long>? ConversationStateChanged;
+
         public AccountScopeIdentity Identity { get; }
 
         public ConnectionState ConnectionState => ConnectionStateValue;
 
-        public ConnectionState ConnectionStateValue { get; init; } = ConnectionState.Connected;
+        public ConnectionState ConnectionStateValue { get; set; } = ConnectionState.Connected;
+
+        public LocalConversationListReadOutcome ConversationListOutcome { get; set; } =
+            new(
+                LocalCacheOperationStatus.Ready,
+                Array.Empty<LocalConversationListItem>(),
+                TotalUnreadCount: 0,
+                Revision: 1);
+
+        public Func<CancellationToken, Task<LocalConversationListReadOutcome>>?
+            ConversationListReadAction
+        {
+            get;
+            set;
+        }
 
         public ClientSyncRunOutcome RetryOutcome { get; init; } = new(
             ClientSyncRunStatus.Completed,
@@ -833,7 +968,7 @@ public sealed class ClientAccountShellCoordinatorTests
         public Func<CancellationToken, Task<ClientSyncRunOutcome>>? RetryAction
         {
             get;
-            init;
+            set;
         }
 
         public Func<Task>? DisposeAction { get; init; }
@@ -852,6 +987,20 @@ public sealed class ClientAccountShellCoordinatorTests
             target.AccountScopeId == Identity.Id;
 
         public void UpdateActivity(ClientActivitySnapshot snapshot) => LastActivity = snapshot;
+
+        public Task<LocalConversationListReadOutcome> ReadConversationListAsync(
+            CancellationToken cancellationToken = default) =>
+            ConversationListReadAction?.Invoke(cancellationToken) ??
+            Task.FromResult(ConversationListOutcome);
+
+        public void RaiseConnectionStateChanged(ConnectionState state)
+        {
+            ConnectionStateValue = state;
+            ConnectionStateChanged?.Invoke(state);
+        }
+
+        public void RaiseConversationStateChanged(long revision) =>
+            ConversationStateChanged?.Invoke(revision);
 
         public Task<ClientAccountRuntimeStartOutcome> StartAsync(
             CancellationToken cancellationToken = default)

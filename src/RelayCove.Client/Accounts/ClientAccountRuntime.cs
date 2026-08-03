@@ -17,6 +17,8 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
     private readonly IClientAccountReadThroughCoordinator readThroughCoordinator;
     private readonly IAsyncDisposable notificationCoordinator;
     private readonly IAsyncDisposable localCache;
+    private readonly AccountScopedLocalCache? conversationSource;
+    private readonly ClientAccountRuntimeStateHub stateHub;
     private readonly Func<ClientNotificationActivationTarget, bool>?
         notificationTargetAuthorizer;
     private readonly ClientActivityState activityState;
@@ -37,7 +39,9 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         IAsyncDisposable localCache,
         ClientActivityState activityState,
         ILogger<ClientAccountRuntime> logger,
-        Func<ClientNotificationActivationTarget, bool>? notificationTargetAuthorizer = null)
+        Func<ClientNotificationActivationTarget, bool>? notificationTargetAuthorizer = null,
+        AccountScopedLocalCache? conversationSource = null,
+        ClientAccountRuntimeStateHub? stateHub = null)
     {
         Identity = identity ?? throw new ArgumentNullException(nameof(identity));
         this.authenticationSession = authenticationSession ??
@@ -51,8 +55,10 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         this.notificationCoordinator = notificationCoordinator ??
             new NoOpClientNotificationRoundCoordinator();
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
+        this.conversationSource = conversationSource;
         this.activityState = activityState ?? throw new ArgumentNullException(nameof(activityState));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        this.stateHub = stateHub ?? new ClientAccountRuntimeStateHub(logger);
         this.notificationTargetAuthorizer = notificationTargetAuthorizer;
         if (!authenticationSession.IsAuthenticated ||
             authenticationSession.UserId != identity.UserId ||
@@ -65,6 +71,18 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
     }
 
     public AccountScopeIdentity Identity { get; }
+
+    public event Action<ConnectionState> ConnectionStateChanged
+    {
+        add => stateHub.ConnectionStateChanged += value;
+        remove => stateHub.ConnectionStateChanged -= value;
+    }
+
+    public event Action<long> ConversationStateChanged
+    {
+        add => stateHub.ConversationStateChanged += value;
+        remove => stateHub.ConversationStateChanged -= value;
+    }
 
     public ConnectionState ConnectionState => realtimeConnection.State;
 
@@ -106,6 +124,21 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
             ThrowIfTerminating();
             activityState.Update(snapshot);
         }
+    }
+
+    public Task<LocalConversationListReadOutcome> ReadConversationListAsync(
+        CancellationToken cancellationToken = default)
+    {
+        lock (stateGate)
+        {
+            ThrowIfTerminating();
+        }
+
+        return conversationSource is null
+            ? Task.FromResult(LocalConversationListReadOutcome.Failure(
+                LocalCacheOperationStatus.AuthoritativeSnapshotRequired,
+                revision: 0))
+            : conversationSource.ReadConversationListAsync(cancellationToken);
     }
 
     public Task<ClientAccountRuntimeStartOutcome> StartAsync(
@@ -250,6 +283,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
 
     private void StartTermination(bool logout)
     {
+        stateHub.Stop();
         var completion = new TaskCompletionSource<ClientLogoutStatus>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         terminalTask = completion.Task;

@@ -8,6 +8,10 @@ namespace RelayCove.Client.Accounts;
 
 internal interface IClientAccountRuntime : IAsyncDisposable
 {
+    event Action<ConnectionState> ConnectionStateChanged;
+
+    event Action<long> ConversationStateChanged;
+
     AccountScopeIdentity Identity { get; }
 
     ConnectionState ConnectionState { get; }
@@ -15,6 +19,9 @@ internal interface IClientAccountRuntime : IAsyncDisposable
     bool TryAuthorizeNotificationTarget(ClientNotificationActivationTarget target);
 
     void UpdateActivity(ClientActivitySnapshot snapshot);
+
+    Task<LocalConversationListReadOutcome> ReadConversationListAsync(
+        CancellationToken cancellationToken = default);
 
     Task<ClientAccountRuntimeStartOutcome> StartAsync(
         CancellationToken cancellationToken = default);

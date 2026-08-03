@@ -167,6 +167,59 @@ public sealed class ClientAccountRuntimeTests
     }
 
     [Fact]
+    public async Task FactoryRuntime_WhenStarted_ExposesConversationSnapshotAndContinuousState()
+    {
+        using var directory = new TemporaryDirectory();
+        var conversation = new ConversationDto(
+            Guid.NewGuid(),
+            ConversationType.PrivateChannel,
+            "Runtime conversation",
+            null,
+            Now.AddHours(-2),
+            Now.AddHours(-1),
+            LastMessageId: 0,
+            LastReadMessageId: 0,
+            UnreadCount: 2,
+            IsMuted: true);
+        var handler = new DelegateHttpHandler((request, _) => Task.FromResult(
+            request.RequestUri!.AbsolutePath.EndsWith(
+                "/api/conversations",
+                StringComparison.Ordinal)
+                ? Ok(new ConversationListResponse([conversation], Complete: true))
+                : Ok(new SyncResponse([], 0, 0, HasMore: false))));
+        var realtime = new FakeRealtimeConnection();
+        IRealtimeEventSink? capturedSink = null;
+        var factory = new ClientAccountRuntimeFactory(
+            new HttpClient(handler),
+            directory.Path,
+            NullLoggerFactory.Instance,
+            (_, _, sink, _) =>
+            {
+                capturedSink = sink;
+                return realtime;
+            });
+        var runtime = await factory.CreateAsync(CreateSession());
+        var conversationRevisions = new ConcurrentQueue<long>();
+        var connectionStates = new ConcurrentQueue<ConnectionState>();
+        runtime.ConversationStateChanged += conversationRevisions.Enqueue;
+        runtime.ConnectionStateChanged += connectionStates.Enqueue;
+
+        var start = await runtime.StartAsync();
+        var list = await runtime.ReadConversationListAsync();
+        await capturedSink!.OnConnectionStateChangedAsync(
+            ConnectionState.Reconnecting,
+            CancellationToken.None);
+
+        Assert.True(start.IsAuthoritativeCacheReady);
+        Assert.Equal(LocalCacheOperationStatus.Ready, list.Status);
+        Assert.Equal(2, list.TotalUnreadCount);
+        Assert.Equal(conversation.Id, Assert.Single(list.Conversations).Id);
+        Assert.NotEmpty(conversationRevisions);
+        Assert.Equal([ConnectionState.Reconnecting], connectionStates);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
     public async Task FactoryRuntime_WhenNotificationPlatformAccepts_WiresStartupSummaryAndPersistsHandling()
     {
         using var directory = new TemporaryDirectory();

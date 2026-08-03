@@ -434,6 +434,216 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         Assert.Equal([conversation.Id], notifications.RevokedConversations);
     }
 
+    [Fact]
+    public async Task ReadConversationListAsync_WhenSnapshotMissing_DoesNotExposePersistedRows()
+    {
+        var identity = CreateIdentity(UserId);
+        var conversation = CreateConversation();
+        await using (var firstCache = await CreateCacheAsync(identity))
+        {
+            Assert.Equal(
+                LocalCacheOperationStatus.Ready,
+                await firstCache.ApplyAuthoritativeConversationSnapshotAsync(
+                    new ConversationListResponse([conversation], Complete: true)));
+            Assert.Single((await firstCache.ReadConversationListAsync()).Conversations);
+        }
+
+        await using var restartedCache = await CreateCacheAsync(identity);
+
+        var outcome = await restartedCache.ReadConversationListAsync();
+
+        Assert.Equal(
+            LocalCacheOperationStatus.AuthoritativeSnapshotRequired,
+            outcome.Status);
+        Assert.Empty(outcome.Conversations);
+        Assert.Equal(0, outcome.TotalUnreadCount);
+    }
+
+    [Fact]
+    public async Task ReadConversationListAsync_WhenReady_ReturnsStablePreviewAndSaturatedUnread()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var updatedAt = DateTimeOffset.Parse("2026-08-03T12:00:00Z");
+        var firstId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var secondId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var olderId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+        var first = new ConversationDto(
+            firstId,
+            ConversationType.PrivateChannel,
+            "First",
+            "https://images.example/first.png",
+            updatedAt.AddDays(-1),
+            updatedAt,
+            LastMessageId: 10,
+            LastReadMessageId: 0,
+            UnreadCount: int.MaxValue,
+            IsMuted: true);
+        var second = new ConversationDto(
+            secondId,
+            ConversationType.Direct,
+            "Second",
+            null,
+            updatedAt.AddDays(-1),
+            updatedAt,
+            LastMessageId: 11,
+            LastReadMessageId: 0,
+            UnreadCount: 1);
+        var older = new ConversationDto(
+            olderId,
+            ConversationType.PublicChannel,
+            "Older",
+            null,
+            updatedAt.AddDays(-2),
+            updatedAt.AddMinutes(-1),
+            LastMessageId: 0,
+            LastReadMessageId: 0,
+            UnreadCount: 0);
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([older, second, first], Complete: true)));
+        Assert.Equal(
+            IncomingMessageMergeResult.Inserted,
+            (await cache.MergeIncomingMessageAsync(CreateMessage(firstId) with
+            {
+                Id = 10,
+                Content = "latest\ntext",
+                CreatedAt = updatedAt,
+            })).Result);
+        Assert.Equal(
+            IncomingMessageMergeResult.Inserted,
+            (await cache.MergeIncomingMessageAsync(CreateMessage(secondId) with
+            {
+                Id = 11,
+                Type = MessageType.Image,
+                Content = null,
+                CreatedAt = updatedAt,
+            })).Result);
+
+        var outcome = await cache.ReadConversationListAsync();
+
+        Assert.Equal(LocalCacheOperationStatus.Ready, outcome.Status);
+        Assert.Equal([firstId, secondId, olderId], outcome.Conversations.Select(x => x.Id));
+        Assert.Equal(int.MaxValue, outcome.TotalUnreadCount);
+        var firstItem = outcome.Conversations[0];
+        Assert.Equal(MessageType.Text, firstItem.LastMessageType);
+        Assert.Equal("latest\ntext", firstItem.LastMessageContent);
+        Assert.Equal(updatedAt, firstItem.LastMessageCreatedAt);
+        Assert.True(firstItem.IsMuted);
+        Assert.Equal(MessageType.Image, outcome.Conversations[1].LastMessageType);
+        Assert.Null(outcome.Conversations[2].LastMessageType);
+        Assert.Null(outcome.Conversations[2].LastMessageContent);
+    }
+
+    [Fact]
+    public async Task ReadConversationListAsync_WhenLastMessagePointsAcrossConversation_DoesNotLeakPreview()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var source = CreateConversation() with { Id = Guid.NewGuid(), LastMessageId = 101 };
+        var target = CreateConversation() with { Id = Guid.NewGuid(), LastMessageId = 0 };
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([source, target], Complete: true)));
+        Assert.Equal(
+            IncomingMessageMergeResult.Inserted,
+            (await cache.MergeIncomingMessageAsync(CreateMessage(source.Id))).Result);
+        Execute(
+            identity,
+            $"UPDATE LocalConversations SET LastMessageId = 101 WHERE Id = '{target.Id:D}';");
+
+        var outcome = await cache.ReadConversationListAsync();
+
+        var targetItem = Assert.Single(outcome.Conversations, item => item.Id == target.Id);
+        Assert.Null(targetItem.LastMessageType);
+        Assert.Null(targetItem.LastMessageContent);
+    }
+
+    [Fact]
+    public async Task ReadConversationListAsync_WhenOneRowIsCorrupt_ExcludesItWithoutFatalScope()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([conversation], Complete: true)));
+        Execute(
+            identity,
+            $"UPDATE LocalConversations SET UpdatedAt = 'not-a-date' " +
+            $"WHERE Id = '{conversation.Id:D}';");
+
+        var outcome = await cache.ReadConversationListAsync();
+
+        Assert.Equal(LocalCacheOperationStatus.Ready, outcome.Status);
+        Assert.Empty(outcome.Conversations);
+        Assert.False(cache.IsFatal);
+    }
+
+    [Fact]
+    public async Task ConversationStateChanged_WhenObserverReadsOrThrows_DoesNotDeadlockOrPoisonCommit()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var observedStatuses = new ConcurrentQueue<LocalCacheOperationStatus>();
+        var trailingObserverCount = 0;
+        cache.ConversationStateChanged += _ => observedStatuses.Enqueue(
+            cache.ReadConversationListAsync().GetAwaiter().GetResult().Status);
+        cache.ConversationStateChanged += _ => throw new InvalidOperationException(
+            "observer failure");
+        cache.ConversationStateChanged += _ => Interlocked.Increment(
+            ref trailingObserverCount);
+
+        var status = await cache.ApplyAuthoritativeConversationSnapshotAsync(
+            new ConversationListResponse([CreateConversation()], Complete: true));
+
+        Assert.Equal(LocalCacheOperationStatus.Ready, status);
+        Assert.Equal([LocalCacheOperationStatus.Ready], observedStatuses);
+        Assert.Equal(1, trailingObserverCount);
+        Assert.False(cache.IsFatal);
+    }
+
+    [Fact]
+    public async Task ConversationStateChanged_WhenListMutationsCommit_RaisesMonotonicRevisions()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation() with
+        {
+            LastMessageId = 0,
+            LastReadMessageId = 0,
+            UnreadCount = 0,
+        };
+        var message = CreateMessage(conversation.Id) with { Id = 1 };
+        var revisions = new ConcurrentQueue<long>();
+        cache.ConversationStateChanged += revisions.Enqueue;
+
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([conversation], Complete: true)));
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            (await cache.ApplySyncPageAsync(
+                new SyncResponse([message], NextCursor: 1, SnapshotUpperBound: 1, HasMore: false),
+                expectedCursor: 0,
+                expectedSnapshotUpperBound: null)).Status);
+        Assert.Equal(
+            IncomingMessageMergeResult.Duplicate,
+            (await cache.MergeIncomingMessageAsync(message)).Result);
+        Assert.Equal(
+            LocalCacheOperationStatus.RevokedConversation,
+            await cache.RevokeConversationAccessAsync(conversation.Id));
+
+        Assert.Equal([1L, 2L, 3L, 4L], revisions);
+        var outcome = await cache.ReadConversationListAsync();
+        Assert.Equal(LocalCacheOperationStatus.Ready, outcome.Status);
+        Assert.Empty(outcome.Conversations);
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();

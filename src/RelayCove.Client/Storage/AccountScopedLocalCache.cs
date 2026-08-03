@@ -10,6 +10,7 @@ namespace RelayCove.Client.Storage;
 
 public sealed class AccountScopedLocalCache : IAsyncDisposable
 {
+    private readonly object eventGate = new();
     private const string RevocationIntentPrefix = "RevocationIntent/";
     private const string NotificationClearPendingPrefix = "NotificationClearPending/";
     private const string NotificationClearCompletedPrefix = "NotificationClearCompleted/";
@@ -29,7 +30,9 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private readonly ConcurrentDictionary<Guid, long> authoritativeLastMessageIds = new();
     private readonly ConcurrentDictionary<Guid, byte> invalidReadThroughConversations = new();
     private readonly ConcurrentDictionary<Guid, byte> deniedConversations;
+    private Action<long>? conversationStateChanged;
     private long authoritativeSnapshotRevision;
+    private long conversationStateRevision;
     private int authoritativeSnapshotApplied;
     private int disposed;
 
@@ -54,6 +57,24 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
 
     internal long AuthoritativeSnapshotRevision =>
         Volatile.Read(ref authoritativeSnapshotRevision);
+
+    internal event Action<long> ConversationStateChanged
+    {
+        add
+        {
+            lock (eventGate)
+            {
+                conversationStateChanged += value;
+            }
+        }
+        remove
+        {
+            lock (eventGate)
+            {
+                conversationStateChanged -= value;
+            }
+        }
+    }
 
     public static Task<AccountScopedLocalCache> CreateAsync(
         AccountScopeIdentity identity,
@@ -265,14 +286,25 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
 
         await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        LocalCacheOperationStatus outcome;
         try
         {
-            return await Task.Run(() => RegisterAuthoritativeConversation(conversation)).ConfigureAwait(false);
+            outcome = await Task.Run(() => RegisterAuthoritativeConversation(conversation))
+                .ConfigureAwait(false);
         }
         finally
         {
             operationGate.Release();
         }
+
+        if (outcome is LocalCacheOperationStatus.Ready or
+            LocalCacheOperationStatus.RevokedConversation or
+            LocalCacheOperationStatus.FatalScope)
+        {
+            PublishConversationStateChanged();
+        }
+
+        return outcome;
     }
 
     public async Task<LocalCacheOperationStatus> ApplyAuthoritativeConversationSnapshotAsync(
@@ -297,10 +329,37 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
 
         await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        LocalAuthoritativeConversationSnapshotOutcome outcome;
         try
         {
-            return await Task.Run(() => ApplyAuthoritativeConversationSnapshot(snapshot))
+            outcome = await Task.Run(() => ApplyAuthoritativeConversationSnapshot(snapshot))
                 .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+
+        PublishConversationStateChanged();
+        return outcome;
+    }
+
+    internal async Task<LocalConversationListReadOutcome> ReadConversationListAsync(
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        var status = GetSyncStatus();
+        if (status != LocalCacheOperationStatus.Ready)
+        {
+            return LocalConversationListReadOutcome.Failure(
+                status,
+                Volatile.Read(ref conversationStateRevision));
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(ReadConversationList).ConfigureAwait(false);
         }
         finally
         {
@@ -368,15 +427,24 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
 
         await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        SyncPageCommitOutcome outcome;
         try
         {
-            return await Task.Run(() => ApplySyncPage(response, expectedCursor, context))
+            outcome = await Task.Run(() => ApplySyncPage(response, expectedCursor, context))
                 .ConfigureAwait(false);
         }
         finally
         {
             operationGate.Release();
         }
+
+        if (outcome.Status is LocalCacheOperationStatus.Ready or
+            LocalCacheOperationStatus.FatalScope)
+        {
+            PublishConversationStateChanged();
+        }
+
+        return outcome;
     }
 
     public async Task<LocalCacheOperationStatus> AddPendingMessageAsync(
@@ -434,15 +502,25 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
 
         await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        LocalCacheMergeOutcome outcome;
         try
         {
-            return await Task.Run(() => MergeIncomingMessage(message, context))
+            outcome = await Task.Run(() => MergeIncomingMessage(message, context))
                 .ConfigureAwait(false);
         }
         finally
         {
             operationGate.Release();
         }
+
+        if ((outcome.Status == LocalCacheOperationStatus.Ready &&
+             outcome.Result != IncomingMessageMergeResult.Conflict) ||
+            outcome.Status == LocalCacheOperationStatus.FatalScope)
+        {
+            PublishConversationStateChanged();
+        }
+
+        return outcome;
     }
 
     public async Task<LocalCacheReadOutcome> ReadMessagesAsync(
@@ -533,9 +611,10 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
 
         await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        LocalCacheOperationStatus outcome;
         try
         {
-            return await Task.Run(() => ApplyReadThroughReceipt(
+            outcome = await Task.Run(() => ApplyReadThroughReceipt(
                     conversationId,
                     confirmedMessageId))
                 .ConfigureAwait(false);
@@ -544,6 +623,14 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         {
             operationGate.Release();
         }
+
+        if (outcome is LocalCacheOperationStatus.Ready or
+            LocalCacheOperationStatus.FatalScope)
+        {
+            PublishConversationStateChanged();
+        }
+
+        return outcome;
     }
 
     public async Task<LocalCacheOperationStatus> RevokeConversationAccessAsync(
@@ -561,26 +648,80 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         // Once a revocation reaches this boundary, caller cancellation must not drop
         // the durable intent or tombstone work.
         await operationGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        LocalCacheOperationStatus outcome;
         try
         {
             if (IsFatal)
             {
-                return LocalCacheOperationStatus.FatalScope;
+                outcome = LocalCacheOperationStatus.FatalScope;
             }
-
-            return await Task.Run(() => PersistRevocation(conversationId)).ConfigureAwait(false);
+            else
+            {
+                outcome = await Task.Run(() => PersistRevocation(conversationId))
+                    .ConfigureAwait(false);
+            }
         }
         finally
         {
             operationGate.Release();
         }
+
+        PublishConversationStateChanged();
+        return outcome;
     }
 
     public ValueTask DisposeAsync()
     {
         Interlocked.Exchange(ref disposed, 1);
+        lock (eventGate)
+        {
+            conversationStateChanged = null;
+        }
 
         return ValueTask.CompletedTask;
+    }
+
+    private void PublishConversationStateChanged()
+    {
+        var revision = Interlocked.Increment(ref conversationStateRevision);
+        Action<long>? handlers;
+        lock (eventGate)
+        {
+            handlers = conversationStateChanged;
+        }
+
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action<long> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(revision);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    "Publishing a local conversation-state change failed; " +
+                    "errorType={ErrorType}.",
+                    exception.GetType().Name);
+            }
+        }
+    }
+
+    private void MarkScopeFatal()
+    {
+        if (Interlocked.Exchange(ref scopeState.FatalScope, 1) != 0)
+        {
+            return;
+        }
+
+        ThreadPool.UnsafeQueueUserWorkItem(
+            static cache => cache.PublishConversationStateChanged(),
+            this,
+            preferLocal: false);
     }
 
     private void Initialize()
@@ -792,7 +933,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            MarkScopeFatal();
             logger.LogCritical(
                 "Local cache scope entered fatal fail-closed state while evaluating notification candidates after an error of type {ExceptionType}.",
                 exception.GetType().Name);
@@ -883,7 +1024,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            MarkScopeFatal();
             logger.LogCritical(
                 "Local cache scope entered fatal fail-closed state while reading notification recovery candidates after an error of type {ExceptionType}.",
                 exception.GetType().Name);
@@ -931,7 +1072,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            MarkScopeFatal();
             logger.LogCritical(
                 "Local cache scope entered fatal fail-closed state while marking notification candidates handled after an error of type {ExceptionType}.",
                 exception.GetType().Name);
@@ -970,7 +1111,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            MarkScopeFatal();
             logger.LogCritical(
                 "Local cache scope entered fatal fail-closed state while acknowledging " +
                 "notification platform cleanup after an error of type {ExceptionType}.",
@@ -1057,7 +1198,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            MarkScopeFatal();
             Volatile.Write(ref authoritativeSnapshotApplied, 0);
             logger.LogCritical(
                 "Local cache scope entered fatal fail-closed state after an authoritative snapshot failure of type {ExceptionType}.",
@@ -1065,6 +1206,138 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             return new LocalAuthoritativeConversationSnapshotOutcome(
                 LocalCacheOperationStatus.FatalScope,
                 notificationClearConversationIds);
+        }
+    }
+
+    private LocalConversationListReadOutcome ReadConversationList()
+    {
+        var status = GetSyncStatus();
+        var revision = Volatile.Read(ref conversationStateRevision);
+        if (status != LocalCacheOperationStatus.Ready)
+        {
+            return LocalConversationListReadOutcome.Failure(status, revision);
+        }
+
+        try
+        {
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction(deferred: true);
+            using var command = CreateCommand(connection, transaction, """
+                SELECT c.Id,
+                       c.Type,
+                       c.Name,
+                       c.AvatarUrl,
+                       c.LastMessageId,
+                       last.Type,
+                       last.Content,
+                       last.CreatedAt,
+                       c.UnreadCount,
+                       c.IsMuted,
+                       c.UpdatedAt
+                FROM LocalConversations AS c
+                LEFT JOIN LocalMessages AS last
+                  ON last.ConversationId = c.Id
+                 AND last.ServerMessageId = c.LastMessageId
+                WHERE NOT EXISTS (
+                          SELECT 1
+                          FROM RevokedConversations AS revoked
+                          WHERE revoked.ConversationId = c.Id)
+                  AND NOT EXISTS (
+                          SELECT 1
+                          FROM LocalAppState AS state
+                          WHERE state.Key = $revocationIntentPrefix || c.Id)
+                ORDER BY c.UpdatedAt DESC, c.Id ASC;
+                """);
+            AddParameter(command, "$revocationIntentPrefix", RevocationIntentPrefix);
+            var conversations = new List<LocalConversationListItem>();
+            long totalUnreadCount = 0;
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                try
+                {
+                    if (!Guid.TryParseExact(reader.GetString(0), "D", out var conversationId) ||
+                        conversationId == Guid.Empty ||
+                        !Enum.IsDefined((ConversationType)reader.GetInt32(1)) ||
+                        string.IsNullOrWhiteSpace(reader.GetString(2)) ||
+                        reader.GetInt64(4) < 0 ||
+                        reader.GetInt32(8) < 0)
+                    {
+                        throw new InvalidDataException(
+                            "The local cache contains an invalid conversation-list row.");
+                    }
+
+                    if (deniedConversations.ContainsKey(conversationId) ||
+                        !authorizedConversations.ContainsKey(conversationId))
+                    {
+                        continue;
+                    }
+
+                    var lastMessageType = reader.IsDBNull(5)
+                        ? null
+                        : (MessageType?)reader.GetInt32(5);
+                    if (lastMessageType.HasValue && !Enum.IsDefined(lastMessageType.Value))
+                    {
+                        throw new InvalidDataException(
+                            "The local cache contains an invalid last-message type.");
+                    }
+
+                    var lastMessageCreatedAt = reader.IsDBNull(7)
+                        ? (DateTimeOffset?)null
+                        : ParseStoredDateTime(reader.GetString(7));
+                    var unreadCount = reader.GetInt32(8);
+                    totalUnreadCount = Math.Min(
+                        (long)int.MaxValue,
+                        totalUnreadCount + unreadCount);
+                    conversations.Add(new LocalConversationListItem(
+                        conversationId,
+                        (ConversationType)reader.GetInt32(1),
+                        reader.GetString(2),
+                        reader.IsDBNull(3) ? null : reader.GetString(3),
+                        reader.GetInt64(4),
+                        lastMessageType,
+                        reader.IsDBNull(6) ? null : reader.GetString(6),
+                        lastMessageCreatedAt,
+                        unreadCount,
+                        reader.GetBoolean(9),
+                        ParseStoredDateTime(reader.GetString(10))));
+                }
+                catch (Exception exception) when (
+                    exception is InvalidDataException or FormatException or
+                        OverflowException or InvalidCastException)
+                {
+                    logger.LogError(
+                        "A corrupt local conversation-list row was excluded; " +
+                        "errorType={ErrorType}.",
+                        exception.GetType().Name);
+                }
+            }
+
+            return new LocalConversationListReadOutcome(
+                LocalCacheOperationStatus.Ready,
+                conversations,
+                (int)totalUnreadCount,
+                revision);
+        }
+        catch (SqliteException exception) when (IsBusy(exception))
+        {
+            logger.LogWarning(
+                "Reading the local conversation list was busy; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return LocalConversationListReadOutcome.Failure(
+                LocalCacheOperationStatus.TransientFailure,
+                revision);
+        }
+        catch (Exception exception)
+        {
+            MarkScopeFatal();
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state while reading the " +
+                "conversation list after an error of type {ExceptionType}.",
+                exception.GetType().Name);
+            return LocalConversationListReadOutcome.Failure(
+                LocalCacheOperationStatus.FatalScope,
+                revision);
         }
     }
 
@@ -1084,7 +1357,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            MarkScopeFatal();
             logger.LogCritical(
                 "Local cache scope entered fatal fail-closed state while reading sync state after an error of type {ExceptionType}.",
                 exception.GetType().Name);
@@ -1164,7 +1437,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
         catch (InvalidDataException exception)
         {
-            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            MarkScopeFatal();
             logger.LogCritical(
                 "Local cache scope entered fatal fail-closed state during sync-page attention processing after an error of type {ExceptionType}.",
                 exception.GetType().Name);
@@ -1288,7 +1561,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
         catch (InvalidDataException exception)
         {
-            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            MarkScopeFatal();
             logger.LogCritical(
                 "Local cache scope entered fatal fail-closed state during message attention processing after an error of type {ExceptionType}.",
                 exception.GetType().Name);
@@ -1976,7 +2249,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             }
             catch (Exception exception)
             {
-                Interlocked.Exchange(ref scopeState.FatalScope, 1);
+                MarkScopeFatal();
                 logger.LogCritical(
                     "Local cache scope entered fatal fail-closed state while reading pending read-through targets after an error of type {ExceptionType}.",
                     exception.GetType().Name);
@@ -2072,7 +2345,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            Interlocked.Exchange(ref scopeState.FatalScope, 1);
+            MarkScopeFatal();
             logger.LogCritical(
                 "Local cache scope entered fatal fail-closed state after a revocation persistence failure of type {ExceptionType}.",
                 exception.GetType().Name);
@@ -2450,7 +2723,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
 
     private void SetFatalDuringInitialization(Exception exception)
     {
-        Interlocked.Exchange(ref scopeState.FatalScope, 1);
+        MarkScopeFatal();
         logger.LogCritical(
             "Local cache scope entered fatal fail-closed state during initialization after an error of type {ExceptionType}.",
             exception.GetType().Name);
@@ -2929,6 +3202,13 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
 
     private static string FormatDateTime(DateTimeOffset value) =>
         value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+
+    private static DateTimeOffset ParseStoredDateTime(string value) =>
+        DateTimeOffset.ParseExact(
+            value,
+            "O",
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.RoundtripKind);
 
     private static bool TryValidateConversationSnapshot(ConversationListResponse? snapshot)
     {

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using RelayCove.Client.Activation;
 using RelayCove.Client.Auth;
+using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
 using RelayCove.Shared.Auth;
 using RelayCove.Shared.Realtime;
@@ -22,10 +23,17 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
     private readonly ILogger<ClientAccountShellCoordinator> logger;
     private ClientAccountShellSnapshot snapshot = ClientAccountShellSnapshot.Initial;
     private IClientAccountRuntime? runtime;
+    private RuntimeSubscription? runtimeSubscription;
     private IDisposable? activationLease;
     private ClientActivitySnapshot latestActivity = ClientActivitySnapshot.Inactive;
     private string? activeDisplayName;
     private Uri? activeServerBaseUri;
+    private LocalConversationListReadOutcome conversationList =
+        LocalConversationListReadOutcome.Failure(
+            LocalCacheOperationStatus.AuthoritativeSnapshotRequired,
+            revision: 0);
+    private long conversationPublicationRevision;
+    private long shellPublicationRevision;
     private Task? disposeTask;
     private bool detachedForProcessExit;
     private int disposeStarted;
@@ -51,7 +59,12 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 
     public event Action<ClientAccountShellSnapshot>? SnapshotChanged;
 
+    public event Action<LocalConversationListReadOutcome>? ConversationListChanged;
+
     public ClientAccountShellSnapshot Snapshot => Volatile.Read(ref snapshot);
+
+    public LocalConversationListReadOutcome ConversationList =>
+        Volatile.Read(ref conversationList);
 
     public Task RestoreAsync(CancellationToken cancellationToken = default) =>
         StartRestoreAsync(cancellationToken);
@@ -216,6 +229,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
     public void DetachForProcessExit()
     {
         IDisposable? lease;
+        RuntimeSubscription? subscription;
         lock (stateGate)
         {
             if (Interlocked.Exchange(ref disposeStarted, 1) != 0)
@@ -226,10 +240,14 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             detachedForProcessExit = true;
             lease = activationLease;
             activationLease = null;
+            subscription = runtimeSubscription;
+            runtimeSubscription = null;
             SnapshotChanged = null;
+            ConversationListChanged = null;
         }
 
         lifetimeCancellation.Cancel();
+        subscription?.Detach();
         lease?.Dispose();
     }
 
@@ -316,6 +334,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             lock (stateGate)
             {
                 SnapshotChanged = null;
+                ConversationListChanged = null;
             }
 
             if (failure is null)
@@ -435,10 +454,13 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                         unownedRuntime.TryAuthorizeNotificationTarget);
                 }
 
+                var subscription = new RuntimeSubscription(this, unownedRuntime);
+                subscription.Attach();
                 lock (stateGate)
                 {
                     ThrowIfStopping();
                     runtime = unownedRuntime;
+                    runtimeSubscription = subscription;
                     activationLease = unownedLease;
                     activeDisplayName = displayName;
                     activeServerBaseUri = serverBaseUri;
@@ -451,6 +473,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                     ClientAccountShellPhase.Active,
                     startOutcome.RealtimeState,
                     startOutcome.StartupSyncOutcome.Status);
+                RequestConversationRefresh(subscription);
             }
             finally
             {
@@ -549,10 +572,12 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
     {
         string? displayName;
         Uri? serverBaseUri;
+        LocalConversationListReadOutcome currentConversationList;
         lock (stateGate)
         {
             displayName = activeDisplayName;
             serverBaseUri = activeServerBaseUri;
+            currentConversationList = conversationList;
         }
 
         PublishSnapshot(new ClientAccountShellSnapshot(
@@ -563,7 +588,10 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             connectionState,
             syncStatus,
             LastLogoutStatus: null,
-            RetryAfter: null));
+            RetryAfter: null,
+            TotalUnreadCount: currentConversationList.Status == LocalCacheOperationStatus.Ready
+                ? currentConversationList.TotalUnreadCount
+                : 0));
     }
 
     private void RestoreCurrentActiveSnapshot(ClientSyncRunStatus? syncStatus = null)
@@ -588,6 +616,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
     {
         IDisposable? lease;
         IClientAccountRuntime? detachedRuntime;
+        RuntimeSubscription? subscription;
         lock (stateGate)
         {
             if (!ReferenceEquals(runtime, expectedRuntime))
@@ -597,12 +626,18 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 
             lease = activationLease;
             detachedRuntime = runtime;
+            subscription = runtimeSubscription;
             activationLease = null;
             runtime = null;
+            runtimeSubscription = null;
             activeDisplayName = null;
             activeServerBaseUri = null;
         }
 
+        subscription?.Detach();
+        PublishConversationList(LocalConversationListReadOutcome.Failure(
+            LocalCacheOperationStatus.AuthoritativeSnapshotRequired,
+            ConversationList.Revision));
         lease?.Dispose();
         var logoutStatus = detachedRuntime is null
             ? ClientLogoutStatus.LoggedOut
@@ -651,6 +686,174 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         lock (stateGate)
         {
             return ReferenceEquals(runtime, expectedRuntime);
+        }
+    }
+
+    private bool IsCurrentSubscription(RuntimeSubscription expectedSubscription)
+    {
+        lock (stateGate)
+        {
+            return ReferenceEquals(runtimeSubscription, expectedSubscription) &&
+                ReferenceEquals(runtime, expectedSubscription.Runtime) &&
+                Volatile.Read(ref disposeStarted) == 0;
+        }
+    }
+
+    private void OnRuntimeConnectionStateChanged(
+        RuntimeSubscription subscription,
+        RelayCove.Shared.Realtime.ConnectionState connectionState)
+    {
+        TryPublishRuntimeActiveSnapshot(subscription, connectionState);
+    }
+
+    private void OnRuntimeConversationStateChanged(
+        RuntimeSubscription subscription,
+        long revision)
+    {
+        _ = revision;
+        RequestConversationRefresh(subscription);
+    }
+
+    private void RequestConversationRefresh(RuntimeSubscription subscription)
+    {
+        if (!IsCurrentSubscription(subscription))
+        {
+            return;
+        }
+
+        Volatile.Write(ref subscription.RefreshPending, 1);
+        if (Interlocked.CompareExchange(ref subscription.RefreshRunning, 1, 0) == 0)
+        {
+            _ = RefreshConversationListAsync(subscription);
+        }
+    }
+
+    private async Task RefreshConversationListAsync(RuntimeSubscription subscription)
+    {
+        try
+        {
+            while (Interlocked.Exchange(ref subscription.RefreshPending, 0) == 1 &&
+                IsCurrentSubscription(subscription))
+            {
+                LocalConversationListReadOutcome outcome;
+                try
+                {
+                    outcome = await subscription.Runtime
+                        .ReadConversationListAsync(lifetimeCancellation.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (
+                    lifetimeCancellation.IsCancellationRequested ||
+                    !IsCurrentSubscription(subscription))
+                {
+                    return;
+                }
+                catch (ObjectDisposedException) when (!IsCurrentSubscription(subscription))
+                {
+                    return;
+                }
+                catch (Exception exception)
+                {
+                    logger.LogWarning(
+                        "Refreshing the active conversation list failed; " +
+                        "errorType={ErrorType}.",
+                        exception.GetType().Name);
+                    outcome = LocalConversationListReadOutcome.Failure(
+                        LocalCacheOperationStatus.TransientFailure,
+                        ConversationList.Revision);
+                }
+
+                if (!IsCurrentSubscription(subscription))
+                {
+                    return;
+                }
+
+                if (!TryPublishConversationList(subscription, outcome))
+                {
+                    return;
+                }
+
+                TryPublishRuntimeActiveSnapshot(
+                    subscription,
+                    subscription.Runtime.ConnectionState);
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref subscription.RefreshRunning, 0);
+            if (Volatile.Read(ref subscription.RefreshPending) != 0 &&
+                IsCurrentSubscription(subscription))
+            {
+                RequestConversationRefresh(subscription);
+            }
+        }
+    }
+
+    private void PublishConversationList(LocalConversationListReadOutcome value)
+    {
+        Action<LocalConversationListReadOutcome>? handlers;
+        lock (stateGate)
+        {
+            value = value with
+            {
+                Revision = Interlocked.Increment(ref conversationPublicationRevision),
+            };
+            Volatile.Write(ref conversationList, value);
+            handlers = ConversationListChanged;
+        }
+
+        PublishConversationListHandlers(value, handlers);
+    }
+
+    private bool TryPublishConversationList(
+        RuntimeSubscription subscription,
+        LocalConversationListReadOutcome value)
+    {
+        Action<LocalConversationListReadOutcome>? handlers;
+        lock (stateGate)
+        {
+            if (!ReferenceEquals(runtimeSubscription, subscription) ||
+                !ReferenceEquals(runtime, subscription.Runtime) ||
+                Volatile.Read(ref disposeStarted) != 0)
+            {
+                return false;
+            }
+
+            value = value with
+            {
+                Revision = Interlocked.Increment(ref conversationPublicationRevision),
+            };
+            Volatile.Write(ref conversationList, value);
+            handlers = ConversationListChanged;
+        }
+
+        PublishConversationListHandlers(value, handlers);
+        return true;
+    }
+
+    private void PublishConversationListHandlers(
+        LocalConversationListReadOutcome value,
+        Action<LocalConversationListReadOutcome>? handlers)
+    {
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action<LocalConversationListReadOutcome> handler in
+            handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(value);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    "Publishing an account conversation-list snapshot failed; " +
+                    "errorType={ErrorType}.",
+                    exception.GetType().Name);
+            }
         }
     }
 
@@ -716,15 +919,23 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         out IDisposable? lease,
         out IClientAccountRuntime? activeRuntime)
     {
+        RuntimeSubscription? subscription;
         lock (stateGate)
         {
             lease = activationLease;
             activeRuntime = runtime;
+            subscription = runtimeSubscription;
             activationLease = null;
             runtime = null;
+            runtimeSubscription = null;
             activeDisplayName = null;
             activeServerBaseUri = null;
         }
+
+        subscription?.Detach();
+        PublishConversationList(LocalConversationListReadOutcome.Failure(
+            LocalCacheOperationStatus.AuthoritativeSnapshotRequired,
+            ConversationList.Revision));
     }
 
     private void PublishStoppingSnapshot()
@@ -742,13 +953,58 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 
     private void PublishSnapshot(ClientAccountShellSnapshot value)
     {
-        Volatile.Write(ref snapshot, value);
         Action<ClientAccountShellSnapshot>? handlers;
         lock (stateGate)
         {
+            value = value with
+            {
+                Revision = Interlocked.Increment(ref shellPublicationRevision),
+            };
+            Volatile.Write(ref snapshot, value);
             handlers = SnapshotChanged;
         }
 
+        PublishSnapshotHandlers(value, handlers);
+    }
+
+    private bool TryPublishRuntimeActiveSnapshot(
+        RuntimeSubscription subscription,
+        RelayCove.Shared.Realtime.ConnectionState connectionState)
+    {
+        ClientAccountShellSnapshot value;
+        Action<ClientAccountShellSnapshot>? handlers;
+        lock (stateGate)
+        {
+            var currentSnapshot = snapshot;
+            if (!ReferenceEquals(runtimeSubscription, subscription) ||
+                !ReferenceEquals(runtime, subscription.Runtime) ||
+                Volatile.Read(ref disposeStarted) != 0 ||
+                currentSnapshot.Phase is not ClientAccountShellPhase.Active and
+                    not ClientAccountShellPhase.Retrying)
+            {
+                return false;
+            }
+
+            value = currentSnapshot with
+            {
+                ConnectionState = connectionState,
+                TotalUnreadCount = conversationList.Status == LocalCacheOperationStatus.Ready
+                    ? conversationList.TotalUnreadCount
+                    : 0,
+                Revision = Interlocked.Increment(ref shellPublicationRevision),
+            };
+            Volatile.Write(ref snapshot, value);
+            handlers = SnapshotChanged;
+        }
+
+        PublishSnapshotHandlers(value, handlers);
+        return true;
+    }
+
+    private void PublishSnapshotHandlers(
+        ClientAccountShellSnapshot value,
+        Action<ClientAccountShellSnapshot>? handlers)
+    {
         if (handlers is null)
         {
             return;
@@ -767,6 +1023,55 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                     exception.GetType().Name);
             }
         }
+    }
+
+    private sealed class RuntimeSubscription
+    {
+        private readonly ClientAccountShellCoordinator owner;
+        private int attached;
+
+        public RuntimeSubscription(
+            ClientAccountShellCoordinator owner,
+            IClientAccountRuntime runtime)
+        {
+            this.owner = owner;
+            Runtime = runtime;
+        }
+
+        public IClientAccountRuntime Runtime { get; }
+
+        public int RefreshPending;
+
+        public int RefreshRunning;
+
+        public void Attach()
+        {
+            if (Interlocked.Exchange(ref attached, 1) != 0)
+            {
+                return;
+            }
+
+            Runtime.ConnectionStateChanged += OnConnectionStateChanged;
+            Runtime.ConversationStateChanged += OnConversationStateChanged;
+        }
+
+        public void Detach()
+        {
+            if (Interlocked.Exchange(ref attached, 0) == 0)
+            {
+                return;
+            }
+
+            Runtime.ConnectionStateChanged -= OnConnectionStateChanged;
+            Runtime.ConversationStateChanged -= OnConversationStateChanged;
+        }
+
+        private void OnConnectionStateChanged(
+            RelayCove.Shared.Realtime.ConnectionState connectionState) =>
+            owner.OnRuntimeConnectionStateChanged(this, connectionState);
+
+        private void OnConversationStateChanged(long revision) =>
+            owner.OnRuntimeConversationStateChanged(this, revision);
     }
 
     private CancellationTokenSource CreateLinkedCancellation(

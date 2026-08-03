@@ -7,6 +7,7 @@ using RelayCove.Client.Accounts;
 using RelayCove.Client.Activation;
 using RelayCove.Client.Desktop;
 using RelayCove.Client.Notifications;
+using RelayCove.Client.Storage;
 using RelayCove.Shared.Realtime;
 
 namespace RelayCove.Client;
@@ -25,6 +26,7 @@ public partial class App : System.Windows.Application
     private bool? notificationRegistrationReady;
     private int lifecycleStopping;
     private int explicitExitRequested;
+    private long lastAccountShellRevision;
 
     protected override async void OnStartup(StartupEventArgs e)
     {
@@ -86,6 +88,8 @@ public partial class App : System.Windows.Application
         {
             accountComposition = CreateAccountComposition();
             accountComposition.Coordinator.SnapshotChanged += OnAccountShellSnapshotChanged;
+            accountComposition.Coordinator.ConversationListChanged +=
+                OnConversationListChanged;
         }
         catch (Exception exception)
         {
@@ -427,6 +431,8 @@ public partial class App : System.Windows.Application
         if (accountComposition is not null)
         {
             accountComposition.Coordinator.SnapshotChanged -= OnAccountShellSnapshotChanged;
+            accountComposition.Coordinator.ConversationListChanged -=
+                OnConversationListChanged;
             try
             {
                 await accountComposition.DisposeAsync();
@@ -467,6 +473,13 @@ public partial class App : System.Windows.Application
             return;
         }
 
+        if (snapshot.Revision < lastAccountShellRevision)
+        {
+            return;
+        }
+
+        lastAccountShellRevision = snapshot.Revision;
+
         if (MainWindow is MainWindow window)
         {
             window.ApplyAccountShellSnapshot(snapshot);
@@ -475,11 +488,30 @@ public partial class App : System.Windows.Application
         try
         {
             trayHost?.UpdateStatus(new ClientTrayStatus(
-                totalUnreadCount: 0,
+                snapshot.TotalUnreadCount,
                 snapshot.ConnectionState));
         }
         catch (ObjectDisposedException) when (Volatile.Read(ref lifecycleStopping) != 0)
         {
+        }
+    }
+
+    private void OnConversationListChanged(LocalConversationListReadOutcome outcome)
+    {
+        if (Volatile.Read(ref lifecycleStopping) != 0)
+        {
+            return;
+        }
+
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(() => OnConversationListChanged(outcome));
+            return;
+        }
+
+        if (MainWindow is MainWindow window)
+        {
+            window.ApplyConversationListSnapshot(outcome);
         }
     }
 

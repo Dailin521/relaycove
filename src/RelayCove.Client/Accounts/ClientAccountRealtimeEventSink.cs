@@ -8,23 +8,33 @@ internal sealed class ClientAccountRealtimeEventSink : IRealtimeEventSink
 {
     private readonly IRealtimeEventSink inner;
     private readonly ClientAccountSyncRequestor syncRequestor;
+    private readonly Action<ConnectionState> publishConnectionState;
     private int reconnectPending;
 
     public ClientAccountRealtimeEventSink(
         IRealtimeEventSink inner,
-        ClientAccountSyncRequestor syncRequestor)
+        ClientAccountSyncRequestor syncRequestor,
+        Action<ConnectionState>? publishConnectionState = null)
     {
         this.inner = inner ?? throw new ArgumentNullException(nameof(inner));
         this.syncRequestor = syncRequestor ??
             throw new ArgumentNullException(nameof(syncRequestor));
+        this.publishConnectionState = publishConnectionState ?? (static _ => { });
     }
 
     public async Task OnConnectionStateChangedAsync(
         ConnectionState state,
         CancellationToken cancellationToken)
     {
-        await inner.OnConnectionStateChangedAsync(state, cancellationToken)
-            .ConfigureAwait(false);
+        try
+        {
+            await inner.OnConnectionStateChangedAsync(state, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            publishConnectionState(state);
+        }
 
         if (state == ConnectionState.Reconnecting)
         {

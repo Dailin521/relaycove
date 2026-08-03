@@ -108,6 +108,8 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
         try
         {
             var activityState = new ClientActivityState();
+            var stateHub = new ClientAccountRuntimeStateHub(
+                loggerFactory.CreateLogger<ClientAccountRuntimeStateHub>());
             cache = await AccountScopedLocalCache.CreateAsync(
                     identity,
                     loggerFactory.CreateLogger<AccountScopedLocalCache>(),
@@ -163,7 +165,11 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                 loggerFactory.CreateLogger<LocalCacheRealtimeEventSink>(),
                 readThroughRequestor.Request,
                 notificationRoundCoordinator);
-            var realtimeSink = new ClientAccountRealtimeEventSink(cacheSink, syncRequestor);
+            cache.ConversationStateChanged += stateHub.PublishConversationStateChanged;
+            var realtimeSink = new ClientAccountRealtimeEventSink(
+                cacheSink,
+                syncRequestor,
+                stateHub.PublishConnectionState);
             realtimeConnection = createRealtimeConnection(
                 identity.CanonicalServerBaseUri,
                 async () => await authenticationSession.GetAccessTokenAsync()
@@ -190,7 +196,9 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                         cache.GetNotificationOverviewAccessStatus() ==
                             LocalCacheOperationStatus.Ready,
                     _ => false,
-                });
+                },
+                cache,
+                stateHub);
             unownedNotificationRoundCoordinator = null;
             return runtime;
         }

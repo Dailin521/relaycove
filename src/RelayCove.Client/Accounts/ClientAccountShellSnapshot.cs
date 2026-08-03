@@ -12,7 +12,9 @@ internal sealed record ClientAccountShellSnapshot(
     ConnectionState ConnectionState,
     ClientSyncRunStatus? LastSyncStatus,
     ClientLogoutStatus? LastLogoutStatus,
-    TimeSpan? RetryAfter)
+    TimeSpan? RetryAfter,
+    int TotalUnreadCount = 0,
+    long Revision = 0)
 {
     public static ClientAccountShellSnapshot Initial { get; } = SignedOut(
         PersistentClientAuthenticationStatus.NoStoredCredential);
@@ -39,5 +41,6 @@ internal sealed record ClientAccountShellSnapshot(
         $"AuthenticationStatus = {AuthenticationStatus}, DisplayName = [REDACTED], " +
         $"ServerBaseUri = [REDACTED], ConnectionState = {ConnectionState}, " +
         $"LastSyncStatus = {LastSyncStatus}, LastLogoutStatus = {LastLogoutStatus}, " +
-        $"RetryAfter = {RetryAfter} }}";
+        $"RetryAfter = {RetryAfter}, TotalUnreadCount = {TotalUnreadCount}, " +
+        $"Revision = {Revision} }}";
 }

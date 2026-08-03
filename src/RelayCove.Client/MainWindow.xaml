@@ -100,8 +100,10 @@
                                TextTrimming="CharacterEllipsis" />
                 </StackPanel>
 
-                <TextBlock Grid.Row="3"
-                           Text="未读计数：0（尚未接线）"
+                <TextBlock x:Name="SidebarUnreadText"
+                           Grid.Row="3"
+                           Text="未读计数：0"
+                           AutomationProperties.LiveSetting="Polite"
                            Foreground="#FF7891AA"
                            FontSize="12" />
             </Grid>
@@ -180,29 +182,110 @@
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
 
-                    <Border Padding="22"
+                    <Border Padding="14"
                             Background="White"
                             BorderBrush="#FFDCE5EF"
                             BorderThickness="1"
                             CornerRadius="10">
-                        <DockPanel>
-                            <TextBlock DockPanel.Dock="Top"
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Margin="8,6,8,12"
                                        Text="会话"
                                        Foreground="#FF25394D"
                                        FontSize="18"
                                        FontWeight="SemiBold" />
-                            <StackPanel VerticalAlignment="Center">
-                                <TextBlock Text="暂无会话数据"
-                                           HorizontalAlignment="Center"
-                                           Foreground="#FF52677B"
-                                           FontWeight="SemiBold" />
-                                <TextBlock Margin="18,8,18,0"
-                                           Text="账户隔离的会话列表将在下一切片接入。"
-                                           Foreground="#FF8796A5"
-                                           TextAlignment="Center"
-                                           TextWrapping="Wrap" />
-                            </StackPanel>
-                        </DockPanel>
+                            <ListBox x:Name="ConversationList"
+                                     Grid.Row="1"
+                                     AutomationProperties.Name="会话列表"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     ScrollViewer.CanContentScroll="True"
+                                     VirtualizingPanel.IsVirtualizing="True"
+                                     VirtualizingPanel.VirtualizationMode="Recycling"
+                                     SelectionChanged="OnConversationSelectionChanged">
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                        <Setter Property="Padding" Value="0" />
+                                        <Setter Property="Margin" Value="0,0,0,4" />
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="10,9">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="42" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <Border Width="34"
+                                                    Height="34"
+                                                    VerticalAlignment="Top"
+                                                    Background="#FFE5F1FC"
+                                                    CornerRadius="17">
+                                                <TextBlock Text="{Binding AvatarText}"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="#FF1677D2"
+                                                           FontWeight="SemiBold" />
+                                            </Border>
+                                            <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                                                <TextBlock Text="{Binding Name}"
+                                                           Foreground="#FF25394D"
+                                                           FontWeight="SemiBold"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding Preview}"
+                                                           Margin="0,3,0,0"
+                                                           Foreground="#FF718396"
+                                                           FontSize="12"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding MutedLabel}"
+                                                           Margin="0,2,0,0"
+                                                           Foreground="#FF94A1AE"
+                                                           FontSize="11" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2" HorizontalAlignment="Right">
+                                                <TextBlock Text="{Binding Timestamp}"
+                                                           Foreground="#FF94A1AE"
+                                                           FontSize="10" />
+                                                <Border Margin="0,6,0,0"
+                                                        Padding="6,2"
+                                                        HorizontalAlignment="Right"
+                                                        Background="#FFE14848"
+                                                        CornerRadius="8">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding HasUnread}" Value="False">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <TextBlock Text="{Binding UnreadText}"
+                                                               Foreground="White"
+                                                               FontSize="10"
+                                                               FontWeight="SemiBold" />
+                                                </Border>
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <TextBlock x:Name="ConversationEmptyText"
+                                       Grid.Row="1"
+                                       Margin="18"
+                                       Text="正在读取账户会话…"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Foreground="#FF8796A5"
+                                       TextAlignment="Center"
+                                       TextWrapping="Wrap" />
+                        </Grid>
                     </Border>
 
                     <Border Grid.Column="2"
@@ -229,8 +312,9 @@
                                                FontSize="30"
                                                FontWeight="Bold" />
                                 </Border>
-                                <TextBlock Margin="0,18,0,0"
-                                           Text="账户运行环境已建立"
+                                <TextBlock x:Name="ConversationHeadingText"
+                                           Margin="0,18,0,0"
+                                           Text="请选择会话"
                                            HorizontalAlignment="Center"
                                            Foreground="#FF25394D"
                                            FontSize="18"
