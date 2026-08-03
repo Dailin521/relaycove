@@ -5,18 +5,18 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认已完成
-- **最近验证通过的状态：** 通知协调器最终代码检查点 `92b924f2ee3dd45e25ee0c9ff3358b346b38f3a8`，绿色集成头 `7cf908eb127ddf8551853d3ce9897c90b554e78c`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认，阶段 7 Windows 原生通知传输、稳定身份和 WPF 注册生命周期已完成
+- **最近验证通过的状态：** Windows 通知平台最终代码检查点 `bb4ae92dbdc1332ecc7283619b78567b44a62f04`，待快进的绿色集成头仍为 `7cf908eb127ddf8551853d3ce9897c90b554e78c`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Fast/Full、format、493 项测试、通知/撤权定向集 460/460、真实磁盘 AccountScope/SQLite/清理确认、会话真实 read-through 目标/空洞/102 会话分页/receipt/撤权/损坏行/busy/取消/single-flight、来源/前台活动、权威列表与 Realtime/Sync/History 乱序、未读/候选/游标整页事务、10,000 行前台页、HTTP Sync、客户端登录/启动恢复/持久轮换/logout、真实 Windows DPAPI、单账户 runtime 生命周期、客户端与服务端 SignalR、既有消息/会话/认证回归、model drift、八项目漏洞审计与空白检查通过
+- **自动化验证：** `已验证` — Fast/Full、format、555 项测试、通知定向集 830/830、最终 host/platform 修复集 320/320、安装态 production builder payload/Register/Show/GetAll/Remove smoke、WPF 非阻塞启停、真实磁盘 AccountScope/SQLite/清理确认、会话 read-through/未读/候选/游标事务、HTTP Sync、客户端认证与 DPAPI、单账户 runtime、客户端与服务端 SignalR、既有消息/会话/认证回归、model drift、八项目漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
-- **最近 Claude 调用：** `已验证` — #39 请求 Opus/XHigh、实际回落 `claude-sonnet-5` 且 `model_mismatch=true`；其历史 tombstone 重放与取消轮 Realtime-first 两项阻断经 Codex 复算后在 `92b924f` 修正，其余建议按可达路径与阶段边界裁定。Codex 仍为实现与验收主体
+- **最近 Claude 调用：** `已验证` — #42 job `5ed116ad-1250-4422-84bc-30c939da40a6` 请求 Opus/XHigh、终态实际回落 `claude-sonnet-5` 且 `model_mismatch=true`；五个既定修复点成立且无 P0/P1，剩余 P2/P3 经 Codex 复算后在 `bb4ae92` 修正并本机复验。Codex 仍为实现与验收主体
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
-- `agent/stage-7-windows-notification-platform`：接 Windows App SDK 2.3.1 原生通知、账户隔离 Tag/Group、严格激活目标和 WPF 注册门；不提前接单实例导航、托盘、声音或闪烁。
+- `agent/stage-7-windows-notification-platform`：代码与门禁已绿色，正在提交任务记录并快进集成；单实例导航、托盘、声音和闪烁仍按后续独立切片推进。
 
 ## 已完成
 
@@ -50,10 +50,11 @@
 - 本地消息来源/活动快照、权威未读派生、cursor 安全 read-through 与事务候选（`DEC-026`）
 - 会话真实消息 read-through、receipt/快照双权威收敛、快照级退避与撤权竞态门禁（`DEC-027`）
 - 旧通知状态收养、权威静音、串行通知协调、generation round gate、durable 平台清理确认与撤权重试（`DEC-028`）
+- Windows App SDK 2.3.1 unpackaged 原生通知、账户隔离 Tag/Group、严格分号激活参数、注册就绪门、有界原生调用与不确定提交精确恢复（`DEC-029`）
 
 ## 下一任务
 
-先完成阶段 7 原生 Windows 通知平台与稳定身份，再接单实例激活转交和账户/权限复核导航。
+快进集成当前 Windows 通知平台切片，再接单实例激活转交和账户/权限 fail-closed 路由。
 
 ## 阻塞项
 

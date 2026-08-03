@@ -9,13 +9,13 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 7
 ActiveTask: docs/ai/tasks/2026-08-03-stage-7-windows-notification-platform.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 92b924f2ee3dd45e25ee0c9ff3358b346b38f3a8
+LatestGreenCodeCommit: bb4ae92dbdc1332ecc7283619b78567b44a62f04
 LatestGreenIntegrationCommit: 7cf908eb127ddf8551853d3ce9897c90b554e78c
-NextAction: 实现 Windows App SDK 2.3.1 通知平台、账户隔离稳定身份与严格激活目标
-ClaudeCalls: 39（全部终态；仅关键用途调用）
-ClaudeCostUsd: 40.91069225 confirmed；另有二十二次失败/中断调用费用 unavailable
+NextAction: 快进集成 Windows 通知平台，再启动单实例激活转交与 fail-closed 路由切片
+ClaudeCalls: 42（全部终态；仅关键用途调用）
+ClaudeCostUsd: 48.7578675 confirmed；另有二十二次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -63,6 +63,7 @@ RequiredUserGate: none
 - 当前本地未读与通知候选代码检查点 `c6955cb649d16b8a6d488dd228f99747a8c8c64c` 已通过 Full、413 项测试、真实 SQLite 来源/前台/本人/pending/重复/History、权威列表落后与 Realtime/Sync/History 乱序、已读边界下旧行、损坏游标 fail-closed、Sync 空洞回填/冲突整页回滚、账户隔离和 runtime 组合；10,000 条历史 + 200 条前台页整项 195 ms，新增三条边界回归连续 10 轮 30/30，既有关键竞态 40/40、model drift 与八项目漏洞审计通过。Claude #33–#35 的有效发现均已由 Codex 复算、修正并本机复验。
 - 当前 read-through 安全上传代码检查点 `8384e6166d69467377e36efa549309f891822076` 已通过 Full、447 项测试、会话内真实已读目标/全局 cursor 反例/未读空洞、102 会话分页、receipt 双权威清理、401/状态分类/快照级抑制、稳定撤权、损坏行隔离、busy、single-flight/补跑、重启/取消/Dispose 与 runtime 接线；协调器 31 项 Release 连续 10 轮 310/310，model drift 与八项目漏洞审计通过。Claude #36–#37 的有效发现均由 Codex 复算并在最终代码检查点收敛，实际模型偏差已如实记录。
 - 当前平台无关通知协调器代码检查点 `92b924f2ee3dd45e25ee0c9ff3358b346b38f3a8` 已通过 Full、493 项测试、旧状态原子收养、权威静音、显式候选复核、at-least-once Recovery、generation round gate、所有撤权来源、durable 平台清理确认和 runtime 终止接线；通知/撤权定向集 Release 连续 10 轮 460/460，model drift 与八项目漏洞审计通过。Claude #38–#39 的有效发现均由 Codex 复算并在最终代码检查点收敛，实际模型偏差已如实记录。
+- 当前 Windows 原生通知平台代码检查点 `bb4ae92dbdc1332ecc7283619b78567b44a62f04` 已通过 Full、555 项测试、通知定向集 830/830、最终 host/platform 修复集 320/320、安装态 production builder payload/Register/Show/GetAll/Remove、WPF 非阻塞启停、model drift 与八项目漏洞审计；Claude #40–#42 的有效发现均由 Codex 复算、修正并在本机门禁收敛，三次终态实际模型偏差已如实记录。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 
@@ -109,9 +110,12 @@ RequiredUserGate: none
 | 37 | 2026-08-03 | read-through 安全上传 | 全局 0.5 固定候选 review | Opus / XHigh | job `1cd74c21-0b8f-4e0a-981a-adb256a72dac`，`workspace=E:\WorkSpace\RelayCove`，`ReviewHead=b70e645`；实际 `claude-sonnet-5`、`model_mismatch=true`，1325318 ms 后 `FIX_REQUIRED`，无 P0/P1。三个 P2——`DEC-026` 漂移、撤权与批次读取竞争、损坏 pending 令全 scope fatal——经 Codex 复算成立并在 `8384e61` 与 `DEC-027` 修正，最终本机回归通过 | `$4.49239625` |
 | 38 | 2026-08-03 | 平台无关通知协调器 | 全局 0.5 持久 challenge | Opus / XHigh | job `b72844be-9c07-4dde-83e6-89e5fd7d5e4a`，`workspace=E:\WorkSpace\RelayCove`；实际 `claude-sonnet-5`、`model_mismatch=true`，631550 ms 后 `REVISE`。有效建议落实为平台三态、round `try/finally`、generation、非持久 Recovery cursor 与收养事务；平台不可用策略边界由 Codex 另行发现并修正 | `$4.1219325` |
 | 39 | 2026-08-03 | 平台无关通知协调器 | 全局 0.5 最终 review | Opus / XHigh | job `0fff90fa-d3e1-4784-ba27-642241cbf7a3`，`workspace=E:\WorkSpace\RelayCove`；实际 `claude-sonnet-5`、`model_mismatch=true`，2265022 ms 后返回。历史 tombstone 每轮重放与取消轮丢弃 Realtime-first 两项阻断经 Codex 复算成立并在 `92b924f` 修正；真实平台挂起 liveness 留作阶段 7 硬门禁，其余建议按当前可达路径裁定 | `$7.83017175` |
+| 40 | 2026-08-03 | Windows 原生通知平台 | 全局 0.5 持久 challenge | Opus / XHigh | job `b8d105e8-48c5-434d-9ebe-34f4de55f450`，`workspace=E:\WorkSpace\RelayCove`；实际 `claude-sonnet-5`、`model_mismatch=true`，797500 ms 后返回。有效发现落实为可恢复平台分类、Summary 聚合与清理、同步 Show/设置隔离和有界等待、惰性 manager 与下一单实例切片边界 | `$2.50882625` |
+| 41 | 2026-08-03 | Windows 原生通知平台 | 全局 0.5 最终 review | Opus / XHigh | job `2c9aff25-7dd5-4919-bbdb-fc15af41f5cf`，`workspace=E:\WorkSpace\RelayCove`；实际 `claude-sonnet-5`、`model_mismatch=true`，924598 ms 后 `FIX_REQUIRED`。原生 launch 分隔符、注册就绪、同步移除隔离与不确定提交/撤权竞争经 Codex 复算成立并在 `5c244b0` 修正；其余按既定恢复策略和阶段 11 bootstrap 边界裁定 | `$3.4250045` |
+| 42 | 2026-08-03 | Windows 原生通知平台 | 全局 0.5 窄范围复审 | Opus / XHigh | job `5ed116ad-1250-4422-84bc-30c939da40a6`，`workspace=E:\WorkSpace\RelayCove`；终态实际 `claude-sonnet-5`、`model_mismatch=true`，597806 ms 后确认五个核验点成立且无 P0/P1。迟到精确清理失败后的全局静默 P2 与持锁内联迟到注销 P3 经 Codex 复算成立并在 `bb4ae92` 修正，最终本机门禁通过 | `$1.9133445` |
 
-- 调用计数：`39`（全部终态）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
-- 已确认费用合计：`$40.91069225`；其余二十二次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`42`（全部终态）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
+- 已确认费用合计：`$48.7578675`；其余二十二次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate
