@@ -21,14 +21,17 @@ public sealed class ApiErrorContractTests
     [Fact]
     public void ApiErrorCodes_WhenReflected_AreUniqueStableStrings()
     {
-        var values = typeof(ApiErrorCodes)
+        var fields = typeof(ApiErrorCodes)
             .GetFields(BindingFlags.Public | BindingFlags.Static)
+            .ToArray();
+        var values = fields
             .Select(field => Assert.IsType<string>(field.GetRawConstantValue()))
             .ToArray();
 
         Assert.Equal(ExpectedCodes.Length, values.Length);
         Assert.Equal(values.Length, values.Distinct(StringComparer.Ordinal).Count());
         Assert.Equal(ExpectedCodes.Order(StringComparer.Ordinal), values.Order(StringComparer.Ordinal));
+        Assert.All(fields, field => Assert.Equal(field.Name, field.GetRawConstantValue()));
     }
 
     [Fact]
