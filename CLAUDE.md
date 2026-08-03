@@ -53,22 +53,22 @@ pwsh ./scripts/verify.ps1 -Mode Full    # 提交与阶段验收：格式检查�
 
 测试镜像源项目：`tests/<Project>.Tests/`。
 
-### 两条不可动摇的可靠性约束
+### 可靠性契约摘要
 
 这是整个项目的立项理由，任何消息相关实现都必须保持：
 
-**先入库、后推送。** 消息经 HTTP `POST /api/messages` 幂等写入 SQLite，事务提交后才由 SignalR 推送 `NewMessage`。SignalR 只是实时通道，不是可靠消息来源。服务端幂等键是 `UNIQUE(SenderId, ClientMessageId)`；客户端重试同一 `ClientMessageId` 必须返回已有 `MessageDto` 而非新建。
+**先入库、后推送。** `POST /api/messages` 在权限事务内使用 INSERT-first 和 `UNIQUE(SenderId, ClientMessageId)`：新建提交后返回 `201` 并只尝试一次 `NewMessage`，相同载荷重放返回 `200` 且不再推送，相同键不同载荷返回 `409 IdempotencyKeyReuse`。推送失败由周期同步补偿；SignalR 不是授权边界或可靠消息源。
 
-**单一入库路径。** 实时推送、断线补拉、历史加载、发送响应四种来源共用同一个客户端入库函数：
+**单一合并路径。** Realtime、Sync、History、SendResponse 共用一个本地事务内合并函数。`LocalMessages` 用 `LocalId` 作为本地主键、可空唯一 `ServerMessageId` 保存服务端身份；合并必须返回 `Inserted`、`PendingPromoted`、`Duplicate` 或 `Conflict`，重复到达不能重复增加未读、更新预览或创建通知候选。
 
 ```text
 ProcessIncomingMessage(MessageDto message, IncomingMessageSource source)
 // source: Realtime | Sync | History | SendResponse
 ```
 
-不要为补拉和推送写两套插入逻辑。客户端凭 `LocalAppState.LastSyncedMessageId` 在重连后调 `GET /api/sync?afterMessageId=xxx` 补拉，按 `MessageId` 升序处理；`LocalMessages` 已存在该 Id 就跳过插入且不重复通知。
+**固定上界逐页同步。** 客户端以按 `AccountScopeId` 隔离的 `LastSyncCursor` 调用 `GET /api/sync?cursor=...&snapshotUpperBound=...`。服务端首页捕获 `SnapshotUpperBound`，响应 `Messages / NextCursor / SnapshotUpperBound / HasMore`；客户端验证不变量，并在一个本地事务内合并整页、更新未读和推进游标。权限空洞或空可见页也必须前进到上界；`409 SyncCursorInvalid` 不能静默归零。
 
-去重分两层，不要混淆：`LocalMessages.IsRead` 管未读显示，`IsNotified` 管通知；通知去重另有 `LastNotifiedMessageId` 游标。
+**通知与撤权 fail-closed。** `IsNotificationHandled` 是唯一逐消息通知真源，只有串行 `NotificationCoordinator` 能调用 Toast；同步轮次用原子 gate 处理 Round/Recovery 候选。私有频道当前成员可懒加载全部历史，`LastReadMessageId` 只管已读；撤权后先建立 deny-set 与持久 tombstone，再清理缓存和 Toast，迟到 Realtime/History 不能复活会话。
 
 ### 服务端安全基线
 
@@ -76,7 +76,7 @@ ProcessIncomingMessage(MessageDto message, IncomingMessageSource source)
 
 ### 客户端约束
 
-消息列表用虚拟化；集合更新回到 UI 线程；上传下载和缩略图不阻塞 UI；关闭窗口默认隐藏到托盘并保留 SignalR 连接与通知能力，真正退出只走托盘菜单；单实例运行第一版用 Mutex + 激活窗口即可。
+消息列表用虚拟化；集合更新回到 UI 线程；上传下载和缩略图不阻塞 UI；关闭窗口默认隐藏到托盘并保留 SignalR 连接与通知能力，真正退出只走托盘菜单。单实例激活必须通过实现探针在 `AppInstance` 与 `Mutex + Named Pipe` IPC 中选型，并把完整 `MessageTarget` / `UnreadOverviewTarget` 转交已有实例；不能只激活窗口。
 
 ## 工作流
 

@@ -36,3 +36,16 @@
 - **理由：** 保证消息不丢、可重试、可补拉且不会重复显示或通知。
 - **影响：** 任何消息实现都必须保持“先入库、后推送”，并维护客户端同步游标和去重记录。
 - **来源：** 工程落地方案第 4.2、12、13 节。
+
+### DEC-003：消息同步、幂等与通知语义
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** `DEC-002` 确立了“先入库、后推送”，但尚未定义权限过滤造成的全局 ID 空洞、并发重放、pending 身份、断线补拉事务、通知恢复和私有频道撤权如何共同收敛。
+- **决策：** 第一版在单服务端实例、单 SQLite 主库、写事务串行化和消息不可变前提下，使用服务端解释的 `LastSyncCursor` 与固定消息 ID `SnapshotUpperBound` 分页。服务端按当前权限扫描并返回 `NextCursor`；客户端验证响应后以逐页本地事务合并消息与推进游标，所有账户状态由规范化服务器地址和用户 ID 派生的 `AccountScopeId` 隔离。
+- **决策：** 本地消息以自增 `LocalId` 为主键、以可空唯一 `ServerMessageId` 保存服务端身份；Realtime、Sync、History、SendResponse 共用一个合并函数，并明确区分 `Inserted`、`PendingPromoted`、`Duplicate`、`Conflict`。服务端发送采用 INSERT-first：新建 `201`、相同载荷重放 `200`、相同幂等键不同载荷 `409 IdempotencyKeyReuse`；只有新建事务提交后尝试一次推送，失败由周期同步补偿。
+- **决策：** `IsNotificationHandled` 是唯一逐消息通知真源，单实例内只有一个串行 `NotificationCoordinator`。同步轮次用原子 gate 合并 Realtime 与 Sync 候选，按 `SyncReason` 执行 `None`、`PerMessage` 或 `Summary`；平台接受 Toast 后、落本地状态前的崩溃窗口按 at-least-once 处理，不宣称严格 exactly-once。
+- **决策：** 私有频道当前成员可通过 History/Search 懒加载全部历史，不设置加入前历史可见水位。`ConversationMembers.LastReadMessageId` 只表示单调已读边界；加入或重新加入事务以当前会话最大消息 ID 初始化该边界。撤权由尽力实时事件、`Complete=true` 权威会话全集和稳定 `403 ConversationAccessRevoked` 收敛，客户端先持久化 tombstone 并 fail-closed，再执行可重试缓存和通知清理。
+- **理由：** 这些规则让权限空洞、并发请求、四种到达顺序、崩溃恢复和撤权迟到帧都有唯一可编码结果，同时保持第一版轻量单体边界，不引入 outbox、消息队列或第二种数据库。
+- **影响：** `SyncResponse` 固定为 `Messages`、`NextCursor`、`SnapshotUpperBound`、`HasMore`；本地表、错误码、通知激活目标和后续契约测试必须遵循上述语义。增加服务端写实例、更换数据库、允许消息编辑删除或改变 ID/提交顺序时，必须新增决策并重新设计同步协议。
+- **来源：** 细化 `DEC-002`；工程落地方案第 4.2、10、11、12、13、20、21 节；`docs/ai/tasks/2026-07-31-stage-0-sync-contract.md`。

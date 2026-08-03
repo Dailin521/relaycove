@@ -1870,24 +1870,25 @@ AI Agent 必须按以下顺序执行。
 目标：
 
 ```text
-创建解决方案、项目结构、README、基础配置。
+先冻结同步、幂等、通知和私有权限契约，再创建可构建解决方案、项目结构和真实验证脚本。
 ```
 
 任务：
 
-1. 创建 `RelayCove.sln`；
-2. 创建 Client、Server、Shared、Updater 项目；
-3. 开启 Nullable；
-4. 配置基础日志；
-5. 配置 `.gitignore`；
-6. 创建 README；
-7. 创建 docs 目录；
-8. 确保可以编译。
+1. 接受 `DEC-003` 并统一规范性文档；
+2. 创建 `RelayCove.sln`；
+3. 创建 Client、Server、Shared、Updater 项目和对应测试项目；
+4. 开启 Nullable；
+5. 配置基础日志；
+6. 配置 `.gitignore`；
+7. 创建真实 `Fast` / `Full` 验证脚本；
+8. 确保 Debug、Release 和测试均可运行。
 
 验收：
 
 ```text
-dotnet build
+pwsh ./scripts/verify.ps1 -Mode Fast
+pwsh ./scripts/verify.ps1 -Mode Full
 ```
 
 必须通过。
@@ -1912,7 +1913,8 @@ dotnet build
 6. 定义 LoginRequest/LoginResponse；
 7. 定义 SendMessageRequest；
 8. 定义 SyncResponse；
-9. 定义 ApiResult 或统一错误响应。
+9. 定义 IncomingMessageSource、SyncReason 与 NotificationPolicy；
+10. 定义稳定错误响应和 `SyncCursorInvalid`、`IdempotencyKeyReuse`、`ConversationAccessRevoked` 错误码。
 
 验收：
 
@@ -1972,7 +1974,9 @@ dotnet build 通过
 5. 管理员管理私有频道成员；
 6. 获取当前用户会话列表；
 7. 创建或获取一对一私聊；
-8. 权限校验。
+8. 在添加成员事务中初始化 `LastReadMessageId`；
+9. 实现 `Complete=true` 权威成员全集与撤权错误码；
+10. 权限校验。
 
 验收：
 
@@ -1981,6 +1985,8 @@ dotnet build 通过
 私有频道只有成员可见
 私聊会话只对两人可见
 无权限用户不能访问会话
+加入或重新加入后可懒加载全部历史，但加入前历史不计未读
+撤权提交后相关资源立即返回稳定 403
 ```
 
 ---
@@ -1998,7 +2004,7 @@ dotnet build 通过
 1. 创建 Messages 表；
 2. 创建 MessageMentions 表；
 3. 实现 POST /api/messages；
-4. 实现幂等：SenderId + ClientMessageId 唯一；
+4. 实现 INSERT-first 幂等：201 新建、200 重放、409 键复用冲突；
 5. 实现历史消息接口；
 6. 实现消息 around 查询；
 7. 实现 read 接口。
@@ -2008,6 +2014,7 @@ dotnet build 通过
 ```text
 能发送文字消息
 重复提交同一 ClientMessageId 不会生成重复消息
+并发相同提交只推送一次，不同载荷重放返回 409
 能拉历史消息
 无权限用户不能发送或读取消息
 ```
@@ -2028,8 +2035,10 @@ dotnet build 通过
 2. 客户端连接时认证；
 3. 服务端把用户加入有权限的会话组；
 4. 新消息入库后推送 NewMessage；
-5. 客户端接收 NewMessage；
-6. 客户端显示连接状态。
+5. 推送 `ConversationAccessRevoked` 并拒绝迟到消息复活缓存；
+6. 客户端接收 NewMessage；
+7. 每次重连后按权威权限重新加组；
+8. 客户端显示连接状态。
 
 验收：
 
@@ -2037,6 +2046,7 @@ dotnet build 通过
 A 发消息
 B 在线时立即收到
 B 无权限会话不会收到
+撤权后即使旧连接有在途帧也不会恢复本地访问
 服务端日志记录推送行为
 ```
 
@@ -2056,12 +2066,12 @@ B 无权限会话不会收到
 2. 创建 LocalConversations；
 3. 创建 LocalMessages；
 4. 创建 LocalAttachments；
-5. 保存 LastSyncedMessageId；
-6. 实现 ProcessIncomingMessage；
-7. 实现消息去重；
-8. 实现启动后同步；
-9. 实现重连后同步；
-10. 实现未读数。
+5. 按 `AccountScopeId` 隔离本地数据库、缓存和 `LastSyncCursor`；
+6. 分离 `LocalId` 与可空唯一 `ServerMessageId`；
+7. 实现四来源唯一合并路径；
+8. 实现固定 `SnapshotUpperBound` 的逐页事务同步；
+9. 实现 single-flight、重试和受控游标错误；
+10. 实现权威会话对账、撤权清理和单调未读边界。
 
 验收：
 
@@ -2070,6 +2080,9 @@ B 无权限会话不会收到
 消息不重复显示
 未读数量正确
 客户端重启后仍能显示最近消息
+权限空洞不会造成空页死循环或游标停滞
+pending、响应、回声和补拉最终只有一条本地消息
+切换账户或服务器不会复用旧作用域数据
 ```
 
 ---
@@ -2093,7 +2106,8 @@ B 无权限会话不会收到
 7. 实现关闭窗口进入托盘；
 8. 实现彻底退出；
 9. 实现开机启动；
-10. 实现单实例运行。
+10. 实现串行 `NotificationCoordinator` 与恢复候选；
+11. 通过探针选择 `AppInstance` 或 `Mutex + Named Pipe` 并实现完整激活转交。
 
 验收：
 
@@ -2103,6 +2117,8 @@ B 关闭窗口进入托盘后仍收到通知
 收到消息时任务栏闪烁
 点击通知打开对应会话
 再次启动客户端不会出现第二个实例
+Realtime、Sync 与恢复扫描不会并行重复提交同一候选
+旧账户或已撤权通知无法打开缓存内容
 ```
 
 ---
@@ -2332,13 +2348,21 @@ A 给 B 发 3 条消息
 B 恢复网络
 B 自动补拉 3 条
 B 不重复显示
-B 不重复通知
+B 按 SyncReason 和候选数得到唯一确定的通知策略
 
 B 彻底退出
 A 给 B 发消息
 B 不要求实时通知
 B 下次启动后能补拉未读
+
+切换账户后点击旧 Toast
+不能打开当前账户同 ID 会话
+
+私有频道撤权后点击陈旧 Toast
+不能显示已撤权缓存
 ```
+
+自动化测试必须覆盖 Startup 汇总、WindowActivated 不弹历史通知、前后台 Reconnect/Periodic、阈值 `10/11`、Toast 临时失败恢复、同步失败时 Realtime 候选解闸，以及串行协调器的并发边界。真实 Windows 行为仍需安装态人工验收。
 
 ## 21.2 消息验收
 
@@ -2347,6 +2371,8 @@ B 下次启动后能补拉未读
 发送多行成功
 发送失败可重试
 重复提交不会重复生成消息
+并发相同请求得到一个 201、一个 200 且只推送一次
+相同幂等键不同载荷返回 409 IdempotencyKeyReuse
 历史消息按时间正确
 回复消息可显示被回复内容
 @用户可解析
@@ -2390,6 +2416,28 @@ SHA-256 不匹配时拒绝安装
 最低版本不足时强制更新
 更新失败不破坏当前可运行版本
 ```
+
+## 21.6 同步、幂等与权限契约测试
+
+以下 Given/When/Then 场景必须在对应实现切片中转成 xUnit 或集成测试：
+
+1. 全局 ID 含大量无权限空洞或整页无可见消息时，最终 `NextCursor` 仍到达快照上限且不死循环。
+2. 多页同步期间新提交消息不进入旧快照，在下一轮可拉到。
+3. 本地某条消息写入失败时整页和游标均回滚；重试后不丢失、不重复派生副作用。
+4. Realtime、Sync、SendResponse 以任意顺序并发到达，最终只有一条本地消息、一次未读、至多一次通知决策；用 barrier 覆盖“同步轮次关闭”与 Realtime 到达的原子边界。
+5. pending 消息没有服务端 ID 时仍可持久化；响应或回声后只提升同一行。
+6. 两个并发相同请求只产生一条服务端消息：一个 `201`、一个 `200`、只允许一次推送；相同键不同载荷返回 `409`。
+7. 切换账户或服务器不会复用旧 `LastSyncCursor`；游标超出服务端最大 ID 时显式失败，不静默跳过。
+8. Startup、WindowActivated、前后台 Reconnect/Periodic、阈值 `10/11` 和 Toast 临时失败分别得到确定策略。
+9. 客户端游标为 `50`、私有频道加入前消息为 `60..90`、加入基线为 `90` 时，Sync 不返回 `60..90`，History/Search 可按需返回全部历史，`91` 后的新消息正常同步与提醒；重新加入同理且不全量回填。
+10. 撤权事件丢失或设备离线后，权威列表或稳定撤权 `403` 仍触发本地收敛；服务端从撤权提交起拒绝所有相关资源访问。
+11. SignalR 重连后按当前权限重新加组；已撤权会话不会因旧组状态继续接收。
+12. 重复添加当前成员不重置已读边界；较小服务端 LastRead 不覆盖本地 pending read-through；撤权后迟到 Realtime/History 不复活缓存。
+13. History 再次命中已由 Realtime 插入的未读行时，不重复到达型副作用，但可单调置为已读或通知已处理并取消未派发候选。
+14. 权威会话列表读取期间成员新增、移除或排序变化，第一版单事务全集仍形成一致快照；未来普通分页结果不得触发 Purge。
+15. Realtime 在 Sync 期间到达而该轮随后永久 `400` 或本地提交失败时，Realtime 候选仍解闸并完成一次通知决策，Sync 候选留待恢复。
+16. 清理任一步失败仍保持 deny-set/tombstone；会话 Group 可清除已无本地行的 Toast；旧账户 Toast、迟到点击和重复激活不能打开当前账户内容或创建第二窗口。
+17. revoked tombstone 首次 INSERT 失败后立即崩溃并离线重启时，冷启动权威对账 gate 仍阻止旧私有缓存显示。
 
 ---
 

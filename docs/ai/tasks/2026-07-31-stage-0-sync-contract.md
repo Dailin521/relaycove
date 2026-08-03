@@ -352,7 +352,10 @@ if ($unexpectedPlanDrift.Count -gt 0) {
 
 ### 修改摘要
 
-- 待实施后填写。
+- 工程方案已定义固定消息 ID 上界分页、逐页本地事务、single-flight、账户作用域和游标错误处理。
+- 本地消息身份已分离为 `LocalId` / `ServerMessageId`，四来源合并与 INSERT-first `200/201/409` 语义已统一。
+- 未读、通知候选 gate、恢复策略、私有频道历史和撤权 fail-closed 规则已写入规范，并列出 17 个后续契约测试场景。
+- `DEC-003`、执行工作流、Claude 仓库指引和状态页已同步；本任务仍待候选验证与独立只读复核后完成。
 
 ### 验证证据
 
@@ -360,14 +363,15 @@ if ($unexpectedPlanDrift.Count -gt 0) {
 | --- | --- | --- |
 | `未验证` | 规格一致性 `rg` | 待实施后运行 |
 | `未验证` | `git diff --check` | 待实施后运行 |
+| `未验证` | Claude 前置 challenge | 2026-08-03 调用失败：本机认证源优先导致组织连接器被禁用；未返回 `workspace_root`、模型、`model_mismatch` 或费用，已按规则降级为 Codex 独立反证 |
 | `未验证` | 独立只读复核 | 待实施后执行 |
 | `未验证` | `dotnet build` | 本任务无解决方案，不适用 |
 
 ### 文件范围
 
-- 新增：待实施后填写。
-- 修改：待实施后填写。
-- 删除：待实施后填写。
+- 新增：无。
+- 修改：`RelayCove_工程落地方案.md`、`CLAUDE.md`、`docs/ai/DECISIONS.md`、`docs/ai/STATUS.md`、`docs/ai/WORKFLOW.md`、本任务文件。
+- 删除：无。
 
 ### 决策与限制
 
