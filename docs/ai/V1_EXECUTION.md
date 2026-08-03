@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 6
-ActiveTask: docs/ai/tasks/2026-08-03-stage-6-client-credential-store.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-6-client-session-restore.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 82267b785fa6ef7d04de4906b9b01de0e0cfda54
-LatestGreenIntegrationCommit: dc31a9c76d7e26cdc02abd907ac1a76f3f985d2d
-NextAction: 快进集成 DPAPI 凭据存储，随后实现持久 refresh token 的显式会话恢复与自动登录
+LatestGreenIntegrationCommit: b722a6a75e5ef15b1f9e95ef02436499f3180fc0
+NextAction: 实现并验证持久 refresh token 会话恢复、rotation 持久化与自动登录入口
 ClaudeCalls: 30（软上限 24，硬上限 30，已封顶）
 ClaudeCostUsd: 6.710481 confirmed；另有二十一次失败/中断调用费用 unavailable
 Blocker: none

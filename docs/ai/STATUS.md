@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-6-client-credential-store`：Windows DPAPI CurrentUser 的单一 refresh 凭据文件、原子替换、严格恢复校验与幂等清除已完成并验证，待快进集成。
+- `agent/stage-6-client-session-restore`：把交互登录、DPAPI refresh 凭据、启动单次 refresh、后续 rotation 持久化和 logout 清理连接成无 UI 认证入口；不组合账户 runtime。
 
 ## 已完成
 
@@ -48,7 +48,7 @@
 
 ## 下一任务
 
-使用持久 refresh token 的显式会话恢复与自动登录；完成后单独实现账户 scope 运行时组合。
+使用持久 refresh token 的显式会话恢复、后续 rotation 持久化与自动登录；完成后单独实现账户 scope 运行时组合。
 
 ## 阻塞项
 

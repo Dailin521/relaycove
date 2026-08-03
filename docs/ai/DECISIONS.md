@@ -281,3 +281,14 @@
 - **理由：** CurrentUser 把可解密范围限制到当前 Windows 用户，DPAPI 自带完整性保护且无需应用持有密钥；只保存 refresh token 减少长期秘密面。先落 ciphertext 再原子发布使失败保留上一个完整轮换点，严格恢复验证避免损坏数据进入自动认证。
 - **影响：** Client 增加 Windows-only 凭据 store 与真实 DPAPI/磁盘测试，不新增包、Shared/服务端协议、数据库或 migration。相同用户上下文中的恶意进程仍可能调用 DPAPI，离线设备也不能被远程擦除；自动 refresh、损坏提示与账户 runtime 在后续切片实现。
 - **来源：** 工程落地方案第 3.1、9.3、阶段 6；`DEC-006`、`DEC-022`；`docs/ai/tasks/2026-08-03-stage-6-client-credential-store.md`；2026-08-03 Microsoft ProtectedData、DataProtectionScope、File.Replace 官方文档与本机 WindowsDesktop 参考程序集证据。
+
+### DEC-024：refresh 轮换的内存发布与持久提交边界
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** `DEC-022` 已保证单次 refresh 的内存原子轮换，`DEC-023` 已保证单个 DPAPI 文件的原子替换，但两者不是同一事务。服务端成功轮换后，旧 refresh token 已撤销；若新 token 本地保存失败，继续把旧磁盘文件标记为有效会让下次自动登录必然重放失效 token。logout 若磁盘清理失败又因调用者取消跳过远端撤销，则旧文件甚至仍可能包含有效 token。
+- **决策：** 交互登录或启动 Restore 成功取得响应后，认证入口以不受该已完成 HTTP 调用者取消影响的提交边界保存新 refresh token，再返回会话。保存失败时尽力删除旧正式凭据，内存会话仍发布同一已验证响应的 access/refresh token，但 `IsCredentialPersisted=false`；不得回退旧 token、部分发布或自动重发认证写请求。
+- **决策：** 启动 Restore 只读取一个凭据并发一次 refresh，响应 user ID 必须等于持久 user ID；401 或身份错配同时清内存和凭据。附加 store 的会话在后续 rotation 中先尝试保存新 refresh token，再原子发布内存响应；保存失败清旧凭据并标记未持久化。logout 先清内存与凭据；若凭据清除失败，即使调用者取消也仍以会话生命周期尝试一次远端 revoke，并返回 `CredentialClearFailed`，不重试。
+- **理由：** 服务端 rotation 是唯一权威提交点，客户端无法把网络与 DPAPI 合成分布式事务。保留当前已验证内存会话维持可用性，同时删除已知失效磁盘 token并显式降级持久状态；logout 的条件性不可取消 revoke 缩小“有效 token 留在不可删除文件中”的窗口。
+- **影响：** Client 增加串行持久认证入口、内部 Restore HTTP 和会话 credential persistence 状态，扩展客户端 logout 状态；不改变 Shared/服务端协议、DPAPI 格式或依赖。进程在服务端轮换成功但收到响应前终止仍只能在下次 401 时清理旧 token，这是单次使用 rotation 的固有限制。
+- **来源：** `DEC-006`、`DEC-022`、`DEC-023`；工程落地方案第 9.3、12.5、18.1；`docs/ai/tasks/2026-08-03-stage-6-client-session-restore.md`；当前 ClientAuthenticationSession 与 ClientCredentialStore 实现。
