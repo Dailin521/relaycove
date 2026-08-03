@@ -56,10 +56,21 @@ internal sealed class ClientAccountRuntimeFactory
         this.loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
         this.createRealtimeConnection = createRealtimeConnection ??
             CreateDefaultRealtimeConnection;
-        this.notificationPlatform = notificationPlatform ??
-            new DeferredClientNotificationPlatform();
-        this.notificationSettingsProvider = notificationSettingsProvider ??
-            (static () => ClientNotificationSettingsSnapshot.Unavailable);
+        if (notificationPlatform is null)
+        {
+            var windowsPlatform = new WindowsClientNotificationPlatform(
+                WindowsAppSdkNotificationManager.Shared,
+                loggerFactory.CreateLogger<WindowsClientNotificationPlatform>());
+            this.notificationPlatform = windowsPlatform;
+            this.notificationSettingsProvider = notificationSettingsProvider ??
+                windowsPlatform.GetSettingsSnapshot;
+        }
+        else
+        {
+            this.notificationPlatform = notificationPlatform;
+            this.notificationSettingsProvider = notificationSettingsProvider ??
+                (static () => ClientNotificationSettingsSnapshot.Unavailable);
+        }
     }
 
     public async Task<ClientAccountRuntime> CreateAsync(

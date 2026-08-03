@@ -8,6 +8,7 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
 {
     private const int StorageBatchSize = 1000;
     private readonly object stateGate = new();
+    private readonly string accountScopeId;
     private readonly AccountScopedLocalCache localCache;
     private readonly IClientNotificationPlatform platform;
     private readonly Func<ClientNotificationSettingsSnapshot> settingsProvider;
@@ -40,6 +41,8 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
                 "The local cache must belong to the notification coordinator account scope.",
                 nameof(localCache));
         }
+
+        accountScopeId = identity.Id;
     }
 
     public Task<ClientNotificationDispatchOutcome> DispatchAsync(
@@ -265,6 +268,7 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
 
             var result = await SubmitPlatformAsync(
                     new ClientNotificationRequest(
+                        accountScopeId,
                         NotificationPolicy.PerMessage,
                         [ToPlatformMessage(candidate)]),
                     cancellationToken)
@@ -351,6 +355,7 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
 
         var result = await SubmitPlatformAsync(
                 new ClientNotificationRequest(
+                    accountScopeId,
                     NotificationPolicy.Summary,
                     current.Candidates.Select(ToPlatformMessage).ToArray()),
                 cancellationToken)
@@ -535,11 +540,36 @@ internal sealed class ClientNotificationCoordinator : IClientNotificationCoordin
         Guid conversationId,
         CancellationToken cancellationToken)
     {
+        var conversationResult = await InvokePlatformCleanupAsync(
+                () => platform.ClearConversationAsync(
+                    accountScopeId,
+                    conversationId,
+                    cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+        var summaryResult = await InvokePlatformCleanupAsync(
+                () => platform.ClearSummaryAsync(accountScopeId, cancellationToken),
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (conversationResult.Status == ClientNotificationPlatformStatus.TransientFailure ||
+            summaryResult.Status == ClientNotificationPlatformStatus.TransientFailure)
+        {
+            return ClientNotificationPlatformResult.TransientFailure;
+        }
+
+        return conversationResult.Status == ClientNotificationPlatformStatus.Accepted ||
+            summaryResult.Status == ClientNotificationPlatformStatus.Accepted
+                ? ClientNotificationPlatformResult.Accepted
+                : ClientNotificationPlatformResult.PermanentlyUnavailable;
+    }
+
+    private async Task<ClientNotificationPlatformResult> InvokePlatformCleanupAsync(
+        Func<Task<ClientNotificationPlatformResult>> cleanup,
+        CancellationToken cancellationToken)
+    {
         try
         {
-            var result = await platform
-                .ClearConversationAsync(conversationId, cancellationToken)
-                .ConfigureAwait(false);
+            var result = await cleanup().ConfigureAwait(false);
             if (!Enum.IsDefined(result.Status))
             {
                 logger.LogError(

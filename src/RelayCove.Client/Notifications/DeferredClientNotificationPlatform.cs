@@ -11,7 +11,13 @@ internal sealed class DeferredClientNotificationPlatform : IClientNotificationPl
     }
 
     public Task<ClientNotificationPlatformResult> ClearConversationAsync(
+        string accountScopeId,
         Guid conversationId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(ClientNotificationPlatformResult.PermanentlyUnavailable);
+
+    public Task<ClientNotificationPlatformResult> ClearSummaryAsync(
+        string accountScopeId,
         CancellationToken cancellationToken) =>
         Task.FromResult(ClientNotificationPlatformResult.PermanentlyUnavailable);
 }

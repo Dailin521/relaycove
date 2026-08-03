@@ -46,7 +46,9 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
         Assert.Equal((ClientNotificationDispatchStatus)expectedDispatchStatus, outcome.Status);
         Assert.Equal(expectedHandled, ReadNotificationHandled(prepared.Identity, 1));
         Assert.Single(platform.Requests);
-        Assert.Equal(NotificationPolicy.PerMessage, platform.Requests.Single().Policy);
+        var request = platform.Requests.Single();
+        Assert.Equal(prepared.Identity.Id, request.AccountScopeId);
+        Assert.Equal(NotificationPolicy.PerMessage, request.Policy);
     }
 
     [Fact]
@@ -337,6 +339,7 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
         await Task.WhenAll(dispatch, clear);
 
         Assert.NotEmpty(platform.ClearedConversations);
+        Assert.True(platform.ClearedSummaries > 0);
         Assert.All(
             platform.ClearedConversations,
             conversationId => Assert.Equal(prepared.Conversation.Id, conversationId));
@@ -369,6 +372,29 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
             .ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
                 new ConversationListResponse([], Complete: true));
         Assert.Equal([prepared.Conversation.Id], retry.RevokedConversationIds);
+    }
+
+    [Fact]
+    public async Task Revocation_WhenSummaryClearIsTransient_RemainsPendingForNextSnapshot()
+    {
+        var prepared = await PrepareAsync(messageCount: 0);
+        await using var cache = prepared.Cache;
+        var platform = new FakeNotificationPlatform
+        {
+            SummaryClearResult = ClientNotificationPlatformResult.TransientFailure,
+        };
+        await using var coordinator = CreateCoordinator(prepared, platform);
+
+        Assert.Equal(
+            LocalCacheOperationStatus.RevokedConversation,
+            await cache.RevokeConversationAccessAsync(prepared.Conversation.Id));
+        await coordinator.ConversationRevokedAsync(prepared.Conversation.Id);
+
+        var snapshot = await cache.ApplyAuthoritativeConversationSnapshotWithRevocationsAsync(
+            new ConversationListResponse([], Complete: true));
+        Assert.Equal([prepared.Conversation.Id], snapshot.RevokedConversationIds);
+        Assert.Single(platform.ClearedConversations);
+        Assert.Equal(1, platform.ClearedSummaries);
     }
 
     [Fact]
@@ -541,6 +567,7 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
     {
         private readonly ConcurrentQueue<ClientNotificationRequest> requests = new();
         private readonly ConcurrentQueue<Guid> clearedConversations = new();
+        private int clearedSummaries;
         private int activeSubmissions;
         private int maxConcurrentSubmissions;
 
@@ -549,6 +576,8 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
 
         public ClientNotificationPlatformResult ClearResult { get; init; } =
             ClientNotificationPlatformResult.Accepted;
+
+        public ClientNotificationPlatformResult? SummaryClearResult { get; init; }
 
         public Func<
             ClientNotificationRequest,
@@ -562,6 +591,8 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
         public IReadOnlyCollection<ClientNotificationRequest> Requests => requests.ToArray();
 
         public IReadOnlyCollection<Guid> ClearedConversations => clearedConversations.ToArray();
+
+        public int ClearedSummaries => Volatile.Read(ref clearedSummaries);
 
         public int MaxConcurrentSubmissions => Volatile.Read(ref maxConcurrentSubmissions);
 
@@ -585,12 +616,22 @@ public sealed class ClientNotificationCoordinatorTests : IDisposable
         }
 
         public Task<ClientNotificationPlatformResult> ClearConversationAsync(
+            string accountScopeId,
             Guid conversationId,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             clearedConversations.Enqueue(conversationId);
             return Task.FromResult(ClearResult);
+        }
+
+        public Task<ClientNotificationPlatformResult> ClearSummaryAsync(
+            string accountScopeId,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref clearedSummaries);
+            return Task.FromResult(SummaryClearResult ?? ClearResult);
         }
 
         private void UpdateMaximum(int candidate)

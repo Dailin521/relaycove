@@ -204,7 +204,7 @@ public sealed class ClientAccountRuntimeTests
     }
 
     [Fact]
-    public async Task FactoryRuntime_WhenDefaultPlatformIsUnavailable_LeavesCandidateForRecovery()
+    public async Task FactoryRuntime_WhenInjectedPlatformIsUnavailable_LeavesCandidateForRecovery()
     {
         using var directory = new TemporaryDirectory();
         var conversation = new ConversationDto(
@@ -231,7 +231,9 @@ public sealed class ClientAccountRuntimeTests
             new HttpClient(handler),
             directory.Path,
             NullLoggerFactory.Instance,
-            (_, _, _, _) => new FakeRealtimeConnection());
+            (_, _, _, _) => new FakeRealtimeConnection(),
+            new DeferredClientNotificationPlatform(),
+            static () => ClientNotificationSettingsSnapshot.Unavailable);
         var runtime = await factory.CreateAsync(CreateSession());
 
         var outcome = await runtime.StartAsync();
@@ -1277,7 +1279,13 @@ public sealed class ClientAccountRuntimeTests
         }
 
         public Task<ClientNotificationPlatformResult> ClearConversationAsync(
+            string accountScopeId,
             Guid conversationId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(ClientNotificationPlatformResult.Accepted);
+
+        public Task<ClientNotificationPlatformResult> ClearSummaryAsync(
+            string accountScopeId,
             CancellationToken cancellationToken) =>
             Task.FromResult(ClientNotificationPlatformResult.Accepted);
     }
