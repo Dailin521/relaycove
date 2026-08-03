@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 4
 ActiveTask: docs/ai/tasks/2026-08-03-stage-4-text-message-api.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: b9b004109183e0157bca5c16f0acdaf7a39c8940
+LatestGreenCodeCommit: 391aff08f3a48396e1a499e3e4cc9db2cc7fdc41
 LatestGreenIntegrationCommit: 4309fe4b729c5eef063bab4903def5776e57409e
-NextAction: 冻结并实现文字消息存储、INSERT-first 幂等发送与 keyset 历史
+NextAction: 仅快进集成文字消息 API 后开始 around/read 与固定上界 Sync 切片
 ClaudeCalls: 22（软上限 24，硬上限 30）
 ClaudeCostUsd: 5.4229485 confirmed；另有十五次失败/中断调用费用 unavailable
 Blocker: none
@@ -46,6 +46,7 @@ RequiredUserGate: none
 - 当前管理员引导代码检查点 `419ef00069c86c85b097a7961cebe95a16730cc5` 已通过 Fast、Full、100 项测试、真实 bootstrap/动态管理员授权/同名并发、密码与日志边界及依赖漏洞审计；Claude 无候选结论，已如实降级记录 Codex 固定差异自审。
 - 当前会话存储代码检查点 `1a3c49289940d625182237fddcd1954fc40983e9` 已通过 Fast、Full、116 项测试、真实 migration up/down/旧认证数据保留、约束/唯一/外键、model drift 与漏洞审计；Claude #20 无结论，已如实降级记录 Codex 固定差异复核。
 - 当前会话访问与成员 API 代码检查点 `b9b004109183e0157bca5c16f0acdaf7a39c8940` 已通过 Full、134 项测试、真实 HTTP/SQLite Direct 与成员并发、动态授权/撤权、共享访问查询、单查询、busy 503、model drift 与漏洞审计；Claude #21 无结论，已如实降级记录 Codex 固定差异复核。
+- 当前文字消息 API 代码检查点 `391aff08f3a48396e1a499e3e4cc9db2cc7fdc41` 已通过 Full、156 项测试、真实 SQLite AUTOINCREMENT/migration up-down/外键、顺序/并发/跨发送者幂等、撤权优先、单查询 keyset History、未读/入群水位、busy 503、model drift 与漏洞审计；Claude #22 无结论，已如实降级记录 Codex 固定差异复核。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确授权绿色任务的常规 push、合入集成分支与任务分支清理，无需二次确认；`main`、Tag、Release、真实发布和生产部署仍须满足对应里程碑与发布 Gate，不由该授权自动放宽。
 

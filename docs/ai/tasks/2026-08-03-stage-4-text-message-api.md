@@ -59,13 +59,13 @@
 
 ### 验收标准
 
-- [ ] migration 在真实 SQLite 创建 Messages/MessageMentions、AUTOINCREMENT、唯一/索引/CHECK/外键，能回滚且保留旧认证/会话数据，model drift 为 false。
-- [ ] 有权用户可发送有效 Text 并返回 201；相同幂等键和相同语义顺序/并发重放只生成一行并返回 200，载荷不同返回 `409 IdempotencyKeyReuse`。
-- [ ] 权限检查先于幂等回读；撤权后首次发送和旧键重放均稳定 `403 ConversationAccessRevoked`，不存在消息/用户/SQLite 细节泄漏。
-- [ ] Reply 必须同会话；mentions 是至多 20 个当前可访问正常用户的集合；非 Text、非空 AttachmentIds、无效/空白/过长/控制字符文本稳定失败。
-- [ ] 当前有权用户按唯一 ID keyset 拉取升序历史，无权/撤权用户 403；页间不重复、不跳过，边界和默认/上限有自动化验证。
-- [ ] 新消息更新会话最后消息与他人未读；私有成员首次加入/重新加入写入事务内当前最大消息 ID，重复 upsert 不回退水位。
-- [ ] Full、漏洞审计、文件白名单、`git diff --check` 与固定差异独立复核通过或按规则如实记录。
+- [x] migration 在真实 SQLite 创建 Messages/MessageMentions、AUTOINCREMENT、唯一/索引/CHECK/外键，能回滚且保留旧认证/会话数据，model drift 为 false。
+- [x] 有权用户可发送有效 Text 并返回 201；相同幂等键和相同语义顺序/并发重放只生成一行并返回 200，载荷不同返回 `409 IdempotencyKeyReuse`。
+- [x] 权限检查先于幂等回读；撤权后首次发送和旧键重放均稳定 `403 ConversationAccessRevoked`，不存在消息/用户/SQLite 细节泄漏。
+- [x] Reply 必须同会话；mentions 是至多 20 个当前可访问正常用户的集合；非 Text、非空 AttachmentIds、无效/空白/过长/控制字符文本稳定失败。
+- [x] 当前有权用户按唯一 ID keyset 拉取升序历史，无权/撤权用户 403；页间不重复、不跳过，边界和默认/上限有自动化验证。
+- [x] 新消息更新会话最后消息与他人未读；私有成员首次加入/重新加入写入事务内当前最大消息 ID，重复 upsert 不回退水位。
+- [x] Full、漏洞审计、文件白名单、`git diff --check` 与固定差异独立复核通过或按规则如实记录。
 
 ### 验证命令
 
@@ -97,25 +97,40 @@ Claude 仅作一次 60 秒参考，不重试、不阻塞 Codex；绿色后按授
 
 ### 修改摘要
 
-- 进行中。
+- 新增 Shared `MessageType`、发送/消息/历史/附件占位 DTO，并为请求和响应固定敏感载荷脱敏字符串表示及 `MessageTypeUnsupported` 错误码。
+- 新增不可变 Message/MessageMention 实体、SQLite AUTOINCREMENT migration、唯一/CHECK/索引与明确 Cascade/Restrict/NO ACTION 外键；真实验证 committed ID 不复用、整会话级联及单独删除被回复消息受限。
+- 新增 `POST /api/messages`：同一 Serializable 写事务内权限优先、reply/mention 校验、INSERT-first、仅目标唯一冲突回读、精确集合幂等、201/200/409 与安全日志。
+- 新增单个权威 SQL 完成当前权限与 History 页的 keyset 查询，避免访问检查与消息读取之间的撤权 TOCTOU；响应升序、游标排除边界、默认 50、范围 1–100。
+- 会话列表投影真实 `LastMessageId`/他人 `UnreadCount`；私有成员首次加入和重新加入在成员写事务内取当前 `MAX(Messages.Id)`，重复 upsert 保留已有水位。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 基准 Fast | Debug 0 警告、0 错误；134 项测试通过 |
+| `已验证` | 最终 Fast | Debug 0 警告、0 错误；Server 131、Shared 23、Client 1、Updater 1，共 156 项测试通过 |
+| `已修复` | 首轮 Full | formatter 发现 Windows 工作副本 CRLF 及 EF migration 的 BOM/块级 namespace；运行仓库 formatter 后复跑，无行为失败 |
+| `已验证` | 最终 `pwsh ./scripts/verify.ps1 -Mode Full` | format clean；Release 0 警告、0 错误；156 项测试通过；`git diff --check` 通过 |
+| `已验证` | 真实 SQLite migration/模型 | Stage 3→最新→Stage 3→Initial→空库迁移通过并保留旧认证/会话数据；AUTOINCREMENT 不复用 committed ID；model drift 为 false |
+| `已验证` | 消息 HTTP/服务场景 | Text 201；顺序/并发同载荷 200 且单行；集合换序等价；不同载荷 409；相同 key 不同发送者 201；撤权后旧/新 key 均 403；busy 503 |
+| `已验证` | History/聚合/成员水位 | 单 SQL 权限化 History、空会话 200、无权 403、升序 keyset 无重复/跳过、多 mention 不截断；最后消息、本人排除未读、首次/重新加入最大 ID 与重复 upsert 不回退通过 |
+| `已验证` | 实体/数据库边界 | Unicode scalar/空白/控制字符/mention 上限、持久后不可变、sender/mention 限制、reply NO ACTION 与 conversation cascade 通过 |
+| `已验证` | `dotnet list RelayCove.sln package --vulnerable --include-transitive` | 8 个项目均无已知易受攻击的直接或传递包 |
+| `未验证` | Claude XHigh challenge #22 | 60 秒内因认证源优先级超时，无模型、workspace、费用或结论；按用户要求不重试、不阻塞 |
+| `已验证` | Codex 固定差异复核 | `ReviewBase=e677597`、`ReviewHead=391aff0`；协议/授权/幂等/迁移/日志/取消/文件白名单与空白检查无剩余发现 |
 
 ### 文件范围
 
-- 新增：本任务文件。
-- 修改：进行中。
+- 新增：消息 Shared 契约；Server Message/MessageMention、migration、发送/History endpoint 与服务；消息实体、SQLite、HTTP 与契约测试。
+- 修改：工程方案、决策/状态/执行/任务文档；Conversation/User 导航、DbContext/Program、会话成员水位与列表聚合、错误码和既有 migration 契约测试。
 - 删除：无。
 
 ### 决策与限制
 
-- 决策：进行中。
-- 已知限制：进行中。
+- 决策：`DEC-010`。消息 committed ID 永不复用；Text 精确保留且不可变；权限先于幂等回读；mentions 按无序集合比较；History 只用唯一 ID keyset。Reply 用 NO ACTION 而非立即 RESTRICT，以同时阻止单条被引用消息删除并允许一条 Conversation 硬删语句完成整组级联。
+- 已知限制：本切片不支持 Image/File/System 发送、真实附件、around/read、Sync/Search、SignalR/outbox、客户端缓存/合并/通知；History 当前最多 100 条且按请求重新检查权限。
+- Claude 未返回第二意见；最终结论由 Codex 结合仓库、官方 SQLite/EF Core 证据、真实 SQLite/HTTP 自动化与固定差异复核独立承担。
 
 ### 下一步
 
-- 冻结 `DEC-010` 并实现 Shared 契约、消息 migration、幂等发送、History、成员水位与会话聚合。
+- 仅快进 `agent/v1-integration` 并推送，随后拆分阶段 4 around/read 与固定上界 Sync 的下一个纵向任务。
