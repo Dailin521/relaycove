@@ -5,10 +5,10 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片，以及阶段 5 服务端/客户端 SignalR 实时边界已完成
-- **最近验证通过的状态：** 客户端 SignalR 接收与连接状态集成 `f76b95fd80c88a4c3abe39ca84c4d1efebc44d9d`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离本地缓存已完成
+- **最近验证通过的状态：** 账户隔离 SQLite/统一合并/撤权 fail-closed 代码检查点 `9182c73b79aa9ec6fd09bd681d6e9aa19ccd35f0`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Full、format、220 项测试、服务端 SignalR 认证/分组/用户路由/当前收件人/撤权，客户端真实认证接收/动态 token/FIFO 撤权屏障/重连状态/并发生命周期/故障隔离/日志，以及既有消息/会话/认证回归、model drift、漏洞审计与空白检查通过
+- **自动化验证：** `已验证` — Fast/Full、format、244 项测试、真实磁盘 AccountScope/SQLite 合并/pending/重启/撤权/fatal/竞争/日志、客户端与服务端 SignalR、既有消息/会话/认证回归、原生 SQLite 安全版本、model drift、八项目漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
 - **最近 Claude 调用：** `已验证` — 本机后台无工具 CLI #30 实际调用 `claude-opus-5` 并返回 `REVISE`，有效发现已纳入阶段 6 durable revocation intent、冷启动授权门和竞争测试；调用数达到 `30/30` 硬上限，后续降级 Codex 固定差异复核
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-6-local-access-cache`：实现 AccountScopeId、本地 SQLite 消息合并与撤权 tombstone/deny-set。
+- `agent/stage-6-local-access-cache`：`completed`，待仅快进集成并清理任务分支。
 
 ## 已完成
 
@@ -40,10 +40,11 @@
 - SignalR 认证 Hub、`sub` 用户标识、每连接权威分组、当前收件人快照和提交后 NewMessage 尽力投递（`DEC-014`）
 - 私有成员真实删除提交结果、目标用户全部连接 ConversationAccessRevoked、并发一次事件与发布失败隔离（`DEC-015`）
 - 客户端动态 token SignalR、确定连接状态、默认重连与 NewMessage/撤权 FIFO 单一 sink（`DEC-016`）
+- AccountScopeId 隔离本地 SQLite、权威登记门、统一消息合并、durable revocation intent/tombstone/fatal fail-closed 与安全原生 SQLite pin（`DEC-017/018/019`）
 
 ## 下一任务
 
-完成 AccountScopeId 隔离的本地 SQLite、撤权 tombstone/deny-set 与 Realtime 唯一合并入口。
+客户端固定上界 Sync 分页复用本地统一合并，并提交 LastSyncCursor 与会话授权门。
 
 ## 阻塞项
 

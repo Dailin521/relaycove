@@ -2,7 +2,7 @@
 
 ## 状态
 
-- `in_progress`
+- `completed`
 - 分支：`agent/stage-6-local-access-cache`
 - 基线：`f76b95fd80c88a4c3abe39ca84c4d1efebc44d9d`
 
@@ -51,11 +51,11 @@
 
 ## 验收标准
 
-- [ ] 相同 canonical server/user 得到同一 scope，不同 server path/port/user 严格隔离；数据库文件无法逃出显式 root，scope/log 不含 token 或用户名。
-- [ ] 已登记会话的 Realtime 消息按两唯一键得到 Inserted/PendingPromoted/Duplicate/Conflict；多 mention 不改变消息唯一性，并发重复只有一行。
-- [ ] 撤权首先建立 deny-set，事务后 tombstone 跨重启存在且会话/消息/mentions 清空；与迟到消息并发时提交后绝不出现复活行，未知会话也不自动创建。
-- [ ] tombstone 首次持久化失败使整个 scope fatal fail-closed；失败不能移除 deny-set、恢复读取或被后续消息静默绕过。
-- [ ] Client/Shared 定向测试、既有回归、Fast/Full、漏洞审计、文件白名单、空白与固定差异复核通过。
+- [x] 相同 canonical server/user 得到同一 scope，不同 server path/port/user 严格隔离；数据库文件无法逃出显式 root，scope/log 不含 token 或用户名。
+- [x] 已登记会话的 Realtime 消息按两唯一键得到 Inserted/PendingPromoted/Duplicate/Conflict；多 mention 不改变消息唯一性，并发重复只有一行。
+- [x] 撤权首先建立 deny-set，事务后 tombstone 跨重启存在且会话/消息/mentions 清空；与迟到消息并发时提交后绝不出现复活行，未知会话也不自动创建。
+- [x] tombstone 首次持久化失败使整个 scope fatal fail-closed；失败不能移除 deny-set、恢复读取或被后续消息静默绕过。
+- [x] Client/Shared 定向测试、既有回归、Fast/Full、漏洞审计、文件白名单、空白与固定差异复核通过。
 
 ## 验证命令
 
@@ -78,14 +78,30 @@ dotnet list RelayCove.sln package --vulnerable --include-transitive
 
 ### 修改摘要
 
-- 进行中。
+- 新增稳定 AccountScopeIdentity、显式绝对 root/子路径约束和脱敏 record 输出；不同服务器子路径/端口/用户使用独立 SQLite 文件。
+- 新增账户作用域本地 schema/store 和 Realtime sink：每操作新连接、WAL、foreign keys、立即写事务、整事务 busy 重试、冷启动权威登记门，以及 Inserted/PendingPromoted/Duplicate/Conflict 固定合并路径。
+- 撤权同步进入进程 scope deny-set，独立提交 durable intent，再原子写 tombstone、级联删除 conversation/messages/mentions 并清 intent；调用方取消不丢撤权，故障进入 fatal，重启可重放。
+- 新增 MessageSendStatus/IncomingMessageMergeResult 稳定枚举、pending API、真实磁盘 SQLite 竞争/重启/故障/账户隔离/日志脱敏测试；直接固定 SQLitePCLRaw bundle 2.1.12，修复首次审计发现的 2.1.11 High advisory。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 集成基线 | `agent/v1-integration` 本地/远端均为 `f76b95f`，前序 Full/220 项测试、model drift 与漏洞审计通过 |
+| `已验证` | Client LocalCache 定向 Release | 13/13；完整 Storage（含 scope）22/22；Shared 32/32 |
+| `已验证` | 竞争/故障循环 | 双 store 并发重复、撤权窗口、tombstone 故障重放三组测试 Release 连续 5 轮均 3/3 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast` | 当前 `9182c73` 后 Debug 构建 0 警告/0 错误，36+32+175+1=`244` 项测试通过 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full` | 当前依赖覆盖后 Release/format/diff check 通过，0 警告/0 错误，244 项测试通过 |
+| `已验证` | 原生 SQLite 版本与漏洞审计 | 真实连接断言原生 SQLite `>=3.50.2`；八个项目 `--vulnerable --include-transitive` 均无易受攻击包 |
+| `已验证` | EF model drift | 服务端 `has-pending-model-changes --no-build` 返回自最新 migration 后无变化 |
+| `已验证` | 固定差异复核 | `Base=f76b95f`、`ReviewHead=9182c73`；Codex 发现并修复公开 record 默认 ToString 敏感输出及 SQLitePCLRaw 2.1.11 High advisory，最终白名单/SQL 参数/取消/日志/事务/空白无剩余发现 |
+| `已验证` | Claude 只读 challenge | #30 实际 `claude-opus-5` 返回 `REVISE`，有效发现已落实为 `DEC-018` 和对应测试；其为第二意见，不替代最终本地验证 |
+
+### 限制
+
+- 本切片不实现 Complete=true HTTP 权威会话对账、Sync/History/SendResponse、附件、通知或 UI；每个新 store 只有本轮显式登记的权威会话可读取/合并。
+- 当前不提供 tombstone 清除或重新加入恢复 API；必须由后续完整权威对账以明确事务语义实现。
 
 ### 下一步
 
-- 固定本地 schema、事务与 fatal fail-closed 决策后实现最小 store/sink 与真实磁盘竞争测试。
+- 在新任务中接入客户端固定上界 Sync 分页，并让 Sync/Realtime 复用本切片的同一合并与账户授权门。
