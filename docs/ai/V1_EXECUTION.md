@@ -9,12 +9,12 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 8
 ActiveTask: docs/ai/tasks/2026-08-04-stage-8-sync-triggers.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 4cad2b3769eb555f009f3f3eaf1e93b2c642a0c6
+LatestGreenCodeCommit: 64f6985a48f1aaeec48af36bd64f17d87b0f8341
 LatestGreenIntegrationCommit: 6d2d2057757267e6a1181eb149d9f5dd375df2da
-NextAction: 实现并验证 WindowActivated / Periodic Sync 自动触发与账户生命周期收敛
-ClaudeCalls: 61（全部终态；#55/#58 已主动停止，#56/#57/#59/#60/#61 失败；仅关键用途调用）
+NextAction: 仅快进自动 Sync 触发切片，并建立阶段 8 下一最小聊天任务
+ClaudeCalls: 62（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61 失败；仅关键用途调用）
 ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有二十三次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
@@ -70,6 +70,7 @@ RequiredUserGate: none
 - 当前账户隔离会话列表最终代码检查点 `ea83e7bf37e83f03c678bf0f82375bfb8a4166af` 已通过最终 Full 673 项、Client 462/462、会话列表/状态/runtime/coordinator 定向 41/41 与 410/410 重复、完整 Client 2,310 次、真实 Release WPF 响应窗口/单实例/进程清理、model drift 与八项目漏洞审计。权威门控读取、精确预览 join、提交后信号、dirty single-flight、版本化旧 runtime 隔离、真实总未读/持续连接和选择不提前推进已读冻结为 `DEC-033`；Claude #51–#53 的成立意见均由 Codex 复算并在最终代码收敛，三次终态模型偏差如实记录。真实登录列表视觉、SignalR/通知点击/托盘数字与 Narrator 保持后续 UI/M5 Gate。
 - 当前有界消息列表最终代码检查点 `46a59f6482263cdbf9a1d12a1470aa79bdff6960` 已通过最终 Fast/Full 704 项、Client 493/493、cache/History/Around/coordinator/滚动关键集 81/81 与 810/810 重复、真实 Release WPF 响应窗口/单实例/进程清理、model drift 与八项目漏洞审计。有界只读页面、History/Around 原子 merge、稳定撤权、版本化选择、虚拟化滚动和已应用视口后的精确 read-through 冻结为 `DEC-034`；Claude #54 的成立意见与 #56 额度失败前两条部分意见均由 Codex 独立复算并在最终代码收敛，失败任务未冒充终局审查。真实登录消息、双客户端、通知定位与 Narrator 保持后续 UI/M5 Gate。
 - 当前 Text 发送最终代码检查点 `4cad2b3769eb555f009f3f3eaf1e93b2c642a0c6` 已通过最终 Fast/Full 743 项、Client 532/532、发送/pending/回声/coordinator/选择关键集 250/250 重复、真实 Release WPF 非零窗口句柄/响应/单实例/进程清理、model drift 与八项目漏洞审计。严格 Text 验证、durable pending、单次幂等 POST、一次 401 refresh、稳定撤权、响应/回声同一行提升、显式原键重试和 nullable 服务端身份冻结为 `DEC-035`；Claude #57–#60 均未形成审查结论，Codex 固定差异自审补出的发送者校验和同进程恢复竞态已在最终代码收敛。真实账户/VPS/双客户端发送视觉与 Narrator 保持 M5 Gate。
+- 当前 WindowActivated / Periodic Sync 最终代码检查点 `64f6985a48f1aaeec48af36bd64f17d87b0f8341` 已通过最终 Fast/Full 751 项、Client 540/540、scheduler/runtime/既有 Sync coordinator 关键集 670/670 重复、真实 Release WPF 非零窗口句柄/响应/单实例/进程清理、model drift 与八项目漏洞审计。Startup 后前台上升沿、五分钟完成后节拍、既有 single-flight 复用和旧 scope 终止顺序冻结为 `DEC-036`；Claude #61–#62 均未读取代码或形成结论，Codex 固定提交自审无剩余发现。真实丢推送、五分钟壁钟与 VPS/双客户端保持 M5 Gate。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 
@@ -138,9 +139,10 @@ RequiredUserGate: none
 | 59 | 2026-08-04 | Text 发送可靠性 review | 本机只读 CLI | Opus / XHigh | `workspace=E:\WorkSpace\RelayCove`、`permission-mode=plan`；订阅额度 403，未返回模型、费用或结论 | `unavailable` |
 | 60 | 2026-08-04 | Text 发送可靠性 review | 本机只读 CLI 回退 | Sonnet / XHigh | `workspace=E:\WorkSpace\RelayCove`、`permission-mode=plan`；订阅额度 403，未返回模型、费用或结论 | `unavailable` |
 | 61 | 2026-08-04 | WindowActivated / Periodic Sync 可靠性 challenge | MCP 只读 challenge | Opus / XHigh | 当前 MCP consultation 因 `ANTHROPIC_API_KEY`/其他认证源优先于 claude.ai 登录而失败；无 job、模型、workspace 回执、费用或结论 | `unavailable` |
+| 62 | 2026-08-04 | WindowActivated / Periodic Sync 固定提交 review | 本机后台只读 CLI | Opus / XHigh | background id `0f5dda0b`、session `0f5dda0b-e23e-480d-9fa1-014b1cbdb360`，`workspace=E:\WorkSpace\RelayCove`、`permission-mode=plan`、工具限于 Read/Glob/Grep；订阅额度 403，停在 idle/blocked 且未读取仓库，主代理确认后主动停止，无正式答案或费用元数据 | `unavailable` |
 
-- 调用计数：`61`（全部终态；#55/#58 已主动停止，#56/#57/#59/#60/#61 失败）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
-- 已确认精确费用合计：`$80.07301150`；另有 #44–#50 本机 Claude Code 状态显示值合计 `$45.97`（界面两位小数，未伪造更高精度），按显示值总计约 `$126.04301150`。其余二十八次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`62`（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61 失败）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
+- 已确认精确费用合计：`$80.07301150`；另有 #44–#50 本机 Claude Code 状态显示值合计 `$45.97`（界面两位小数，未伪造更高精度），按显示值总计约 `$126.04301150`。其余二十九次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate
