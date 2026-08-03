@@ -18,6 +18,7 @@
 - `已验证`：ASP.NET Core 10 SignalR 官方认证文档要求浏览器 WebSocket/SSE 将 bearer token 放入 `access_token` 查询参数时，只在 Hub 路径提取；官方安全文档确认默认 Hosting Information 日志会记录查询字符串，必须将 `Microsoft.AspNetCore.Hosting` 提升至 Warning 或提供等价脱敏。
 - `已验证`：官方组文档说明组成员只属于当前连接、重连不持久，且组不是安全机制；本切片每次连接从数据库重新加组，每次消息投递另查当前活跃收件人，不把旧组状态当作授权真源。
 - `已验证`：服务端项目由 ASP.NET Core shared framework 提供 SignalR server；真实客户端集成测试需要在 Server.Tests 增加同版本 `Microsoft.AspNetCore.SignalR.Client` 测试依赖，不改变产品运行时依赖。
+- `已验证`：Claude XHigh challenge #26 在 60 秒内因本机认证源优先级禁用 claude.ai connector 而超时；调用前后 HEAD 均为 `cb5a4d6` 且工作区干净，未返回模型、workspace、费用或结论，按用户要求不重试、不阻塞 Codex。
 
 ## 范围
 

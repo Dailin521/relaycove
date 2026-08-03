@@ -167,3 +167,15 @@
 - **理由：** 100 条缺省页在 200 上限内提供确定兼容行为；deferred 只读事务既给两条查询一致快照，又避免立即取得 SQLite RESERVED 写锁。先对消息做 `Take(limit+1)` 再连接 mentions，防止多 mentions 消耗消息页容量；末页由服务端直接推进到快照上界以跨过权限空洞。
 - **影响：** 新增 Shared SyncResponse、Server Sync endpoint/验证/服务及自动化测试，不新增 migration 或依赖。客户端事务合并、AccountScopeId、通知 gate、SignalR 和同步世代仍属后续切片；更换数据库、增加写实例或改变消息 ID/可变性时必须重审 `DEC-003` 与本决策。
 - **来源：** 工程落地方案第 12.4；`DEC-003`、`DEC-009`、`DEC-010`、`DEC-011`；`docs/ai/tasks/2026-07-31-stage-0-sync-contract.md`；`docs/ai/tasks/2026-08-03-stage-4-message-sync-api.md`；本地 Microsoft.Data.Sqlite 10.0.5 transaction API 与当前 EF Core SQLite 模型。
+
+### DEC-014：SignalR 身份、组与提交后尽力实时投递
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** 阶段 5 需要在不削弱 `DEC-003/010` 持久化与幂等真源的前提下缩短在线消息延迟。SignalR principal 在连接期间缓存，组只属于连接且不是安全机制；浏览器 WebSocket/SSE 还必须以查询参数携带 access token，默认 Hosting Information 日志会记录完整 URL。若直接向旧会话组广播，会让连接后被撤权的用户继续收到新敏感内容；若在事务内或幂等回放时推送，又会产生未提交/重复消息。
+- **决策：** 服务端只暴露要求认证的 `/hubs/chat` 强类型 Hub，当前不提供客户端可调用的业务或加组方法。JWT bearer 只在该 Hub 路径提取非空 `access_token` 查询值；`Microsoft.AspNetCore.Hosting` 日志最低为 Warning，生产连接必须使用 HTTPS。SignalR 用户标识固定为已验证 JWT `sub` 的非空标准 `D` GUID，Hub endpoint 在 token 到期时关闭连接。
+- **决策：** 每个新连接从数据库重新读取当前正常 actor 可见的未删除 Public 及其成员 Private/Direct 会话并逐连接加组；断线重建不继承旧组，组名由会话 GUID 确定且客户端不能自选。组仅作路由优化。`NewMessage` 每次使用单个权威数据库查询计算当前正常收件人：Public 的全部正常用户、Private/Direct 的当前成员，然后通过 SignalR user ID 向每位用户的所有连接发送完整 `MessageDto`，包含发送者连接。
+- **决策：** 只有 `MessageCommandService` 返回 `Created` 后 endpoint 才调用发布，此时 SQLite 事务已提交；`Replay` 和任何失败状态都不发布，并发同键仍只有插入获胜者发布一次。发布不使用已取消的 HTTP request token；收件人查询或 SignalR transport 的任意异常在发布边界内被吸收，只记录 message/conversation ID、已解析收件人数和异常元数据，不记录正文、昵称或 token，不改变已经决定的 201，也不在请求内重试。实时投递是尽力而为，遗漏由固定上界 Sync 补偿。
+- **理由：** 以数据库收件人快照而非可能陈旧的组状态裁决每次敏感投递，能保证撤权提交后开始的发布不再选择该用户，同时接受撤权前已排队帧属于既有客户端 deny-set 威胁模型。提交后状态分支把一次实时事件绑定到唯一持久行；失败隔离保持 HTTP 与数据库为可靠真源。Hub 限域查询 token 与 Hosting 日志过滤封住最直接的凭据泄露路径。
+- **影响：** Server 增加 ChatHub、`IUserIdProvider`、当前收件人发布器和 SignalR 注册；Server.Tests 增加同版本 Microsoft SignalR .NET client 依赖以运行真实连接测试，不新增产品运行时包或 migration。`ConversationAccessRevoked` 事件、主动移组/断连、客户端重连/同步/deny-set、跨实例 backplane/outbox 和真实 HTTPS/WebSocket 部署验收属于后续切片。
+- **来源：** 工程落地方案第 10.3、12.1/12.2、12.5、阶段 5；`DEC-003`、`DEC-006`、`DEC-009`、`DEC-010`、`DEC-013`；`docs/ai/tasks/2026-08-03-stage-5-signalr-new-message.md`；2026-08-03 ASP.NET Core 10 SignalR authentication/authorization、security、users/groups 与 strongly typed Hub 官方文档。
