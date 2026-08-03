@@ -14,8 +14,8 @@ IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: c3717c9455a98cbf9014e8cbd37ef2f635261cc3
 LatestGreenIntegrationCommit: f76b95fd80c88a4c3abe39ca84c4d1efebc44d9d
 NextAction: 实现 AccountScopeId、本地 SQLite 消息合并与撤权 tombstone/deny-set
-ClaudeCalls: 29（软上限 24，硬上限 30）
-ClaudeCostUsd: 6.438276 confirmed；另有二十一次失败/中断调用费用 unavailable
+ClaudeCalls: 30（软上限 24，硬上限 30，已封顶）
+ClaudeCostUsd: 6.710481 confirmed；另有二十一次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -89,9 +89,10 @@ RequiredUserGate: none
 | 27 | 2026-08-03 | SignalR ConversationAccessRevoked | 前置 challenge | Opus / XHigh | `ChallengeHead=ca6fec7`；60 秒窗口内因本机认证源优先级禁用 claude.ai connector 而超时；调用前后 HEAD 与干净状态不变，无模型、workspace、费用或结论；按用户要求未重试，由 Codex 结合仓库事务/撤权与用户路由证据收敛 `DEC-015` | `unavailable` |
 | 28 | 2026-08-03 | SignalR ConversationAccessRevoked | 本机后台只读 CLI review | Opus / XHigh | 从 `E:\WorkSpace\RelayCove` 启动且工具限于 `Read/Glob/Grep`；实际主要模型 `claude-opus-5`（CLI 含少量 `claude-sonnet-5` 开销），返回未提供 `workspace_root/model_mismatch`；约 `290742 ms` 后 `terminal_reason=budget_exhausted`，未形成 verdict/findings，不能标记通过，固定候选由 Codex 复核 | `$1.0153275` |
 | 29 | 2026-08-03 | 客户端 SignalR 接收与连接状态 | 前置 challenge | Opus / XHigh | `ChallengeHead=8c811cf`；60 秒内 `claude_second_brain` MCP wrapper 仍因本机认证源优先级禁用 claude.ai connector 而超时；无模型、workspace、费用、结论或发现，不重试，由 Codex 结合仓库与 ASP.NET Core 10 官方证据收敛 | `unavailable` |
+| 30 | 2026-08-03 | 客户端账户隔离缓存与撤权 | 本机后台无工具 challenge | Opus / XHigh | 实际主要模型 `claude-opus-5`（CLI 含少量 `claude-sonnet-5` 开销），约 `274623 ms` 后返回 `REVISE`；有效发现推动 durable revocation intent、冷启动默认隐藏旧缓存、读写双门禁、固定唯一键判定和取消不可丢撤权，纳入 `DEC-018` 与磁盘测试；未返回 `workspace_root/model_mismatch` | `$0.272205` |
 
-- 调用计数：`29 / 24 soft / 30 hard`。
-- 已确认费用合计：`$6.438276`；其余二十一次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`30 / 24 soft / 30 hard`，已达到硬上限，后续任务使用 Codex 固定差异复核。
+- 已确认费用合计：`$6.710481`；其余二十一次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - Claude 恢复可用后，每次调用必须记录返回的 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；达到调用或费用硬上限时降级为 Codex 独立复核，不停止开发。
 
 ## 阻塞与用户 Gate

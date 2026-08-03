@@ -17,6 +17,7 @@
 - `已验证`：工程方案固定 AccountScopeId 为 canonical server URI + 当前 user GUID 的 SHA-256 Base64Url；LocalMessages 以可空唯一 ServerMessageId 和 `(SenderId, ClientMessageId)` 合并，未知或 revoked conversation 不得自动创建。
 - `已验证`：工程方案固定撤权顺序为进程 deny-set→独立最小 tombstone 事务→清理；tombstone 首次持久化失败时整个作用域 fatal fail-closed，冷启动须先权威会话对账才可展示私有缓存。
 - `已验证`：Microsoft.Data.Sqlite 官方说明 SQLite 不支持真正异步 I/O，应避免伪 async API；并发访问每次新建 connection、不要跨线程共享 ADO.NET 对象；WAL 改善并发，shared cache 与 WAL 不应混用；写事务为 Serializable，busy/locked 自动重试到 timeout。
+- `已验证`：本机后台无工具 Claude #30 实际使用 `claude-opus-5` 返回 `REVISE`；采纳 durable revocation intent、冷启动默认隐藏旧缓存、读写双门禁、固定唯一键顺序和撤权不可因调用方取消而丢弃，记录为 `DEC-018`。Claude 调用达到 `30/30` 硬上限，不再追加调用。
 
 ## 范围
 
@@ -24,7 +25,7 @@
 - 建立当前切片实际使用的 schema/version：LocalConversations、LocalMessages、LocalMessageMentions、RevokedConversations 和 LocalAppState；启用 foreign keys、WAL、明确 timeout 和参数化 SQL，不使用 shared cache或跨调用共享 connection。
 - 增加账户作用域 cache/store 与 `IRealtimeEventSink` 实现。只有调用方以权威会话 DTO 显式登记后才接收消息；未知会话触发对账请求并拒绝入库，不自动创建。
 - Realtime 合并按 ServerMessageId 与 `(SenderId, ClientMessageId)` 统一：新建、pending 提升、精确重复或不可变载荷冲突得到确定结果；事务提交后才对上层可见。
-- 撤权先同步更新 deny-set，随后事务持久化 tombstone 并级联删除会话消息/mentions；迟到消息在触库前拒绝。tombstone 写失败设置作用域 fatal fail-closed，后续读取/合并均拒绝且不能自行清除。
+- 撤权先同步更新 deny-set，再以 LocalAppState 独立提交 durable intent，随后事务持久化 tombstone、级联删除会话消息/mentions 并清 intent；迟到消息在触库前拒绝。tombstone 写失败设置作用域 fatal fail-closed，重启先重放 intent；每个新 store 默认不授权旧会话，只有当前权威 DTO 显式登记后才可读取/合并，且 tombstone 会拒绝重新登记。
 - 真实磁盘 SQLite 测试覆盖跨重启 tombstone、账户/服务器隔离、路径逃逸、并发重复/冲突、pending 提升、未知会话、撤权与消息竞争、故障注入及日志脱敏。
 
 ## 允许修改

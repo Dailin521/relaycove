@@ -11,7 +11,7 @@
 - **自动化验证：** `已验证` — Full、format、220 项测试、服务端 SignalR 认证/分组/用户路由/当前收件人/撤权，客户端真实认证接收/动态 token/FIFO 撤权屏障/重连状态/并发生命周期/故障隔离/日志，以及既有消息/会话/认证回归、model drift、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
-- **最近 Claude 调用：** `未验证` — 本机只读 CLI #28 已证明 API 可调用 `claude-opus-5`；随后客户端实时边界 XHigh challenge #29 的 `claude_second_brain` MCP wrapper 仍因认证源优先级在 60 秒超时，无模型、费用或结论；两者均不替代 Codex 与自动化证据
+- **最近 Claude 调用：** `已验证` — 本机后台无工具 CLI #30 实际调用 `claude-opus-5` 并返回 `REVISE`，有效发现已纳入阶段 6 durable revocation intent、冷启动授权门和竞争测试；调用数达到 `30/30` 硬上限，后续降级 Codex 固定差异复核
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
@@ -47,4 +47,4 @@
 
 ## 阻塞项
 
-- 无。本机 Claude CLI 已确认可调用，但本次候选审查在预算内无结论；Codex 继续以本地证据为主推进下一任务。
+- 无。本机 Claude CLI 已确认可调用且 #30 返回有效挑战；调用数已达硬上限，Codex 继续以仓库和自动化证据为主推进。

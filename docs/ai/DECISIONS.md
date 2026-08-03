@@ -215,3 +215,14 @@
 - **理由：** 内存先拒绝封住事件与 SQLite 之间的窗口，持久 tombstone 封住重启窗口，scope gate 与事务重检给撤权/消息竞争单一线性化顺序。账户目录隔离和未知会话拒绝防止跨账户或伪造实时事件扩张本地授权。
 - **影响：** Client 增加本地 SQLite 依赖、scope/schema/store/realtime sink 与真实磁盘测试；不实现完整会话 HTTP、Sync、通知、附件或 UI。未来完整权威对账必须先提交后才允许清除 tombstone；数据库加密和离线远程擦除仍是第一版限制。
 - **来源：** 工程落地方案第 11.3、12.3–12.8、阶段 6；`DEC-003`、`DEC-015`、`DEC-016`；`docs/ai/tasks/2026-08-03-stage-6-local-access-cache.md`；2026-08-03 Microsoft.Data.Sqlite connection strings、async limitations、transactions 与 database errors 官方文档。
+
+### DEC-018：持久撤权意图与冷启动缓存授权门
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** `DEC-017` 的内存 deny-set 与单个 tombstone/清理事务能封住正常提交后的迟到消息，但若 tombstone 首次写入失败或进程在事务提交前终止，内存 fatal/deny 状态会随进程消失；本阶段又不实现 Complete=true HTTP 对账，不能让新 store 自动展示磁盘旧会话。撤权回调还可能在连接关停时收到已取消 token，不能因此丢掉安全工作项。
+- **决策：** 撤权同步加入当前账户 scope 的线程安全 deny-set 后，不再接受调用方取消；先在 `LocalAppState` 独立立即写事务提交 `RevocationIntent/<conversationId>`，再用第二个立即写事务 upsert tombstone、删除 LocalConversation（两级外键级联消息与 mentions）并清除 intent。初始化先重放所有 intent，再加载 tombstone；重放失败把 scope 置为 fatal。写事务使用 `BEGIN IMMEDIATE`，busy/locked 按有界次数重放整个事务。
+- **决策：** 新建 store 的当前进程授权集合始终为空，即使磁盘已有 LocalConversations，也不得读取或合并，直到调用方以本轮当前权威 `ConversationDto` 显式登记。登记在同一写事务内先检查 tombstone，命中时拒绝且不清 tombstone/deny-set；未知 Realtime 只触发对账请求。读取和消息写入在触库前与事务内都重检 fatal/deny/tombstone/权威会话，Conflict 零写入回滚，唯一键判定固定为 ServerMessageId 后 `(SenderId, ClientMessageId)`。
+- **理由：** durable intent 把“已经收到撤权但尚未完成清理”变成可重放事实；冷启动授权门覆盖 intent 自身尚未提交即崩溃以及离线漏事件窗口，同时不假装本切片已实现 HTTP 对账。取消不可丢、固定事务顺序和读写共用门禁消除关停、竞争与 WAL 旧快照造成的 fail-open。
+- **影响：** 不新增表或外部依赖，复用本切片实际使用的 LocalAppState；当前切片不提供 tombstone 清除/重新加入 API，后续 Complete=true 权威对账必须显式、原子地实现恢复流程。进程崩溃前尚未落盘的数据仍无法远程擦除，但不会在未重新权威登记时展示。
+- **来源：** `DEC-003`、`DEC-016`、`DEC-017`；工程落地方案第 12.3、12.7、12.8；`docs/ai/tasks/2026-08-03-stage-6-local-access-cache.md`；本机 Claude #30 XHigh challenge；真实磁盘故障注入、重启重放、取消、竞争与账户隔离测试。
