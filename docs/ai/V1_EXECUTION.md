@@ -7,13 +7,13 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M1
-CurrentStage: 阶段 4
-ActiveTask: docs/ai/tasks/2026-08-03-stage-4-message-sync-api.md
-TaskStatus: completed
+CurrentStage: 阶段 5
+ActiveTask: docs/ai/tasks/2026-08-03-stage-5-signalr-new-message.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 9d87ac2ee94cc83005e15ca3b095dcc5ea8530dd
-LatestGreenIntegrationCommit: 9500836415913fd89b1b10f4babff7f821efec34
-NextAction: 仅快进集成 Sync 绿色提交，然后开始阶段 5 SignalR 服务端实时投递纵向切片
+LatestGreenIntegrationCommit: 8f7c074b6889ad35f517e13738755097f1492a89
+NextAction: 实现认证 ChatHub、当前权限收件人快照与提交后 NewMessage 尽力投递
 ClaudeCalls: 25（软上限 24，硬上限 30）
 ClaudeCostUsd: 5.4229485 confirmed；另有十八次失败/中断调用费用 unavailable
 Blocker: none

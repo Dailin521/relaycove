@@ -5,7 +5,7 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 文字消息存储/发送/History/read-through/around 已合入；固定上界 Sync API 已完成并等待快进集成
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片已合入；阶段 5 SignalR 服务端 NewMessage 切片已开始
 - **最近验证通过的状态：** Sync API 代码 `9d87ac2ee94cc83005e15ca3b095dcc5ea8530dd`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — Full、format、197 项测试、Sync 固定上界/空洞/权限变化/mentions/查询边界、around/read-through/文字消息/会话/认证回归、model drift、漏洞审计与空白检查通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-4-message-sync-api`：固定上界、权限空洞和单调游标的服务端同步分页已绿色完成，等待仅快进集成。
+- `agent/stage-5-signalr-new-message`：实现认证 Hub、当前权限分组与提交后 NewMessage 尽力实时投递。
 
 ## 已完成
 
@@ -40,7 +40,7 @@
 
 ## 下一任务
 
-仅快进集成 Sync 绿色提交，然后开始阶段 5 SignalR 服务端实时投递纵向切片。
+完成阶段 5 SignalR 服务端 NewMessage 实时投递纵向切片。
 
 ## 阻塞项
 
