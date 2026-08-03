@@ -247,3 +247,15 @@
 - **理由：** 显式 Complete 位把破坏性“缺失即撤权”限定在可证明全集；单一本地事务使 cursor 成为已持久化消息集合的提交水位，而不是网络接收水位。复用同一 merge 裁决维持 Realtime 先到、发送回声与补拉的统一幂等语义。
 - **影响：** 为既有 Shared wrapper 增加脱敏输出，新增 Client snapshot/page store API 和真实磁盘测试，不改服务端协议、数据库或 `/api/sync`。HttpClient retry、401 refresh、single-flight、后台触发和未读/通知在后续切片实现。
 - **来源：** 工程落地方案第 12.3–12.8、阶段 6；`DEC-003`、`DEC-013`、`DEC-017`、`DEC-018`；`docs/ai/tasks/2026-08-03-stage-6-client-sync-page.md`；当前 ConversationEndpoints、SyncEndpoints、SyncResponse 与 AccountScopedLocalCache 仓库事实。
+
+### DEC-021：客户端同步请求重试与账户 single-flight
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** `DEC-020` 已使完整会话快照和单个 Sync 页具备本地原子语义，但客户端还没有 HTTP 循环。若不区分“同请求网络重试”与“下一轮新快照”，会在失败后悄然更换 upper；若每个 Reconnect/窗口/timer 都启动循环，会产生并发游标提交和无界补跑。
+- **决策：** 一个 ClientSyncCoordinator 仅管理一个 AccountScopeIdentity，复用外部长生命 HttpClient，每次尝试新建请求并动态取当前 Bearer token。每轮先获取/提交 `Complete=true` 会话全集，再从磁盘游标开始：首页无 upper，续页必须原样使用首页 upper，只有每页本地事务成功才可请求下页。
+- **决策：** 单个逻辑 HTTP 请求最多三次瞬态重试；网络/timeout/408/429/500/502/503/504 使用 250ms 起始、5s 封顶指数退避加有界抖动，合法 `Retry-After` 取更长值但不超过 30s。`401` 独立于瞬态计数，对被拒 token 只刷新一次并立即重试原请求；第二个 401 或刷新失败终止。`400`/非法 JSON/响应不变量为协议错误；只有 `409 + SyncCursorInvalid` 阻塞该 coordinator 后续请求，不归零游标、不删 pending。
+- **决策：** `SyncReason` 数值固定为 Startup=1、Reconnect=2、WindowActivated=3、Periodic=4。并发触发共用当前 flight 并至多登记一次补跑；选择顺序为 WindowActivated > 未完成 Startup 恢复 > Reconnect > Periodic，补跑运行期间的新触发直接并入它，不链式生成第三轮。调用者取消只取消等待；账户 Dispose 才取消共享循环。
+- **理由：** 固定请求参数和有界重试保留 `DEC-013/020` 的游标真源；长生命 HttpClient 复用连接池，动态 token 与一次 refresh 封住旧凭据重放；single-flight 把多触发变成确定的最多两轮，而不是并发或永不停止的循环。
+- **影响：** Shared 增加 SyncReason，Client 增加同步 coordinator、最小认证会话契约、HTTP 分类/退避和脱敏结果，不新增依赖或服务端变更。账户组合根、真实 refresh token 安全存储、定时/窗口/SignalR 钩子、通知与受控游标重建 UI 由后续切片完成。
+- **来源：** 工程落地方案第 12.4/12.5、阶段 6；`DEC-003`、`DEC-013`、`DEC-018`、`DEC-020`；`docs/ai/tasks/2026-08-03-stage-6-client-sync-orchestration.md`；当前 Shared 错误契约、SyncEndpoints 与 AccountScopedLocalCache；2026-08-03 .NET 10 HttpClient 与 Retry-After 官方文档。

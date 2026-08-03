@@ -5,7 +5,7 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离本地缓存、权威会话快照和 Sync 页原子提交已完成
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离本地缓存、权威会话快照和 Sync 页原子提交已完成；HTTP 编排进行中
 - **最近验证通过的状态：** 权威会话快照/Sync 页与 LastSyncCursor 原子提交代码检查点 `cb7b1ed26dbbb934d92865af829beb159370abcf`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — Fast/Full、format、259 项测试、真实磁盘 AccountScope/SQLite 合并/pending/重启/撤权/fatal/竞争/快照对账/Sync 整页回滚/游标/日志、客户端与服务端 SignalR、既有消息/会话/认证回归、原生 SQLite 安全版本、model drift、八项目漏洞审计与空白检查通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-6-client-sync`：Complete 权威会话快照原子对账与固定上界 Sync 页/LastSyncCursor 同事务提交已完成并验证，待快进集成。
+- `agent/stage-6-client-sync-orchestration`：实现会话快照先行的固定上界 HTTP 循环、一次 401 refresh、有界瞬态重试与账户 single-flight。
 
 ## 已完成
 

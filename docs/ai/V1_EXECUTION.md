@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 6
-ActiveTask: docs/ai/tasks/2026-08-03-stage-6-client-sync-page.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-6-client-sync-orchestration.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: cb7b1ed26dbbb934d92865af829beb159370abcf
-LatestGreenIntegrationCommit: ef69d87ade1a0bc50e5a683ee3a751e664908f31
-NextAction: 快进集成已验证的客户端 Sync 页原子提交，随后实现 Sync HTTP 调度与 single-flight
+LatestGreenIntegrationCommit: 104b49a6a84125b538c38b9a396f7590ab1db0f0
+NextAction: 实现会话快照先行的 Sync HTTP 循环、有界重试、一次 refresh 与 single-flight
 ClaudeCalls: 30（软上限 24，硬上限 30，已封顶）
 ClaudeCostUsd: 6.710481 confirmed；另有二十一次失败/中断调用费用 unavailable
 Blocker: none
