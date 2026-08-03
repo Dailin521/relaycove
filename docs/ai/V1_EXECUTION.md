@@ -9,13 +9,13 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 6
 ActiveTask: docs/ai/tasks/2026-08-03-stage-6-read-through-upload.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: c6955cb649d16b8a6d488dd228f99747a8c8c64c
+LatestGreenCodeCommit: 8384e6166d69467377e36efa549309f891822076
 LatestGreenIntegrationCommit: 902456efa3e108a3159a86eaaa88a96271b9cafb
-NextAction: 实现并验证会话真实消息目标、持久 single-flight 与 read-through HTTP 上传
-ClaudeCalls: 35（全部终态；仅关键用途调用）
-ClaudeCostUsd: 19.54815225 confirmed；另有二十二次失败/中断调用费用 unavailable
+NextAction: 提交 read-through 文档交接，推送并仅快进集成，再启动通知收养与协调切片
+ClaudeCalls: 37（全部终态；仅关键用途调用）
+ClaudeCostUsd: 28.958588 confirmed；另有二十二次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -61,6 +61,7 @@ RequiredUserGate: none
 - 当前持久 refresh 会话恢复代码检查点 `5dece6b577734649ef75f36c68ea25ec82b08703` 已通过 Full、362 项测试、启动单次恢复/身份校验/轮换落盘、无效 2xx fail-closed、保存与清理失败、logout 条件性 revoke、旧会话所有权门和日志脱敏场景，关键 9 项 Release 连续 10 轮、model drift 与八项目漏洞审计；Claude 已达 `30/30` 硬上限，按账本使用 Codex 固定差异复核。
 - 当前单账户 runtime 代码检查点 `e2195cd6835b9d858c00f1757e7fc7d640ea1021` 已通过 Full、382 项测试、真实 cache/HTTP/DPAPI、先连接后同步、连接失败仍补拉、显式 flight/启动终止收敛、Dispose 保留与 Logout 清除凭据、账户切换所有权和日志脱敏场景；组合回归 94/94、关键竞态 200/200、model drift 与八项目漏洞审计通过。Claude #32 的有效发现已修正并复验，实际模型偏差已如实记录。
 - 当前本地未读与通知候选代码检查点 `c6955cb649d16b8a6d488dd228f99747a8c8c64c` 已通过 Full、413 项测试、真实 SQLite 来源/前台/本人/pending/重复/History、权威列表落后与 Realtime/Sync/History 乱序、已读边界下旧行、损坏游标 fail-closed、Sync 空洞回填/冲突整页回滚、账户隔离和 runtime 组合；10,000 条历史 + 200 条前台页整项 195 ms，新增三条边界回归连续 10 轮 30/30，既有关键竞态 40/40、model drift 与八项目漏洞审计通过。Claude #33–#35 的有效发现均已由 Codex 复算、修正并本机复验。
+- 当前 read-through 安全上传代码检查点 `8384e6166d69467377e36efa549309f891822076` 已通过 Full、447 项测试、会话内真实已读目标/全局 cursor 反例/未读空洞、102 会话分页、receipt 双权威清理、401/状态分类/快照级抑制、稳定撤权、损坏行隔离、busy、single-flight/补跑、重启/取消/Dispose 与 runtime 接线；协调器 31 项 Release 连续 10 轮 310/310，model drift 与八项目漏洞审计通过。Claude #36–#37 的有效发现均由 Codex 复算并在最终代码检查点收敛，实际模型偏差已如实记录。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 
@@ -103,9 +104,11 @@ RequiredUserGate: none
 | 33 | 2026-08-03 | 本地未读与通知候选 | 全局 0.5 持久 challenge | Opus / XHigh | job `3f2699b1-9e8a-4845-b242-c74016360fa3`，`workspace=E:\WorkSpace\RelayCove`；实际 `claude-sonnet-5`、`model_mismatch=true`，593013 ms 后返回。有效发现促成连续已读边界不越过已提交 cursor、显示名移出不可变冲突和后续旧缓存收养要求；其余超出本切片建议按非目标记录 | `$2.31851075` |
 | 34 | 2026-08-03 | 本地未读与通知候选 | 全局 0.5 持久候选 review | Opus / XHigh | job `7f77374f-6c0d-4872-9912-0dd721930c32`，`workspace=E:\WorkSpace\RelayCove`；实际 `claude-sonnet-5`、`model_mismatch=true`，1112066 ms 后返回。P2 权威覆盖反例和页内 read-through 写放大经 Codex 复算确认，落实为互斥区间派生、独立内存权威边界、每会话一次 read-through 与 10,000 行测试 | `$3.916135` |
 | 35 | 2026-08-03 | 本地未读与通知候选 | 固定提交窄复审 | Opus / XHigh | job `d74f75d8-b3cf-4a16-8985-2467f2801b5d`，`workspace=E:\WorkSpace\RelayCove`，预期 `ReviewHead=4626f5628744837c63621f4e8fbbee95cb9cb0bc`；实际 `claude-sonnet-5`、`model_mismatch=true`，995274 ms 后 `FIX_REQUIRED`。只读 workspace 同时观察到后续 History 修复；P2 前台 read-through 重复扣减及两条 P3 经 Codex 复算成立并在 `c6955cb` 修正，Full 与边界回归通过 | `$4.279979` |
+| 36 | 2026-08-03 | read-through 安全上传 | 全局 0.5 持久 challenge | Opus / XHigh | job `19595f3f-9c68-4363-a880-5caf0608ea4e`，`workspace=E:\WorkSpace\RelayCove`；实际 `claude-sonnet-5`、`model_mismatch=true`，1073718 ms 后 `REVISE`。确认会话真实目标、空洞保护和 receipt 清理方向；永久错误重复发送与 busy 令 scope fatal 两项经 Codex 复算并在 `b70e645` 修正 | `$4.9180395` |
+| 37 | 2026-08-03 | read-through 安全上传 | 全局 0.5 固定候选 review | Opus / XHigh | job `1cd74c21-0b8f-4e0a-981a-adb256a72dac`，`workspace=E:\WorkSpace\RelayCove`，`ReviewHead=b70e645`；实际 `claude-sonnet-5`、`model_mismatch=true`，1325318 ms 后 `FIX_REQUIRED`，无 P0/P1。三个 P2——`DEC-026` 漂移、撤权与批次读取竞争、损坏 pending 令全 scope fatal——经 Codex 复算成立并在 `8384e61` 与 `DEC-027` 修正，最终本机回归通过 | `$4.49239625` |
 
-- 调用计数：`35`（全部终态）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
-- 已确认费用合计：`$19.54815225`；其余二十二次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`37`（全部终态）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
+- 已确认费用合计：`$28.958588`；其余二十二次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate

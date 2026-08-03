@@ -5,18 +5,18 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务已完成
-- **最近验证通过的状态：** 本地未读与通知候选事务代码检查点 `c6955cb649d16b8a6d488dd228f99747a8c8c64c`，绿色集成头 `902456efa3e108a3159a86eaaa88a96271b9cafb`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传已完成
+- **最近验证通过的状态：** read-through 安全上传代码检查点 `8384e6166d69467377e36efa549309f891822076`，当前绿色集成头 `902456efa3e108a3159a86eaaa88a96271b9cafb`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Fast/Full、format、413 项测试、真实磁盘 AccountScope/SQLite、来源/前台活动、权威列表与 Realtime/Sync/History 乱序、已读边界下旧行、损坏游标 fail-closed、未读/候选/游标整页事务、10,000 行前台 read-through、HTTP Sync、客户端登录/启动恢复/持久轮换/logout、真实 Windows DPAPI、单账户 runtime 生命周期、客户端与服务端 SignalR、既有消息/会话/认证回归、model drift、八项目漏洞审计与空白检查通过
+- **自动化验证：** `已验证` — Fast/Full、format、447 项测试、真实磁盘 AccountScope/SQLite、会话真实 read-through 目标/空洞/102 会话分页/receipt/撤权/损坏行/busy/取消/single-flight、来源/前台活动、权威列表与 Realtime/Sync/History 乱序、未读/候选/游标整页事务、10,000 行前台页、HTTP Sync、客户端登录/启动恢复/持久轮换/logout、真实 Windows DPAPI、单账户 runtime 生命周期、客户端与服务端 SignalR、既有消息/会话/认证回归、model drift、八项目漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
-- **最近 Claude 调用：** `已验证` — #35 请求 Opus/XHigh、实际回落 `claude-sonnet-5` 且 `model_mismatch=true`；其 P2 前台重复扣减反例经 Codex 复算成立，已用 `LastReadMessageId` 下界修正并完成 413 项本机回归，P3 的损坏页游标和撤权内存清理不对称也一并收敛。Codex 仍为实现与验收主体
+- **最近 Claude 调用：** `已验证` — #37 请求 Opus/XHigh、实际回落 `claude-sonnet-5` 且 `model_mismatch=true`；其三个 P2 经 Codex 复算后落实为 `DEC-027`、撤权批次返回前复核和损坏 pending 单会话隔离，最终代码检查点完成 447 项 Full 与协调器 310/310 压力回归。Codex 仍为实现与验收主体
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
-- `agent/stage-6-read-through-upload`：以会话内真实已读消息 ID 和已提交 cursor 构造安全目标，实现账户级持久 single-flight uploader，不接通知或 WPF 副作用。
+- `agent/stage-6-read-through-upload`：代码与文档验收完成，待推送并仅快进集成；不含通知、WPF 或真实发布副作用。
 
 ## 已完成
 
@@ -48,10 +48,11 @@
 - 持久 refresh 会话恢复、可信轮换提交边界、凭据清理与单会话所有权门（`DEC-024`）
 - 单账户 runtime、Realtime→Startup Sync、显式 flight 线性化与账户切换终止所有权（`DEC-025`）
 - 本地消息来源/活动快照、权威未读派生、cursor 安全 read-through 与事务候选（`DEC-026`）
+- 会话真实消息 read-through、receipt/快照双权威收敛、快照级退避与撤权竞态门禁（`DEC-027`）
 
 ## 下一任务
 
-完成 read-through 安全 uploader 后，实现旧缓存收养、串行候选轮次 gate、有界 Recovery 与平台无关 NotificationCoordinator。
+实现旧缓存收养、串行候选轮次 gate、有界 Recovery 与平台无关 NotificationCoordinator。
 
 ## 阻塞项
 

@@ -316,3 +316,15 @@
 - **理由：** 独立权威覆盖边界区分“服务端快照已计入”与“本地已经见过”，区间派生把权威基线和列表后的本地增量精确相加；逐行单调标志让后续通知协调器能够在派发前重检。连续已读边界按已提交 cursor 钳制则不会把未同步空洞误报为已读，同时保留原始 pending 让后续轮次在 cursor 追上后继续幂等上报。
 - **影响：** Shared 增加来源枚举；Client 增加活动快照、来源上下文、带候选的 merge/page 结果以及 Realtime/Sync/runtime 接线，不改服务端 DTO、SQLite schema、migration、依赖或 Windows API。当前只产生明确候选且不派发；下个切片在扫描历史 `IsNotificationHandled=false` 前必须以 durable 版本键完成旧缓存收养，随后实现 Round/Recovery gate、串行 NotificationCoordinator 和按已提交 cursor 钳制的 read-through uploader。WPF 必须完整上报可见性、最小化、焦点和打开会话变化，不能把一次旧前台快照长期复用。
 - **来源：** 工程落地方案第 12.3、12.5–12.8、13.1–13.4；`DEC-003`、`DEC-020`、`DEC-021`、`DEC-025`；`docs/ai/tasks/2026-08-03-stage-6-local-unread.md`；真实 SQLite 列表/Realtime/Sync/History 交错、整页回滚、账户隔离、已读边界下旧行与 10,000 行前台页测试；Claude #33 challenge、#34 review 与 #35 窄复审中经 Codex 复算和本机测试确认的空洞、权威覆盖、写放大与前台重复扣减发现。
+
+### DEC-027：会话真实消息 read-through、确认收敛与快照级退避
+
+- **状态：** 已接受；局部替代 `DEC-026` 中“直接使用数值 `MIN(PendingReadThroughMessageId, LastSyncCursor)` 作为 HTTP 目标”和“只有权威列表可清除 pending”的后续实现前提
+- **日期：** 2026-08-03
+- **背景：** `LastSyncCursor` 是跨会话的全局消息水位，数值 `MIN(raw pending, cursor)` 可能是另一会话的消息 ID，直接上报会被服务端目标归属校验拒绝。另一方面，成功 `ConversationReadReceipt` 已是服务端在动态权限和目标归属事务内返回的权威单调确认；即使列表快照尚未刷新，它也足以确认不高于 receipt 的当前 pending。若忽略 receipt，只靠列表清理，会在重启和高频触发中反复发送已被服务端接受的目标。永久错误、网络失败和 SQLite busy 若每次 Sync 页触发都重试，也会形成账户级请求风暴。
+- **决策：** 原始 `PendingReadThroughMessageId` 仍保存本地前台最大目标。实际请求目标必须是同一会话真实存在、`IsRead=true`、不高于原始 pending 与已提交 `LastSyncCursor` 的最高 ServerMessageId，并且 `(旧 LastReadMessageId, 候选]` 内没有本地已知未读空洞；没有这样的行就不发送。原始 pending 本身必须属于该会话的一条本地已读服务器消息。单行损坏只隔离该会话并脱敏记录，不得让其他会话或整个 AccountScope 进入 fatal；批次按原始 pending 会话行分页，内存 deny、durable revocation intent 与 tombstone 任一命中均不得返回目标。
+- **决策：** 成功 receipt 必须匹配会话且 `LastReadMessageId >= requested target`。应用 receipt 的单一 SQLite 事务将已知消息单调置读/已处理、仅扣减旧连续边界之上的已知未读行、推进 `LastReadMessageId`，并在 `receipt >= 当前 raw pending` 时清除当前 pending；并发出现的更高 pending 不得被较小 receipt 清除。完整权威会话快照仍可在服务端 `LastReadMessageId >= 当前 pending` 时清除 pending。两条路径都是权威确认，均不能回退边界。
+- **决策：** 每账户 coordinator 只有一个 flight，并发触发最多登记一次补跑；调用方取消只取消等待，Dispose/Logout 才取消共享生命周期。成功目标、永久错误抑制和瞬时失败退避只保存在内存，并绑定成功提交的权威快照 revision：永久错误按会话抑制，认证/网络/SQLite busy 按账户延后，下一次成功快照使其重新可试。稳定 `ConversationAccessRevoked` 403 走 durable revoke/purge，普通 403 不做破坏性清理。没有新增 schema，也不宣称跨进程 exactly-once；重启可按服务端 `MAX(old,target)` 幂等重发。
+- **理由：** 会话内真实行与空洞检查同时满足服务端目标归属和“客户端尚未同步的私有消息不能被越过”；receipt 与快照双权威收敛减少无意义重发，同时以当前 pending 比较保护并发新目标。快照 revision 给错误状态一个可证明的失效边界，既避免每页紧循环，又允许下一轮权威对账后恢复。
+- **影响：** Client Storage 增加有界 pending 批次与 receipt 事务，Sync 增加 read-through HTTP transport/coordinator，并在已提交 Sync 页和前台 Realtime 合并后触发；账户 runtime 按 Realtime → Sync → read-through → cache/session 顺序终止。不修改 Shared/Server 契约、SQLite schema、migration、依赖、Notification/WPF 或 Windows API。
+- **来源：** `DEC-003`、`DEC-011`、`DEC-020`、`DEC-021`、`DEC-025`、`DEC-026`；工程落地方案第 12.3–12.8；`docs/ai/tasks/2026-08-03-stage-6-read-through-upload.md`；真实 SQLite 跨会话 cursor、空洞、撤权、损坏行、busy、102 会话分页、重启、取消、receipt 竞争和 runtime 接线测试；Claude #36 challenge、#37 固定候选 review 中经 Codex 复算并在 `8384e61` 修正的退避、撤权批次竞争、损坏行隔离与文档漂移发现。
