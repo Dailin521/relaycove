@@ -18,6 +18,32 @@ internal static class ClientConversationListPresenter
             : Array.Empty<ClientConversationListItemPresentation>();
     }
 
+    internal static (
+        ClientConversationListItemPresentation? Selection,
+        bool ClearPendingSelection) ResolveSelection(
+            IReadOnlyList<ClientConversationListItemPresentation> items,
+            LocalCacheOperationStatus status,
+            Guid? pendingSelectionId,
+            Guid? previousSelectionId)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        if (pendingSelectionId is { } pendingId)
+        {
+            var pendingSelection = items.FirstOrDefault(item => item.Id == pendingId);
+            if (pendingSelection is not null)
+            {
+                return (pendingSelection, true);
+            }
+
+            if (status == LocalCacheOperationStatus.Ready)
+            {
+                return (Find(items, previousSelectionId), true);
+            }
+        }
+
+        return (Find(items, previousSelectionId), false);
+    }
+
     private static ClientConversationListItemPresentation Present(
         LocalConversationListItem item) =>
         new(
@@ -85,4 +111,11 @@ internal static class ClientConversationListPresenter
             ? normalized
             : normalized[..MaximumPreviewLength] + "…";
     }
+
+    private static ClientConversationListItemPresentation? Find(
+        IReadOnlyList<ClientConversationListItemPresentation> items,
+        Guid? selectionId) =>
+        selectionId is { } candidateId
+            ? items.FirstOrDefault(item => item.Id == candidateId)
+            : null;
 }

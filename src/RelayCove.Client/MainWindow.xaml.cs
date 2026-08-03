@@ -90,16 +90,20 @@ public partial class MainWindow : Window
             _ => "会话列表暂时不可用，请稍后重试。",
         });
 
-        var selectionId = pendingConversationSelectionId ?? previousSelectionId;
-        if (selectionId is { } candidateId)
+        var selection = ClientConversationListPresenter.ResolveSelection(
+            items,
+            outcome.Status,
+            pendingConversationSelectionId,
+            previousSelectionId);
+        if (selection.ClearPendingSelection)
         {
-            var selected = items.FirstOrDefault(item => item.Id == candidateId);
-            if (selected is not null)
-            {
-                ConversationList.SelectedItem = selected;
-                ConversationList.ScrollIntoView(selected);
-                pendingConversationSelectionId = null;
-            }
+            pendingConversationSelectionId = null;
+        }
+
+        if (selection.Selection is not null)
+        {
+            ConversationList.SelectedItem = selection.Selection;
+            ConversationList.ScrollIntoView(selection.Selection);
         }
 
         ApplySelectedConversation(

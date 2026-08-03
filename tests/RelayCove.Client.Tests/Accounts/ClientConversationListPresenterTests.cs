@@ -55,6 +55,63 @@ public sealed class ClientConversationListPresenterTests
         Assert.Empty(presentation);
     }
 
+    [Fact]
+    public void ResolveSelection_WhenPendingTargetIsMissingFromReadyList_ExpiresAndRestoresPrevious()
+    {
+        var previousId = Guid.NewGuid();
+        var items = ClientConversationListPresenter.Present(new LocalConversationListReadOutcome(
+            LocalCacheOperationStatus.Ready,
+            [CreateItem(MessageType.Text, "previous") with { Id = previousId }],
+            TotalUnreadCount: 0,
+            Revision: 1));
+
+        var resolution = ClientConversationListPresenter.ResolveSelection(
+            items,
+            LocalCacheOperationStatus.Ready,
+            pendingSelectionId: Guid.NewGuid(),
+            previousId);
+
+        Assert.True(resolution.ClearPendingSelection);
+        Assert.Equal(previousId, resolution.Selection?.Id);
+    }
+
+    [Fact]
+    public void ResolveSelection_WhenPendingTargetMayStillArrive_RetainsIt()
+    {
+        var resolution = ClientConversationListPresenter.ResolveSelection(
+            Array.Empty<ClientConversationListItemPresentation>(),
+            LocalCacheOperationStatus.AuthoritativeSnapshotRequired,
+            pendingSelectionId: Guid.NewGuid(),
+            previousSelectionId: null);
+
+        Assert.False(resolution.ClearPendingSelection);
+        Assert.Null(resolution.Selection);
+    }
+
+    [Fact]
+    public void ResolveSelection_WhenPendingTargetExists_SelectsAndConsumesIt()
+    {
+        var pendingId = Guid.NewGuid();
+        var previousId = Guid.NewGuid();
+        var items = ClientConversationListPresenter.Present(new LocalConversationListReadOutcome(
+            LocalCacheOperationStatus.Ready,
+            [
+                CreateItem(MessageType.Text, "previous") with { Id = previousId },
+                CreateItem(MessageType.Text, "pending") with { Id = pendingId },
+            ],
+            TotalUnreadCount: 0,
+            Revision: 1));
+
+        var resolution = ClientConversationListPresenter.ResolveSelection(
+            items,
+            LocalCacheOperationStatus.Ready,
+            pendingId,
+            previousId);
+
+        Assert.True(resolution.ClearPendingSelection);
+        Assert.Equal(pendingId, resolution.Selection?.Id);
+    }
+
     private static LocalConversationListItem CreateItem(
         MessageType? messageType,
         string? content) =>
