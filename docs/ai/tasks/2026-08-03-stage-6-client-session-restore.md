@@ -2,7 +2,7 @@
 
 ## 状态
 
-- `in_progress`
+- `completed`
 - 分支：`agent/stage-6-client-session-restore`
 - 基线：`b722a6a75e5ef15b1f9e95ef02436499f3180fc0`
 
@@ -47,10 +47,10 @@
 
 ## 验收标准
 
-- [ ] 登录成功保存 refresh token；启动恢复只 refresh 一次，校验持久 user ID 并在返回会话前保存轮换 token。
-- [ ] 后续 refresh rotation 同步更新 DPAPI 凭据；保存失败清旧值、标记未持久化但不部分更新 token，401/错配同时清会话与凭据。
-- [ ] logout 清本地内存/凭据并尝试远端撤销；清凭据失败有明确状态，调用者取消不能跳过必要 revoke。
-- [ ] Client 定向、真实 DPAPI/HTTP、关键竞态、Fast/Full、model drift、八项目漏洞审计、白名单、空白和固定差异复核通过。
+- [x] 登录成功保存 refresh token；启动恢复只 refresh 一次，校验持久 user ID 并在返回会话前保存轮换 token。
+- [x] 后续 refresh rotation 同步更新 DPAPI 凭据；保存失败清旧值、标记未持久化但不部分更新 token，401/错配同时清会话与凭据。
+- [x] logout 清本地内存/凭据并尝试远端撤销；清凭据失败有明确状态，调用者取消不能跳过必要 revoke。
+- [x] Client 定向、真实 DPAPI/HTTP、关键竞态、Fast/Full、model drift、八项目漏洞审计、白名单、空白和固定差异复核通过。
 
 ## 验证命令
 
@@ -72,12 +72,28 @@ dotnet list RelayCove.sln package --vulnerable --include-transitive
 
 ### 修改摘要
 
-- 待完成。
+- 新增 Client 内部的持久认证入口：串行 Login/Restore，按凭据缺失、损坏、不可用和远端结果稳定分类；Restore 只发送一次 refresh，并校验轮换响应 user ID 与持久身份一致。
+- Login/Restore 在返回会话前以不可取消的本地提交边界保存 refresh token；会话后续 rotation 先保存新 token 再发布内存状态，保存失败尽力清旧文件并显式标记 `IsCredentialPersisted=false`。
+- 401、身份错配、无效或取消读取的 2xx 成功体视为可能已经发生服务端轮换，清空当前会话与持久凭据；可重试非 2xx 和传输不确定仍保留当前状态且不自动重试认证写请求。
+- logout 先清内存和 DPAPI 文件；本地清除失败时忽略调用者取消并尝试一次远端 revoke，返回 `CredentialClearFailed`。Dispose 保留凭据供下次启动；持久认证入口在旧会话 Dispose 完成前拒绝新的 Login/Restore。
+- 代码检查点为 `5dece6b577734649ef75f36c68ea25ec82b08703`；未修改 Shared/服务端协议、数据库、migration、DPAPI 格式、依赖或账户 runtime。
 
 ### 验证证据
 
-- 待完成。
+| 状态 | 命令或场景 | 结果 |
+| --- | --- | --- |
+| `已验证` | 集成基线 | `agent/v1-integration` 本地/远端均为 `b722a6a`；前序 Full/339 项测试、model drift 与漏洞审计通过 |
+| `已验证` | Client 认证定向 | Release 77/77；覆盖真实 CurrentUser DPAPI 文件、可控 login/refresh/logout HTTP、启动恢复只请求一次及轮换 replacement |
+| `已验证` | 失败与安全边界 | NotFound/Corrupt/Unavailable 不发 HTTP；401、用户错配、畸形/取消 2xx 清会话和凭据；429/503/传输不确定保留凭据且不重试 |
+| `已验证` | 持久提交与 logout | 登录/恢复/后续 refresh 均验证保存顺序；保存失败继续可信内存会话但清旧文件并标未持久化；清除失败且调用者已取消仍发一次 logout |
+| `已验证` | 会话所有权与日志 | 旧持久会话 Dispose 前第二次登录被拒绝，Dispose 后可继续；结果、会话、manager 日志不含服务器、用户、显示名、access/refresh token 或异常 message |
+| `已验证` | 关键竞态固定提交 | `5dece6b` 上启动恢复、成功体取消、保存失败、轮换、无效 2xx、logout 清理失败、旧会话所有权 9 项 Release 连续 10 轮，90/90 通过 |
+| `已验证` | Fast/Full | Debug/Release 均 0 警告、0 错误；Client 153 + Shared 33 + Server 175 + Updater 1 = 362 项测试全部通过 |
+| `已验证` | 格式/空白/白名单 | `dotnet format --verify-no-changes`、`git diff --check` 通过；基线到固定代码提交的 13/13 个文件全部在任务白名单，代码提交仅含 9 个 Client Auth/测试文件 |
+| `已验证` | EF model drift | `has-pending-model-changes --no-build` 返回自最新 migration 后模型无变化 |
+| `已验证` | 依赖漏洞审计 | 未新增包；8 个源/测试项目的直接与传递依赖均未报告已知漏洞 |
+| `已验证` | 固定候选 Codex 复核 | 发现并修正无效 2xx 仍保留可能失效 token、Dispose 可中断成功响应后的持久提交和不同账户会话交叉覆盖风险；复核取消、状态映射、凭据清理与日志后无剩余发现；Claude 已达 `30/30` 硬上限 |
 
 ### 下一步
 
-- 组合 AccountScopeIdentity、本地 cache、Realtime、Sync 与账户切换/Dispose 生命周期。
+- 快进集成本切片，随后组合 AccountScopeIdentity、本地 cache、Realtime、Sync 与账户切换/Dispose 生命周期。

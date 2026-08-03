@@ -5,10 +5,10 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话和 DPAPI 凭据存储已完成
-- **最近验证通过的状态：** 客户端 DPAPI refresh 凭据安全存储代码检查点 `82267b785fa6ef7d04de4906b9b01de0e0cfda54`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储和持久会话恢复已完成
+- **最近验证通过的状态：** 持久 refresh 会话恢复与自动登录代码检查点 `5dece6b577734649ef75f36c68ea25ec82b08703`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Fast/Full、format、339 项测试、真实磁盘 AccountScope/SQLite 合并/pending/重启/撤权/fatal/竞争/快照对账/Sync 整页回滚/游标、HTTP 多页/重试/refresh/single-flight/取消/日志、客户端登录/轮换/logout、真实 Windows DPAPI/原子凭据文件、客户端与服务端 SignalR、既有消息/会话/认证回归、原生 SQLite 安全版本、model drift、八项目漏洞审计与空白检查通过
+- **自动化验证：** `已验证` — Fast/Full、format、362 项测试、真实磁盘 AccountScope/SQLite 合并/pending/重启/撤权/fatal/竞争/快照对账/Sync 整页回滚/游标、HTTP 多页/重试/refresh/single-flight/取消/日志、客户端登录/启动恢复/持久轮换/logout、真实 Windows DPAPI/原子凭据文件、客户端与服务端 SignalR、既有消息/会话/认证回归、原生 SQLite 安全版本、model drift、八项目漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
 - **最近 Claude 调用：** `已验证` — 本机后台无工具 CLI #30 实际调用 `claude-opus-5` 并返回 `REVISE`，有效发现已纳入阶段 6 durable revocation intent、冷启动授权门和竞争测试；调用数达到 `30/30` 硬上限，后续降级 Codex 固定差异复核
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-6-client-session-restore`：把交互登录、DPAPI refresh 凭据、启动单次 refresh、后续 rotation 持久化和 logout 清理连接成无 UI 认证入口；不组合账户 runtime。
+- `agent/stage-6-client-session-restore`：无 UI 持久认证入口、启动单次 refresh、后续 rotation 持久化、logout 清理和旧会话所有权门已完成并验证，待快进集成。
 
 ## 已完成
 
@@ -45,10 +45,11 @@
 - 客户端 Sync HTTP 有界重试、一次 refresh、精确游标 block 与账户 single-flight（`DEC-021`）
 - 客户端真实登录、内存认证会话、refresh rotation 与 logout 线性化（`DEC-022`）
 - Windows CurrentUser DPAPI 单一 refresh 凭据文件与原子发布（`DEC-023`）
+- 持久 refresh 会话恢复、可信轮换提交边界、凭据清理与单会话所有权门（`DEC-024`）
 
 ## 下一任务
 
-使用持久 refresh token 的显式会话恢复、后续 rotation 持久化与自动登录；完成后单独实现账户 scope 运行时组合。
+组合认证会话、AccountScopeIdentity、本地缓存、SignalR 和 Sync 的账户 runtime，并冻结切换账户时的 Dispose 顺序。
 
 ## 阻塞项
 

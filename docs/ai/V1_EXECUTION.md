@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 6
 ActiveTask: docs/ai/tasks/2026-08-03-stage-6-client-session-restore.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 82267b785fa6ef7d04de4906b9b01de0e0cfda54
+LatestGreenCodeCommit: 5dece6b577734649ef75f36c68ea25ec82b08703
 LatestGreenIntegrationCommit: b722a6a75e5ef15b1f9e95ef02436499f3180fc0
-NextAction: 实现并验证持久 refresh token 会话恢复、rotation 持久化与自动登录入口
+NextAction: 快进集成持久会话恢复，随后组合账户 runtime 与切换/Dispose 生命周期
 ClaudeCalls: 30（软上限 24，硬上限 30，已封顶）
 ClaudeCostUsd: 6.710481 confirmed；另有二十一次失败/中断调用费用 unavailable
 Blocker: none
@@ -58,6 +58,7 @@ RequiredUserGate: none
 - 当前客户端 Sync HTTP 编排代码检查点 `8f7838baa79f194702cd88d3d4f6134d5f6e9341` 已通过 Full、285 项测试、真实磁盘 + 可控 HTTP 多页/重试/Retry-After/refresh/409 block/single-flight/取消/日志场景，关键 5 项竞态 Release 连续 10 轮、model drift 与八项目漏洞审计；Claude 已达 `30/30` 硬上限，按账本使用 Codex 固定差异复核。
 - 当前客户端认证会话代码检查点 `821d8598c8936376ba31e586bd8cfd4d23beda40` 已通过 Full、322 项测试、真实 login 请求与状态分类、响应/Bearer 校验、refresh single-flight rotation、logout/Dispose 线性化、取消与日志脱敏场景，关键 5 项竞态 Release 连续 10 轮、model drift 与八项目漏洞审计；Claude 已达 `30/30` 硬上限，按账本使用 Codex 固定差异复核。
 - 当前 DPAPI 客户端凭据存储代码检查点 `82267b785fa6ef7d04de4906b9b01de0e0cfda54` 已通过 Full、339 项测试、真实 Windows CurrentUser DPAPI、ciphertext 明文扫描、轮换原子替换/失败保旧、并发/取消、篡改/截断/超限/非法 payload、清除与日志脱敏场景，关键 5 项文件竞态 Release 连续 10 轮、model drift 与八项目漏洞审计；Claude 已达 `30/30` 硬上限，按账本使用 Codex 固定差异复核。
+- 当前持久 refresh 会话恢复代码检查点 `5dece6b577734649ef75f36c68ea25ec82b08703` 已通过 Full、362 项测试、启动单次恢复/身份校验/轮换落盘、无效 2xx fail-closed、保存与清理失败、logout 条件性 revoke、旧会话所有权门和日志脱敏场景，关键 9 项 Release 连续 10 轮、model drift 与八项目漏洞审计；Claude 已达 `30/30` 硬上限，按账本使用 Codex 固定差异复核。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确授权绿色任务的常规 push、合入集成分支与任务分支清理，无需二次确认；`main`、Tag、Release、真实发布和生产部署仍须满足对应里程碑与发布 Gate，不由该授权自动放宽。
 
@@ -104,6 +105,7 @@ RequiredUserGate: none
 
 - 当前阻塞：无。
 - 当前所需用户 Gate：无。
+- `未验证`：用户已提供仓库外的香港 Light-A2 协作应用主机配置汇总，保留到 M5 真实 VPS/双客户端 Gate；当前不读取，届时仅最小读取所需配置且不把地址、密钥或凭据提交到仓库或测试日志。
 - 只有 `AGENTS.md`、`WORKFLOW.md` 和 v1 执行目标列出的重大产品、不可逆、安全、凭据、真实体验或发布事项才请求用户裁决；普通工程实现由当前任务自行收敛。
 
 ## 恢复与更新规则
