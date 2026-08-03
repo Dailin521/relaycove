@@ -294,9 +294,10 @@ Local Uploads Directory
 ```text
 客户端 POST /api/messages
 服务端验证权限
-服务端写入 SQLite
-服务端返回 MessageDto
-服务端通过 SignalR 推送 NewMessage
+服务端在 SQLite 中 INSERT-first
+服务端提交数据库事务
+服务端返回 MessageDto（新插入 201，幂等重放 200）
+仅新插入请求在提交后尝试一次 SignalR NewMessage
 客户端本地入库
 客户端刷新 UI
 ```
@@ -309,15 +310,15 @@ SignalR 不作为唯一可靠消息来源。
 
 ### 断线恢复
 
-客户端必须记录最后同步到的服务端消息 ID 或时间游标。
+客户端必须记录服务端解释的 `LastSyncCursor`，不得用最后一条可见消息的 ID 推算游标。
 
 重连成功后调用：
 
 ```text
-GET /api/sync?afterMessageId=xxx
+GET /api/sync?cursor={long}&snapshotUpperBound={long?}&limit={int?}
 ```
 
-补拉遗漏消息。
+首页由服务端在同一只读事务中捕获固定消息 ID 上界；后续页原样携带该上界。每页提交本地事务后才推进游标，循环到 `HasMore=false` 才完成一轮补拉。SignalR 只缩短可见延迟，周期同步负责补偿推送失败。
 
 ---
 
@@ -703,7 +704,7 @@ DELETE /api/conversations/{id}/members/{userId}
 ```text
 GET  /api/conversations/{conversationId}/messages?beforeMessageId=xxx&limit=50
 POST /api/messages
-GET  /api/sync?afterMessageId=xxx
+GET  /api/sync?cursor={long}&snapshotUpperBound={long?}&limit={int?}
 POST /api/conversations/{conversationId}/read
 GET  /api/search?keyword=xxx&conversationId=optional
 ```
@@ -883,6 +884,37 @@ public enum ConnectionState
     Reconnecting = 3,
     ServerUnavailable = 4
 }
+
+public enum IncomingMessageSource
+{
+    Realtime = 1,
+    Sync = 2,
+    History = 3,
+    SendResponse = 4
+}
+
+public enum SyncReason
+{
+    Startup = 1,
+    Reconnect = 2,
+    WindowActivated = 3,
+    Periodic = 4
+}
+
+public enum NotificationPolicy
+{
+    None = 0,
+    PerMessage = 1,
+    Summary = 2
+}
+
+public enum IncomingMessageMergeResult
+{
+    Inserted = 1,
+    PendingPromoted = 2,
+    Duplicate = 3,
+    Conflict = 4
+}
 ```
 
 ## 10.2 关键 DTO
@@ -921,6 +953,7 @@ public sealed record ConversationDto(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     long LastMessageId,
+    long LastReadMessageId,
     int UnreadCount);
 ```
 
@@ -937,6 +970,7 @@ public sealed record MessageDto(
     string? Content,
     long? ReplyToMessageId,
     IReadOnlyList<AttachmentDto> Attachments,
+    IReadOnlyList<Guid> MentionUserIds,
     DateTimeOffset CreatedAt);
 ```
 
@@ -970,7 +1004,9 @@ public sealed record AttachmentDto(
 ```csharp
 public sealed record SyncResponse(
     IReadOnlyList<MessageDto> Messages,
-    long LatestMessageId);
+    long NextCursor,
+    long SnapshotUpperBound,
+    bool HasMore);
 ```
 
 ## 10.3 SignalR 事件
@@ -980,6 +1016,7 @@ public sealed record SyncResponse(
 ```text
 NewMessage(MessageDto message)
 ConversationUpdated(ConversationDto conversation)
+ConversationAccessRevoked(Guid conversationId)
 UserPresenceChanged(UserPresenceDto presence)
 ForceLogout(string reason)
 ServerNotice(string message)
@@ -1067,11 +1104,11 @@ Type                       INTEGER NOT NULL
 Content                    TEXT NULL
 ReplyToMessageId            INTEGER NULL
 CreatedAt                  TEXT NOT NULL
-EditedAt                   TEXT NULL
-DeletedAt                  TEXT NULL
 
 UNIQUE(SenderId, ClientMessageId)
 ```
+
+第一版消息一经写入不可编辑、撤回或删除。所有 GUID 在 SQLite 中使用 `Guid.ToString("D").ToLowerInvariant()` 的规范文本；未来若支持消息变更，必须新增独立变更流，不能复用只向前扫描的新消息游标。
 
 ### MessageMentions
 
@@ -1131,7 +1168,10 @@ Type                       INTEGER NOT NULL
 Name                       TEXT NOT NULL
 AvatarUrl                  TEXT NULL
 LastMessageId               INTEGER NOT NULL DEFAULT 0
+LastReadMessageId           INTEGER NOT NULL DEFAULT 0
+PendingReadThroughMessageId INTEGER NULL
 UnreadCount                INTEGER NOT NULL DEFAULT 0
+IsMuted                    INTEGER NOT NULL DEFAULT 0
 LastOpenedAt               TEXT NULL
 UpdatedAt                  TEXT NOT NULL
 ```
@@ -1139,7 +1179,8 @@ UpdatedAt                  TEXT NOT NULL
 ### LocalMessages
 
 ```text
-Id                         INTEGER PRIMARY KEY
+LocalId                    INTEGER PRIMARY KEY AUTOINCREMENT
+ServerMessageId            INTEGER NULL UNIQUE
 ClientMessageId             TEXT NOT NULL
 ConversationId              TEXT NOT NULL
 SenderId                   TEXT NOT NULL
@@ -1149,15 +1190,19 @@ Content                    TEXT NULL
 ReplyToMessageId            INTEGER NULL
 CreatedAt                  TEXT NOT NULL
 IsRead                     INTEGER NOT NULL DEFAULT 0
-IsNotified                 INTEGER NOT NULL DEFAULT 0
+IsNotificationHandled      INTEGER NOT NULL DEFAULT 0
 LocalSendStatus             INTEGER NOT NULL
+
+UNIQUE(SenderId, ClientMessageId)
 ```
+
+pending 行使用 `LocalId` 定位、`ServerMessageId=NULL`；服务端 `MessageDto.Id` 只写入 `ServerMessageId`。这样发送响应、Realtime 回声与后续 Sync 可以提升同一行，不需要为未确认消息伪造服务端 ID。
 
 ### LocalAttachments
 
 ```text
 Id                         TEXT PRIMARY KEY
-MessageId                  INTEGER NULL
+LocalMessageId             INTEGER NULL
 OriginalFileName            TEXT NOT NULL
 ContentType                TEXT NOT NULL
 Size                       INTEGER NOT NULL
@@ -1166,6 +1211,8 @@ LocalPath                  TEXT NULL
 ThumbnailLocalPath          TEXT NULL
 DownloadStatus             INTEGER NOT NULL
 ```
+
+`LocalAttachments.LocalMessageId` 引用 `LocalMessages.LocalId`，所以 pending 与已确认消息共用同一附件关系。提及用户 ID 以 `(LocalMessageId, MentionedUserId)` 唯一保存，供不可变载荷校验和本地展示使用。
 
 ### LocalAppState
 
@@ -1178,8 +1225,7 @@ UpdatedAt                  TEXT NOT NULL
 必须保存：
 
 ```text
-LastSyncedMessageId
-LastNotifiedMessageId
+LastSyncCursor
 CurrentUserId
 ServerBaseUrl
 ClientVersion
@@ -1196,81 +1242,73 @@ Theme
 ```text
 用户输入消息
 客户端生成 ClientMessageId
-客户端插入本地 LocalMessages，状态 Sending
+客户端插入 LocalMessages pending 行（ServerMessageId=NULL，状态 Sending）
 客户端 POST /api/messages
-服务端验证权限
-服务端检查 SenderId + ClientMessageId 是否已存在
-如果已存在，直接返回已有 MessageDto
-如果不存在，写入 Messages
+服务端在权威事务内验证权限并尝试 INSERT
+新插入提交后返回 201；幂等重放回读并返回 200
 服务端提交数据库事务
-服务端返回 MessageDto
-服务端 SignalR 推送 NewMessage
-客户端收到响应后更新本地消息为 Sent
-其他客户端收到 NewMessage 后入库和通知
+只有新插入请求在提交后尝试一次 SignalR NewMessage
+客户端把 SendResponse 或 Realtime 回声合并到同一 pending 行并标记 Sent
 ```
 
 ## 12.2 幂等要求
 
-服务端必须保证：
+- `POST /api/messages` 使用 INSERT-first，并由 `UNIQUE(SenderId, ClientMessageId)` 裁决并发。同一发送者和 `ClientMessageId` 只能生成一条消息。
+- 服务端拒绝 `Guid.Empty`；非法 GUID 由请求绑定返回 `400`。GUID 一律以小写标准 `D` 格式写入 SQLite，防止 TEXT 唯一约束被不同文本形式绕过。
+- 发送权限校验必须在幂等回读之前，并与消息写入处于同一权威事务边界；撤权后重放仍返回带稳定错误码 `ConversationAccessRevoked` 的 `403`，不能借幂等命中读回旧消息。
+- 新插入在事务提交后返回 `201 Created`。只有赢得插入的请求允许尝试一次 `NewMessage` 推送；推送失败只记日志，不回滚、不改变 HTTP 结果，由周期同步补偿。
+- 只捕获 `UNIQUE(SenderId, ClientMessageId)` 这一目标约束冲突。命中后在同一发送者范围回读原消息，返回 `200 OK`，不得再次推送；其他约束错误不得伪装成幂等重放。
+- 重放的会话、类型、正文、回复目标、附件 ID 集合和提及用户 ID 集合必须与原请求语义相同。相同键携带不同有效载荷返回 `409 IdempotencyKeyReuse`。
+- SignalR 可以向发送者连接广播以支持多设备；当前设备始终用 `(SenderId, ClientMessageId)` 把响应和回声合并到同一行。
+
+## 12.3 本地消息身份与唯一合并路径
+
+Realtime、Sync、History、SendResponse 全部调用同一个本地事务内合并函数。它分别查询 `serverHit`（`ServerMessageId`）与 `keyHit`（`SenderId + ClientMessageId`），并返回明确结果：
 
 ```text
-同一 SenderId + ClientMessageId 只能生成一条服务端消息
+serverHit 为空，keyHit 为空：Inserted
+serverHit 为空，keyHit 命中本账户相容 pending：PendingPromoted
+serverHit 与 keyHit 命中同一行且不可变字段相容：Duplicate
+serverHit 命中而 keyHit 为空：Conflict
+serverHit 与 keyHit 命中不同本地行：Conflict
+任何命中行与权威载荷不相容：Conflict
 ```
 
-这样客户端重试不会产生重复消息。
+- 不可变字段至少包括服务端消息 ID、发送者、客户端消息 ID、会话、类型、正文、回复目标、附件 ID 集合和提及用户 ID 集合；`MessageDto` 必须携带这些比较字段。
+- `PendingPromoted` 只允许补齐本账户请求语义一致的 pending 行。`Conflict` 是数据完整性错误，必须回滚当前事务并记录，不能自动任选一行。
+- 只有他人消息的 `Inserted` 可以增加未读或登记通知候选；`PendingPromoted` 只确认自己的发送状态。`Duplicate` 不得重复增加未读、创建通知候选或更新预览，但 History、已读推进和通知抑制可执行 `false -> true` 的单调观察型副作用并取消未派发候选。
+- 任何路径都不得把 `IsRead` 或 `IsNotificationHandled` 从 `true` 重置为 `false`。发送状态固定为 `Sending -> Failed`、用户显式重试时 `Failed -> Sending`、权威响应或回声时 `Sending/Failed -> Sent`、以及终态 `Sent -> Sent`；迟到失败只记日志。
 
-## 12.3 接收去重
+## 12.4 固定上界同步协议
 
-客户端收到消息时：
+请求与响应固定为：
 
 ```text
-如果 LocalMessages 已存在 MessageId：
-    忽略重复插入
-    不重复通知
-否则：
-    插入本地数据库
-    更新会话
-    判断是否通知
+GET /api/sync?cursor={long}&snapshotUpperBound={long?}&limit={int?}
 ```
 
-## 12.4 断线补拉
-
-客户端记录：
-
-```text
-LastSyncedMessageId
+```csharp
+public sealed record SyncResponse(
+    IReadOnlyList<MessageDto> Messages,
+    long NextCursor,
+    long SnapshotUpperBound,
+    bool HasMore);
 ```
 
-重连后：
+- 首页省略 `snapshotUpperBound`。服务端在同一只读事务内读取 `MAX(Messages.Id)`（空表为 `0`）并完成本页查询，得到固定 `SnapshotUpperBound`。后续页原样携带该值；固定的是 ID 截止上界，不是在多个 HTTP 请求间持有同一事务。
+- 每页按当前权限重新过滤 `cursor < MessageId <= SnapshotUpperBound` 的同步候选。私有频道还要求 `MessageId > ConversationMembers.LastReadMessageId`；这只影响增量 Sync，不限制当前成员通过 History/Search 懒加载全部历史。
+- 可见候选按 `MessageId ASC` 查询 `limit + 1` 条。有第 `limit + 1` 条时返回前 `limit` 条，`HasMore=true`，`NextCursor` 为本页最后一条 ID；没有更多可见消息时，`HasMore=false`，`NextCursor=SnapshotUpperBound`。即使本页为空或上界前全是无权限空洞，也必须跨到上界，不能空页死循环。
+- 响应必须满足：消息 ID 严格递增且位于 `(cursor, NextCursor]`；`0 <= cursor <= NextCursor <= SnapshotUpperBound`；`HasMore == (NextCursor < SnapshotUpperBound)`；`HasMore=true` 时消息非空且 `NextCursor > cursor`；只要上界大于游标，下一游标就必须前进。
+- `cursor < 0`、`limit` 不在 `1..200` 或 `snapshotUpperBound < cursor` 返回可诊断 `400`。首次游标或续页上界大于服务端当前最大消息 ID 时返回 `409 SyncCursorInvalid`；客户端不得静默夹断或归零。无状态服务端无法证明续页是否篡改上界，因此“原样回传”是受支持客户端不变量，授权仍由每页当前权限保证。
+- 多页期间新提交且 ID 大于上界的消息不进入本轮，在下一轮拉取。第一版依赖单服务端实例、单 SQLite 主库、写事务串行化、`AUTOINCREMENT` 不复用已提交 ROWID和消息不可变；改变任一前提必须重新设计同步协议。
 
-```text
-GET /api/sync?afterMessageId=LastSyncedMessageId
-```
+## 12.5 客户端逐页事务、重试与 single-flight
 
-服务端返回当前用户有权限访问的所有新消息。
-
-客户端按 MessageId 升序处理。
-
-## 12.5 补拉去重
-
-补拉消息必须走和实时推送相同的入库逻辑。
-
-不要写两套插入逻辑。
-
-推荐：
-
-```text
-ProcessIncomingMessage(MessageDto message, IncomingMessageSource source)
-```
-
-source 可取：
-
-```text
-Realtime
-Sync
-History
-SendResponse
-```
+- 写本地数据库前先验证完整响应不变量。每页消息合并、会话预览、未读派生状态和 `LastSyncCursor=NextCursor` 必须在一个本地事务提交；任一非重复错误、协议错误或数据冲突使整页回滚，不得跳过坏消息后推进游标。
+- 页面请求或本地提交失败时保留最后已提交游标。网络中断、超时、`429` 和可重试 `5xx` 用指数退避加抖动，以同一 `(cursor, SnapshotUpperBound)` 重试；`401` 只刷新一次令牌再重试同一页；`400` 或响应不变量错误停止并记录协议错误；`409 SyncCursorInvalid` 阻塞当前账户作用域并要求受控重建，不得清除 pending 或自动归零。
+- 放弃轮次后，下一触发从最后已提交游标获取新上界；崩溃后丢失仅存在内存中的上界是安全的。循环到 `HasMore=false` 才是完整同步轮次，批量 Toast、声音和闪烁只能在相应本地提交之后执行。
+- `Startup`、`Reconnect`、`WindowActivated`、`Periodic` 是 `SyncReason`。每个账户作用域只允许一个同步循环；运行中触发合并原因并只设置一次 pending rerun，当前轮结束后至多立即补跑一次。补跑时若窗口已激活取 `WindowActivated`，否则仍处启动恢复取 `Startup`，否则有重连触发取 `Reconnect`，其余取 `Periodic`。登出或切换账户必须取消旧循环。
+- 每轮先获取权威会话列表并应用成员新增/撤权、静音和 `LastReadMessageId`，再拉消息页。第一版列表在一个服务端只读事务返回非分页全集并标记 `Complete=true`；只有响应校验和本地对账事务成功后，客户端才可依据缺失推断撤权。未来若分页，必须先引入所有页共享的固定 `MembershipSnapshotToken`，且仅完整快照返回 `Complete=true`；普通实时分页结果不得触发清理。
 
 ## 12.6 未读处理
 
