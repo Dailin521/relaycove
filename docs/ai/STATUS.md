@@ -11,7 +11,7 @@
 - **自动化验证：** `已验证` — Fast/Full、format、41 项测试、真实 SQLite migration up/down、发布依赖、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
-- **本任务 Claude 调用：** `已验证` — challenge 的有效 `REVISE` 已纳入 `DEC-005`；最终 safe-mode 只读 CLI 以 `claude-opus-5` / XHigh 对 `ReviewHead=6b0c85e` 返回 `PASS`，无阻塞发现，费用见 `V1_EXECUTION.md`
+- **本任务 Claude 调用：** `已验证` — 认证端点两次 safe-mode 只读 `claude-opus-5` / XHigh challenge 对 `ChallengeHead=87ff08a` 返回 `REVISE`；有效发现经本地核对后纳入 `DEC-006`，费用见 `V1_EXECUTION.md`
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
@@ -32,7 +32,7 @@
 
 ## 下一任务
 
-完成 JWT/refresh rotation/错误 oracle/事务/限流前置 challenge，独立判断后冻结 `DEC-006` 并实现真实 HTTP 认证闭环。
+按 `DEC-006` 实现严格 JWT validation、login/refresh/logout/me、强类型 token、原子 rotation 与端点级限流，并用真实 HTTP + 文件 SQLite 覆盖负向/并发路径。
 
 ## 阻塞项
 

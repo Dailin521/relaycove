@@ -1098,6 +1098,8 @@ v1 登录名限制为 3–64 个 ASCII 字母、数字、点、下划线或连�
 
 服务端 GUID 以小写标准 `D` 文本保存；时间以固定 `yyyy-MM-ddTHH:mm:ss.fffZ` UTC 文本保存并拒绝非 UTC 写入。refresh token 原始值由 32 字节 CSPRNG 产生，表中只保存 `Base64Url(SHA-256(raw bytes))` 的 43 字符哈希；不得保存明文 token。密码使用 ASP.NET Core 版本化 `PasswordHasher` 格式，不自定义低层 PBKDF2 存储协议。
 
+认证 token 细节遵循 `DEC-006`：access JWT 固定 `typ=at+jwt`、HS256、issuer/audience 与 `sub/jti/iat/exp`，有效期 15 分钟并仅接受 30 秒时钟偏差；签名 key 至少 32 个随机字节且不得进入仓库。refresh token 有效期 30 天，每次使用都在 SQLite 非 deferred 写事务内条件撤销旧 token 并原子插入新 token；并发只有一个请求成功。JWT 验证后仍查库确认用户存在且未禁用，logout 对任意 token 输入幂等返回 204。
+
 ### Conversations
 
 ```text

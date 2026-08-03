@@ -70,3 +70,16 @@
 - **理由：** ASCII 登录标识配合 Unicode `DisplayName` 避免 ICU/NLS、不可见和双向控制字符造成跨环境账号漂移；固定文本格式使 SQLite 字典序等于 UTC 时间序；框架版本化密码格式支持升级重哈希；高熵 refresh token 的快速确定性哈希既能按值查找又不暴露原文。
 - **影响：** schema 增加内部 `NormalizedUserName`；关键长度、格式、布尔值和非空要求必须用 SQLite CHECK 验证，不能依赖 `HasMaxLength`。测试必须真实运行 migration up/down、`HasPendingModelChanges`、外键/级联、UTC Kind/比较和约束冲突。`AvatarAttachmentId` 在 Attachments 切片前只保留可空文本，不建外键；后续迁移加 FK 前必须处理孤儿值。默认管理员、保留用户名、密码策略、Token 签发/轮换/保留和 WAL/备份另行决策。
 - **来源：** 工程落地方案第 7.1、11.1、11.2、18.4、19.4、阶段 2；`docs/ai/tasks/2026-08-03-stage-2-auth-storage.md`；2026-08-03 Microsoft EF Core SQLite 与 PasswordHasher 官方文档。
+
+### DEC-006：自托管 access JWT 与一次性 refresh 轮换边界
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** 工程方案要求封闭自托管 WPF/Server 直接以用户名和密码登录并签发 token；这不是通用 OAuth/OIDC authorization server，仍必须抵抗 JWT 算法混淆、账号/token oracle、refresh 并发重放、SQLite 锁竞争和机密日志泄漏。
+- **决策：** 单服务 v1 access token 使用 HS256，Base64 signing key 至少 32 个随机字节，只能由 User Secrets/环境或受控部署配置注入，缺失或畸形时启动失败。JWT 固定 `typ=at+jwt`、HS256、issuer、audience、`sub/jti/iat/exp`，`MapInboundClaims=false`，access 有效期 15 分钟、clock skew 30 秒；验证后必须从数据库确认用户仍存在且未禁用，不信任 token 中的可变权限。所有认证时间来自把 `TimeProvider` 截断到毫秒 UTC 的单一 `ServerClock`。
+- **决策：** refresh 原始值是强类型 32 字节 CSPRNG Base64Url，hash 是不同强类型；任何 `ToString()`、错误和日志都不得暴露原始值或 hash。refresh 有效期 30 天，并在默认非 deferred/Serializable SQLite 写事务内以第一条条件更新原子撤销旧 token，只有受影响行数为 1 才插入新 token 并提交；并发 loser、畸形、未知、过期或已撤销 token 对 refresh 统一为 `401 AuthenticationFailed`。残余 `SQLITE_BUSY/LOCKED` 返回 `503 ServiceUnavailable`。v1 不增加 token family，不因已撤销 token 重放而全账号登出。
+- **决策：** login 只把 body 形状错误作为 `400 ValidationFailed`；非法字符用户名仍执行 dummy verify 后统一 401。logout 对畸形、未知、过期、已撤销和有效 token 均无响应体返回 204，有效 token 尽力撤销。JWT challenge/forbidden 分别使用 `AuthenticationRequired`/`AccessDenied`，不在 `WWW-Authenticate` 暴露失败原因；未处理异常使用 `InternalServerError`，认证存储暂不可用使用 `ServiceUnavailable`。`RateLimitExceeded`、`ServiceUnavailable`、`InternalServerError` 是 `DEC-004` 后新增稳定码。
+- **决策：** login 按实际 `RemoteIpAddress` 使用 10 次/分钟 fixed window，refresh 使用 60 次/分钟，均不排队，拒绝返回 429、`Retry-After` 和稳定 envelope；未知地址进入固定 sentinel 分区，当前不读取客户端转发头。登录/refresh/rehash 必须用领域方法在同一成功事务单调推进相应用户活动时间与 `UpdatedAt`。
+- **理由：** 固定 token 类型、算法和 claims 消除默认映射与算法混淆；短期 access 加每请求用户状态检查使禁用即时生效；条件写而非 read-modify-write 让 refresh rotation 在单库中可证明单赢；强类型和统一响应降低误存明文与枚举风险；端点级限流限制高成本密码尝试且不影响已认证 API。
+- **影响：** appsettings 可以提交 issuer/audience/生命周期和限流非机密值，但不得提交 signing key；开发和测试必须显式注入临时 key，生产由部署 Gate 提供。无 token family、无 `kid`/key rotation、单进程限流、反代前共享 IP 和 15 分钟内 access 不可主动撤销是已知 v1 限制；可信代理、分布式限流、密钥轮换与重放族追踪另行决策。
+- **来源：** 工程落地方案第 8.2、10.2、11.1、18.4、阶段 2；`docs/ai/tasks/2026-08-03-stage-2-auth-endpoints.md`；2026-08-03 ASP.NET Core 10 JWT bearer/rate limiter、Microsoft.Data.Sqlite transaction 文档；RFC 8725、RFC 9700。

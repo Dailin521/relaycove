@@ -13,9 +13,9 @@ TaskStatus: running
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 6b0c85e35cb3ed56f58646b569908a8d61958876
 LatestGreenIntegrationCommit: cd8f33afafe4956658792b0036cd229c29277412
-NextAction: 固定认证端点 ChallengeHead，执行 JWT/refresh rotation/错误 oracle/事务/限流 XHigh challenge
-ClaudeCalls: 15（软上限 24，硬上限 30）
-ClaudeCostUsd: 4.0273085 confirmed；另有十次失败/中断调用费用 unavailable
+NextAction: 按 DEC-006 实现 login/refresh/logout/me、严格 JWT validation、条件轮换事务与端点限流
+ClaudeCalls: 17（软上限 24，硬上限 30）
+ClaudeCostUsd: 5.4229485 confirmed；另有十次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -66,9 +66,11 @@ RequiredUserGate: none
 | 13 | 2026-08-03 | 认证存储 | 只读 CLI 候选 review | Opus / XHigh | `ReviewHead=134fea6ceca3ec40aa8e5ce7e35a66eb1ba83d9a`；600 秒外层上限前无终局结果，本地降级复核发现并修复时间精度、CHECK 与用户名不变量缺口 | `unavailable` |
 | 14 | 2026-08-03 | 认证存储 | 最终 MCP review | Opus / XHigh | `claude_second_brain` 接单后因 wrapper 认证源优先级导致 claude.ai connector 被禁用，未返回结构化模型、workspace 或费用 | `unavailable` |
 | 15 | 2026-08-03 | 认证存储 | safe-mode 只读 CLI 最终 review | Opus / XHigh | 显式工作目录 `E:\WorkSpace\RelayCove`，工具限于 `Read/Glob/Grep`；实际 `claude-opus-5`、请求模型无偏差，`Base=0e5eefb..ReviewHead=6b0c85e`；耗时 `782578 ms`，`PASS`，无阻塞发现 | `$2.35148075` |
+| 16 | 2026-08-03 | 认证端点 | safe-mode 只读 CLI challenge | Opus / XHigh | `ChallengeHead=87ff08aa5c7258a0b48cd37733a9b6fcd1d0b8d9`；实际 `claude-opus-5`，返回 `REVISE`；确认毫秒时钟和并发轮换阻塞项，中段本地输出被截断 | `$0.82506775` |
+| 17 | 2026-08-03 | 认证端点 | safe-mode 只读 CLI 定向 challenge | Opus / XHigh | 同一 ChallengeHead，实际 `claude-opus-5`；完整返回 7 项 `REVISE` 修正，经本地代码与 Microsoft.Data.Sqlite 事务证据核对后纳入 `DEC-006` | `$0.57057225` |
 
-- 调用计数：`15 / 24 soft / 30 hard`。
-- 已确认费用合计：`$4.0273085`；其余十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`17 / 24 soft / 30 hard`。
+- 已确认费用合计：`$5.4229485`；其余十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - Claude 恢复可用后，每次调用必须记录返回的 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；达到调用或费用硬上限时降级为 Codex 独立复核，不停止开发。
 
 ## 阻塞与用户 Gate

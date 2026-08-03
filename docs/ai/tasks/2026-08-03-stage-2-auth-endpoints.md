@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 2 — 登录、refresh 轮换、logout 与 current-user 最小闭环
-- **状态：** 进行中（前置证据与 challenge）
+- **状态：** 进行中（challenge 完成，实施中）
 - **基准提交：** `cd8f33afafe4956658792b0036cd229c29277412`
 - **工作分支：** `agent/stage-2-auth-endpoints`
 - **相关方案章节：** `RelayCove_工程落地方案.md` 第 7.1、8.2、10.2、11.1、18.4、阶段 2；`DEC-004`、`DEC-005`
@@ -21,15 +21,18 @@
 - `已验证`：[RFC 8725](https://www.rfc-editor.org/rfc/rfc8725.html)要求固定允许算法、足够密钥熵、issuer/subject/audience 验证和不同 JWT 用途的显式类型；[RFC 9700](https://datatracker.ietf.org/doc/rfc9700/)要求公共客户端 refresh token 使用 sender constraint 或 rotation。
 - `已验证`：[Microsoft.AspNetCore.Authentication.JwtBearer 10.0.10](https://www.nuget.org/packages/microsoft.aspnetcore.authentication.jwtbearer)面向 `net10.0`；ASP.NET Core 自带 rate limiter 支持按 endpoint/IP 分区、无队列拒绝与 `Retry-After`。
 - `已验证`：Microsoft 官方不建议生产系统自行从用户名/密码签发 access token，而工程方案明确要求封闭自托管 WPF 客户端采用该流程；本任务必须把偏离标准身份提供方的风险与部署密钥边界写入决策，而不能把它描述为通用 OAuth/OIDC 实现。
+- `已验证`：两次只读 `claude-opus-5` / XHigh challenge 对 `ChallengeHead=87ff08a` 返回 `REVISE`；其毫秒时钟、非 deferred 写事务、JWT 默认值、error envelope、token oracle、领域时间方法、强类型 token 与限流发现经 Codex 用仓库代码和 Microsoft.Data.Sqlite 官方事务文档独立核对成立。
+- `已验证`：Microsoft.Data.Sqlite 事务默认 Serializable；只有显式 `BeginTransaction(deferred: true)` 才延迟并在读后升级写锁。当前轮换应使用默认非 deferred 显式事务，且把条件更新作为第一条语句；并发证据必须来自真实文件 SQLite。
 
 ### 假设
 
 - `假设`：单服务 v1 使用 HS256 access JWT；Base64 signing key 至少 32 随机字节，只从 User Secrets/环境或部署配置注入，缺失/畸形时启动失败，仓库不提供默认密钥。固定 `typ=at+jwt`、issuer、audience、`sub/jti/iat/exp`，validation 只允许 HS256，clock skew 为 30 秒。
-- `假设`：access 生命周期 15 分钟，refresh 生命周期 30 天；由受限 `TimeProvider` 生成毫秒 UTC 时间。access token 不携带可变管理员权限，JWT 验证后从数据库确认用户仍存在且未禁用。
+- `假设`：access 生命周期 15 分钟，refresh 生命周期 30 天；唯一 `ServerClock` 包装 `TimeProvider` 并在所有持久化值和 EF 查询参数进入 converter 前截断到毫秒 UTC。access token 不携带可变管理员权限，JWT 验证后从数据库确认用户仍存在且未禁用。
 - `假设`：新增 `RefreshTokenRequest(RefreshToken)`、`LogoutRequest(RefreshToken)` 与 `CurrentUserResponse(UserId, UserName, DisplayName, IsAdmin)`；refresh 复用脱敏 `LoginResponse`，logout 对缺失、畸形、未知、过期或已撤销 token 统一返回 `204`，refresh 对这些情况统一返回 `401 AuthenticationFailed`。
-- `假设`：refresh 在单 SQLite 事务内以 `RevokedAt IS NULL AND ExpiresAt > now` 条件更新旧 token 并插入新 token；只有一个并发请求可成功。v1 不新增 token-family 列，已撤销 token 重放不做全账号撤销，记录无机密诊断并统一失败。
-- `假设`：登录成功原子更新 `LastLoginAt`、`LastOnlineAt`、`UpdatedAt`，refresh 更新 `LastOnlineAt`、`UpdatedAt`；rehash-needed 在同一成功事务更新密码哈希。原始 token 与 hash 使用不同强类型/结果对象，禁止同为 `string` 的调用点互换。
+- `假设`：refresh 在默认非 deferred/Serializable SQLite 写事务内，第一条语句以 `TokenHash == hash && RevokedAt == null && ExpiresAt > now` 条件 `ExecuteUpdate`；受影响行数必须为 1 才插入新 token 并提交。v1 不新增 token-family 列，已撤销 token 重放不做全账号撤销；残余 `SQLITE_BUSY/LOCKED` 返回 `503 ServiceUnavailable`，不伪装为凭据失败或泄漏 token。
+- `假设`：`User` 新增只接收毫秒 UTC 的领域方法，登录成功原子更新 `LastLoginAt`、`LastOnlineAt`、`UpdatedAt`，refresh 更新 `LastOnlineAt`、`UpdatedAt`；rehash-needed 在同一成功事务更新密码哈希。原始 token 与 hash 使用不同 `readonly record struct`，原始值 `ToString()` 永远脱敏，禁止同为 `string` 的调用点互换。
 - `假设`：login 使用按 remote IP 的内存 fixed-window 10 次/分钟、queue 0；refresh 为 60 次/分钟，返回 `429 RateLimitExceeded` 与 `Retry-After`。真实反向代理可信转发头与分布式限流属于部署切片，当前不信任客户端自报 IP header。
+- `假设`：JWT `MapInboundClaims=false`，签发与验证显式固定 `typ=at+jwt`、HS256、issuer/audience/lifetime/signature；`OnChallenge`/`OnForbidden` 只返回稳定 error envelope，`WWW-Authenticate` 不携带过期、签名或账号状态细节。新增 `ServiceUnavailable`、`InternalServerError` 作为稳定基础设施错误码。
 
 ### 范围
 
@@ -104,7 +107,8 @@ Fast 后形成代码检查点，Full 后固定 ReviewHead 做候选复核；不�
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 基准 Fast | Debug 0 警告、0 错误；41 项测试通过 |
-| `未验证` | Claude challenge | 待固定 ChallengeHead 后执行 |
+| `已验证` | Claude challenge #16 | safe-mode 只读 CLI，实际 `claude-opus-5` / XHigh，费用 `$0.82506775`，对 `ChallengeHead=87ff08a` 返回 `REVISE`；本地输出截断中段，但 F1 毫秒时钟与并发轮换阻塞项明确可复现 |
+| `已验证` | Claude 定向 challenge #17 | 同一 ChallengeHead、只读 `Read/Glob/Grep`，实际 `claude-opus-5` / XHigh，费用 `$0.57057225`，完整返回 7 项 `REVISE` 修正；Codex 独立核对后纳入 `DEC-006` |
 
 ### 文件范围
 
@@ -114,9 +118,9 @@ Fast 后形成代码检查点，Full 后固定 ReviewHead 做候选复核；不�
 
 ### 决策与限制
 
-- 决策：待 challenge 后记录于 `DEC-006`。
+- 决策：challenge 后采用 `ServerClock`、严格 typed HS256 access JWT、动态用户状态、强类型 raw/hash token、非 deferred 条件轮换事务、稳定错误 envelope 与端点级 IP 限流；详见 `DEC-006`。
 - 已知限制：见“明确不做”；任务开始时尚无实现证据。
 
 ### 下一步
 
-- challenge 后冻结 DEC-006 并实现认证 HTTP 闭环。
+- 实现认证 HTTP 闭环并用真实文件 SQLite 与 HTTP host 验证轮换、oracle 和 JWT 负向路径。
