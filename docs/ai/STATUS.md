@@ -5,18 +5,18 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 8 — production 账户组合与聊天 UI
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around 与渲染后 read-through 已完成
-- **最近验证通过的状态：** 消息列表最终代码与完成记录已仅快进到绿色集成提交 `c237bc04393361b0ab7d80376f121d4e5621561e`；当前 Text 发送分支以同一提交为干净基线，最终 Fast/Full 704/704 通过
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through，以及 Text 输入、durable pending、幂等发送和失败重试已完成
+- **最近验证通过的状态：** Text 发送最终代码提交 `4cad2b3769eb555f009f3f3eaf1e93b2c642a0c6` 已通过全部门禁；完成记录待随本任务提交仅快进到绿色集成分支
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — 最终 Fast/Full、format、704 项测试、Client 493/493；cache/History/Around/coordinator/滚动关键集 81/81、连续 10 轮 810/810；真实 Release WPF 可见 `RelayCove` 窗口/响应/单实例/进程清理、既有原生通知/attention/托盘/激活证据、model drift、八项目漏洞审计与空白检查通过；真实登录后的消息视觉与 Narrator 保持未验证
+- **自动化验证：** `已验证` — 最终 Fast/Full、format、743 项测试、Client 532/532；发送/pending/回声/coordinator/选择关键集每轮 25 项、连续 10 轮 250/250；真实 Release WPF 非零窗口句柄/响应/单实例/进程清理、既有原生通知/attention/托盘/激活证据、model drift、八项目漏洞审计与空白检查通过；真实登录后的发送视觉、双客户端与 Narrator 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
-- **最近 Claude 调用：** `已验证` — #54 job `b0d5a420-dafa-4ed3-9d03-15bd2971df62` 完成挑战，实际 `claude-sonnet-5` 且 `model_mismatch=true`；#55 因错误 workspace 主动取消；#56 job `090a3bc5-29fc-4cf6-a349-3da279083645` 在订阅额度 403 后失败、无正式答案。#54 成立项及 #56 失败前两条部分意见均由 Codex 独立复算并在 `46a59f6`/`DEC-034` 收敛，失败任务未冒充通过
+- **最近 Claude 调用：** `已验证` — Text 发送 #57 MCP 因认证源优先级失败；#58 本机后台会话 `0cb84cf1` 未收到任务、保持 idle 后由主代理停止；#59 Opus 与 #60 Sonnet 只读 CLI 均因订阅额度 403 失败，无审查结论或费用。失败未冒充通过，最终固定差异与门禁由 Codex 完成
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
-- `agent/stage-8-text-send-flow`：实现 Text 输入、持久 pending、HTTP 幂等发送、响应/回声统一提升和失败重试。
+- 阶段 8 下一独立纵向切片待从周期 Sync/持续收敛或 Reply/@ 缺口中选择；当前 Text 发送任务已完成。
 
 ## 已完成
 
@@ -56,10 +56,11 @@
 - production 单账户组合、自动恢复/登录/重试/注销、权威缓存后 activation lease、真实 activity/托盘边界状态、最小 WPF 账户壳、凭据清理 barrier 与无障碍 live region（`DEC-032`）
 - 权威门控会话列表、提交后状态信号、持续连接/总未读、版本化旧 runtime 隔离和虚拟化双栏壳（`DEC-033`）
 - 有界消息 cache 页面、History/Around 原子 merge、稳定撤权、版本化消息选择、虚拟化滚动和已应用视口后的 read-through（`DEC-034`）
+- Text 严格验证、durable pending/失败恢复、单次幂等 POST、响应/回声同一行提升、显式原键重试和 WPF 输入状态（`DEC-035`）
 
 ## 下一任务
 
-完成当前消息视图切片后，进入消息输入与 Text 发送闭环。
+盘点阶段 8 剩余缺口并建立下一最小纵向任务；真实 VPS/双客户端 Gate 继续保留到 M5。
 
 ## 阻塞项
 

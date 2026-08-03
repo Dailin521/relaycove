@@ -420,3 +420,16 @@
 - **理由：** 有界页面和原子 merge 把网络分页、SQLite 状态与 UI 可见性放在同一可证明边界；把 published、applied 和 viewport 三种状态分开，防止 Dispatcher 排队或无关状态重发把不可见消息误判为已读。非 Ready 空快照与 activity 清除延续私有数据 fail-closed 约束。
 - **影响：** Client 增加无 schema 的有界 cache 页面、History/Around HTTP coordinator、消息选择状态机、虚拟化 WPF 列表和渲染后回执；不改 Shared/Server 协议、SQLite schema/migration、通知编码或依赖。当前只显示服务端已确认消息；输入、Text 发送、pending/失败重试、回复、搜索、附件和周期 Sync 留给后续切片。真实账户、VPS、第二客户端、通知点击后的端到端定位和 Narrator 仍属后续 UI/M5 Gate。
 - **来源：** 工程落地方案第 9.2–9.4、10.4、12.3、12.6–12.8、阶段 8；`DEC-017`、`DEC-020`、`DEC-026`、`DEC-027`、`DEC-030`、`DEC-033`；`docs/ai/tasks/2026-08-04-stage-8-message-list-shell.md`；最终 Fast/Full 704 项、Client 493 项、关键集 810/810、真实 Release WPF 窗口/单实例 smoke、model drift 与八项目漏洞审计；Claude #54 完成挑战及 #56 额度失败前部分意见中经 Codex 独立复算并本机验证的 History 未读、渲染边界、协议校验、fail-closed 可见性、已应用 revision 与滚动保持发现。
+
+### DEC-035：Durable pending、单次幂等写请求与显式原键重试
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-010/014/017/026/027/034` 已冻结服务端 INSERT-first 幂等发送、Realtime 回声、账户隔离缓存、未读/通知来源和有界消息视图，但客户端仍没有安全的写请求所有权。若先 POST 再落盘，进程崩溃会丢失幂等键；若对 timeout/429/5xx 自动重放写请求，会把“服务端已提交但响应丢失”的不确定状态变成隐式重复网络写；若 pending 伪造服务端 ID 或无条件失败覆盖，响应、Realtime、Sync 与取消竞争会产生双行或把 Sent 降级。
+- **决策：** 当前切片只发送 `MessageType.Text`，逐 Unicode scalar 复用服务端 1–4000、非全空白、只允许 TAB/CR/LF 控制字符的精确口径，并保留合法首尾空白和换行。Reply、Attachment、Mention 均固定为空。每条新消息先在账户/会话权威门内以新 `ClientMessageId` 原子插入 `ServerMessageId=NULL, Sending`；每会话当前账户最多 50 条 outstanding。最新页面把确认消息和最多 50 条 pending/failed 分开读取，presentation 使用 nullable `ServerMessageId + ClientMessageId`，不得把 LocalId 或负数冒充服务端身份。
+- **决策：** 写传输只对认证 401 做一次 refresh 后重放；网络、timeout、429、5xx 和取消都不自动重发 POST，而是条件性 `Sending -> Failed`。用户显式重试先原子 `Failed -> Sending`，复用数据库中完全相同的 ClientMessageId、ConversationId、Type、Content、ReplyTo 和 Mention；同一键同时重试共享一个 flight。201 Created 与 200 replay 都必须严格校验当前发送者及不可变请求字段，再以 `SendResponse` 进入既有统一 merge。响应、Realtime 或 Sync 谁先确认都只允许 `PendingPromoted/Duplicate`；`Sent` 永不被迟到失败降级，冲突保持失败并报协议错误。
+- **决策：** 只有进程内该 scope 的第一次 cache 初始化把崩溃遗留 Sending 恢复为 Failed；同进程第二个 cache 实例不得误伤活动 flight。稳定 `ConversationAccessRevoked` 进入既有 durable purge/通知清理，认证失效结束当前账户；账户终止先取消并等待发送 coordinator，再释放 cache/session。会话选择切换不使用 selection token 取消已提交发送，但 shell 的迟到结果不得发布到新选择或新 runtime。
+- **决策：** WPF 仅在当前 Ready 会话启用输入；Enter 发送、Ctrl+Enter 插入换行，失败行显式显示重试。当前实现等待发送调用返回后，只有 `PendingCommitted=true` 且输入仍逐字相同时清空，并在等待期间阻止同一输入重复提交；这牺牲慢 POST 时的即时清空，以确保未确认落盘前绝不丢输入。若未来要改成“落盘即清空、网络后台继续”，必须另行冻结 completion/authentication 事件所有权。
+- **理由：** durable-first 把客户端崩溃恢复与服务端幂等键连接为同一个可证明状态；不自动重发不确定 POST 避免隐藏写放大，显式原键重试让 200 replay 安全收敛。条件化状态转换、严格响应发送者和统一 merge 覆盖响应/回声/同步/终止竞态，nullable 服务端身份避免 UI 把尚未确认的本地事实冒充服务器事实。
+- **影响：** Client 增加无 schema 变化的 pending mutation/read/recovery、发送 transport/coordinator、runtime/shell 接线和 WPF 输入/重试；不改 Shared/Server 协议、SQLite schema/migration、通知编码或依赖。Reply、@、附件、草稿持久化、编辑/撤回、搜索和周期 Sync 仍留给后续切片；真实账户/VPS/双客户端、网络断连视觉和 Narrator 留到 M5 Gate。
+- **来源：** 工程落地方案第 4.2、9.2–9.4、10.4、12.1–12.3、12.6–12.8、阶段 8；`DEC-010`、`DEC-014`、`DEC-017`、`DEC-025`、`DEC-026`、`DEC-027`、`DEC-034`；`docs/ai/tasks/2026-08-04-stage-8-text-send-flow.md`；最终 Fast/Full 743 项、Client 532 项、关键集 250/250、真实 Release WPF 窗口句柄/响应/单实例 smoke、model drift 与八项目漏洞审计。Claude #57–#60 均因认证/额度或空闲调度无结论；Codex 固定差异自审发现并修正发送者响应校验与同进程恢复竞态后由本机自动化复验。
