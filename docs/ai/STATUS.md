@@ -5,10 +5,10 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 文字消息存储/发送/History 已合入；read-through API 切片已开始
-- **最近验证通过的状态：** 文字消息 API 代码 `391aff08f3a48396e1a499e3e4cc9db2cc7fdc41`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 文字消息存储/发送/History 已合入；read-through API 已绿色完成并待快进集成
+- **最近验证通过的状态：** read-through API 代码 `d92552a093a217d6c5c38b4ee27b89da542cc2b8`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — Full、format、156 项测试、文字消息顺序/并发/跨发送者幂等、撤权优先、单查询 History keyset、未读/入群水位/busy、真实 SQLite AUTOINCREMENT/migration up-down/约束/外键、既有会话与认证回归、model drift、漏洞审计与空白检查通过
+- **自动化验证：** `已验证` — Full、format、167 项测试、read-through 单调/并发/Public 首次状态/撤权与目标边界、Public 成员 API 隔离、文字消息/会话/认证回归、busy、model drift、漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 11 个单元测试以及 RelayCove、`oss-maintainer-hub` 真实只读 MCP 调用通过
 - **最近 Claude 调用：** `未验证` — read-through API XHigh challenge #23 对 `ChallengeHead=9c8211f` 因本机认证源覆盖 claude.ai 登录在 60 秒内超时；未取得审查结论且按用户要求未重试，`DEC-011` 由 Codex 结合仓库事务/授权证据独立收敛
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-4-message-read-api`：实现单调 read-through、Public 个人水位及撤权边界。
+- `agent/stage-4-message-read-api`：绿色完成，待仅快进 `agent/v1-integration`。
 
 ## 已完成
 
@@ -34,10 +34,11 @@
 - Conversations/ConversationMembers 实体、Direct 永久唯一身份、成员角色/单调已读、SQLite 约束与 migration（`DEC-008`）
 - 会话创建/详情/权威全集、Direct 并发获取/恢复、私有成员动态管理、撤权 403 与 `DEC-009`
 - Text 消息不可变存储、AUTOINCREMENT、INSERT-first 幂等发送、单查询权限化 keyset History、会话未读/最大消息聚合、私有成员加入水位与 `DEC-010`
+- read-through 真实目标验证、单调服务端确认、Public 个人水位、Private/Direct 撤权边界与 Public 成员 API 隔离（`DEC-011`）
 
 ## 下一任务
 
-完成阶段 4 read-through API 后，继续 around 与固定上界 Sync 纵向切片。
+快进集成后继续阶段 4 around 与固定上界 Sync 纵向切片。
 
 ## 阻塞项
 

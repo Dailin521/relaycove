@@ -2,7 +2,7 @@
 
 ## 状态
 
-- `in_progress`
+- `completed`
 - 分支：`agent/stage-4-message-read-api`
 - 基线：`1a957784f86f09f22d1ea8bd6edbfa382d7e9f7e`
 
@@ -34,12 +34,12 @@
 
 ## 验收标准
 
-- [ ] 请求/确认契约 JSON 稳定且日志字符串不泄漏非必要状态。
-- [ ] 当前有权用户用同会话真实消息推进水位并收到 200 确认；重复、较小及并发上报最终为最大真实目标且不回退。
-- [ ] Public 普通用户可持久化个人水位且不会开放 Public 成员管理/list；Private/Direct 仅现有成员可推进。
-- [ ] 任意极大 ID、跨会话 ID、空/非正 ID 稳定 400；未知/删除/撤权稳定 403，禁用用户遵循既有动态 JWT 校验稳定 401，且权限检查先于目标消息信息暴露。
-- [ ] 会话列表的 `LastReadMessageId` 与 `UnreadCount` 在成功上报后正确，自己的消息不计未读。
-- [ ] busy 503、日志无消息正文/昵称、Fast/Full、model drift、漏洞审计、白名单、空白和固定差异复核通过。
+- [x] 请求/确认契约 JSON 稳定且日志字符串不泄漏非必要状态。
+- [x] 当前有权用户用同会话真实消息推进水位并收到 200 确认；重复、较小及并发上报最终为最大真实目标且不回退。
+- [x] Public 普通用户可持久化个人水位且不会开放 Public 成员管理/list；Private/Direct 仅现有成员可推进。
+- [x] 任意极大 ID、跨会话 ID、空/非正 ID 稳定 400；未知/删除/撤权稳定 403，禁用用户遵循既有动态 JWT 校验稳定 401，且权限检查先于目标消息信息暴露。
+- [x] 会话列表的 `LastReadMessageId` 与 `UnreadCount` 在成功上报后正确，自己的消息不计未读。
+- [x] busy 503、日志无消息正文/昵称、Fast/Full、model drift、漏洞审计、白名单、空白和固定差异复核通过。
 
 ## 验证命令
 
@@ -60,14 +60,38 @@ dotnet list RelayCove.sln package --vulnerable --include-transitive
 
 ### 修改摘要
 
-- 进行中。
+- 新增 Shared read-through 请求与确认 DTO，并固定 Web JSON 字段和脱敏字符串表示。
+- 新增 `POST /api/conversations/{conversationId}/read`、请求校验及 Serializable 事务服务：先动态复核内容访问，再确认目标消息属于当前会话，最后单调推进并返回服务端确认水位。
+- Private/Direct 只更新既有成员；Public 普通用户首次有效上报创建仅承载个人水位的内部状态行，不修改会话更新时间。
+- 加固 Public 成员 list/upsert/remove 的类型短路，在展开成员集合前返回 `ConversationTypeConflict`，避免个人状态行被成员 API 查询放大；既有 Private 全局管理员覆盖和 Direct/Private 授权保持不变。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 集成基线 Fast | Debug 0 警告、0 错误；Server 131、Shared 23、Client 1、Updater 1，共 156 项测试通过 |
+| `已验证` | read-through 定向与并发回归 | Public 首次并发建行、重复/较小/较大单调推进、Private 并发最大值、Direct、撤权、目标/权限边界、busy 与契约测试通过；Public 首次并发场景连续 5 次通过 |
+| `已修复` | Public 状态隔离复核 | 首轮查询改写触发 SQLite 不支持 APPLY，未进入提交；改为授权化类型预查后，Conversation/MessageRead 定向测试 13 项通过，并保留全局管理员读取 Private 成员清单语义 |
+| `已验证` | Public 成员 API 隔离 | 已存在个人水位行时，成员 list/write 仍为 `ConversationTypeConflict`；数据库命令断言确认不会 JOIN `ConversationMembers` 展开状态行 |
+| `已验证` | 最终 `pwsh ./scripts/verify.ps1 -Mode Fast` | Debug 0 警告、0 错误；Server 140、Shared 25、Client 1、Updater 1，共 167 项测试通过 |
+| `已验证` | 最终 `pwsh ./scripts/verify.ps1 -Mode Full` | format clean；Release 0 警告、0 错误；167 项测试通过；`git diff --check` 通过 |
+| `已验证` | EF model drift | `has-pending-model-changes` 返回自上次 migration 后模型无变化 |
+| `已验证` | 漏洞审计 | 8 个源/测试项目均无已知易受攻击的直接或传递包 |
+| `未验证` | Claude XHigh challenge #23 | 60 秒内因认证源优先级超时，无模型、workspace、费用或结论；按用户要求不重试、不阻塞 |
+| `已验证` | Codex 固定差异复核 | `ReviewBase=9c8211f`、`ReviewHead=d92552a`；契约、授权优先、目标归属、单调/并发、Public 隔离、日志、错误映射、文件白名单和空白检查无剩余发现 |
+
+### 文件范围
+
+- 新增：Shared read 请求/确认；Server read-through 服务；Server/Shared read 契约、验证、HTTP 与并发测试。
+- 修改：工程方案、决策/状态/执行/任务文档；消息 endpoint、验证、状态与 DI；Public 成员查询/命令隔离。
+- 删除：无。
+
+### 决策与限制
+
+- 决策：`DEC-011`。只接受当前会话内真实消息；权限判断先于目标查询；服务端确认值单调；Public 个人状态复用不公开的成员行且不改变 Public 的成员 API 协议。
+- 已知限制：本切片不实现 around、固定上界 Sync、Search、SignalR read receipt、客户端 pending 水位或本地缓存，也不支持跨服务端写实例。
+- Claude 未返回第二意见；最终结论由 Codex 结合仓库事务/授权证据、真实 HTTP/SQLite 自动化和固定差异复核独立承担。
 
 ### 下一步
 
-- 按 `DEC-011` 实现 Shared 契约、事务服务、endpoint 与自动化验证。
+- 仅快进 `agent/v1-integration` 并推送，随后开始阶段 4 around 与固定上界 Sync 的下一个纵向任务。
