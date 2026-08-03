@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Mvc;
 using RelayCove.Server.Errors;
+using RelayCove.Server.Realtime;
 using RelayCove.Server.Services;
 using RelayCove.Shared.Errors;
 using RelayCove.Shared.Messages;
@@ -28,6 +29,7 @@ public static class MessageEndpoints
         HttpContext context,
         MessageRequestValidator validator,
         MessageCommandService commandService,
+        NewMessagePublisher newMessagePublisher,
         CancellationToken cancellationToken)
     {
         if (!TryGetActorUserId(context, out var actorUserId))
@@ -42,6 +44,11 @@ public static class MessageEndpoints
         }
 
         var result = await commandService.SendAsync(actorUserId, request!, cancellationToken);
+        if (result.Status == MessageOperationStatus.Created)
+        {
+            await newMessagePublisher.TryPublishAsync(result.Value!);
+        }
+
         return result.Status switch
         {
             MessageOperationStatus.Created => Results.Created(

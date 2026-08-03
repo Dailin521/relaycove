@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using RelayCove.Server.Data;
 using RelayCove.Server.Errors;
+using RelayCove.Server.Hubs;
 using RelayCove.Shared.Errors;
 
 namespace RelayCove.Server.Authentication;
@@ -11,6 +12,19 @@ public sealed class RelayCoveJwtBearerEvents(
     RelayCoveDbContext dbContext,
     ILogger<RelayCoveJwtBearerEvents> logger) : JwtBearerEvents
 {
+    public override Task MessageReceived(MessageReceivedContext context)
+    {
+        var accessToken = context.Request.Query["access_token"];
+        if (accessToken.Count == 1 &&
+            !string.IsNullOrWhiteSpace(accessToken[0]) &&
+            context.HttpContext.Request.Path.StartsWithSegments(ChatHub.Route))
+        {
+            context.Token = accessToken[0];
+        }
+
+        return Task.CompletedTask;
+    }
+
     public override async Task TokenValidated(TokenValidatedContext context)
     {
         var subject = context.Principal?.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using RelayCove.Server.Authentication;
@@ -11,12 +12,15 @@ using RelayCove.Server.Data.Entities;
 using RelayCove.Server.Endpoints;
 using RelayCove.Server.Errors;
 using RelayCove.Server.Hosting;
+using RelayCove.Server.Hubs;
 using RelayCove.Server.Options;
 using RelayCove.Server.RateLimiting;
+using RelayCove.Server.Realtime;
 using RelayCove.Server.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
+builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting", LogLevel.Warning);
 builder.Logging.AddSimpleConsole(options =>
 {
     options.SingleLine = true;
@@ -60,6 +64,8 @@ builder.Services.AddScoped<MessageCommandService>();
 builder.Services.AddScoped<MessageQueryService>();
 builder.Services.AddScoped<MessageReadService>();
 builder.Services.AddScoped<MessageSyncService>();
+builder.Services.AddScoped<NewMessagePublisher>();
+builder.Services.AddSingleton<INewMessageTransport, SignalRNewMessageTransport>();
 builder.Services.AddScoped<RelayCoveJwtBearerEvents>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();
@@ -72,6 +78,8 @@ builder.Services.AddAuthorization(options =>
     });
 });
 builder.Services.AddScoped<IAuthorizationHandler, AdministratorAuthorizationHandler>();
+builder.Services.AddSignalR();
+builder.Services.AddSingleton<IUserIdProvider, SubjectUserIdProvider>();
 builder.Services.AddHostedService<BootstrapAdminHostedService>();
 builder.Services.AddSingleton<IConfigureOptions<Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerOptions>, ConfigureJwtBearerOptions>();
 builder.Services.AddRateLimiter(_ => { });
@@ -91,6 +99,8 @@ app.MapAdminUserEndpoints();
 app.MapConversationEndpoints();
 app.MapMessageEndpoints();
 app.MapSyncEndpoints();
+app.MapHub<ChatHub>(ChatHub.Route, options => options.CloseOnAuthenticationExpiration = true)
+    .RequireAuthorization();
 
 app.Run();
 
