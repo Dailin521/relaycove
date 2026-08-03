@@ -10,6 +10,7 @@ internal sealed class WindowsClientNotificationHost : IDisposable
     private readonly ILogger<WindowsClientNotificationHost> logger;
     private readonly TimeSpan nativeOperationTimeout;
     private bool registered;
+    private bool registrationUncertain;
     private bool disposed;
 
     public WindowsClientNotificationHost(
@@ -40,6 +41,11 @@ internal sealed class WindowsClientNotificationHost : IDisposable
                 return true;
             }
 
+            if (registrationUncertain)
+            {
+                return false;
+            }
+
             try
             {
                 manager.NotificationInvoked += OnNotificationInvoked;
@@ -53,6 +59,7 @@ internal sealed class WindowsClientNotificationHost : IDisposable
                     if (!registration.Wait(nativeOperationTimeout))
                     {
                         manager.NotificationInvoked -= OnNotificationInvoked;
+                        registrationUncertain = true;
                         ScheduleLateRegistrationCleanup(registration);
                         logger.LogError(
                             "Windows app notification registration timed out.");
@@ -207,16 +214,14 @@ internal sealed class WindowsClientNotificationHost : IDisposable
         _ = registration.ContinueWith(
             static (completed, state) =>
             {
-                if (completed.Status != TaskStatus.RanToCompletion ||
-                    !completed.Result.IsSupported)
-                {
-                    return;
-                }
-
                 var host = (WindowsClientNotificationHost)state!;
                 try
                 {
-                    host.manager.Unregister();
+                    if (completed.Status == TaskStatus.RanToCompletion &&
+                        completed.Result.IsSupported)
+                    {
+                        host.manager.Unregister();
+                    }
                 }
                 catch (Exception exception)
                 {
@@ -224,6 +229,13 @@ internal sealed class WindowsClientNotificationHost : IDisposable
                         "Cleaning a late Windows notification registration failed; " +
                         "errorType={ErrorType}.",
                         exception.GetType().Name);
+                }
+                finally
+                {
+                    lock (host.stateGate)
+                    {
+                        host.registrationUncertain = false;
+                    }
                 }
             },
             this,

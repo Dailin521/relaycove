@@ -135,6 +135,30 @@ public sealed class WindowsClientNotificationHostTests
     }
 
     [Fact]
+    public async Task TryStart_WhileLateRegistrationIsUncertain_DoesNotRaceCleanup()
+    {
+        using var release = new ManualResetEventSlim();
+        var manager = new FakeWindowsAppNotificationManager
+        {
+            RegisterAction = release.Wait,
+        };
+        using var host = CreateHost(
+            manager,
+            _ => { },
+            nativeOperationTimeout: TimeSpan.FromMilliseconds(20));
+
+        Assert.False(host.TryStart());
+        Assert.False(host.TryStart());
+        Assert.Equal(1, manager.RegisterCount);
+
+        release.Set();
+        await WaitUntilAsync(() => manager.UnregisterCount == 1);
+
+        Assert.True(host.TryStart());
+        Assert.Equal(2, manager.RegisterCount);
+    }
+
+    [Fact]
     public void Dispose_AfterRegistration_UnsubscribesBeforeUnregisterAndIsIdempotent()
     {
         var manager = new FakeWindowsAppNotificationManager();
