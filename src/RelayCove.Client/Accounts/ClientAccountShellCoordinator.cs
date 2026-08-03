@@ -570,28 +570,28 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         RelayCove.Shared.Realtime.ConnectionState connectionState,
         ClientSyncRunStatus? syncStatus)
     {
-        string? displayName;
-        Uri? serverBaseUri;
-        LocalConversationListReadOutcome currentConversationList;
+        ClientAccountShellSnapshot value;
+        Action<ClientAccountShellSnapshot>? handlers;
         lock (stateGate)
         {
-            displayName = activeDisplayName;
-            serverBaseUri = activeServerBaseUri;
-            currentConversationList = conversationList;
+            value = new ClientAccountShellSnapshot(
+                phase,
+                PersistentClientAuthenticationStatus.Authenticated,
+                activeDisplayName,
+                activeServerBaseUri,
+                connectionState,
+                syncStatus,
+                LastLogoutStatus: null,
+                RetryAfter: null,
+                TotalUnreadCount: conversationList.Status == LocalCacheOperationStatus.Ready
+                    ? conversationList.TotalUnreadCount
+                    : 0,
+                Revision: Interlocked.Increment(ref shellPublicationRevision));
+            Volatile.Write(ref snapshot, value);
+            handlers = SnapshotChanged;
         }
 
-        PublishSnapshot(new ClientAccountShellSnapshot(
-            phase,
-            PersistentClientAuthenticationStatus.Authenticated,
-            displayName,
-            serverBaseUri,
-            connectionState,
-            syncStatus,
-            LastLogoutStatus: null,
-            RetryAfter: null,
-            TotalUnreadCount: currentConversationList.Status == LocalCacheOperationStatus.Ready
-                ? currentConversationList.TotalUnreadCount
-                : 0));
+        PublishSnapshotHandlers(value, handlers);
     }
 
     private void RestoreCurrentActiveSnapshot(ClientSyncRunStatus? syncStatus = null)

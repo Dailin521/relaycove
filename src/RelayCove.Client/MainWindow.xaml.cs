@@ -30,6 +30,11 @@ public partial class MainWindow : Window
 
     internal void ApplyAccountShellSnapshot(ClientAccountShellSnapshot snapshot)
     {
+        if (!snapshot.HasActiveAccount)
+        {
+            pendingConversationSelectionId = null;
+        }
+
         var presentation = ClientAccountShellPresenter.Present(snapshot);
         SetLiveText(HeadingText, presentation.Heading);
         SetLiveText(DetailText, presentation.Detail);

@@ -1286,10 +1286,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                         ? (DateTimeOffset?)null
                         : ParseStoredDateTime(reader.GetString(7));
                     var unreadCount = reader.GetInt32(8);
-                    totalUnreadCount = Math.Min(
-                        (long)int.MaxValue,
-                        totalUnreadCount + unreadCount);
-                    conversations.Add(new LocalConversationListItem(
+                    var item = new LocalConversationListItem(
                         conversationId,
                         (ConversationType)reader.GetInt32(1),
                         reader.GetString(2),
@@ -1300,7 +1297,11 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                         lastMessageCreatedAt,
                         unreadCount,
                         reader.GetBoolean(9),
-                        ParseStoredDateTime(reader.GetString(10))));
+                        ParseStoredDateTime(reader.GetString(10)));
+                    conversations.Add(item);
+                    totalUnreadCount = Math.Min(
+                        (long)int.MaxValue,
+                        totalUnreadCount + unreadCount);
                 }
                 catch (Exception exception) when (
                     exception is InvalidDataException or FormatException or
@@ -1315,7 +1316,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
 
             return new LocalConversationListReadOutcome(
                 LocalCacheOperationStatus.Ready,
-                conversations,
+                conversations.AsReadOnly(),
                 (int)totalUnreadCount,
                 revision);
         }

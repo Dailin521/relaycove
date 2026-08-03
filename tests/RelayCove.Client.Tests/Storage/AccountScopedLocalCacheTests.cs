@@ -534,6 +534,9 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         Assert.Equal(MessageType.Image, outcome.Conversations[1].LastMessageType);
         Assert.Null(outcome.Conversations[2].LastMessageType);
         Assert.Null(outcome.Conversations[2].LastMessageContent);
+        var listView = Assert.IsAssignableFrom<IList<LocalConversationListItem>>(
+            outcome.Conversations);
+        Assert.Throws<NotSupportedException>(() => listView.Add(firstItem));
     }
 
     [Fact]
@@ -580,6 +583,7 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
 
         Assert.Equal(LocalCacheOperationStatus.Ready, outcome.Status);
         Assert.Empty(outcome.Conversations);
+        Assert.Equal(0, outcome.TotalUnreadCount);
         Assert.False(cache.IsFatal);
     }
 
