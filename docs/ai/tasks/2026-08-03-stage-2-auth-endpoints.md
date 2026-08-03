@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 2 — 登录、refresh 轮换、logout 与 current-user 最小闭环
-- **状态：** 进行中（challenge 完成，实施中）
+- **状态：** 已完成
 - **基准提交：** `cd8f33afafe4956658792b0036cd229c29277412`
 - **工作分支：** `agent/stage-2-auth-endpoints`
 - **相关方案章节：** `RelayCove_工程落地方案.md` 第 7.1、8.2、10.2、11.1、18.4、阶段 2；`DEC-004`、`DEC-005`
@@ -63,13 +63,13 @@
 
 ### 验收标准
 
-- [ ] 合法登录返回脱敏 `LoginResponse`，数据库只出现 refresh hash；密码、原始 refresh 和 access token 不进入日志/错误/持久化明文。
-- [ ] 未知/非法用户名、错误密码和禁用用户使用相同 `401 AuthenticationFailed` 形状，缺失或无效 bearer 使用 `401 AuthenticationRequired`，无账号状态 oracle。
-- [ ] access JWT 只接受固定算法、类型、签名、issuer、audience 与 lifetime；有效 token 可调用 me，篡改/错误 claim/过期 token 和登录后禁用账号被拒绝。
-- [ ] refresh 原子轮换且并发只能一个成功；旧/未知/畸形/过期 token 统一失败，新 token 可继续轮换，数据库只存 hash。
-- [ ] logout 对任意 token 输入统一 `204` 且有效 token 被撤销；用户活动时间、password rehash 与成功操作在同一事务推进。
-- [ ] login/refresh 限流、`Retry-After` 与 `RateLimitExceeded` envelope 有自动化证据，其他端点不被同一策略误限。
-- [ ] Fast、Full、包漏洞审计、文件白名单、`git diff --check`、Claude challenge 与候选独立复核均通过或按规则如实记录。
+- [x] 合法登录返回脱敏 `LoginResponse`，数据库只出现 refresh hash；密码、原始 refresh 和 access token 不进入日志/错误/持久化明文。
+- [x] 未知/非法用户名、错误密码和禁用用户使用相同 `401 AuthenticationFailed` 形状，缺失或无效 bearer 使用 `401 AuthenticationRequired`，无账号状态 oracle。
+- [x] access JWT 只接受固定算法、类型、签名、issuer、audience 与 lifetime；有效 token 可调用 me，篡改/错误 claim/过期 token 和登录后禁用账号被拒绝。
+- [x] refresh 原子轮换且并发只能一个成功；旧/未知/畸形/过期 token 统一失败，新 token 可继续轮换，数据库只存 hash。
+- [x] logout 对任意 token 输入统一 `204` 且有效 token 被撤销；用户活动时间、password rehash 与成功操作在同一事务推进。
+- [x] login/refresh 限流、`Retry-After` 与 `RateLimitExceeded` envelope 有自动化证据，其他端点不被同一策略误限。
+- [x] Fast、Full、包漏洞审计、文件白名单、`git diff --check`、Claude challenge 与候选独立复核均通过或按规则如实记录。
 
 ### 验证命令
 
@@ -100,7 +100,11 @@ Fast 后形成代码检查点，Full 后固定 ReviewHead 做候选复核；不�
 
 ### 修改摘要
 
-- 待实现。
+- 新增严格 `at+jwt` / HS256 access token 签发和 bearer validation，启动期强制校验外部 signing key，并在 token 验证后动态确认用户仍存在且未禁用。
+- 新增 login/refresh/logout/me HTTP 闭环、统一错误 envelope、认证端点 IP fixed-window 限流、dummy password verify、password rehash 与用户活动时间推进。
+- refresh 使用真实 SQLite 默认非 deferred Serializable 写事务，以条件撤销作为首条语句并只在恰好命中一行时创建新 token；raw token/hash 采用不同强类型并统一脱敏。
+- 自审发现并修复两项可靠性缺口：首次数据库读取的 `SQLITE_BUSY/LOCKED` 原会落成 500，现统一为 503；测试宿主的连接字符串覆盖晚于 `Program` 读取，现显式替换 `DbContext`，每个测试类真实隔离临时数据库。
+- 新增真实 HTTP、临时文件 SQLite、并发轮换、锁库、JWT 负向、限流、启动配置和日志泄漏测试；仓库不含默认 signing key，应用仍不自动迁移。
 
 ### 验证证据
 
@@ -109,18 +113,26 @@ Fast 后形成代码检查点，Full 后固定 ReviewHead 做候选复核；不�
 | `已验证` | 基准 Fast | Debug 0 警告、0 错误；41 项测试通过 |
 | `已验证` | Claude challenge #16 | safe-mode 只读 CLI，实际 `claude-opus-5` / XHigh，费用 `$0.82506775`，对 `ChallengeHead=87ff08a` 返回 `REVISE`；本地输出截断中段，但 F1 毫秒时钟与并发轮换阻塞项明确可复现 |
 | `已验证` | Claude 定向 challenge #17 | 同一 ChallengeHead、只读 `Read/Glob/Grep`，实际 `claude-opus-5` / XHigh，费用 `$0.57057225`，完整返回 7 项 `REVISE` 修正；Codex 独立核对后纳入 `DEC-006` |
+| `已验证` | Server 定向测试 | `58/58` 通过；含真实文件 SQLite refresh 并发单赢、锁库 503、JWT 篡改/claim/过期/无签名、限流、空请求、rehash、动态禁用和日志无机密 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast` | Debug 构建 0 警告、0 错误；Server 58、Shared 13、Client/Updater 各 1，共 73 项测试通过 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full` | format、Release 构建、73 项测试与 `git diff --check` 全部通过；构建 0 警告、0 错误 |
+| `已验证` | `dotnet list RelayCove.sln package --vulnerable --include-transitive` | 8 个源/测试项目的直接与传递依赖均未报告已知漏洞 |
+| `已验证` | 基准差异文件白名单 | `cd8f33a..HEAD` 共 47 个文件，关闭 Git 中文路径转义后 0 个超出任务允许范围 |
+| `已验证` | Codex 固定候选自审 | `DecisionBase=9e17813..ReviewHead=b72194a`；发现并修复 SQLite 错误映射和测试数据库隔离问题，修复后 Fast/Full 通过 |
+| `未验证` | Claude 候选 review #18 | `claude_second_brain` 因本机 `ANTHROPIC_API_KEY`/其他认证源优先于 claude.ai 登录而禁用 connector，未返回模型、workspace、费用或审查结论；按用户要求不重复耗时调用，由 Codex 自审与本地验证降级覆盖 |
 
 ### 文件范围
 
-- 新增：本任务文件。
-- 修改：`docs/ai/STATUS.md`、`docs/ai/V1_EXECUTION.md`。
+- 新增：Server authentication、endpoint、error、options、rate-limit 与 session 服务；Shared refresh/logout/me 契约；对应 Server/Shared 自动化测试。
+- 修改：Server 启动与实体/哈希服务、Shared 稳定错误码、项目依赖和认证存储相关测试；工程方案、`DECISIONS.md`、`STATUS.md`、`V1_EXECUTION.md` 与本任务记录。
 - 删除：无。
 
 ### 决策与限制
 
 - 决策：challenge 后采用 `ServerClock`、严格 typed HS256 access JWT、动态用户状态、强类型 raw/hash token、非 deferred 条件轮换事务、稳定错误 envelope 与端点级 IP 限流；详见 `DEC-006`。
-- 已知限制：见“明确不做”；任务开始时尚无实现证据。
+- 已知限制：见“明确不做”。v1 仍接受单实例内存限流、无可信代理配置、无 refresh family/replay 全族撤销、无 signing-key rotation/JWKS；这些边界已在 `DEC-006` 明示，不阻塞当前封闭自托管切片。
+- 独立复核限制：前置 Claude challenge 有效且已纳入实现；最终候选 Claude MCP 因本机认证源配置失败未取得意见，不能标记为通过，但本地固定差异自审、58 项 Server 测试、Full 与漏洞审计均通过。
 
 ### 下一步
 
-- 实现认证 HTTP 闭环并用真实文件 SQLite 与 HTTP host 验证轮换、oracle 和 JWT 负向路径。
+- 将完成提交仅快进合入 `agent/v1-integration`；下一纵向切片实现默认管理员引导与管理员用户生命周期，不扩展当前 token 协议。

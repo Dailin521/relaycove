@@ -9,13 +9,13 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 2
 ActiveTask: docs/ai/tasks/2026-08-03-stage-2-auth-endpoints.md
-TaskStatus: running
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 6b0c85e35cb3ed56f58646b569908a8d61958876
+LatestGreenCodeCommit: b72194a168ba99a5268661df8f8cac7c48578fc4
 LatestGreenIntegrationCommit: cd8f33afafe4956658792b0036cd229c29277412
-NextAction: 按 DEC-006 实现 login/refresh/logout/me、严格 JWT validation、条件轮换事务与端点限流
-ClaudeCalls: 17（软上限 24，硬上限 30）
-ClaudeCostUsd: 5.4229485 confirmed；另有十次失败/中断调用费用 unavailable
+NextAction: 将认证端点完成提交仅快进合入 agent/v1-integration，并启动默认管理员与用户生命周期切片
+ClaudeCalls: 18（软上限 24，硬上限 30）
+ClaudeCostUsd: 5.4229485 confirmed；另有十一次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -32,7 +32,7 @@ RequiredUserGate: none
 | 里程碑 | 状态 | 当前证据 | 下一出口 |
 | --- | --- | --- | --- |
 | M0 | `completed` | 同步契约、`DEC-003`、解决方案和真实 Fast/Full 验证均通过 | 已进入 M1 |
-| M1 | `running` | 可构建骨架、认证共享契约（`DEC-004`）与认证存储/密码哈希（`DEC-005`）已完成 | 认证、会话、权限、文字消息、历史与 SignalR 形成纵向闭环 |
+| M1 | `running` | 可构建骨架、认证共享契约/存储（`DEC-004/005`）与认证 HTTP/轮换闭环（`DEC-006`）已完成 | 管理员用户生命周期、权限、文字消息、历史与 SignalR 形成纵向闭环 |
 | M2 | `pending` | 尚未开始 | Internal Alpha 验收证据完整 |
 | M3 | `pending` | 尚未开始 | Beta 验收证据完整 |
 | M4 | `pending` | 尚未开始 | RC 自动化、包与发布材料完整 |
@@ -43,9 +43,9 @@ RequiredUserGate: none
 ## 集成与绿色状态
 
 - `agent/v1-integration` 是本地最新绿色集成头；任务分支只有完成验证和交接提交后，才允许仅快进该分支。
-- 当前认证存储代码检查点 `6b0c85e35cb3ed56f58646b569908a8d61958876` 已通过 Fast、Full、41 项测试、迁移/依赖审计与 Claude 独立复核；完成交接提交后才允许仅快进集成头。
+- 当前认证端点代码检查点 `b72194a168ba99a5268661df8f8cac7c48578fc4` 已通过 Fast、Full、73 项测试、真实 SQLite 并发/锁库、JWT 负向、限流、日志与依赖漏洞审计；候选 Claude MCP 未取得结论，已如实降级记录 Codex 固定差异自审。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
-- 未经用户明确授权，不 push、不合并 `main`、不创建 PR/Tag/Release、不部署，也不删除远端分支。
+- 用户已明确授权绿色任务的常规 push、合入集成分支与任务分支清理，无需二次确认；`main`、Tag、Release、真实发布和生产部署仍须满足对应里程碑与发布 Gate，不由该授权自动放宽。
 
 ## Claude 使用账本
 
@@ -68,9 +68,10 @@ RequiredUserGate: none
 | 15 | 2026-08-03 | 认证存储 | safe-mode 只读 CLI 最终 review | Opus / XHigh | 显式工作目录 `E:\WorkSpace\RelayCove`，工具限于 `Read/Glob/Grep`；实际 `claude-opus-5`、请求模型无偏差，`Base=0e5eefb..ReviewHead=6b0c85e`；耗时 `782578 ms`，`PASS`，无阻塞发现 | `$2.35148075` |
 | 16 | 2026-08-03 | 认证端点 | safe-mode 只读 CLI challenge | Opus / XHigh | `ChallengeHead=87ff08aa5c7258a0b48cd37733a9b6fcd1d0b8d9`；实际 `claude-opus-5`，返回 `REVISE`；确认毫秒时钟和并发轮换阻塞项，中段本地输出被截断 | `$0.82506775` |
 | 17 | 2026-08-03 | 认证端点 | safe-mode 只读 CLI 定向 challenge | Opus / XHigh | 同一 ChallengeHead，实际 `claude-opus-5`；完整返回 7 项 `REVISE` 修正，经本地代码与 Microsoft.Data.Sqlite 事务证据核对后纳入 `DEC-006` | `$0.57057225` |
+| 18 | 2026-08-03 | 认证端点 | 最终 MCP review | Opus / XHigh | `ReviewHead=b72194a`；本机 `ANTHROPIC_API_KEY`/其他认证源优先于 claude.ai 登录，connector 被禁用，未返回模型、workspace、费用或审查结论；按用户要求未重复耗时调用，降级 Codex 固定差异自审 | `unavailable` |
 
-- 调用计数：`17 / 24 soft / 30 hard`。
-- 已确认费用合计：`$5.4229485`；其余十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`18 / 24 soft / 30 hard`。
+- 已确认费用合计：`$5.4229485`；其余十一次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - Claude 恢复可用后，每次调用必须记录返回的 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；达到调用或费用硬上限时降级为 Codex 独立复核，不停止开发。
 
 ## 阻塞与用户 Gate
