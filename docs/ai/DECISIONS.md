@@ -107,3 +107,16 @@
 - **理由：** 永久 canonical pair key 把并发单例交给唯一索引并保留一对一历史连续性；Direct 名称动态派生避免同一字段无法同时表达双方视角；显式 Restrict/Cascade 防止 EF 必填关系的默认级联误删会话，同时保留从属成员清理。没有提前创建 Messages 表或触碰同步协议。
 - **影响：** 后续创建/获取 Direct 必须 INSERT-first 或在等效写事务中处理唯一冲突，并在发现软删除记录时恢复同一 ID；频道/成员 API 必须维护会话角色与全局管理员的区分。阶段 11 用户硬删除必须先处理其创建者引用，常规账号删除宜通过现有 `IsDisabled` 收敛。未来 Attachments migration 加 Avatar FK 前仍需处理孤儿值。
 - **来源：** 工程落地方案第 7.2、7.3、10.1、11.1、11.2、阶段 3；`DEC-003`、`DEC-005`；`docs/ai/tasks/2026-08-03-stage-3-conversation-storage.md`；2026-08-03 Microsoft EF Core 10 SQLite limitations、keys/indexes 与 cascade delete 官方文档。
+
+### DEC-009：会话 API、动态管理授权与权威读取边界
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** 阶段 3 需要把三种会话的创建、可见性和成员管理落为稳定 HTTP 契约，同时避免全局管理员越权读取私有内容、授权检查与写入之间的 TOCTOU、Direct 并发重复，以及不完整会话列表触发客户端误删缓存。
+- **决策：** `POST /api/conversations` 是判别请求：Public/Private 频道只接受 `Type` 与 `Name`，且仅数据库当前全局管理员可创建；Direct 只接受 `Type=Direct` 与 `ParticipantUserId`，任意正常认证用户可创建或获取。频道创建者写入会话内 `Administrator`；Direct 使用 `DEC-008` 永久 canonical pair key，新建返回 201，已存在或恢复软删除行返回 200，并始终保持同一 ID 和恰好两个 `Member`。禁止自聊，目标用户必须存在且未禁用。
+- **决策：** 私有频道成员写操作允许写事务内仍为全局管理员的用户，或该频道内当前 `Administrator`；全局管理覆盖只授予成员管理权，不自动授予私有会话内容读取权。成员 POST 是幂等 upsert：新增为 201，已存在 no-op 或角色更新为 200；DELETE 对不存在成员仍返回 204。Public 的访问对正常认证用户隐式成立，不伪造 JoinedAt 成员清单；Direct 成员不可变。对 Public 成员清单或非 Private 成员写返回稳定 `409 ConversationTypeConflict`。
+- **决策：** `GET /api/conversations` 在单个非分页权威 SQL 查询中按当前身份投影完整可见集合并返回 `Complete=true`；Public 对全部正常认证用户可见，Private/Direct 只对当前成员可见，Direct 名称按当前用户投影另一参与者昵称。单会话读取把权限过滤与 DTO 投影放在同一查询中。未知、删除或不可访问会话统一 fail-closed 为 `403 ConversationAccessRevoked`，不提供存在性 oracle；普通成员尝试管理返回 `403 AccessDenied`。私有成员清单只对当前成员或全局管理员可读，Direct 清单只对参与者可读。
+- **决策：** 会话和成员命令使用 SQLite 非 deferred、Serializable 写事务，在修改前重新读取 actor、目标用户、会话类型与当前角色。当前尚无 Messages，创建/重新加入成员的 `LastReadMessageId` 为 0；阶段 4 引入 Messages 时，必须在同一成员写事务中改为读取该会话当前 `MAX(Messages.Id)`，重复添加现有成员不得重置水位。当前 DTO 的 `LastMessageId`、`UnreadCount` 和无显式成员的 Public `LastReadMessageId` 均为 0。
+- **理由：** ASP.NET Core 的资源授权发生在资源加载后，需要命令/查询边界内的命令式动态判断；SQLite 同时只有一个待提交写者，非 deferred 事务可在权限复核前取得写锁，避免先授权后等待写锁造成的陈旧权限。EF Core 单查询避免 split query 在并发撤权下返回内部不一致结果，且 `Complete=true` 只用于确实完整的集合。统一 403 隐藏私有资源是否存在，409 则只表示已获授权上下文中的资源类型不支持该操作。
+- **影响：** Shared 增加创建、列表、会话和成员 DTO，以及 `ConversationTypeConflict`、`UserNotFound` 稳定错误码；Server 端点和测试必须覆盖 Direct 正反序/并发/恢复、事务内动态降权、撤权后 403、单查询全集和日志脱敏。阶段 4 修改成员初始化时必须与 Messages migration/服务同批验证，不能继续写常量 0。频道更新/删除、公共显式成员、用户目录、消息、SignalR 和客户端不在本切片。
+- **来源：** 工程落地方案第 7.2、7.3、8.2、10.2、阶段 3；`DEC-003`、`DEC-006`、`DEC-008`；`docs/ai/tasks/2026-08-03-stage-3-conversation-api.md`；2026-08-03 Microsoft.Data.Sqlite transactions、ASP.NET Core resource-based authorization 与 EF Core single/split query 官方文档。

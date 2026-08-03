@@ -699,6 +699,10 @@ POST   /api/conversations/{id}/members
 DELETE /api/conversations/{id}/members/{userId}
 ```
 
+阶段 3 冻结 `POST /api/conversations` 为判别请求：Public/Private 传 `Type + Name`，只允许数据库当前全局管理员创建，且创建者成为会话内 Administrator；Direct 传 `Type=Direct + ParticipantUserId`，任意正常认证用户可创建或获取，canonical pair 新建返回 201、已存在或恢复返回 200。私有成员 POST 是 201/200 幂等 upsert，DELETE 不存在成员仍为 204；写事务内必须复核全局管理员或当前会话 Administrator。全局管理员的成员管理覆盖不自动授予私有内容读取权。
+
+`GET /api/conversations` 必须在单个权威查询中返回非分页完整集合和 `Complete=true`；Public 对全部正常认证用户隐式可见，Private/Direct 仅当前成员可见，Direct 名称按另一参与者昵称派生。未知、删除或不可访问会话统一返回 `403 ConversationAccessRevoked`；错误会话类型的成员操作返回 `409 ConversationTypeConflict`。Public 不提供伪造成员清单，Direct 成员不可变。
+
 ### 消息接口
 
 ```text
@@ -968,7 +972,7 @@ public sealed record ApiErrorResponse(
 ```
 
 - `Code` 是客户端分支的稳定字符串；`Message` 只用于人类诊断或显示，不是兼容性键。`Details` 的键使用 Web camelCase 请求字段名，每个字段可包含多个错误。
-- 第一批稳定错误码为 `ValidationFailed`、`AuthenticationFailed`、`AuthenticationRequired`、`AccessDenied`、`RateLimitExceeded`、`ServiceUnavailable`、`InternalServerError`、`UserNameAlreadyExists`、`SyncCursorInvalid`、`IdempotencyKeyReuse`、`ConversationAccessRevoked`。
+- 第一批稳定错误码为 `ValidationFailed`、`AuthenticationFailed`、`AuthenticationRequired`、`AccessDenied`、`RateLimitExceeded`、`ServiceUnavailable`、`InternalServerError`、`UserNameAlreadyExists`、`UserNotFound`、`ConversationTypeConflict`、`SyncCursorInvalid`、`IdempotencyKeyReuse`、`ConversationAccessRevoked`。
 - 未知用户名、密码错误和账号禁用统一返回 `401 AuthenticationFailed`，响应不得揭示账号是否存在或禁用；精确原因只进入不含机密的服务端诊断。
 - 缺少或无效认证返回 `401 AuthenticationRequired`；身份有效但普通权限不足返回 `403 AccessDenied`；已撤销会话权限继续使用 `403 ConversationAccessRevoked`。
 - 请求校验失败返回 `400 ValidationFailed`；同步游标和幂等键冲突使用各自已冻结的 `409` 错误码。错误响应、日志和 TraceId 都不得包含密码、完整 Token 或密钥。
@@ -2020,7 +2024,7 @@ dotnet build 通过
 6. 获取当前用户会话列表；
 7. 创建或获取一对一私聊；
 8. 在添加成员事务中初始化 `LastReadMessageId`；
-9. 实现 `Complete=true` 权威成员全集与撤权错误码；
+9. 实现 `Complete=true` 权威会话全集与撤权错误码；
 10. 权限校验。
 
 验收：
