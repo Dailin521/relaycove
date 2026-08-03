@@ -99,7 +99,7 @@ git diff --check 'c1f7020f2eb23867ec089d3328ab3cd6645fd5df..HEAD'
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
-| `未验证` | Claude challenge | 待调用 |
+| `未验证` | Claude challenge | 调用因本机认证源优先禁用组织连接器而失败；调用前后 `ChallengeHead=6d60f9ae22a392adb75970763f260b10e53ebdbc` 与干净状态一致，未返回模型、workspace、mismatch 或费用，已降级 Codex 反证 |
 | `未验证` | Fast / Full | 待运行 |
 | `未验证` | 敏感字段与 JSON 测试 | 待运行 |
 | `未验证` | Claude/Codex 候选复核 | 待执行 |

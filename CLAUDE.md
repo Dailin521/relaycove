@@ -74,6 +74,8 @@ ProcessIncomingMessage(MessageDto message, IncomingMessageSource source)
 
 权限校验必须在服务端：管理员接口校验 `IsAdmin == true`，搜索按 `ConversationMembers` 过滤，附件下载校验所属会话权限，都不能只靠客户端隐藏入口。附件物理文件名用 `{AttachmentId}_{RandomSuffix}{Extension}`，绝不使用原始文件名，防目录穿越。日志不得写明文密码、完整 Token、密钥、附件内容。
 
+API 失败统一使用 `ApiErrorResponse` 的稳定字符串 `Code`；客户端不得解析 `Message` 分支。未知用户、错误密码和禁用账号统一为 `AuthenticationFailed`，避免账号枚举。Login request/response 的 `ToString()` 已脱敏，但任何日志代码仍不得显式记录密码、Access Token 或 Refresh Token。
+
 ### 客户端约束
 
 消息列表用虚拟化；集合更新回到 UI 线程；上传下载和缩略图不阻塞 UI；关闭窗口默认隐藏到托盘并保留 SignalR 连接与通知能力，真正退出只走托盘菜单。单实例激活必须通过实现探针在 `AppInstance` 与 `Mutex + Named Pipe` IPC 中选型，并把完整 `MessageTarget` / `UnreadOverviewTarget` 转交已有实例；不能只激活窗口。

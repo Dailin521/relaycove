@@ -947,6 +947,24 @@ public sealed record LoginResponse(
     string MinimumSupportedClientVersion);
 ```
 
+`LoginRequest` 与 `LoginResponse` 的实现必须覆盖 record 默认 `ToString()`：密码、Access Token 和 Refresh Token 只能输出 `[REDACTED]`，不得因对象插值或结构化日志意外泄露。传输 JSON 仍包含完成认证所需字段，服务端和客户端统一使用 Web camelCase 形状。
+
+### ApiErrorResponse
+
+```csharp
+public sealed record ApiErrorResponse(
+    string Code,
+    string Message,
+    string? TraceId = null,
+    IReadOnlyDictionary<string, string[]>? Details = null);
+```
+
+- `Code` 是客户端分支的稳定字符串；`Message` 只用于人类诊断或显示，不是兼容性键。`Details` 的键使用 Web camelCase 请求字段名，每个字段可包含多个错误。
+- 第一批稳定错误码为 `ValidationFailed`、`AuthenticationFailed`、`AuthenticationRequired`、`AccessDenied`、`SyncCursorInvalid`、`IdempotencyKeyReuse`、`ConversationAccessRevoked`。
+- 未知用户名、密码错误和账号禁用统一返回 `401 AuthenticationFailed`，响应不得揭示账号是否存在或禁用；精确原因只进入不含机密的服务端诊断。
+- 缺少或无效认证返回 `401 AuthenticationRequired`；身份有效但普通权限不足返回 `403 AccessDenied`；已撤销会话权限继续使用 `403 ConversationAccessRevoked`。
+- 请求校验失败返回 `400 ValidationFailed`；同步游标和幂等键冲突使用各自已冻结的 `409` 错误码。错误响应、日志和 TraceId 都不得包含密码、完整 Token 或密钥。
+
 ### ConversationDto
 
 ```csharp

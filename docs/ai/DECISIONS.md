@@ -49,3 +49,14 @@
 - **理由：** 这些规则让权限空洞、并发请求、四种到达顺序、崩溃恢复和撤权迟到帧都有唯一可编码结果，同时保持第一版轻量单体边界，不引入 outbox、消息队列或第二种数据库。
 - **影响：** `SyncResponse` 固定为 `Messages`、`NextCursor`、`SnapshotUpperBound`、`HasMore`；本地表、错误码、通知激活目标和后续契约测试必须遵循上述语义。增加服务端写实例、更换数据库、允许消息编辑删除或改变 ID/提交顺序时，必须新增决策并重新设计同步协议。
 - **来源：** 细化 `DEC-002`；工程落地方案第 4.2、10、11、12、13、20、21 节；`docs/ai/tasks/2026-07-31-stage-0-sync-contract.md`。
+
+### DEC-004：稳定 API 错误与认证机密日志边界
+
+- **状态：** 已接受
+- **日期：** 2026-08-03
+- **背景：** Client 和 Server 需要共享可兼容的失败分支；登录 DTO 又包含密码与 Token，C# record 默认字符串表示会把构造参数带入日志。
+- **决策：** API 失败使用 `ApiErrorResponse(Code, Message, TraceId, Details)`。`Code` 是稳定字符串兼容键，`Message` 仅供人类诊断或显示，字段错误使用 Web camelCase 键。第一批代码为 `ValidationFailed`、`AuthenticationFailed`、`AuthenticationRequired`、`AccessDenied` 以及 `DEC-003` 的 `SyncCursorInvalid`、`IdempotencyKeyReuse`、`ConversationAccessRevoked`。
+- **决策：** 未知用户、密码错误和账号禁用对外统一为 `401 AuthenticationFailed`，避免账号枚举。Login request/response 覆盖 record `ToString()`，密码、Access Token 和 Refresh Token 一律显示 `[REDACTED]`；错误响应、TraceId 与日志也不得携带这些机密。
+- **理由：** 字符串码便于跨版本、跨语言稳定分支；把诊断文本与机器码分离可以修改或本地化提示而不破坏客户端。统一认证失败和默认脱敏降低枚举与日志泄露风险。
+- **影响：** 后续 Controller、客户端 HTTP 层、测试和文档必须按 HTTP 状态与 `Code` 组合判断，不得解析 `Message`。新增或替代公共错误码需要在对应任务更新本决策或新增替代决策。
+- **来源：** 工程落地方案第 8.2、10.2、18.4 节；`docs/ai/tasks/2026-08-03-stage-1-auth-contracts.md`。
