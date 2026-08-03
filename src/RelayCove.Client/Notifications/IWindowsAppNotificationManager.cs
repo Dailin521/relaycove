@@ -14,8 +14,6 @@ internal interface IWindowsAppNotificationManager
 
     void Register();
 
-    string? GetCurrentActivationArgument();
-
     void Unregister();
 
     Task ShowAsync(

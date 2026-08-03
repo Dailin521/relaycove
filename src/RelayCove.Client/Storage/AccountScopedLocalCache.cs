@@ -236,7 +236,19 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     {
         ValidateGuid(conversationId, nameof(conversationId));
         ThrowIfDisposed();
+        var syncStatus = GetSyncStatus();
+        if (syncStatus != LocalCacheOperationStatus.Ready)
+        {
+            return syncStatus;
+        }
+
         return GetAccessStatus(conversationId);
+    }
+
+    internal LocalCacheOperationStatus GetNotificationOverviewAccessStatus()
+    {
+        ThrowIfDisposed();
+        return GetSyncStatus();
     }
 
     public async Task<LocalCacheOperationStatus> RegisterAuthoritativeConversationAsync(

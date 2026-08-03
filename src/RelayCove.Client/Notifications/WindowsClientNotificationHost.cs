@@ -32,7 +32,6 @@ internal sealed class WindowsClientNotificationHost : IDisposable
 
     public bool TryStart()
     {
-        string? currentActivationArgument;
         lock (stateGate)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
@@ -52,7 +51,7 @@ internal sealed class WindowsClientNotificationHost : IDisposable
                 try
                 {
                     var registration = Task.Factory.StartNew(
-                        RegisterAndReadCurrentActivation,
+                        RegisterIfSupported,
                         CancellationToken.None,
                         TaskCreationOptions.LongRunning,
                         TaskScheduler.Default);
@@ -67,7 +66,7 @@ internal sealed class WindowsClientNotificationHost : IDisposable
                     }
 
                     var result = registration.GetAwaiter().GetResult();
-                    if (!result.IsSupported)
+                    if (!result)
                     {
                         manager.NotificationInvoked -= OnNotificationInvoked;
                         logger.LogWarning("Windows app notifications are not supported.");
@@ -76,15 +75,6 @@ internal sealed class WindowsClientNotificationHost : IDisposable
 
                     registered = true;
                     manager.SetRegistrationReady(true);
-                    currentActivationArgument = result.ActivationArgument;
-                    if (result.ActivationReadException is not null)
-                    {
-                        logger.LogWarning(
-                            "Reading the current Windows notification activation failed; " +
-                            "errorType={ErrorType}.",
-                            result.ActivationReadException.GetType().Name);
-                    }
-
                     logger.LogInformation("Windows app notification host registered.");
                 }
                 catch
@@ -100,11 +90,6 @@ internal sealed class WindowsClientNotificationHost : IDisposable
                     exception.GetType().Name);
                 return false;
             }
-        }
-
-        if (currentActivationArgument is not null)
-        {
-            OnNotificationInvoked(currentActivationArgument);
         }
 
         return true;
@@ -155,6 +140,27 @@ internal sealed class WindowsClientNotificationHost : IDisposable
         }
     }
 
+    internal void DetachForProcessExit()
+    {
+        lock (stateGate)
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            disposed = true;
+            if (!registered)
+            {
+                return;
+            }
+
+            manager.NotificationInvoked -= OnNotificationInvoked;
+            manager.SetRegistrationReady(false);
+            registered = false;
+        }
+    }
+
     private void OnNotificationInvoked(string argument)
     {
         lock (stateGate)
@@ -184,34 +190,18 @@ internal sealed class WindowsClientNotificationHost : IDisposable
         }
     }
 
-    private RegistrationResult RegisterAndReadCurrentActivation()
+    private bool RegisterIfSupported()
     {
         if (!manager.IsSupported())
         {
-            return new RegistrationResult(
-                IsSupported: false,
-                ActivationArgument: null,
-                ActivationReadException: null);
+            return false;
         }
 
         manager.Register();
-        try
-        {
-            return new RegistrationResult(
-                IsSupported: true,
-                manager.GetCurrentActivationArgument(),
-                ActivationReadException: null);
-        }
-        catch (Exception exception)
-        {
-            return new RegistrationResult(
-                IsSupported: true,
-                ActivationArgument: null,
-                exception);
-        }
+        return true;
     }
 
-    private void ScheduleLateRegistrationCleanup(Task<RegistrationResult> registration)
+    private void ScheduleLateRegistrationCleanup(Task<bool> registration)
     {
         _ = registration.ContinueWith(
             static (completed, state) =>
@@ -225,12 +215,12 @@ internal sealed class WindowsClientNotificationHost : IDisposable
     }
 
     private async Task CompleteLateRegistrationCleanupAsync(
-        Task<RegistrationResult> registration)
+        Task<bool> registration)
     {
         try
         {
             if (registration.Status == TaskStatus.RanToCompletion &&
-                registration.Result.IsSupported)
+                registration.Result)
             {
                 var unregistration = Task.Factory.StartNew(
                     manager.Unregister,
@@ -269,8 +259,4 @@ internal sealed class WindowsClientNotificationHost : IDisposable
         }
     }
 
-    private sealed record RegistrationResult(
-        bool IsSupported,
-        string? ActivationArgument,
-        Exception? ActivationReadException);
 }

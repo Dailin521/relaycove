@@ -17,6 +17,8 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
     private readonly IClientAccountReadThroughCoordinator readThroughCoordinator;
     private readonly IAsyncDisposable notificationCoordinator;
     private readonly IAsyncDisposable localCache;
+    private readonly Func<ClientNotificationActivationTarget, bool>?
+        notificationTargetAuthorizer;
     private readonly ClientActivityState activityState;
     private readonly ILogger<ClientAccountRuntime> logger;
     private readonly CancellationTokenSource lifetimeCancellation = new();
@@ -34,7 +36,8 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
         IAsyncDisposable? notificationCoordinator,
         IAsyncDisposable localCache,
         ClientActivityState activityState,
-        ILogger<ClientAccountRuntime> logger)
+        ILogger<ClientAccountRuntime> logger,
+        Func<ClientNotificationActivationTarget, bool>? notificationTargetAuthorizer = null)
     {
         Identity = identity ?? throw new ArgumentNullException(nameof(identity));
         this.authenticationSession = authenticationSession ??
@@ -50,6 +53,7 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
         this.activityState = activityState ?? throw new ArgumentNullException(nameof(activityState));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        this.notificationTargetAuthorizer = notificationTargetAuthorizer;
         if (!authenticationSession.IsAuthenticated ||
             authenticationSession.UserId != identity.UserId ||
             !Equals(authenticationSession.ServerBaseUri, identity.CanonicalServerBaseUri))
@@ -67,6 +71,33 @@ internal sealed class ClientAccountRuntime : IAsyncDisposable
     public override string ToString() =>
         $"{nameof(ClientAccountRuntime)} {{ Identity = [REDACTED], " +
         $"ConnectionState = {ConnectionState} }}";
+
+    internal bool TryAuthorizeNotificationTarget(ClientNotificationActivationTarget target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        lock (stateGate)
+        {
+            if (terminalMode != TerminalMode.None ||
+                !authenticationSession.IsAuthenticated ||
+                !string.Equals(Identity.Id, target.AccountScopeId, StringComparison.Ordinal) ||
+                notificationTargetAuthorizer is null)
+            {
+                return false;
+            }
+
+            try
+            {
+                return notificationTargetAuthorizer(target);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    "Authorizing a notification target failed; errorType={ErrorType}.",
+                    exception.GetType().Name);
+                return false;
+            }
+        }
+    }
 
     public void UpdateActivity(ClientActivitySnapshot snapshot)
     {

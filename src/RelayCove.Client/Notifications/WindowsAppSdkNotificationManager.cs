@@ -1,4 +1,3 @@
-using Microsoft.Windows.AppLifecycle;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
 
@@ -6,6 +5,8 @@ namespace RelayCove.Client.Notifications;
 
 internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotificationManager
 {
+    internal const string ColdActivationCommandLineMarker =
+        "----AppNotificationActivated:";
     private readonly Lazy<AppNotificationManager> manager;
     private int registered;
 
@@ -17,6 +18,12 @@ internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotification
     }
 
     public static WindowsAppSdkNotificationManager Shared { get; } = new();
+
+    internal static bool RequiresRegistrationBeforeActivationRead(
+        IReadOnlyList<string>? commandLineArguments = null) =>
+        (commandLineArguments ?? Environment.GetCommandLineArgs())
+            .Skip(1)
+            .Contains(ColdActivationCommandLineMarker, StringComparer.Ordinal);
 
     public event Action<string>? NotificationInvoked;
 
@@ -33,15 +40,6 @@ internal sealed class WindowsAppSdkNotificationManager : IWindowsAppNotification
     public bool IsSupported() => AppNotificationManager.IsSupported();
 
     public void Register() => manager.Value.Register();
-
-    public string? GetCurrentActivationArgument()
-    {
-        var activation = AppInstance.GetCurrent().GetActivatedEventArgs();
-        return activation.Kind == ExtendedActivationKind.AppNotification &&
-            activation.Data is AppNotificationActivatedEventArgs notificationActivation
-                ? notificationActivation.Argument
-                : null;
-    }
 
     public void Unregister()
     {

@@ -664,8 +664,6 @@ public sealed class WindowsClientNotificationPlatformTests
         {
         }
 
-        public string? GetCurrentActivationArgument() => null;
-
         public void Unregister()
         {
         }

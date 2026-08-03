@@ -173,7 +173,17 @@ internal sealed class ClientAccountRuntimeFactory
                 notificationRoundCoordinator,
                 cache,
                 activityState,
-                loggerFactory.CreateLogger<ClientAccountRuntime>());
+                loggerFactory.CreateLogger<ClientAccountRuntime>(),
+                target => target.Kind switch
+                {
+                    ClientNotificationActivationKind.Message =>
+                        cache.GetNotificationConversationAccessStatus(
+                            target.ConversationId!.Value) == LocalCacheOperationStatus.Ready,
+                    ClientNotificationActivationKind.UnreadOverview =>
+                        cache.GetNotificationOverviewAccessStatus() ==
+                            LocalCacheOperationStatus.Ready,
+                    _ => false,
+                });
             unownedNotificationRoundCoordinator = null;
             return runtime;
         }

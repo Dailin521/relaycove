@@ -43,42 +43,6 @@ public sealed class WindowsClientNotificationHostTests
     }
 
     [Fact]
-    public void TryStart_WhenCurrentActivationIsNotification_DeliversAfterRegistration()
-    {
-        var target = ClientNotificationActivationTarget.UnreadOverview(AccountScopeId);
-        var manager = new FakeWindowsAppNotificationManager
-        {
-            CurrentActivationArgument =
-                WindowsNotificationActivationCodec.EncodeToArgument(target),
-        };
-        ClientNotificationActivationTarget? received = null;
-        using var host = CreateHost(manager, activation => received = activation);
-
-        Assert.True(host.TryStart());
-
-        Assert.Equal(target, received);
-        Assert.Equal(1, manager.GetCurrentActivationCount);
-    }
-
-    [Fact]
-    public void TryStart_WhenCurrentActivationReadFails_KeepsRegisteredAndLogsSafely()
-    {
-        var manager = new FakeWindowsAppNotificationManager
-        {
-            CurrentActivationException = new COMException("sensitive activation"),
-        };
-        var logger = new RecordingLogger<WindowsClientNotificationHost>();
-        using var host = CreateHost(manager, _ => { }, logger);
-
-        Assert.True(host.TryStart());
-
-        Assert.Equal(1, manager.SubscriberCount);
-        Assert.DoesNotContain(
-            logger.Entries,
-            entry => entry.Contains("sensitive activation", StringComparison.Ordinal));
-    }
-
-    [Fact]
     public void Invocation_WhenTargetIsInvalid_FailsClosedWithoutCallingSink()
     {
         var manager = new FakeWindowsAppNotificationManager();
@@ -205,6 +169,34 @@ public sealed class WindowsClientNotificationHostTests
     }
 
     [Fact]
+    public void DetachForProcessExit_AfterRegistration_DoesNotRemovePersistentRegistration()
+    {
+        var manager = new FakeWindowsAppNotificationManager();
+        var host = CreateHost(manager, _ => { });
+        Assert.True(host.TryStart());
+
+        host.DetachForProcessExit();
+        host.DetachForProcessExit();
+
+        Assert.Equal(0, manager.UnregisterCount);
+        Assert.Equal(0, manager.SubscriberCount);
+        Assert.False(manager.IsRegistered);
+    }
+
+    [Theory]
+    [InlineData(new[] { "RelayCove.Client.exe", "----AppNotificationActivated:", "-Embedding" }, true)]
+    [InlineData(new[] { "RelayCove.Client.exe", "----appnotificationactivated:" }, false)]
+    [InlineData(new[] { "RelayCove.Client.exe", "prefix----AppNotificationActivated:" }, false)]
+    [InlineData(new[] { "RelayCove.Client.exe" }, false)]
+    public void ColdActivationMarker_WhenCommandLineVaries_MatchesOnlyExactSystemArgument(
+        string[] arguments,
+        bool expected) =>
+        Assert.Equal(
+            expected,
+            WindowsAppSdkNotificationManager
+                .RequiresRegistrationBeforeActivationRead(arguments));
+
+    [Fact]
     public void Dispose_WhenUnregisterDoesNotFinishInTime_ReturnsWithinBound()
     {
         var manager = new FakeWindowsAppNotificationManager();
@@ -302,12 +294,6 @@ public sealed class WindowsClientNotificationHostTests
 
         public int UnregisterCount { get; private set; }
 
-        public string? CurrentActivationArgument { get; init; }
-
-        public Exception? CurrentActivationException { get; init; }
-
-        public int GetCurrentActivationCount { get; private set; }
-
         public bool IsSupported() => IsSupportedValue;
 
         public void Register()
@@ -320,17 +306,6 @@ public sealed class WindowsClientNotificationHostTests
             }
 
             registered = true;
-        }
-
-        public string? GetCurrentActivationArgument()
-        {
-            GetCurrentActivationCount++;
-            if (CurrentActivationException is not null)
-            {
-                throw CurrentActivationException;
-            }
-
-            return CurrentActivationArgument;
         }
 
         public void Unregister()

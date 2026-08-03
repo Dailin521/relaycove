@@ -147,10 +147,15 @@ public sealed class ClientAccountRuntimeTests
             });
         var session = CreateSession();
         var runtime = await factory.CreateAsync(session);
+        var unreadTarget = ClientNotificationActivationTarget.UnreadOverview(
+            runtime.Identity.Id);
+
+        Assert.False(runtime.TryAuthorizeNotificationTarget(unreadTarget));
 
         var outcome = await runtime.StartAsync();
 
         Assert.True(outcome.IsAuthoritativeCacheReady);
+        Assert.True(runtime.TryAuthorizeNotificationTarget(unreadTarget));
         Assert.Equal(ServerBaseUri, capturedServerBaseUri);
         Assert.Equal(AccessToken, await capturedAccessTokenProvider!());
         Assert.Equal(
@@ -1126,6 +1131,110 @@ public sealed class ClientAccountRuntimeTests
         Assert.True(session.IsDisposeCompleted);
     }
 
+    [Fact]
+    public async Task TryAuthorizeNotificationTarget_WhenScopeMatches_UsesRuntimeOwnedAuthorizer()
+    {
+        using var directory = new TemporaryDirectory();
+        var authorizerCalls = 0;
+        var runtime = CreateRuntime(
+            directory.Path,
+            CreateSession(),
+            new FakeRealtimeConnection(),
+            new FakeSyncCoordinator(),
+            notificationTargetAuthorizer: target =>
+            {
+                authorizerCalls++;
+                return target.Kind == ClientNotificationActivationKind.UnreadOverview;
+            });
+        var target = ClientNotificationActivationTarget.UnreadOverview(runtime.Identity.Id);
+
+        var result = runtime.TryAuthorizeNotificationTarget(target);
+
+        Assert.True(result);
+        Assert.Equal(1, authorizerCalls);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task TryAuthorizeNotificationTarget_WhenScopeDiffersOrStopping_FailsClosed()
+    {
+        using var directory = new TemporaryDirectory();
+        var authorizerCalls = 0;
+        var runtime = CreateRuntime(
+            directory.Path,
+            CreateSession(),
+            new FakeRealtimeConnection(),
+            new FakeSyncCoordinator(),
+            notificationTargetAuthorizer: _ =>
+            {
+                authorizerCalls++;
+                return true;
+            });
+        var differentScope = AccountScopeIdentity.Create(
+            new Uri("https://different.example/"),
+            UserId,
+            directory.Path).Id;
+
+        Assert.False(runtime.TryAuthorizeNotificationTarget(
+            ClientNotificationActivationTarget.UnreadOverview(differentScope)));
+        await runtime.DisposeAsync();
+        Assert.False(runtime.TryAuthorizeNotificationTarget(
+            ClientNotificationActivationTarget.UnreadOverview(runtime.Identity.Id)));
+        Assert.Equal(0, authorizerCalls);
+    }
+
+    [Fact]
+    public async Task TryAuthorizeNotificationTarget_WhenAuthenticationSessionIsCleared_FailsClosed()
+    {
+        using var directory = new TemporaryDirectory();
+        var authorizerCalls = 0;
+        var session = CreateSession();
+        var runtime = CreateRuntime(
+            directory.Path,
+            session,
+            new FakeRealtimeConnection(),
+            new FakeSyncCoordinator(),
+            notificationTargetAuthorizer: _ =>
+            {
+                authorizerCalls++;
+                return true;
+            });
+        var target = ClientNotificationActivationTarget.UnreadOverview(runtime.Identity.Id);
+
+        Assert.Equal(ClientLogoutStatus.LoggedOut, await session.LogoutAsync());
+
+        Assert.False(runtime.TryAuthorizeNotificationTarget(target));
+        Assert.Equal(0, authorizerCalls);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task TryAuthorizeNotificationTarget_WhenAuthorizerFails_LogsOnlyErrorType()
+    {
+        using var directory = new TemporaryDirectory();
+        var logger = new RecordingLogger<ClientAccountRuntime>();
+        var runtime = CreateRuntime(
+            directory.Path,
+            CreateSession(),
+            new FakeRealtimeConnection(),
+            new FakeSyncCoordinator(),
+            logger: logger,
+            notificationTargetAuthorizer: _ =>
+                throw new InvalidOperationException("classified authorization detail"));
+
+        var result = runtime.TryAuthorizeNotificationTarget(
+            ClientNotificationActivationTarget.UnreadOverview(runtime.Identity.Id));
+
+        Assert.False(result);
+        Assert.Contains(
+            logger.Entries,
+            entry => entry.Contains("InvalidOperationException", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            logger.Entries,
+            entry => entry.Contains("classified authorization detail", StringComparison.Ordinal));
+        await runtime.DisposeAsync();
+    }
+
     private static ClientAccountRuntime CreateRuntime(
         string rootDirectory,
         ClientAuthenticationSession session,
@@ -1134,7 +1243,8 @@ public sealed class ClientAccountRuntimeTests
         IAsyncDisposable? cache = null,
         FakeReadThroughCoordinator? readThrough = null,
         ILogger<ClientAccountRuntime>? logger = null,
-        IAsyncDisposable? notificationCoordinator = null) =>
+        IAsyncDisposable? notificationCoordinator = null,
+        Func<ClientNotificationActivationTarget, bool>? notificationTargetAuthorizer = null) =>
         new(
             AccountScopeIdentity.Create(ServerBaseUri, UserId, rootDirectory),
             session,
@@ -1144,7 +1254,8 @@ public sealed class ClientAccountRuntimeTests
             notificationCoordinator,
             cache ?? new RecordingAsyncDisposable(() => ValueTask.CompletedTask),
             new ClientActivityState(),
-            logger ?? NullLogger<ClientAccountRuntime>.Instance);
+            logger ?? NullLogger<ClientAccountRuntime>.Instance,
+            notificationTargetAuthorizer);
 
     private static ClientAuthenticationSession CreateSession(
         HttpMessageHandler? handler = null) =>
