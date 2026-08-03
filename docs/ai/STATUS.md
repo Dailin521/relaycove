@@ -6,7 +6,7 @@
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传已完成
-- **最近验证通过的状态：** read-through 安全上传代码检查点 `8384e6166d69467377e36efa549309f891822076`，当前绿色集成头 `902456efa3e108a3159a86eaaa88a96271b9cafb`
+- **最近验证通过的状态：** read-through 安全上传代码检查点 `8384e6166d69467377e36efa549309f891822076`，绿色集成头 `47d442223916e0da1651d9ee9669af372c37817d`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — Fast/Full、format、447 项测试、真实磁盘 AccountScope/SQLite、会话真实 read-through 目标/空洞/102 会话分页/receipt/撤权/损坏行/busy/取消/single-flight、来源/前台活动、权威列表与 Realtime/Sync/History 乱序、未读/候选/游标整页事务、10,000 行前台页、HTTP Sync、客户端登录/启动恢复/持久轮换/logout、真实 Windows DPAPI、单账户 runtime 生命周期、客户端与服务端 SignalR、既有消息/会话/认证回归、model drift、八项目漏洞审计与空白检查通过
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- `agent/stage-6-read-through-upload`：代码与文档验收完成，待推送并仅快进集成；不含通知、WPF 或真实发布副作用。
+- `agent/stage-6-notification-coordinator`：补齐权威静音投影，原子收养旧缓存，接入单串行通知协调器、Sync/Realtime round gate 与有界 Recovery；不接 Windows Toast/WPF。
 
 ## 已完成
 
@@ -52,7 +52,7 @@
 
 ## 下一任务
 
-实现旧缓存收养、串行候选轮次 gate、有界 Recovery 与平台无关 NotificationCoordinator。
+完成平台无关通知协调后，接 Windows 通知权限探针、Toast、激活目标、声音/闪烁与 WPF activity 事件。
 
 ## 阻塞项
 

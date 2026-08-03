@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 6
-ActiveTask: docs/ai/tasks/2026-08-03-stage-6-read-through-upload.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-03-stage-6-notification-coordinator.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 8384e6166d69467377e36efa549309f891822076
-LatestGreenIntegrationCommit: 902456efa3e108a3159a86eaaa88a96271b9cafb
-NextAction: 提交 read-through 文档交接，推送并仅快进集成，再启动通知收养与协调切片
+LatestGreenIntegrationCommit: 47d442223916e0da1651d9ee9669af372c37817d
+NextAction: 冻结旧缓存收养、权威静音、通知 round gate 与有界 Recovery 后实现平台无关协调器
 ClaudeCalls: 37（全部终态；仅关键用途调用）
 ClaudeCostUsd: 28.958588 confirmed；另有二十二次失败/中断调用费用 unavailable
 Blocker: none
