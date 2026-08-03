@@ -7,13 +7,13 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M1
-CurrentStage: 阶段 2
-ActiveTask: docs/ai/tasks/2026-08-03-stage-2-admin-bootstrap.md
-TaskStatus: completed
+CurrentStage: 阶段 3
+ActiveTask: docs/ai/tasks/2026-08-03-stage-3-conversation-storage.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 419ef00069c86c85b097a7961cebe95a16730cc5
-LatestGreenIntegrationCommit: 80bb74270e5b15a47fb4bbc7ae19deacd47f22ec
-NextAction: 将管理员引导完成提交仅快进合入 agent/v1-integration，并启动 Conversations/ConversationMembers 存储切片
+LatestGreenIntegrationCommit: db92a5b0ac307d6d221a5880d64eee87082b348e
+NextAction: 冻结 Conversations/ConversationMembers 数据库语义并实现实体、SQLite migration 与真实约束测试
 ClaudeCalls: 19（软上限 24，硬上限 30）
 ClaudeCostUsd: 5.4229485 confirmed；另有十二次失败/中断调用费用 unavailable
 Blocker: none

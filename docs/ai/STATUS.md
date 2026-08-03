@@ -5,7 +5,7 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 1 — 认证、会话、权限与核心消息闭环
-- **当前分支成果：** 同步契约、v1 外层账本、.NET 10 可构建骨架、认证共享契约/存储及 login/refresh/logout/me HTTP 闭环已完成
+- **当前分支成果：** 阶段 2 认证与管理员闭环已完成并合入绿色集成头；阶段 3 会话/成员存储切片已开始
 - **最近验证通过的状态：** 管理员引导与创建用户代码 `419ef00069c86c85b097a7961cebe95a16730cc5`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — Fast/Full、format、100 项测试、真实 SQLite migration/认证轮换/bootstrap/管理员并发、JWT 负向、限流、日志泄漏、发布依赖、漏洞审计与空白检查通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 无；管理员引导与创建用户切片等待仅快进合入 `agent/v1-integration`。
+- `agent/stage-3-conversation-storage`：冻结并实现 Conversations/ConversationMembers 最小持久化、约束与 migration。
 
 ## 已完成
 
@@ -34,7 +34,7 @@
 
 ## 下一任务
 
-进入阶段 3，先冻结并实现 Conversations/ConversationMembers 的最小持久化与迁移切片，为公共/私有频道和成员权限提供真实数据库基础。
+完成 Conversations/ConversationMembers 的实体、SQLite 约束、migration 与真实 up/down/外键/唯一性验证。
 
 ## 阻塞项
 
