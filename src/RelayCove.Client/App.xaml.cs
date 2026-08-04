@@ -854,6 +854,17 @@ public partial class App : System.Windows.Application
                 return false;
             }
 
+            if (File.Exists(recordPath))
+            {
+                var existingToken = File.ReadAllText(recordPath, Encoding.UTF8);
+                if (IsBootstrapToken(existingToken) && !TryDeleteOwnedBootstrap(existingToken))
+                {
+                    return false;
+                }
+
+                File.Delete(recordPath);
+            }
+
             File.Delete(temporaryPath);
             File.WriteAllText(temporaryPath, token, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             File.Move(temporaryPath, recordPath, overwrite: true);
@@ -959,8 +970,8 @@ public partial class App : System.Windows.Application
                 return false;
             }
 
-            File.Delete(expectedMarker);
             File.Delete(expectedUpdater);
+            File.Delete(expectedMarker);
             Directory.Delete(expectedDirectory, recursive: false);
             return true;
         }
