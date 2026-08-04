@@ -66,6 +66,9 @@ public sealed partial class ReleaseTemplateTests
         Assert.Matches(ConnectionHeaderRegex(), nginx);
         Assert.DoesNotContain("proxy_pass http://0.0.0.0", nginx, StringComparison.OrdinalIgnoreCase);
 
+        var hubLocation = ExtractNginxLocation(nginx, "/hubs/chat");
+        Assert.Matches(@"(?m)^\s*access_log\s+off\s*;\s*$", hubLocation);
+
         var bodySizeMatch = BodySizeRegex().Match(nginx);
         Assert.True(bodySizeMatch.Success, "nginx.conf must set client_max_body_size explicitly.");
 
@@ -91,6 +94,7 @@ public sealed partial class ReleaseTemplateTests
         var connectionString = GetRequiredProperty(root, "ConnectionStrings", "Default").GetString();
         var uploadsPath = GetRequiredProperty(root, "Storage", "UploadsPath").GetString();
         var maximumFileBytes = GetRequiredProperty(root, "Uploads", "MaximumFileBytes").GetInt64();
+        var updateManifestPath = GetRequiredProperty(root, "Update", "ManifestPath").GetString();
         var bootstrapEnabled = GetRequiredProperty(root, "BootstrapAdmin", "Enabled").GetBoolean();
 
         Assert.Equal(
@@ -98,6 +102,7 @@ public sealed partial class ReleaseTemplateTests
             connectionString);
         Assert.StartsWith("/var/lib/relaycove/", uploadsPath, StringComparison.Ordinal);
         Assert.InRange(maximumFileBytes, MinimumMaximumFileBytes, AbsoluteMaximumFileBytes);
+        Assert.Equal("/var/lib/relaycove/updates/manifest.json", updateManifestPath);
         Assert.False(bootstrapEnabled);
         Assert.False(TryGetProperty(root, out _, "Authentication", "SigningKey"));
         Assert.False(TryGetProperty(root, out _, "BootstrapAdmin", "Password"));
@@ -156,6 +161,17 @@ public sealed partial class ReleaseTemplateTests
 
     private static string ReadRepositoryText(params string[] segments) =>
         File.ReadAllText(PackagingTestPaths.GetRepositoryPath(segments));
+
+    private static string ExtractNginxLocation(string content, string path)
+    {
+        var marker = $"location {path}";
+        var markerIndex = content.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(markerIndex >= 0, $"Missing Nginx location: {path}");
+        var openingBrace = content.IndexOf('{', markerIndex);
+        var closingBrace = content.IndexOf('}', openingBrace + 1);
+        Assert.True(openingBrace >= 0 && closingBrace > openingBrace, $"Invalid Nginx location: {path}");
+        return content[(openingBrace + 1)..closingBrace];
+    }
 
     private static void AssertDirective(string content, string name, string expectedValue)
     {

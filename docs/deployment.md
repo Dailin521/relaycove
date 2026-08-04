@@ -18,6 +18,7 @@ The following commands require an administrator account. They are examples for a
 ```sh
 sudo useradd --system --user-group --home-dir /var/lib/relaycove --shell /usr/sbin/nologin relaycove
 sudo install -d -o relaycove -g relaycove -m 0700 /var/lib/relaycove
+sudo install -d -o relaycove -g relaycove -m 0750 /var/lib/relaycove/updates
 sudo install -d -o root -g root -m 0755 /opt/relaycove/releases /etc/relaycove
 sudo install -d -o root -g root -m 0755 /var/www/certbot
 ```
@@ -59,7 +60,7 @@ The release scripts own the archive format and migration-bundle filename. Before
 
 ## Configure without committing secrets
 
-Copy `deploy/appsettings.Production.example.json` from the new version's explicit release path to its `app/appsettings.Production.json`, then replace `REPLACE_WITH_PACKAGE_VERSION` and `chat.example.com`. This application loads production settings from its content root, so placing this file only in `/etc/relaycove` has no effect. Keep the release tree root-owned and only update this file as part of an intentional release configuration change.
+Copy `deploy/appsettings.Production.example.json` from the new version's explicit release path to its `app/appsettings.Production.json`, then replace `REPLACE_WITH_PACKAGE_VERSION` and `chat.example.com`. Keep `Update:ManifestPath` at the supplied writable state path, `/var/lib/relaycove/updates/manifest.json`; do not put the live update manifest in the immutable release tree. This application loads production settings from its content root, so placing this file only in `/etc/relaycove` has no effect. Keep the release tree root-owned and only update this file as part of an intentional release configuration change.
 
 ```sh
 set -eu
@@ -100,7 +101,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable relaycove.service
 ```
 
-The Nginx template uses a standard HTTP-to-HTTPS redirect, explicit TLS certificate paths, a loopback upstream, and WebSocket upgrade headers only where needed for `/hubs/chat`. Its `map` directive must be included from Nginx's `http {}` context, as is normal for `conf.d`; do not paste it inside a `server {}` block. The Server accepts one forwarded hop only from loopback, so authentication rate limits remain partitioned by the real client address without trusting public `X-Forwarded-*` input.
+The Nginx template uses a standard HTTP-to-HTTPS redirect, explicit TLS certificate paths, a loopback upstream, and WebSocket upgrade headers only where needed for `/hubs/chat`. It disables the access log for that location because SignalR WebSocket/SSE requests can carry `access_token` in the query string; do not re-enable a request-target log there. Its `map` directive must be included from Nginx's `http {}` context, as is normal for `conf.d`; do not paste it inside a `server {}` block. The Server accepts one forwarded hop only from loopback, so authentication rate limits remain partitioned by the real client address without trusting public `X-Forwarded-*` input.
 
 ## First migration and start
 
@@ -118,6 +119,7 @@ sudo install -d -o root -g root -m 0700 /var/backups/relaycove/$stamp
 sudo test ! -e /var/lib/relaycove/relaycove.db || sudo cp -a /var/lib/relaycove/relaycove.db /var/backups/relaycove/$stamp/
 sudo test ! -e /var/lib/relaycove/relaycove.db-wal || sudo cp -a /var/lib/relaycove/relaycove.db-wal /var/backups/relaycove/$stamp/
 sudo test ! -e /var/lib/relaycove/relaycove.db-shm || sudo cp -a /var/lib/relaycove/relaycove.db-shm /var/backups/relaycove/$stamp/
+sudo test ! -d /var/lib/relaycove/uploads || sudo cp -a /var/lib/relaycove/uploads /var/backups/relaycove/$stamp/
 
 release_root=/opt/relaycove/releases/<version>/RelayCove.Server-<version>-linux-x64
 sudo -H -u relaycove "$release_root/migrate/RelayCove.Migrations" \
@@ -131,7 +133,7 @@ sudo systemctl start relaycove.service
 sudo systemctl status --no-pager relaycove.service
 ```
 
-The backup is consistent only because the service is stopped before copying the database and its possible `-wal`/`-shm` sidecars. On an initial empty host the three files do not yet exist, so the backup directory is intentionally empty before the first bundle creates the database. Preserve every non-empty backup until the release has passed the intended environment's acceptance checks. The migration bundle is self-contained and single-file, so native libraries can be extracted at execution. `sudo -H -u relaycove` sets `HOME=/var/lib/relaycove`, the service-owned `0700` state directory prepared above, rather than allowing an administrator home or arbitrary temporary location to become the extraction location. It also keeps database, uploads, and extraction state owned by the service identity.
+The backup is consistent only because the service is stopped before copying the database, its possible `-wal`/`-shm` sidecars, and the uploads directory as one stopped-service set. On an initial empty host these items do not yet exist, so the backup directory is intentionally empty before the first bundle creates the database. Preserve every non-empty backup until the release has passed the intended environment's acceptance checks. The migration bundle is self-contained and single-file, so native libraries can be extracted at execution. `sudo -H -u relaycove` sets `HOME=/var/lib/relaycove`, the service-owned `0700` state directory prepared above, rather than allowing an administrator home or arbitrary temporary location to become the extraction location. It also keeps database, uploads, and extraction state owned by the service identity.
 
 ## Upgrade and failure recovery
 
@@ -142,7 +144,7 @@ If archive verification, configuration validation, migration, Nginx validation, 
 1. Keep `relaycove.service` stopped; do not retry by running the application against a partly migrated database.
 2. Record `journalctl -u relaycove.service` output without copying environment values or secrets.
 3. If migration failed, note that `current` still identifies the prior release; do not start it against a possibly changed database until an operator has selected and restored a known-good stopped-service backup when restoration is required.
-4. Restore the database as an exact stopped-service three-file set: first remove the current `relaycove.db`, `relaycove.db-wal`, and `relaycove.db-shm`, then copy back each file that exists in the selected backup. A sidecar absent from the backup must also be absent from the restored state; an intentionally empty first-deployment backup therefore removes every database file created by the failed attempt.
+4. Restore the database and uploads as one exact stopped-service set: first quarantine the current uploads directory and remove the current `relaycove.db`, `relaycove.db-wal`, and `relaycove.db-shm`, then copy back each item that exists in the selected backup. A database sidecar or uploads directory absent from the backup must also be absent from the restored state.
 5. Retain or atomically repoint `/opt/relaycove/current` to the selected known-good release, and re-check its configuration and permissions before starting.
 
 Example exact-set restore after selecting the backup deliberately:
@@ -150,7 +152,10 @@ Example exact-set restore after selecting the backup deliberately:
 ```sh
 set -eu
 backup_root=/var/backups/relaycove/<selected-stamp>
+restore_hold=/var/backups/relaycove/pre-restore-$(date -u +%Y%m%dT%H%M%SZ)
 sudo systemctl stop relaycove.service
+sudo install -d -o root -g root -m 0700 "$restore_hold"
+sudo test ! -e /var/lib/relaycove/uploads || sudo mv /var/lib/relaycove/uploads "$restore_hold/uploads"
 sudo rm -f /var/lib/relaycove/relaycove.db \
   /var/lib/relaycove/relaycove.db-wal \
   /var/lib/relaycove/relaycove.db-shm
@@ -160,6 +165,10 @@ for database_file in relaycove.db relaycove.db-wal relaycove.db-shm; do
     sudo chown relaycove:relaycove "/var/lib/relaycove/$database_file"
   fi
 done
+if sudo test -d "$backup_root/uploads"; then
+  sudo cp -a "$backup_root/uploads" /var/lib/relaycove/uploads
+  sudo chown -R relaycove:relaycove /var/lib/relaycove/uploads
+fi
 ```
 
 There is no automatic migration rollback, automatic database restore, or multi-instance SQLite failover in this release slice. Treat a failed migration as an operator decision, not as a reason to start the service with uncertain state.
@@ -167,5 +176,7 @@ There is no automatic migration rollback, automatic database restore, or multi-i
 ## Operational checks
 
 After the service and Nginx are running, use host-approved monitoring to check `systemctl status relaycove.service`, `journalctl -u relaycove.service`, Nginx error logs, certificate expiry, disk capacity under `/var/lib/relaycove`, and backup restore drills. Do not log the signing key, bootstrap credentials, Authorization headers, tokens, upload contents, or private attachment paths.
+
+Publish update artifacts to `/var/lib/relaycove/updates` with owner `root:relaycove` and mode `0640`. Copy and verify the exact Client ZIP first, then atomically replace `manifest.json` last; the manifest generator does not copy the ZIP. Never publish a manifest that names an absent or partially transferred artifact.
 
 Before declaring deployment ready, perform the M5 Linux/VPS gate in the real target environment: HTTPS and certificate renewal, public firewall rules, Nginx WebSocket reconnects, service restart recovery, database backup and restore, upload limit behaviour, real-client login, and two-client authorization/revocation behaviour. These remain `未验证` for this Windows/offline M4 package work.
