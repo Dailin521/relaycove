@@ -150,6 +150,19 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
             message with { Attachments = tooMany },
             message with { Attachments = [first with { Id = Guid.Empty }] },
             message with { Attachments = [first with { OriginalFileName = "../secret.bin" }] },
+            message with { Attachments = [first with { OriginalFileName = "." }] },
+            message with { Attachments = [first with { OriginalFileName = "bad\u0001name.png" }] },
+            message with
+            {
+                Attachments =
+                [
+                    first with
+                    {
+                        OriginalFileName = string.Concat(
+                            Enumerable.Repeat("\U0001F6F0", 256)),
+                    },
+                ],
+            },
             message with { Attachments = [first with { ContentType = "Image/PNG" }] },
             message with { Attachments = [first with { ContentType = "image/png; charset=utf-8" }] },
             message with { Attachments = [first with { ContentType = "application/octet-stream" }] },
@@ -168,6 +181,38 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
 
         Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
         Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments;"));
+    }
+
+    [Fact]
+    public async Task MergeIncomingMessage_WhenAttachmentBoundsAreExact_AcceptsMaximumCollection()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        await RegisterAsync(cache, conversation);
+        var attachments = Enumerable.Range(1, 10)
+            .Select(index => CreateAttachment(
+                Guid.Parse($"{index:x8}-aaaa-bbbb-cccc-dddddddddddd")))
+            .OrderBy(attachment => attachment.Id)
+            .ToArray();
+        attachments[0] = attachments[0] with
+        {
+            OriginalFileName = string.Concat(Enumerable.Repeat("\U0001F6F0", 255)),
+            Size = 100L * 1024 * 1024,
+        };
+        var message = CreateMessage(conversation.Id) with
+        {
+            Type = MessageType.Image,
+            Content = null,
+            Attachments = attachments,
+        };
+
+        var outcome = await cache.MergeIncomingMessageAsync(message);
+        var read = await cache.ReadMessagesAsync(conversation.Id);
+
+        Assert.Equal(IncomingMessageMergeResult.Inserted, outcome.Result);
+        AssertMessage(message, Assert.Single(read.Messages));
+        Assert.Equal(10, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments;"));
     }
 
     [Theory]
