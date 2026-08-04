@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 9
 ActiveTask: docs/ai/tasks/2026-08-04-stage-9-client-attachment-upload-send.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 53a5b630140517aca6be4bc0a4f43397857a0154
+LatestGreenCodeCommit: 44e5010787d1b9fa540f730fa52bef22f25cad02
 LatestGreenIntegrationCommit: 3ceabdc4ba43336aa4f7a00a2fa93c49c2b7806d
-NextAction: 实现并验证非幂等客户端上传、unbound reservation、Image/File pending 原子绑定与重启重试
+NextAction: 仅快进集成并清理当前任务分支，随后启动 WPF 附件选择、发送状态与上传进度切片
 ClaudeCalls: 73（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败；仅关键用途调用）
 ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有四十次失败/中断调用费用 unavailable
 Blocker: none

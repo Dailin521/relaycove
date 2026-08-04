@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 9 客户端上传 reservation 与 durable Image/File 发送
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `3ceabdc4ba43336aa4f7a00a2fa93c49c2b7806d`
 - **工作分支：** `agent/stage-9-client-attachment-upload-send`
 - **相关方案章节：** 7.4–7.5、8.2、10.2、12.1–12.3、12.7、14.1–14.2、阶段 9、21.2–21.3；`DEC-017/025/035/041/042/043/044`
@@ -21,7 +21,7 @@
 - `已验证`：现有 Text 链已经实现 pending-before-POST、同 `ClientMessageId` 显式重试、一次 401 refresh、flight 合流、统一 merge、撤权和 runtime 生命周期；应泛化而不是另建第二条消息发送路径。
 - `已验证`：production 普通 API 共用 30 秒 `HttpClient`；该超时不足以作为 25–100 MiB 上传的可靠上界，上传需要独立有界 client，不能扩大所有普通请求的等待时间。
 - `已验证`：服务端当前两条 401 路径都在附件提交前结束：authorization challenge 在读取 endpoint body 前返回稳定 `AuthenticationRequired` JSON envelope；`ActorUnavailable` 在读取 body 后、数据库插入前返回同一错误码。反代 HTML、空 body 或其他错误码 401 不能证明未提交。
-- `已验证`：Claude #73 Opus XHigh 关键 challenge 仍在兼容 `consult_claude` 启动阶段失败，无 job、模型、workspace、费用或结论；失败不冒充通过。Codex reviewer 给出 `REVISE`，两项 P1（401 必须精确验证稳定错误 envelope、unbound 启动清理必须采用 scope 进程首次 gate）已纳入契约；既有 Client 101/101、Server 26/26 定向测试通过。
+- `已验证`：Claude #73 Opus XHigh 关键 challenge 仍在兼容 `consult_claude` 启动阶段失败，无 job、模型、workspace、费用或结论；失败不冒充通过。Codex 设计 reviewer 的两项 P1（401 必须精确验证稳定错误 envelope、unbound 启动清理必须采用 scope 进程首次 gate）均已纳入；固定差异 reviewer 的唯一 P2（固定 30 秒/10 分钟 timeout 与禁 307/308 自动重定向）补测后最终 `PASS`，无剩余 P0/P1/P2。
 
 ### 假设
 
@@ -47,13 +47,13 @@
 
 ### 验收标准
 
-- [ ] 合法 Image/File 内容源以恰好一个 `file` section 逐个流式 POST，严格接受对应 201 DTO；1/10 个附件、Unicode 名称、1 byte/100 MiB 客户端边界和规范 MIME 通过。
-- [ ] 只有受限读取并精确匹配稳定 `AuthenticationRequired` envelope 的 401 最多 refresh/reopen 一次；HTML/空 body/错误码 401、网络、timeout、429、5xx、取消、协议错误或部分批次失败不自动重传，所有打开的 stream 都释放，且没有 pending 半行。
-- [ ] 每个 201 先形成 unbound reservation；pending 创建在单事务绑定全部规范 ID，未知/重复/已绑定/元数据冲突或故障注入整体回滚；同进程第二 cache 不清除活跃 reservation、真实进程重启会清除旧 unbound，partial/crash orphan 的本地/远端职责有自动化证据。
-- [ ] Image/File pending、显式 retry 和进程重启始终复用原 `ClientMessageId + AttachmentIds + MentionUserIds + ReplyToMessageId`；Text 继续固定空附件且原测试全绿。
-- [ ] SendResponse/Realtime/Sync/History 的完整相同附件可提升/重复，任一远端字段变化为 Conflict；本地可变路径/下载状态不影响不可变比较。
-- [ ] production runtime 使用独立有界上传 client，账户切换/Dispose/撤权/authentication-required 不泄漏 flight；普通 30 秒 HTTP client 行为不变。
-- [ ] Fast、两次 Full、客户端上传/发送定向重复、八项目漏洞审计、日志脱敏、空白和 Codex reviewer 固定差异审查通过。
+- [x] 合法 Image/File 内容源以恰好一个 `file` section 逐个流式 POST，严格接受对应 201 DTO；1/10 个附件、Unicode 名称、1 byte/100 MiB 客户端边界和规范 MIME 通过。
+- [x] 只有受限读取并精确匹配稳定 `AuthenticationRequired` envelope 的 401 最多 refresh/reopen 一次；HTML/空 body/错误码 401、网络、timeout、429、5xx、取消、协议错误或部分批次失败不自动重传，所有打开的 stream 都释放，且没有 pending 半行。
+- [x] 每个 201 先形成 unbound reservation；pending 创建在单事务绑定全部规范 ID，未知/重复/已绑定/元数据冲突或故障注入整体回滚；同进程第二 cache 不清除活跃 reservation、真实进程重启会清除旧 unbound，partial/crash orphan 的本地/远端职责有自动化证据。
+- [x] Image/File pending、显式 retry 和进程重启始终复用原 `ClientMessageId + AttachmentIds + MentionUserIds + ReplyToMessageId`；Text 继续固定空附件且原测试全绿。
+- [x] SendResponse/Realtime/Sync/History 的完整相同附件可提升/重复，任一远端字段变化为 Conflict；本地可变路径/下载状态不影响不可变比较。
+- [x] production runtime 使用独立有界上传 client，账户切换/Dispose/撤权/authentication-required 不泄漏 flight；普通 30 秒 HTTP client 行为不变。
+- [x] Fast、两次 Full、客户端上传/发送定向重复、八项目漏洞审计、日志脱敏、空白和 Codex reviewer 固定差异审查通过。
 
 ### 验证命令
 
@@ -84,26 +84,35 @@ git diff --check
 
 ### 修改摘要
 
-- `待完成`
+- 新增可重新打开且精确长度的 `ClientAttachmentUploadSource` 与有界 multipart transport；201/Location/完整 DTO 严格验证，只有受限稳定 `AuthenticationRequired` 401 可 refresh/reopen 一次，其他未知提交、timeout、取消、307/308、429/5xx 均不重放。
+- 新增统一附件元数据策略、账户隔离 unbound reservation、exact cleanup 与 scope 进程首次恢复 gate；Image/File pending 在一个 SQLite 事务内写 message/mentions 并逐项绑定全部规范附件，故障与冲突整笔回滚。
+- 泛化既有 durable send pipeline：Text 保持空附件，Image/File 复用同一 `ClientMessageId + AttachmentIds + mentions + reply` 显式 retry，SendResponse/Realtime/Sync/History 以完整不可变元数据统一提升/冲突。
+- production runtime 暴露 headless `SendAttachmentsAsync`；普通请求继续 30 秒，上传使用独立 10 分钟且 `AllowAutoRedirect=false` 的 client，Dispose/process-exit detach 双 client 所有权已固定。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 绿色集成头 Fast 基线 | 932/932；Shared 39、Server 255、Client 641、Updater 1；0 警告、0 错误。 |
-| `未验证` | 实现与最终门禁 | 任务进行中。 |
+| `已验证` | 固定代码与测试头 | `44e5010787d1b9fa540f730fa52bef22f25cad02`（主体 `ce81eef` + upload failure 边界补测 `44e5010`）。 |
+| `已验证` | 最终 Fast | 980/980；Shared 39、Server 255、Client 685、Updater 1；Debug 0 警告、0 错误。 |
+| `已验证` | 最终 Full ×2 | 每轮 980/980；Release 0 警告、0 错误；`dotnet format --verify-no-changes` 与 `git diff --check` 通过。第一次候选 Full 曾仅因 using 顺序停止，修正后从头完成并只计后续两轮。 |
+| `已验证` | Client 核心 Release 定向 ×10 | 每轮 147/147，合计 1470/1470；覆盖 upload/cache/coordinator/runtime/composition、10 个 Image、reply/mentions、部分失败、真实 cache 重启 retry、Realtime race、双 client 生命周期。 |
+| `已验证` | Server 上传认证/提交前失败定向 | 19/19；匿名 pre-body 与 disabled `ActorUnavailable` 均为稳定 401 且无附件 DB 行。 |
+| `已验证` | 非幂等/事务边界 | 稳定 401→refresh→201 恰好两次 open；HTML/空 body/错误码/超限 envelope、network/timeout/cancel/429/5xx/307/308 均单次 POST；stream getter/open/send 所有失败路径释放。unbound gate、unknown/type conflict、逐项 bind 故障、账户隔离与重启清理均通过真实 SQLite。 |
+| `已验证` | 审计与独立复核 | 八个项目无已知 vulnerable package；新增日志只记录枚举状态/异常类型且 DTO/source/pending ToString 脱敏；Codex reviewer 修复唯一 P2 后最终 `PASS`、无 P0/P1/P2。Claude #73 启动失败，无结论。 |
 
 ### 文件范围
 
-- 新增：本任务记录。
-- 修改：`待完成`
+- 新增：上传 source/transport/result/status、统一附件元数据策略、reservation outcome/result、上传 transport 测试与本任务记录。
+- 修改：账户缓存与 fault injection、pending models、消息 send transport/coordinator/status、account runtime/interface/factory/composition，以及对应 Client 测试、状态与决策文档。
 - 删除：无。
 
 ### 决策与限制
 
-- 决策：`DEC-045` 初稿 — 非幂等上传只允许经稳定错误 envelope 证明的 401 重放；客户端 unbound reservation 与 pending 原子绑定分离，scope 进程首次 gate 清理旧 unbound，pending 创建后才具备跨重启可靠发送语义。
+- 决策：`DEC-045` 已接受 — 非幂等上传只允许经受限稳定错误 envelope 证明的 401 重放；客户端 unbound reservation 与 pending 原子绑定分离，scope 进程首次 gate 清理旧 unbound，pending 创建后才具备跨重启可靠发送语义。
 - 已知限制：不恢复“上传已成功但尚未创建 pending”的用户意图；不接 WPF、进度、下载或 VPS。
 
 ### 下一步
 
-- 完成实现、固定提交 Codex reviewer 审查和最终门禁后仅快进集成；随后进入 WPF 文件选择/上传进度切片。
+- 仅快进集成并清理任务分支；随后进入 WPF 附件选择、发送状态与上传进度切片，仍不读取 VPS 配置。

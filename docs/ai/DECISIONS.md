@@ -545,12 +545,12 @@
 
 ### DEC-045：非幂等客户端上传与 durable 附件消息以 pending 创建为恢复边界
 
-- **状态：** 待验证
+- **状态：** 已接受
 - **日期：** 2026-08-04
 - **背景：** 服务端上传 endpoint 没有客户端幂等键，成功后先形成未绑定 lease；客户端现有 Text 可靠链则以本地 pending 和 `ClientMessageId` 为重试身份。若网络失败后自动重传上传会制造未知数量的 server orphan；若只在内存保存 201 DTO，上传成功到消息 POST 之间的本地故障又无法原子证明附件载荷。`DEC-044` 已预留 nullable `LocalMessageId`，但上一切片刻意未开放 unbound 客户端行为。
-- **初步决策：** 每个上传使用可重新打开、可精确验证长度的内容源和独立有界 HTTP client，逐个发送恰好一个 multipart `file`。只有受限读取并精确解析出稳定 `AuthenticationRequired` error envelope 的 401，且 token refresh 成功，才允许重新打开并重放一次；HTML、空 body、其他错误码 401、网络/timeout/429/5xx/取消和未知提交一律返回失败，不自动再 POST。
-- **初步决策：** 通过严格校验的 201 `AttachmentDto` 先写为当前 AccountScope 的 unbound `LocalAttachments` reservation；全部上传成功后，在一个 SQLite 事务内创建 Image/File pending、mentions 并把规范附件 ID 从 null 绑定到该 `LocalMessageId`。未知、重复、已绑定、跨账户或元数据不一致都回滚；Text 继续要求空附件。
-- **初步决策：** durable 恢复边界是 pending 成功提交。此后显式 retry 永远复用原 `ClientMessageId`、AttachmentIds、reply 和 mentions，SendResponse/Realtime/Sync/History 用完整附件元数据提升同一行。pending 之前的进程崩溃不恢复用户意图；每个账户 scope 以独立的进程首次 `UnboundRecoveryCompleted` gate 清除旧 unbound 本地行，失败时复位 gate，同一进程第二个 cache 不得清理第一个 cache 的活跃 reservation；server orphan 由既有 24 小时 lease 回收。部分批次失败只尽力清理本 flight 的本地 unbound 行，不推测或主动重传远端状态。
+- **决策：** 每个上传使用可重新打开、可精确验证长度的内容源和独立有界 HTTP client，逐个发送恰好一个 multipart `file`。只有受限读取并精确解析出稳定 `AuthenticationRequired` error envelope 的 401，且 token refresh 成功，才允许重新打开并重放一次；HTML、空 body、其他错误码 401、网络/timeout/429/5xx/取消、307/308 和未知提交一律返回失败，不自动再 POST。
+- **决策：** 通过严格校验的 201 `AttachmentDto` 先写为当前 AccountScope 的 unbound `LocalAttachments` reservation；全部上传成功后，在一个 SQLite 事务内创建 Image/File pending、mentions 并把规范附件 ID 从 null 绑定到该 `LocalMessageId`。未知、重复、已绑定、跨账户或元数据不一致都回滚；Text 继续要求空附件。
+- **决策：** durable 恢复边界是 pending 成功提交。此后显式 retry 永远复用原 `ClientMessageId`、AttachmentIds、reply 和 mentions，SendResponse/Realtime/Sync/History 用完整附件元数据提升同一行。pending 之前的进程崩溃不恢复用户意图；每个账户 scope 以独立的进程首次 `UnboundRecoveryCompleted` gate 清除旧 unbound 本地行，失败时复位 gate，同一进程第二个 cache 不得清理第一个 cache 的活跃 reservation；server orphan 由既有 24 小时 lease 回收。部分批次失败只尽力清理本 flight 的本地 unbound 行，不推测或主动重传远端状态。
 - **理由：** 该边界既不伪造 upload 幂等，也把真正可重试的消息载荷放入现有账户隔离 SQLite 事务和统一 merge 裁决；不需要改变 server API、schema v2、消息 ID、attach-once 或同步协议。
 - **影响：** `DEC-044` 的 nullable 外键从“预留”进入受控使用；Client 增加 upload transport、reservation 写入/清理、附件 pending 与 runtime surface。普通 API 30 秒 client 不变，上传使用独立 10 分钟上界。WPF、进度、跨崩溃草稿恢复、下载和 VPS 仍未开放。
-- **来源：** 工程方案第 7.4–7.5、8.2、10.2、12.1–12.3、12.7、14.1–14.2、阶段 9、21.2–21.3；`DEC-017/025/035/041/042/043/044`；`docs/ai/tasks/2026-08-04-stage-9-client-attachment-upload-send.md`；绿色集成头与 Fast 932/932。Claude #73 启动阶段失败，无 job、模型、workspace、费用或结论；Codex reviewer `REVISE` 的两项 P1 已纳入，最终固定差异审查与本机门禁待完成。
+- **来源：** 工程方案第 7.4–7.5、8.2、10.2、12.1–12.3、12.7、14.1–14.2、阶段 9、21.2–21.3；`DEC-017/025/035/041/042/043/044`；`docs/ai/tasks/2026-08-04-stage-9-client-attachment-upload-send.md`；固定代码与测试头 `44e5010787d1b9fa540f730fa52bef22f25cad02`；最终 Fast/两次 Full 980 项、Client 核心定向 1470/1470、Server 上传认证/提交前失败 19/19、真实 SQLite reservation/gate/逐项绑定回滚/重启 retry/Realtime race、双 client timeout/redirect/lifecycle、八项目漏洞审计、日志脱敏与空白检查。Claude #73 启动阶段失败，无 job、模型、workspace、费用或结论；Codex 设计 P1 与固定差异 P2 均修正，最终 reviewer `PASS`、无剩余 P0/P1/P2。
