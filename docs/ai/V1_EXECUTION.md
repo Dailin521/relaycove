@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 8
 ActiveTask: docs/ai/tasks/2026-08-04-stage-8-mention-compose.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 2b8a3a1d9896dd241c35d164a2e6304c33df075b
+LatestGreenCodeCommit: 82c083d5fa319ea2cb2fe8fc51ba09c5382c8a1c
 LatestGreenIntegrationCommit: 0ccc925e99952e900cac9c31d3509b064762ce85
-NextAction: 实现并验证客户端 picker、token 绑定与 durable 非空提及发送
+NextAction: 仅快进集成客户端提及切片，然后启动阶段 9 附件最小纵向闭环
 ClaudeCalls: 68（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68 失败；仅关键用途调用）
 ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有三十四次失败/中断调用费用 unavailable
 Blocker: none
@@ -75,6 +75,7 @@ RequiredUserGate: none
 - 当前安全链接最终代码检查点 `018df9840fcb35a6a5ee41b21191b129792a2f2f` 已通过最终 Fast/两次 Full 782 项、Client 571/571、parser/policy/launcher/presenter 关键集 190/190、真实 Release WPF 响应窗口/单实例/精确清理、model drift、八项目漏洞审计、敏感日志检索与空白检查。有界绝对 HTTP(S) 识别、当前 Ready 快照成员门和无命令拼接的 Windows shell association 已收敛为 `DEC-038`；真实浏览器打开刻意不自动化，`@用户`、新消息分割线与真实登录视觉保持后续/M5 Gate。
 - 当前新消息分割线最终代码检查点 `49d72a3f882c2ea450010bec83a0d18e30a02d26` 已通过最终 Fast/两次 Full 788 项、Client 577/577、cache/shell/presenter 关键集 520/520、真实 Release WPF 响应窗口/单实例/精确清理、model drift、八项目漏洞审计与空白检查。同事务打开状态、selection 冻结和 History/Around 分页证明已收敛为 `DEC-039`；真实登录数据下视觉/Narrator 保持 M5 Gate，`@用户` 仍需先冻结普通用户目录协议。
 - 当前会话作用域提及候选最终代码检查点 `2b8a3a1d9896dd241c35d164a2e6304c33df075b` 已通过最终 Fast/两次 Full 807 项（Shared 37、Server 192、Client 577、Updater 1）、Shared/validator/真实 HTTP/SQLite endpoint 关键集 190/190、model drift、八项目漏洞审计与空白检查。最小脱敏响应、与发送授权同构的 Public/Private/Direct 查询、字面前缀、稳定 limit+1 与零结果撤权复核已收敛为 `DEC-040`；客户端 picker/token/durable 发送留在下一切片。
+- 当前客户端提及组合与可靠发送代码检查点 `82c083d5fa319ea2cb2fe8fc51ba09c5382c8a1c` 已通过最终 Fast/三次 Full 860 项（Shared 37、Server 192、Client 630、Updater 1）、提及/发送/shell 关键集 740/740、Release WPF 响应窗口/单实例/精确清理、model drift、八项目漏洞审计、敏感日志检索与空白检查。候选 selection gate、正文 token 存活条件、pending 前规范 ID 快照和重启/显式 retry 原集合已收敛为 `DEC-041`；无登录会话下 picker UIA 不适用，真实登录视觉/键盘/Narrator 留到 M5。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 
