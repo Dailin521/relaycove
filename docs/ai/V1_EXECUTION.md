@@ -7,15 +7,15 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M5
-CurrentStage: M5-01 阶段 11 管理面绿色收口并恢复实机 Gate
-ActiveTask: docs/ai/tasks/2026-08-04-stage-11-admin-control.md
-TaskStatus: completed_pending_integration
+CurrentStage: M5-02 exact rc.13 与真实 VPS/双客户端 Gate
+ActiveTask: docs/ai/tasks/2026-08-04-stage-13-vps-windows-gate.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 019b3a053a5d2e16cd60984c47d0fcecf72bb6bb
-LatestGreenIntegrationCommit: 893f68e2793c020ac15fed56a74e7edbae5bb0df
-NextAction: 复跑 Fast、push 并仅快进集成阶段 11；随后从最新集成头恢复 stage-13 exact RC、VPS 与双客户端 Gate
-ClaudeCalls: 84（#1–#84 全部终态；#84 在答案前被旧兼容 MCP 的 $0.5 budget 终止，按单次策略不重试）
-ClaudeCostUsd: 83.3341725 exact confirmed + 94.83 local CLI displayed（#44–#50/#74–#76/#81–#82）；按显示值合计约 178.1641725；其余未返回费用保持 unavailable
+LatestGreenCodeCommit: e200da63ec19c3cf634e7112608556ff8f7180fa
+LatestGreenIntegrationCommit: f0c86009d839e30939976e361135c67560664bcc
+NextAction: 验证 stage-13 部署修复，生成并离线验证 exact rc.13，随后在批准 HTTPS 子路径部署并执行双客户端与更新 Gate
+ClaudeCalls: 85（#1–#85 全部终态；#85 MCP 0.5 持久 Sonnet/High challenge 已读取并本地裁定）
+ClaudeCostUsd: 85.04138415 exact confirmed + 94.83 local CLI displayed（#44–#50/#74–#76/#81–#82）；按显示值合计约 179.87138415；其余未返回费用保持 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -36,7 +36,7 @@ RequiredUserGate: none
 | M2 | `completed` | 阶段 9 附件纵向闭环与 Internal Alpha 证据包已由 `8ff8c15` 合入绿色集成分支 | 已进入 M3 |
 | M3 | `completed` | 权限化搜索 API、客户端 Global/Current 搜索、Around-first 跳转和一次性高亮已由 `8d8d5d2` 完成绿色集成，最终 Fast/Full 1,426/1,426 | 已进入 M4 |
 | M4 | `completed` | M4-01–M4-04 已由 `c69b983` 完成绿色集成，最终 Fast/Full 1,566/1,566 与更新交付 smoke 通过 | 已进入 M5 |
-| M5 | `running` | VPS 真实只读预检已通过；阶段 11 管理面 production `019b3a0` 已通过最终 Full 1,591 项与三路独立复审，正绿色集成 | 从最新集成头生成 exact RC，完成真实 VPS/TLS/双 Windows Client Gate |
+| M5 | `running` | 阶段 11 已由 `f0c8600` 绿色集成；stage-13 `e200da6` 通过 Full 1,593 项与两路 PASS，VPS 的 Ubuntu/Nginx/TLS/资源与未占用 HTTPS 子路径已只读验证 | 生成 exact rc.13，完成真实 VPS/双 Windows Client/更新 Gate |
 
 里程碑顺序来自当前 v1 执行目标；每个里程碑的功能口径和最终交付标准仍由工程方案、决策记录和对应最小纵向任务冻结，本文件不预写实现细节。
 
@@ -183,14 +183,15 @@ RequiredUserGate: none
 | 82 | 2026-08-04 | M4 内部便携 ZIP 更新协议、外部自举与替换恢复边界 | 本机 Claude Code 后台持久只读 challenge | Sonnet / High | 有效 background `c5c5ab8c`、session `c5c5ab8c-7890-47a5-8495-3f80896ced31`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；实际 `claude-sonnet-5`，答案已读取，支持 portable ZIP 与 M4-03→M4-04 分层。指出的 stale lock/journal recovery 风险已修正；当前版本检查、bootstrap handoff 文档已落实，精确自举残留清理留到 M4-04 | `$5.71`（CLI 状态显示值） |
 | 83 | 2026-08-04 | M4-04 Server snapshot/metadata cache、Client 更新下载与 mandatory/Exit 可靠性边界 | 当前会话旧兼容 MCP 只读咨询 | Sonnet / High | 实际 `claude-sonnet-5` / High，`247454 ms`，答案已读取；支持 validated snapshot/metadata cache、绝不缓存 stream，并确认 invalidate-before-revalidate 与 per-request reparse 已落实。对 Client HTTPS/loopback、64 KiB/15 s 响应界限、`.part` SHA 原子发布、optional/mandatory fail-open、单调 login preflight、显式 Exit/Updater token cleanup 及安全 Kestrel/safe-probe smoke 的分层，经 Codex 以仓库与本机证据裁定为 M4-04 交付边界 | `$0.21073725` |
 | 84 | 2026-08-04 | 阶段 11 用户退役、token 撤权与持久上传设置边界 | 当前会话旧兼容 MCP 只读 challenge | Sonnet / High | 唯一一次调用在答案前失败：当前 Desktop 仍只暴露旧 `consult_claude`，内部命令强加 `$0.5` budget 后退出；无正式答案、可靠实际模型、duration 或费用。按策略不重试，由仓库 FK/认证证据与 Codex 独立 reviewer 裁定 | `unavailable` |
+| 85 | 2026-08-04 | M5 更新供应链、完整备份恢复与发布原子性边界 | MCP 0.5 持久只读 challenge `7b490d54-d7a6-49e6-bcef-ce2b612dad5f` | Sonnet / High | `workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；实际 `claude-sonnet-5`，`659250 ms`，答案已读取。指出的 updates 服务写权限、半成品备份、恢复前删除 DB、仅散文发布步骤和真机 systemd 验证要求均已由 `e200da6` 修正或纳入 M5 Gate；两路 Codex 与本机 Full/WSL 复核无剩余 P0–P2 | `$1.70721165` |
 
-- 调用计数：`84`（#1–#84 全部终态；#78/#79/#84 在答案前失败且分别按单次策略不重试；#80–#83 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构、安全、数据库、协议或可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
-- 已确认精确费用合计：`$83.3341725`；另有 #44–#50/#74–#76/#81–#82 本机 Claude Code 状态显示值合计 `$94.83`（界面两位小数，未伪造更高精度），按显示值总计约 `$178.1641725`。其余未返回费用保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`85`（#1–#85 全部终态；#78/#79/#84 在答案前失败且分别按单次策略不重试；#80–#83/#85 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构、安全、数据库、协议或可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
+- 已确认精确费用合计：`$85.04138415`；另有 #44–#50/#74–#76/#81–#82 本机 Claude Code 状态显示值合计 `$94.83`（界面两位小数，未伪造更高精度），按显示值总计约 `$179.87138415`。其余未返回费用保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate
 
-- 当前阻塞：无；阶段 11 已绿色完成，正返回 M5 exact RC、真实 VPS/TLS 与双客户端 Gate。Claude #84 无答案且不重试，Codex reviewer 与本机/实机门禁承担裁定。
+- 当前阻塞：无；正生成 M5 exact rc.13 并部署到已批准 HTTPS 子路径。当前 Windows 会话无创建临时本地用户的管理员令牌，双客户端 Gate 若无法提权则切换另一真实 Windows 会话/机器，不削弱单实例约束。
 - 当前所需用户 Gate：无。
 - `进行中`：用户已提供仓库外的香港 Light-A2 协作应用主机配置汇总；M5 只最小读取所需配置，地址、密钥、凭据和 token 不提交到仓库或测试日志。
 - 只有 `AGENTS.md`、`WORKFLOW.md` 和 v1 执行目标列出的重大产品、不可逆、安全、凭据、真实体验或发布事项才请求用户裁决；普通工程实现由当前任务自行收敛。

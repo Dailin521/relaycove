@@ -702,3 +702,15 @@
 - **理由：** 逻辑退役保留小团队所需审计和聊天历史而不引入跨表物理擦除；token/连接代际同时封闭 HTTP 与实时旧会话，版本化事件消除新会话竞态。单 key 设置和最小 WPF overlay 满足内部 RC 运维，不引入 Web 后台、RBAC、审计平台、多实例设置同步或外部监控。
 - **影响：** Server 增加 Users 两字段、AppSettings migration、管理员用户/运营 API、频道软删除与状态指标；Shared 增加管理 DTO、登录 token 版本和账户撤权事件；Client 增加管理 overlay、动态能力、账户撤权与代际过滤。当前接受两个非阻断内部 RC 限制：瞬时 `/me` 探测失败需重新登录后重试；成员增删期间恰好切换频道时可能需要重新选择频道刷新名册，但归属校验阻止跨频道误删。多实例状态、物理删除、在线角色编辑、批量管理、复杂监控和公开市场级 UI 不在 v1。
 - **来源：** 工程方案第 8、10.2、11.1、17、阶段 11；`DEC-006/007/008/014/015`；`docs/ai/tasks/2026-08-04-stage-11-admin-control.md`；production `019b3a0`；最终 Full 1,591 项（Shared 69、Server 333、Client 1,151、Updater 38）、Server/Client 定向 147/6、model drift、八项目漏洞审计、format 与空白检查。三路 Codex reviewer 的旧实时连接、新会话误杀、管理生命周期、成员名册竞态、上传下限和迁移数据保留发现均已修正并复审关闭，无剩余 P0/P1；Claude #84 在答案前失败且按单次策略未重试。
+
+### DEC-058：M5 发布面以只读更新根、完整备份发布与受控 HTTPS 子路径部署
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** 内部 RC 的更新包未签名，若 Server 服务账号可替换 manifest/ZIP，服务端入侵即可扩展为客户端更新代码执行；SignalR WebSocket/SSE 又可能把查询 token 写入 Nginx 默认 access log。只复制 SQLite 而不复制附件、直接暴露半成品备份目录或恢复前删除当前 DB，也会让首次实机故障不可恢复。目标 VPS 已有受控 HTTPS 入口，但没有专用 RelayCove DNS。
+- **决策：** `/hubs/chat` location 关闭 access log，避免记录携带 `access_token` 的请求目标。更新根固定为 `/var/lib/relaycove/updates`、`root:relaycove 0750`，文件为 `root:relaycove 0640`；systemd 在可写父状态目录内以 `ReadOnlyPaths` 再次隔离更新根。管理员只以同文件系统临时名发布，经 SHA-256 验证后先原子切换 ZIP，最后原子切换 manifest，Server 全程只读。
+- **决策：** 停服备份把 DB/WAL/SHM/uploads 复制到隐藏 staging，生成全文件 SHA-256、写完成标记后才以同文件系统 rename 获得正式路径。恢复必须先验证正式目录、完成标记和全部 hash，再把当前四类状态完整隔离到 `restore_hold`，之后才统一复制备份；任一步失败保持服务停止且旧状态可找回。
+- **决策：** M5 不为内部 RC 等待新增 DNS。复用目标主机已批准、证书有效且未占用的 `/relaycove/` HTTPS 子路径，Nginx 只新增精确前缀代理并在 reload 前执行 `nginx -t`，不改现有 location；Kestrel 仍只监听 loopback。若子路径实测出现协议不兼容，再回退到专用 DNS，而不开放公网 Kestrel 或降低 TLS。
+- **理由：** 双层只读更新根把普通服务入侵与客户端供应链分开；完整 staging/校验/隔离使备份和恢复拥有可观察提交点。复用受控 TLS 子路径避免把 DNS 控制变成内部初版阻塞，且现有 Client/SignalR 已支持反向代理基路径。
+- **影响：** 部署模板和操作文档增加安全边界与回归，不改变 API、数据库、消息协议或依赖。服务进程不能自行发布更新；运维必须以 root 按 ZIP-first/manifest-last 顺序执行。代码签名、公开分发信任、多节点备份和自动恢复仍不属于内部 RC。
+- **来源：** `DEC-054/055/056`；`docs/ai/tasks/2026-08-04-stage-13-vps-windows-gate.md`；production `2cd7376/e200da6`；ReleaseTemplateTests 8/8、WSL 空状态备份恢复、最终 Full 1,593/1,593、model drift、八项目漏洞审计、format/空白检查；安全与运维两路 Codex 最终复审均 `PASS`。Claude #85 MCP 0.5 持久 Sonnet/High challenge 实际 `claude-sonnet-5`、`659250 ms`、`$1.70721165`，指出的 updates 写权限、半成品备份、恢复删除和发布命令缺口均已修正，真机 systemd 验证纳入 M5 Gate。

@@ -4,7 +4,7 @@
 
 - **任务名称：** 阶段 13 内部 RC 真实部署与双客户端验收
 - **状态：** `进行中`
-- **基准提交：** `c69b98342f1a43dd46056cb73f5ca68eefc99fe6`
+- **基准提交：** `f0c86009d839e30939976e361135c67560664bcc`
 - **工作分支：** `agent/stage-13-vps-gate`
 - **相关方案章节：** 16、19、阶段 13、21.1–21.5、24；`DEC-054/055/056`
 
@@ -14,14 +14,16 @@
 
 ### 已知事实
 
-- `已验证`：M4-04 已由 `c69b983` 仅快进合入并推送 `agent/v1-integration`；最终 Fast/Full 1,566/1,566、exact `1.0.0-rc.12` 更新交付 smoke 与多路 Codex 复核通过。
+- `已验证`：阶段 11 已由 `f0c8600` 仅快进合入并推送 `agent/v1-integration`；最终 Fast/Full 1,591/1,591，管理面三路 Codex 复核无 P0/P1。
 - `已验证`：仓库已有可复现 Linux x64 Server 包、migration bundle、systemd/Nginx/config 模板、Windows self-contained Client ZIP、更新清单生成器和离线 verifier；Server 不在应用启动时自动迁移。
 - `已验证`：用户明确授权使用仓库外 `C:\AITemp\Servers_and_Proxies\VPS_应用与代理配置汇总.md` 中“香港 Light-A2 协作应用主机”做实机测试，并预授权绿色 push、仅快进集成、满足 Gate 后的 main/Tag/Release 与部署，无需二次确认。
 - `已验证`：配置、凭据、主机地址、密钥、token 和 Authorization 内容不得写入仓库、任务记录、截图文件名或测试日志。
+- `已验证`：目标主机为 Ubuntu 22.04 x86_64，Nginx 1.18 配置有效且运行中，RelayCove 尚未部署、回环端口 5080 未占用，资源满足内部 RC；SSH host key 与既有记录匹配。
+- `已验证`：专用 RelayCove DNS 尚不存在；已批准的既有 HTTPS 入口证书仍有效且 `/relaycove/` 前缀未占用，因此本次以该受控子路径部署，保留原有 location，并在每次 reload 前执行 `nginx -t`。
+- `已验证`：`2cd7376/e200da6` 已关闭 Hub 查询 token 进入 Nginx access log、服务写更新目录、半成品备份发布和恢复前破坏现状等风险；ReleaseTemplateTests 8/8、WSL 空状态备份恢复及安全/运维两路 Codex 最终复核通过。
 
 ### 假设
 
-- `假设`：目标主机的 SSH、systemd、Nginx、DNS/TLS 或可替代的受控 HTTPS 入口可用；先以只读探针验证，不把假设冒充事实。
 - `假设`：两个隔离 Client profile 可在当前 Windows 主机上以两个真实测试账号完成双客户端业务 Gate；若 Windows 单实例键阻止同一登录会话并行，则使用独立 Windows 会话或另一台已授权机器，而不削弱产品单实例约束。
 
 ### 范围
@@ -77,3 +79,10 @@ VPS、双客户端与更新 Gate 的 exact 命令在确认目标环境后写入�
 ## 任务结果
 
 `进行中`。
+
+- 阶段 11 已绿色集成，stage-13 分支已从最新集成头重建。
+- 部署安全修复提交：`2cd73761861641c0a33628dcdba9036d5c4caffe`、`e200da63ec19c3cf634e7112608556ff8f7180fa`；两路 Codex reviewer 最终 PASS。
+- 当前最终 Full 1,593/1,593（Shared 69、Server 335、Client 1,151、Updater 38），Release 0 警告/0 错误；model drift、八项目漏洞审计、format 与空白检查通过。
+- Claude #85 MCP 0.5 Sonnet/High 持久只读 challenge 已完成；其高风险意见与 Codex 复审一致，均已在 `e200da6` 落地，systemd 子目录只读与属主保持进入真实 VPS Gate。
+- VPS 只读环境、现有 TLS 与隔离子路径可行性已验证；未写入远端，也未记录地址或凭据。
+- 当前 Windows 会话没有创建临时标准用户的管理员令牌；exact rc.12 已离线复核可作为升级旧版本，双客户端执行时使用提权创建的临时标准用户、另一 Windows 会话或另一台已授权机器。
