@@ -3,10 +3,10 @@
 ## 任务定义
 
 - **任务名称：** M4 首个服务端 RC 发布纵向切片
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `8d8d5d26451f2e3c8aac9879fd7ed2f8affa00f2`
 - **工作分支：** `agent/m4-server-release-package`
-- **相关方案章节：** 2.2、3.4、5.2、14、16、19、阶段 13、21.5；`DEC-005/006/007/017/042/043`
+- **相关方案章节：** 2.2、3.4、5.2、14、16、19、阶段 13、21.5；`DEC-005/006/007/017/042/043/054`
 
 ### 目标
 
@@ -22,9 +22,9 @@
 - `已验证`：Updater 仍为空壳，客户端未冻结 RID/安装器；本切片不把它们伪装成可发布能力。
 - `已记录`：发布矩阵/迁移/systemd/Nginx 边界的唯一一次 Claude #81 已以本机 Claude Code 2.1.221 后台持久 Sonnet/High 只读任务 `6798888b` 启动；两个 CLI 参数解析产生的空会话未发送模型任务并已停止，不计为调用。
 
-### 暂定边界（在生产提交前结合 #81 与本机证据最终裁定）
+### 已裁定边界
 
-- Server 与 migration bundle 均以 `linux-x64` self-contained 发布；不 trimming、不 single-file、不 ReadyToRun，避免改变反射/本机库语义并让目标 VPS 不依赖预装 .NET。版本必须由调用方显式提供并写入 assembly/package 名；禁止隐式使用时间作为版本。
+- Server 与 migration bundle 均以 `linux-x64` self-contained 发布；Server 不 trimming、不 single-file、不 ReadyToRun，migration bundle 按 EF 生产入口交付为单一自包含可执行文件，目标 VPS 不依赖预装 .NET。版本必须由调用方显式提供并写入 assembly/package 名；禁止隐式使用时间作为版本。
 - 归档根固定为 `RelayCove.Server-<version>-linux-x64/`，至少包含 `app/`、`migrate/`、`deploy/` 与 manifest。归档外生成小写 SHA-256 sidecar；同一 commit/version/SDK/输入重复构建应得到相同文件清单、逐文件 hash 与归档 hash。
 - migration bundle 是生产升级的显式入口，不在 Server 启动时自动迁移。部署步骤必须先停止服务、备份 SQLite 主库及同目录 WAL/SHM 状态、以 `relaycove` 身份执行 bundle、失败则保持服务停止并人工恢复；不得声称自动回滚或多实例在线迁移。
 - systemd 以专用非 root `relaycove` 用户运行，仅写 `/var/lib/relaycove`，秘密只从权限受控的 `/etc/relaycove/relaycove.env` 注入；包内只提供无秘密 example。Nginx 终止 HTTPS、代理到 loopback Kestrel、保留 SignalR Upgrade，并把 request body 上限设为至少 `100 MiB + 64 KiB` 且仍由应用执行最终文件限制。
@@ -41,6 +41,7 @@
 - 允许修改：
   - `scripts/`、`installer/linux/`、`docs/deployment.md`
   - `tests/RelayCove.Server.Tests/Packaging/` 与必要的 `docs/ai/` 记录。
+  - 独立部署复核确认 Nginx 会让现有认证限流退化为全站共享 loopback 后，允许最小修改 Server Forwarded Headers 管线与对应认证限流回归；不改变 API、业务语义或依赖。
   - 仅当实际产物版本元数据无法由命令行注入时，最小修改 `Directory.Build.props`。
 - 明确不做：
   - 真实 VPS、systemd/Nginx/TLS 启动、生产数据库或生产秘密访问。
@@ -49,13 +50,13 @@
 
 ### 验收标准
 
-- [ ] 干净 checkout 上单命令生成版本化 `linux-x64` Server、migration bundle、部署材料、manifest、归档与正确 SHA-256；输出只位于验证后的 `artifacts/` 精确目录。
-- [ ] 同一 commit/version/SDK/输入连续两次构建的包布局、逐文件 hash 和归档 hash 相同；归档无绝对路径、`..`、重复/大小写碰撞、源代码、PDB、数据库、uploads、logs、开发配置或临时文件。
-- [ ] Server 与 migration bundle 是 Linux x64 self-contained、入口具有 executable mode；manifest 准确记录版本、commit、RID、SDK、文件长度/hash 与唯一相对路径。
-- [ ] systemd 使用非 root、loopback Kestrel、受控 EnvironmentFile/StateDirectory/UMask 和有界停止/重启策略；模板不存在真实 key/password/token、bootstrap 默认关闭。
-- [ ] Nginx 只示例 HTTPS 终止与 loopback upstream，支持 SignalR Upgrade，body 上限不早于应用 100 MiB + 64 KiB 边界；配置字段与当前 Options/Program 一致。
-- [ ] 部署文档明确停止→一致备份→migration bundle→启动顺序、失败保持停止/人工恢复、首次 bootstrap 凭据移除，以及哪些 Linux/VPS/TLS/双客户端事实仍为 `未验证`。
-- [ ] packaging 定向、Fast、最终 Full、model drift、依赖漏洞、format/空白、秘密扫描、两路独立 Codex 复核和 Claude #81 本地裁定完成；无业务/schema/dependency/unrelated 改动。
+- [x] 干净 checkout 上单命令生成版本化 `linux-x64` Server、migration bundle、部署材料、manifest、归档与正确 SHA-256；输出只位于验证后的 `artifacts/` 精确目录。
+- [x] 同一 commit/version/SDK/输入连续两次构建的包布局、逐文件 hash 和归档 hash 相同；归档无绝对路径、`..`、重复/大小写碰撞、源代码、PDB、数据库、uploads、logs、开发配置或临时文件。
+- [x] Server 与 migration bundle 是 Linux x64 self-contained、入口具有 executable mode；manifest 准确记录版本、commit、RID、SDK、文件长度/hash 与唯一相对路径。
+- [x] systemd 使用非 root、loopback Kestrel、受控 EnvironmentFile/StateDirectory/UMask 和有界停止/重启策略；模板不存在真实 key/password/token、bootstrap 默认关闭。
+- [x] Nginx 只示例 HTTPS 终止与 loopback upstream，支持 SignalR Upgrade，body 上限不早于应用 100 MiB + 64 KiB 边界；配置字段与当前 Options/Program 一致。
+- [x] 部署文档明确停止→一致备份→migration bundle→启动顺序、失败保持停止/人工恢复、首次 bootstrap 凭据移除，以及哪些 Linux/VPS/TLS/双客户端事实仍为 `未验证`。
+- [x] packaging 定向、Fast、最终 Full、model drift、依赖漏洞、format/空白、秘密扫描和两路独立 Codex 复核完成；Claude #81 已按重大发布决策单次启动且保持后台运行，按用户策略完成后读取但不阻塞主线；无业务/schema/dependency/unrelated 改动。
 
 ### 初始验证命令
 
@@ -87,4 +88,10 @@ Claude #81 后台只读运行；Codex 三路并行实现/挑战，所有意见�
 
 ## 任务结果
 
-`进行中`。实现、产物复验、独立复核与交接完成后填写。
+`已完成`。
+
+- 生产提交：`47c6f88e83e822d9225bc358edff128599099596`（可复现 Server/migration bundle、USTAR、manifest/hash、systemd/Nginx/config、部署文档与 Packaging 测试）；`a482d35fd0225feb9a412933fba0d5c6c444a4ed`（loopback 单跳代理头、认证限流分区、迁移失败恢复、秘密与 ELF fail-closed）；`b13188643cfc72c9d0896fc919fe53448e1c7ea5`（三个 self-contained runtime 库及 Nginx 转发头进入离线强制验证）。
+- 产物：干净提交 `a482d35` 的两份 `1.0.0-rc.4` 均为 361 文件、`linux-x64` self-contained，Server、migration bundle 与关键 runtime 库为 ELF64 x86-64；两个 110,914,241-byte 归档字节一致，SHA-256 均为 `ed01d0b8ccd026ea648d48a43e83093a25b1dc58ee4a6bc5a947bd9cc3ed1c24`。最新 `b131886` 验证器再次通过该双包比较。
+- 自动化：Packaging + 认证代理限流定向 20/20；最终 Fast/Full 均为 1,445/1,445（Shared 41、Server 302、Client 1,101、Updater 1），Release 构建 0 警告/0 错误，PowerShell parser、format 与 `git diff --check` 通过。EF model drift 无变化；8 个项目 direct/transitive 漏洞审计无已知漏洞。
+- 复核：运维/安全两路独立 Codex 首轮发现代理限流、迁移 fail-fast/精确恢复、权限、Nginx lifecycle、ELF/runtime 与秘密排除缺口，成立项均修正；最终交叉复审关闭 runtime ELF 与 Nginx 转发头两项 P1，无剩余 P0/P1。Claude #81 本机持久 Sonnet/High 任务 `6798888b` 仍在运行，完成后读取并由主代理按真实 Linux/VPS 边界裁定。
+- 边界：Windows 已验证生成、结构、hash、重复构建、配置/秘密与自动化，不声称 Linux、systemd、Nginx/TLS、migration/restore、真实 VPS、真实客户端或双客户端已运行；这些仍是 M5 Gate。Client/Updater、安装器、更新 manifest、Tag/Release 与生产部署未包含在本切片。

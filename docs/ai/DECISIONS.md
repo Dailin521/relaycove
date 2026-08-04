@@ -655,4 +655,14 @@
 - **决策：** 高亮只存在于 WPF 内存展示层，绑定 exact conversation/message/navigation generation 和真实已 materialize、DataContext 仍匹配的虚拟化容器；约两秒后恢复，回收、新导航、会话/runtime 变化、撤权、窗口关闭或 materialize 失败立即清除。只有真实目标容器可见后才确认导航应用和 read-through；高亮不进入 SQLite、snapshot、服务端或持久状态。
 - **理由：** 对象身份与单调 generation 封闭表面值相同的 ABA，Around-first 把点击线性化到当前服务端授权，同步失效消除 dispatcher 排队期间的敏感可见窗口；UI-only 容器租约避免虚拟化把视觉与已读回执施加到错误消息。
 - **影响：** Client 新增搜索 policy、HTTP transport/coordinator、runtime/shell/WPF surface 与测试；不改 Shared/Server/API/schema/migration，不新增生产依赖，也不提供 typeahead、本地搜索、持久结果、相关性或 cursor。真实登录视觉/Narrator、VPS 与双客户端留到 M5 Gate。
-- **来源：** 工程方案第 9.2–9.4、12.8、15、阶段 10、21.4；`DEC-012/017/018/025/032/033/034/052`；`docs/ai/tasks/2026-08-04-stage-10-search-ui.md`；production `87b4af63a9ee5d3ae1c3df3c2f416f51fa30e929` 与 `f85c5442cdaa42d690eead32dffda5b20006f4df`；最终 Search 107/107、WPF 搜索展示 10/10、账户壳 85/85、Fast/Full 1,426/1,426（Shared 41、Server 283、Client 1,101、Updater 1）、真实 Release WPF lifecycle、model drift、八项目漏洞审计、format 与空白检查。两路 Codex reviewer 的发现均已修正并复审关闭、无剩余 P0–P2；Claude #80 仍在后台运行，完成后读取并本地裁定。
+- **来源：** 工程方案第 9.2–9.4、12.8、15、阶段 10、21.4；`DEC-012/017/018/025/032/033/034/052`；`docs/ai/tasks/2026-08-04-stage-10-search-ui.md`；production `87b4af63a9ee5d3ae1c3df3c2f416f51fa30e929` 与 `f85c5442cdaa42d690eead32dffda5b20006f4df`；最终 Search 107/107、WPF 搜索展示 10/10、账户壳 85/85、Fast/Full 1,426/1,426（Shared 41、Server 283、Client 1,101、Updater 1）、真实 Release WPF lifecycle、model drift、八项目漏洞审计、format 与空白检查。两路 Codex reviewer 的发现均已修正并复审关闭、无剩余 P0–P2；Claude #80 实际 `claude-sonnet-5` 的最终意见为无 P0/P1，仅两项非阻塞 P2 记录，经本地证据裁定不影响交付。
+
+### DEC-054：仅信任 loopback 反向代理头并在认证限流前恢复客户端地址
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-006` 在服务端直接监听时刻意不读取客户端转发头；M4 改为 Nginx 终止 TLS、只向 loopback Kestrel 转发后，若继续使用 socket 对端地址，所有 login/refresh 请求都会以同一 loopback 主体共享认证限额，既影响正常小团队使用，也允许单一来源耗尽全站入口配额。无条件信任公网 `X-Forwarded-*` 又会允许伪造来源绕过限流。
+- **决策：** Server 只处理 `X-Forwarded-For` 与 `X-Forwarded-Proto`，固定 `ForwardLimit=1`、要求头数量对称，并只信任 IPv4/IPv6 loopback 代理；转发头中间件必须位于路由、认证和限流之前。Nginx upstream 只连接 loopback Kestrel，并由模板设置真实客户端链与 HTTPS 协议；Kestrel 不作为公网入口。来自非 loopback 对端的转发头保持不受信任，不能改变限流主体或请求协议。
+- **理由：** 单一可信 hop 让认证限流重新按真实客户端地址分区，同时把伪造边界限制在本机反向代理；中间件顺序使现有按 `RemoteIpAddress` 分区的策略无需新增公共协议或状态。
+- **影响：** 细化 `DEC-006` 的“当前不读取转发头”前提；Server 启动管线新增受限 Forwarded Headers 配置，部署材料明确 loopback/Nginx 边界，并增加两个代理客户端各自限流、同一客户端仍被限流的回归。没有 API、数据库、migration 或依赖变化；多级代理、CDN 与非 loopback sidecar 需要另行决策和配置。
+- **来源：** 工程方案第 14、16、阶段 13、21.5；`DEC-006`；`docs/ai/tasks/2026-08-04-m4-server-release-package.md`；production `a482d35fd0225feb9a412933fba0d5c6c444a4ed`；认证限流与 Packaging 定向 20/20、最终 Fast/Full 1,445/1,445（Shared 41、Server 302、Client 1,101、Updater 1）、Release 0 警告/0 错误、model drift 与八项目漏洞审计通过。

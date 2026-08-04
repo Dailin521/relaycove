@@ -9,13 +9,13 @@ ExecutionStatus: running
 CurrentMilestone: M4
 CurrentStage: M4-01 服务端 RC 发布包
 ActiveTask: docs/ai/tasks/2026-08-04-m4-server-release-package.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: f85c5442cdaa42d690eead32dffda5b20006f4df
+LatestGreenCodeCommit: b13188643cfc72c9d0896fc919fe53448e1c7ea5
 LatestGreenIntegrationCommit: 8d8d5d26451f2e3c8aac9879fd7ed2f8affa00f2
-NextAction: 实现并验证可复现的 linux-x64 Server RC 包、migration bundle 与部署材料
-ClaudeCalls: 81（#1–#79 全部终态；#80/#81 本机后台持久 Sonnet/High 只读任务运行中）
-ClaudeCostUsd: 83.12343525 exact confirmed + 76.68 local CLI displayed（#44–#50/#74–#76）；按显示值合计约 159.80343525；另有四十一次失败/中断调用费用 unavailable
+NextAction: 提交 M4-01 证据交接并仅快进 agent/v1-integration，随后启动 M4-02 win-x64 Client 可运行 RC 包
+ClaudeCalls: 81（#1–#80 全部终态；#81 本机后台持久 Sonnet/High 只读任务运行中）
+ClaudeCostUsd: 83.12343525 exact confirmed + 76.68 local CLI displayed（#44–#50/#74–#76）；按显示值合计约 159.80343525；其余未返回费用保持 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -35,7 +35,7 @@ RequiredUserGate: none
 | M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
 | M2 | `completed` | 阶段 9 附件纵向闭环与 Internal Alpha 证据包已由 `8ff8c15` 合入绿色集成分支 | 已进入 M3 |
 | M3 | `completed` | 权限化搜索 API、客户端 Global/Current 搜索、Around-first 跳转和一次性高亮已由 `8d8d5d2` 完成绿色集成，最终 Fast/Full 1,426/1,426 | 已进入 M4 |
-| M4 | `running` | M4-01 服务端 RC 发布包、migration bundle 与离线发布材料已启动 | RC 自动化、包与发布材料完整 |
+| M4 | `running` | M4-01 Linux x64 服务端 RC、migration bundle、离线验证和部署材料已绿色完成；待合入后进入 M4-02 Client RC 包 | RC 自动化、包与发布材料完整 |
 | M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
 
 里程碑顺序来自当前 v1 执行目标；每个里程碑的功能口径和最终交付标准仍由工程方案、决策记录和对应最小纵向任务冻结，本文件不预写实现细节。
@@ -86,7 +86,8 @@ RequiredUserGate: none
 - 当前本地图片预览 production 检查点 `fabe16c28476237a1ed9d91f26a6738d09057c0f` 已通过最终 Full 1,267 项（Shared 39、Server 255、Client 972、Updater 1）、图片/附件/MessageListPresenter/AccountShell 定向 218/218、真实 PNG/JPEG 与预算/超时/撤权/ABA/recycling/viewer/focus 回归、model drift、八项目漏洞审计、format 与空白检查。两路 Codex 独立复审的 owner cleanup、critical cleanup、snapshot materialize 与自动焦点问题均已修复并补回归；Claude #77 的成立意见经 Codex 复算收敛为 `DEC-050`。直接打开文件与真实登录/VPS/双客户端保持后续或 M5 Gate。
 - 当前安全关联应用打开 production 检查点 `f8c3dcd22c40ec511665314b5daf07a58a798a9d` 已通过最终 Fast/Full 1,348 项（Shared 39、Server 255、Client 1,053、Updater 1）、附件/MessageListPresenter/AccountShell 定向 271/271、真实无害文本 MOTW/Attachment Manager 探针 1/1、Release WPF 响应窗口、model drift、八项目漏洞审计、format 与空白检查。两路 Codex 独立复审均无 P0–P2；三阶段 Prepare→commit/foreground acknowledgement→`ExecuteRelease` 已证明 COM 前 SQLite/cache/coordinator/shell gate 全部退出，边界收敛为 `DEC-051`。Claude #78 在答案前失败且无可用结果，按单次策略未重试；真实登录视觉/Narrator、恶意样本与 VPS/双客户端保持 M5 Gate。
 - 当前权限化搜索 production 检查点 `4c4edbab9fd8a3178d39cd7fbddd49c36c16c82c` 已通过最终 Fast/Full 1,378 项（Shared 41、Server 283、Client 1,053、Updater 1）、Search 定向 30/30、真实 HTTP/SQLite 的权限/Unicode/附件/LIKE/snippet/限流回归、model drift、八项目漏洞审计、format 与空白检查。安全与协议两路 Codex reviewer 首轮各发现一个 P2，限流和真实 SQLite 大小写等价用例修正后二轮均 `PASS`、无剩余 P0–P2；边界收敛为 `DEC-052`。Claude #79 在答案前失败且无可用结果，按单次策略未重试；客户端搜索 UI 与 VPS/双客户端保持后续/M5 Gate。
-- 当前客户端搜索 production `87b4af63a9ee5d3ae1c3df3c2f416f51fa30e929` 与认证失效修正 `f85c5442cdaa42d690eead32dffda5b20006f4df` 已通过 Search 107/107、WPF 搜索展示 10/10、账户壳 85/85、最终 Fast/Full 1,426/1,426（Shared 41、Server 283、Client 1,101、Updater 1）、Release 0 警告/0 错误、真实 WPF lifecycle、model drift、八项目漏洞审计、format 与空白检查。两路 Codex reviewer 的后台失效、虚拟化测试和慢 logout 残留发现均已修正并复审关闭，无剩余 P0–P2；边界收敛为 `DEC-053`。Claude #80 仍在后台持久只读运行，完成后读取并由 Codex 本地裁定，不阻塞绿色集成。
+- 当前客户端搜索 production `87b4af63a9ee5d3ae1c3df3c2f416f51fa30e929` 与认证失效修正 `f85c5442cdaa42d690eead32dffda5b20006f4df` 已通过 Search 107/107、WPF 搜索展示 10/10、账户壳 85/85、最终 Fast/Full 1,426/1,426（Shared 41、Server 283、Client 1,101、Updater 1）、Release 0 警告/0 错误、真实 WPF lifecycle、model drift、八项目漏洞审计、format 与空白检查。两路 Codex reviewer 的后台失效、虚拟化测试和慢 logout 残留发现均已修正并复审关闭，无剩余 P0–P2；边界收敛为 `DEC-053`。Claude #80 实际 `claude-sonnet-5` 最终无 P0/P1，仅两项非阻塞 P2 记录，经本地裁定不影响交付。
+- 当前 M4-01 production `47c6f88e83e822d9225bc358edff128599099596`、`a482d35fd0225feb9a412933fba0d5c6c444a4ed` 与最终验证器 `b13188643cfc72c9d0896fc919fe53448e1c7ea5` 已通过两份 361 文件 `linux-x64` self-contained RC 的字节一致归档（SHA-256 `ed01d0b8ccd026ea648d48a43e83093a25b1dc58ee4a6bc5a947bd9cc3ed1c24`）、Packaging/代理限流 20/20、最终 Fast/Full 1,445/1,445（Shared 41、Server 302、Client 1,101、Updater 1）、Release 0 警告/0 错误、model drift、八项目漏洞审计、format 与空白检查。运维/安全两路 Codex reviewer 的成立 P1 全部修正并复审关闭，无剩余 P0/P1；边界收敛为 `DEC-054`。Claude #81 仍后台只读运行，完成后读取并本地裁定，不阻塞绿色集成。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 
@@ -173,16 +174,16 @@ RequiredUserGate: none
 | 77 | 2026-08-04 | 已下载图片的进程内有界解码、缩略图与查看生命周期 | 全局 MCP 0.5.0 持久只读安全/可靠性 challenge | Opus / XHigh | job `abb22632-84bd-4a97-bc74-468cb3751b61`，`workspace=E:\WorkSpace\RelayCove`，仓库只读；调用前仍存在恶意图片 decoder allocation/hang/cancellation 高风险争议，故本决策唯一一次调用直接选择 Opus/XHigh。实际 `claude-opus-5`、mismatch=`false`，795,273 ms 后答案返回并已读取；格式/预算、私有内存、slot/超时脱离及 helper 触发意见经 Codex 复算后采纳，WIC/额外依赖建议由当前 WinRT 编译与真实解码证据裁定不采纳 | `$3.05042375` |
 | 78 | 2026-08-04 | 已下载附件的受控临时副本、MOTW 与关联应用打开 | 当前会话旧兼容 MCP 只读安全 challenge | Sonnet / High | 唯一一次调用在答案前失败：Desktop 任务只暴露旧 `consult_claude`，其内部命令强加 `$0.5` budget 后退出；无持久 job、正式答案、可靠实际模型、duration 或费用。按策略不重试，由 Microsoft 官方契约、本机探针与 Codex 独立复核替代 | `unavailable` |
 | 79 | 2026-08-04 | 搜索公共协议、权限过滤、SQLite LIKE 与结果边界 | 当前会话旧兼容 MCP 只读协议/安全 challenge | Sonnet / XHigh | 唯一一次调用在答案前失败：本机 MCP 配置已指向 0.5.0 持久工具，但当前 Desktop 任务仍只暴露旧 `consult_claude`，其内部命令再次强加 `$0.5` budget 后退出；无持久 job、正式答案、可靠实际模型、duration 或费用。按策略不重试，由仓库证据、SQLite/EF 官方契约与三路 Codex 只读调查替代 | `unavailable` |
-| 80 | 2026-08-04 | 客户端搜索撤权、迟到结果与 Around-first 导航边界 | 本机 Claude Code 2.1.221 后台持久只读 challenge | Sonnet / High | background `213daa77`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；运行中，完成后读取并由 Codex 本地裁定，不阻塞主线 | `running` |
+| 80 | 2026-08-04 | 客户端搜索撤权、迟到结果与 Around-first 导航边界 | 本机 Claude Code 2.1.221 后台持久只读 challenge | Sonnet / High | background `213daa77`、session `213daa77-e08a-4667-9d5f-0c9633e8c489`，`workspace=E:\WorkSpace\RelayCove`，实际 `claude-sonnet-5`；已完成并读取，结论无 P0/P1，仅“输入即清结果”产品细节与未重走全部高亮门控两项非阻塞 P2，经本地证据裁定不影响交付 | `unavailable` |
 | 81 | 2026-08-04 | M4 服务端 RC 发布矩阵、migration bundle、systemd 与 Nginx 边界 | 本机 Claude Code 2.1.221 后台持久只读 challenge | Sonnet / High | 有效 background `6798888b`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；运行中，完成后读取并由 Codex 本地裁定。此前两个 CLI 参数解析产生的空会话未发送模型任务并已停止，不计调用 | `running` |
 
-- 调用计数：`81`（#1–#79 全部终态；#80/#81 运行中；#78/#79 在答案前失败且分别按单次策略不重试；#77 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构、安全、数据库、协议或可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
-- 已确认精确费用合计：`$83.12343525`；另有 #44–#50/#74–#76 本机 Claude Code 状态显示值合计 `$76.68`（界面两位小数，未伪造更高精度），按显示值总计约 `$159.80343525`。其余四十一次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`81`（#1–#80 全部终态；#81 运行中；#78/#79 在答案前失败且分别按单次策略不重试；#80 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构、安全、数据库、协议或可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
+- 已确认精确费用合计：`$83.12343525`；另有 #44–#50/#74–#76 本机 Claude Code 状态显示值合计 `$76.68`（界面两位小数，未伪造更高精度），按显示值总计约 `$159.80343525`。其余未返回费用保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate
 
-- 当前阻塞：无；Claude #79 无答案不阻塞仓库证据、SQLite/EF 官方契约、本机真实数据库与 Codex 复核。
+- 当前阻塞：无；Claude #81 后台运行不阻塞当前仓库证据、双构建产物、本机门禁与 Codex 复核，完成后必须读取并裁定。
 - 当前所需用户 Gate：无。
 - `未验证`：用户已提供仓库外的香港 Light-A2 协作应用主机配置汇总，保留到 M5 真实 VPS/双客户端 Gate；当前不读取，届时仅最小读取所需配置且不把地址、密钥或凭据提交到仓库或测试日志。
 - 只有 `AGENTS.md`、`WORKFLOW.md` 和 v1 执行目标列出的重大产品、不可逆、安全、凭据、真实体验或发布事项才请求用户裁决；普通工程实现由当前任务自行收敛。

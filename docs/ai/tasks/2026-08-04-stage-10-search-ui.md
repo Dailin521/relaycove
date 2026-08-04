@@ -96,5 +96,5 @@ Claude #80 只读后台运行；普通实现/审查使用 Codex，任何意见�
 - 自动化：Search 定向 Debug 107/107（Shared 2、Server 28、Client 77），WPF 搜索展示 Release 10/10，账户壳定向 85/85；Fast 与最终 Full 均为 1,426/1,426（Shared 41、Server 283、Client 1,101、Updater 1），Release 构建 0 警告/0 错误，format 与 `git diff --check` 通过。
 - 发布前检查：EF model drift 无变化；8 个项目 direct/transitive 漏洞审计无已知漏洞。真实 Release WPF lifecycle 已验证主窗口 `RelayCove` 可响应、第二实例正常退出且测试后无残留进程；登录态搜索视觉与 Narrator、VPS 和双客户端仍按计划保留到 M5 Gate。
 - 复核：transport/runtime 交叉复核最终 `PASS`、无 P0–P2；可靠性挑战发现的后台失效窗口和认证失效慢 logout 残留均已修正、补回归并由原 reviewer 复审关闭，无剩余 P0–P2。
-- Claude #80：本机 Claude Code 2.1.221 后台持久 Sonnet/High 只读任务 `213daa77` 仍在运行；按既定非阻塞策略，完成后读取并由 Codex 复算，若有成立问题在后续绿色分支修正。
+- Claude #80：本机 Claude Code 2.1.221 后台持久 Sonnet/High 只读任务 `213daa77` 已完成；实际 `claude-sonnet-5`，结论为无 P0/P1，仅记录“输入即清结果”的产品细节与未重走全部高亮门控两项非阻塞 P2，本地既有测试和交付边界足以覆盖，未追加代码修改。
 - 边界：未改 Shared/Server/API/schema/migration 或生产依赖；不提供 typeahead、本地搜索、持久搜索结果或相关性排序。

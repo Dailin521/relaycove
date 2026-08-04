@@ -5,18 +5,18 @@
 ## 当前状态
 
 - **当前阶段：** M4-01 — Linux 服务端 RC 发布包
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮已完成
-- **最近验证通过的状态：** M3 客户端搜索 production `87b4af6/f85c544` 与交接头 `8d8d5d26451f2e3c8aac9879fd7ed2f8affa00f2` 已通过 Search 107/107、WPF 搜索展示 10/10、账户壳 85/85、Fast/Full 1,426/1,426、两路独立复审、真实 Release WPF lifecycle、model drift、依赖漏洞、format 与空白检查，并已仅快进合入本地/远端 `agent/v1-integration`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮；M4-01 可复现 Linux x64 Server RC、migration bundle、离线校验与部署材料已完成
+- **最近验证通过的状态：** M4-01 production `47c6f88/a482d35/b131886` 已通过干净双构建归档字节一致、最新离线验证器、Packaging/代理限流 20/20、Fast/Full 1,445/1,445、两路独立复核及 P1 关闭、model drift、依赖漏洞、format 与空白检查；交接完成后仅快进合入 `agent/v1-integration`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — 当前最终 Fast/Full、format 与 1,426 项测试（Shared 41、Server 283、Client 1,101、Updater 1）通过；Search 定向 107/107、WPF 搜索展示 10/10、账户壳 85/85。覆盖服务端权限/Unicode/附件/LIKE/snippet/限流，以及客户端 scope、refresh/错误分类、迟到结果、撤权/注销同步清理、Around-first、虚拟化高亮与 UIA 脱敏；真实登录视觉/Narrator、VPS 与双客户端保持未验证
+- **自动化验证：** `已验证` — 当前最终 Fast/Full、format 与 1,445 项测试（Shared 41、Server 302、Client 1,101、Updater 1）通过；Server release Packaging 与代理限流定向 20/20。覆盖可复现 USTAR、manifest/SHA-256、Linux x64 ELF/runtime、路径/秘密排除、部署模板与 loopback 转发限流；Linux/VPS/TLS、真实 migration/restore、真实登录视觉/Narrator 与双客户端保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
-- **最近 Claude 调用：** `运行中` — #80 客户端搜索只读 review `213daa77` 与 #81 M4 服务端发布只读 challenge `6798888b` 均为本机 Claude Code 2.1.221 Sonnet/High 后台持久任务；主线继续并行，分别完成后读取并由 Codex 本地裁定
+- **最近 Claude 调用：** `运行中` — #80 客户端搜索 Sonnet/High review `213daa77` 已完成且无 P0/P1；#81 M4 服务端发布 Sonnet/High challenge `6798888b` 仍在本机后台持久运行，完成后读取并由 Codex 本地裁定，不阻塞主线
 - **Codex 项目配置：** `已验证` — 已移除仓库中遮蔽全局配置的旧 Claude MCP v0.3 `consult_claude` override；`codex mcp get claude_second_brain` 现解析到全局 0.5.0 的 start/list/check/read 持久工具，Fast/Explorer/Reviewer 项目设置保留
 
 ## 进行中
 
-- M3 已由 `8d8d5d2` 完成绿色集成。当前 `agent/m4-server-release-package` 正在交付可复现的 Linux x64 Server、migration bundle、SHA-256、systemd/Nginx/config 模板、离线验收与部署文档；仍不读取 VPS 配置或接触真实部署。
+- M4-01 已在 `agent/m4-server-release-package` 完成绿色实现与交接证据，下一步仅快进合入 `agent/v1-integration` 并启动 M4-02 Windows Client 可运行 RC 包；#81 保持后台只读运行，仍不读取 VPS 配置或接触真实部署。
 
 ## 已完成
 
@@ -74,10 +74,12 @@
 - Restricted Zone 临时副本、三阶段 STA job、Windows Attachment Manager 关联应用打开与受控 cleanup（`DEC-051`）
 - 权限内嵌的消息/附件字面搜索、唯一消息限额、Unicode-safe snippet 与按 subject 零排队限流（`DEC-052`）
 - 客户端搜索 runtime/request/result identity lease、Around-first 重新授权与 recycling-safe UI-only 高亮（`DEC-053`）
+- loopback 单跳可信转发头、认证限流真实客户端分区与公网伪造隔离（`DEC-054`）
+- 可复现 Linux x64 Server/migration bundle、USTAR + SHA-256、systemd/Nginx/config、离线 fail-closed 验收与部署恢复文档
 
 ## 下一任务
 
-完成 M4-01 服务端 RC 发布包、迁移入口、离线校验和部署材料，再继续客户端打包/更新发布材料；真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
+仅快进合入 M4-01 后，启动 M4-02 `win-x64` Client 可运行内部 RC 包；Updater/更新协议与 CI/Release 汇总随后分片，真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
 
 ## 阻塞项
 
