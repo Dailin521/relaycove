@@ -22,7 +22,6 @@ public partial class App : System.Windows.Application
 {
     private const string BootstrapRecordFileName = "owned-bootstrap-token.v1";
     private const string BootstrapMarkerFileName = ".relaycove-bootstrap-owner";
-    private static readonly TimeSpan UpdaterParentExitTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan[] BootstrapCleanupDelays =
     [
         TimeSpan.Zero,
@@ -30,6 +29,7 @@ public partial class App : System.Windows.Application
         TimeSpan.FromSeconds(1),
     ];
     private ILoggerFactory? loggerFactory;
+    private readonly object bootstrapRecordGate = new();
     private WindowsSingleInstanceHost? singleInstanceHost;
     private ClientNotificationActivationRouter? notificationActivationRouter;
     private ClientActivationDispatcher? activationDispatcher;
@@ -718,13 +718,13 @@ public partial class App : System.Windows.Application
         var token = Guid.NewGuid().ToString("N");
         if (!TryPersistBootstrapToken(token))
         {
+            TryDeleteBootstrapRecordIfMatches(token);
             ShowUpdateHandoffFailure("无法安全记录更新交接状态，请重试。");
             Interlocked.Exchange(ref updateHandoffStarted, 0);
             return;
         }
 
-        var updaterStarted = false;
-        var parentExited = false;
+        Process? updaterProcess = null;
         try
         {
             var appDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory));
@@ -752,33 +752,61 @@ public partial class App : System.Windows.Application
                 currentProcess.StartTime.ToUniversalTime().Ticks,
                 token);
 
-            using var updaterProcess = Process.Start(startInfo) ??
+            updaterProcess = Process.Start(startInfo) ??
                 throw new InvalidOperationException("The package-local updater did not start.");
-            updaterStarted = true;
-            await updaterProcess.WaitForExitAsync().WaitAsync(UpdaterParentExitTimeout);
-            parentExited = true;
-            if (updaterProcess.ExitCode != 0)
-            {
-                throw new InvalidOperationException("The package-local updater rejected the handoff.");
-            }
-
-            // Exit code 0 means only that the external bootstrap accepted ownership.
-            // It is intentionally not an apply-complete signal.
-            RequestExplicitExit();
         }
         catch (Exception exception) when (exception is InvalidOperationException or
-            System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or TimeoutException)
+            System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
         {
-            if (!updaterStarted || parentExited)
-            {
-                TryDeleteBootstrapRecord();
-            }
+            updaterProcess?.Dispose();
+            TryDeleteBootstrapRecordIfMatches(token);
             loggerFactory?.CreateLogger<App>().LogWarning(
-                "Update handoff was not accepted; errorType={ErrorType}.",
+                "Starting the package-local updater failed; errorType={ErrorType}.",
                 exception.GetType().Name);
             ShowUpdateHandoffFailure("更新程序未能接受交接；当前 RelayCove 仍可继续使用，请重试。");
             Interlocked.Exchange(ref updateHandoffStarted, 0);
+            return;
         }
+
+        ShowUpdateHandoffConfirming();
+        try
+        {
+            using (updaterProcess)
+            {
+                // This is only the package-local bootstrap parent. It never waits for
+                // this Client, so await its determinate acceptance result without a
+                // timeout that could orphan an already-started external bootstrap.
+                await updaterProcess.WaitForExitAsync();
+                if (updaterProcess.ExitCode != 0)
+                {
+                    TryDeleteBootstrapRecordIfMatches(token);
+                    loggerFactory?.CreateLogger<App>().LogWarning(
+                        "The package-local updater rejected the handoff; exitCode={ExitCode}.",
+                        updaterProcess.ExitCode);
+                    ShowUpdateHandoffFailure(
+                        "更新程序未能接受交接；当前 RelayCove 仍可继续使用，请重试。");
+                    Interlocked.Exchange(ref updateHandoffStarted, 0);
+                    return;
+                }
+            }
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or
+            System.ComponentModel.Win32Exception or IOException)
+        {
+            // Once Process.Start succeeds, an indeterminate wait failure must retain
+            // both the latch and ownership record. The external bootstrap may already
+            // be running, and a second handoff would violate single ownership.
+            loggerFactory?.CreateLogger<App>().LogWarning(
+                "Waiting for updater bootstrap acceptance became indeterminate; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+            ShowUpdateHandoffConfirming();
+            return;
+        }
+
+        // Exit code 0 means only that the external bootstrap accepted ownership.
+        // It is intentionally not an apply-complete signal.
+        RequestExplicitExit();
     }
 
     private void ShowUpdateHandoffFailure(string message)
@@ -786,6 +814,14 @@ public partial class App : System.Windows.Application
         if (MainWindow is MainWindow window)
         {
             window.ShowUpdateHandoffFailure(message);
+        }
+    }
+
+    private void ShowUpdateHandoffConfirming()
+    {
+        if (MainWindow is MainWindow window)
+        {
+            window.ShowUpdateHandoffConfirming();
         }
     }
 
@@ -840,35 +876,45 @@ public partial class App : System.Windows.Application
 
         try
         {
-            Directory.CreateDirectory(updateCacheRoot);
-            if (IsReparsePoint(updateCacheRoot))
+            lock (bootstrapRecordGate)
             {
-                return false;
-            }
-
-            var recordPath = GetBootstrapRecordPath();
-            var temporaryPath = recordPath + ".tmp";
-            if ((File.Exists(recordPath) && IsReparsePoint(recordPath)) ||
-                (File.Exists(temporaryPath) && IsReparsePoint(temporaryPath)))
-            {
-                return false;
-            }
-
-            if (File.Exists(recordPath))
-            {
-                var existingToken = File.ReadAllText(recordPath, Encoding.UTF8);
-                if (IsBootstrapToken(existingToken) && !TryDeleteOwnedBootstrap(existingToken))
+                Directory.CreateDirectory(updateCacheRoot);
+                if (IsReparsePoint(updateCacheRoot))
                 {
                     return false;
                 }
 
-                File.Delete(recordPath);
-            }
+                var recordPath = GetBootstrapRecordPath();
+                var temporaryPath = recordPath + ".tmp";
+                if ((File.Exists(recordPath) && IsReparsePoint(recordPath)) ||
+                    (File.Exists(temporaryPath) && IsReparsePoint(temporaryPath)))
+                {
+                    return false;
+                }
 
-            File.Delete(temporaryPath);
-            File.WriteAllText(temporaryPath, token, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-            File.Move(temporaryPath, recordPath, overwrite: true);
-            return true;
+                if (File.Exists(recordPath))
+                {
+                    var existingToken = File.ReadAllText(recordPath, Encoding.UTF8);
+                    if (IsBootstrapToken(existingToken) &&
+                        !TryDeleteOwnedBootstrap(existingToken))
+                    {
+                        return false;
+                    }
+
+                    if (!CompareAndDeleteBootstrapRecord(recordPath, existingToken))
+                    {
+                        return false;
+                    }
+                }
+
+                File.Delete(temporaryPath);
+                File.WriteAllText(
+                    temporaryPath,
+                    token,
+                    new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                File.Move(temporaryPath, recordPath, overwrite: false);
+                return true;
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
             System.Security.SecurityException)
@@ -890,12 +936,16 @@ public partial class App : System.Windows.Application
         string? token;
         try
         {
-            var recordPath = GetBootstrapRecordPath();
-            token = File.Exists(recordPath) && !IsReparsePoint(recordPath)
-                ? await File.ReadAllTextAsync(recordPath)
-                : null;
+            lock (bootstrapRecordGate)
+            {
+                var recordPath = GetBootstrapRecordPath();
+                token = File.Exists(recordPath) && !IsReparsePoint(recordPath)
+                    ? File.ReadAllText(recordPath, Encoding.UTF8)
+                    : null;
+            }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+            System.Security.SecurityException)
         {
             loggerFactory?.CreateLogger<App>().LogWarning(
                 "Update bootstrap ownership read failed; errorType={ErrorType}.",
@@ -905,7 +955,11 @@ public partial class App : System.Windows.Application
 
         if (!IsBootstrapToken(token))
         {
-            TryDeleteBootstrapRecord();
+            if (token is not null)
+            {
+                TryDeleteBootstrapRecordIfMatches(token);
+            }
+
             return;
         }
 
@@ -918,7 +972,7 @@ public partial class App : System.Windows.Application
 
             if (TryDeleteOwnedBootstrap(token!))
             {
-                TryDeleteBootstrapRecord();
+                TryDeleteBootstrapRecordIfMatches(token!);
                 return;
             }
         }
@@ -984,22 +1038,44 @@ public partial class App : System.Windows.Application
 
     private string GetBootstrapRecordPath() => Path.Combine(updateCacheRoot!, BootstrapRecordFileName);
 
-    private void TryDeleteBootstrapRecord()
+    private bool TryDeleteBootstrapRecordIfMatches(string expectedToken)
     {
         try
         {
-            var path = GetBootstrapRecordPath();
-            if (!File.Exists(path) || !IsReparsePoint(path))
+            lock (bootstrapRecordGate)
             {
-                File.Delete(path);
+                return CompareAndDeleteBootstrapRecord(
+                    GetBootstrapRecordPath(),
+                    expectedToken);
             }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+            System.Security.SecurityException)
         {
             loggerFactory?.CreateLogger<App>().LogWarning(
                 "Update bootstrap ownership record cleanup failed; errorType={ErrorType}.",
                 exception.GetType().Name);
+            return false;
         }
+    }
+
+    internal static bool CompareAndDeleteBootstrapRecord(
+        string recordPath,
+        string expectedToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(recordPath);
+        ArgumentNullException.ThrowIfNull(expectedToken);
+        if (!File.Exists(recordPath) || IsReparsePoint(recordPath) ||
+            !string.Equals(
+                File.ReadAllText(recordPath, Encoding.UTF8),
+                expectedToken,
+                StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        File.Delete(recordPath);
+        return true;
     }
 
     private static bool IsBootstrapToken(string? value) =>

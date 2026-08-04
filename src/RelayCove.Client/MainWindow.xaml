@@ -1426,7 +1426,8 @@
                                 Foreground="White"
                                 Visibility="Collapsed"
                                 Click="OnApplyUpdateClicked" />
-                        <Button Content="退出 RelayCove"
+                        <Button x:Name="ExitMandatoryUpdateButton"
+                                Content="退出 RelayCove"
                                 Click="OnExitForMandatoryUpdateClicked" />
                     </WrapPanel>
                 </StackPanel>

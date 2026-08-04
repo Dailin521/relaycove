@@ -158,6 +158,7 @@ public partial class MainWindow : Window
     internal void ApplyUpdateState(ClientUpdateState state)
     {
         ArgumentNullException.ThrowIfNull(state);
+        var wasMandatoryUpdateGate = mandatoryUpdateGate;
         if (state.IsMandatory)
         {
             mandatoryUpdateGate = true;
@@ -208,6 +209,8 @@ public partial class MainWindow : Window
         MandatoryUpdateOverlay.Visibility = mandatoryUpdateGate
             ? Visibility.Visible
             : Visibility.Collapsed;
+        LoginPanel.IsEnabled = !mandatoryUpdateGate;
+        AccountPanel.IsEnabled = !mandatoryUpdateGate;
         if (!mandatoryUpdateGate)
         {
             return;
@@ -249,6 +252,12 @@ public partial class MainWindow : Window
             ? Visibility.Visible
             : Visibility.Collapsed;
         ApplyMandatoryUpdateButton.IsEnabled = applyUpdate is not null;
+        if (!wasMandatoryUpdateGate || !MandatoryUpdateOverlay.IsKeyboardFocusWithin)
+        {
+            _ = Dispatcher.BeginInvoke(
+                FocusMandatoryUpdateAction,
+                DispatcherPriority.Input);
+        }
     }
 
     internal void ShowUpdateHandoffFailure(string message)
@@ -256,6 +265,24 @@ public partial class MainWindow : Window
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         updateHandoffFailure = message;
         SetLiveText(MandatoryUpdateErrorText, message);
+        RetryMandatoryUpdateButton.IsEnabled = checkForUpdates is not null;
+        ApplyMandatoryUpdateButton.IsEnabled = applyUpdate is not null;
+        OptionalUpdateActionButton.IsEnabled = applyUpdate is not null;
+        FocusMandatoryUpdateAction();
+    }
+
+    internal void ShowUpdateHandoffConfirming()
+    {
+        updateHandoffFailure = null;
+        SetLiveText(UpdateStatusText, "更新：正在确认交接…");
+        SetLiveText(MandatoryUpdateErrorText, string.Empty);
+        SetLiveText(MandatoryUpdateProgressText, "更新程序正在确认交接，请稍候。");
+        RetryMandatoryUpdateButton.IsEnabled = false;
+        DownloadMandatoryUpdateButton.IsEnabled = false;
+        CancelMandatoryUpdateButton.IsEnabled = false;
+        ApplyMandatoryUpdateButton.IsEnabled = false;
+        OptionalUpdateActionButton.IsEnabled = false;
+        FocusMandatoryUpdateAction();
     }
 
     internal Guid? SelectedConversationId =>
@@ -2507,6 +2534,13 @@ public partial class MainWindow : Window
         System.Windows.Input.KeyEventArgs e)
     {
         _ = sender;
+        if (mandatoryUpdateGate && !MandatoryUpdateOverlay.IsKeyboardFocusWithin)
+        {
+            e.Handled = true;
+            FocusMandatoryUpdateAction();
+            return;
+        }
+
         if (e.Key != Key.Escape || AttachmentImageViewerOverlay.Visibility != Visibility.Visible)
         {
             return;
@@ -2514,6 +2548,26 @@ public partial class MainWindow : Window
 
         CloseAttachmentImageViewer(restoreFocus: true);
         e.Handled = true;
+    }
+
+    private void FocusMandatoryUpdateAction()
+    {
+        if (!mandatoryUpdateGate || MandatoryUpdateOverlay.Visibility != Visibility.Visible)
+        {
+            return;
+        }
+
+        System.Windows.Controls.Button target =
+            ApplyMandatoryUpdateButton.IsVisible && ApplyMandatoryUpdateButton.IsEnabled
+            ? ApplyMandatoryUpdateButton
+            : CancelMandatoryUpdateButton.IsVisible && CancelMandatoryUpdateButton.IsEnabled
+                ? CancelMandatoryUpdateButton
+                : DownloadMandatoryUpdateButton.IsVisible && DownloadMandatoryUpdateButton.IsEnabled
+                    ? DownloadMandatoryUpdateButton
+                    : RetryMandatoryUpdateButton.IsEnabled
+                        ? RetryMandatoryUpdateButton
+                        : ExitMandatoryUpdateButton;
+        _ = Keyboard.Focus(target);
     }
 
     private async Task StartAttachmentThumbnailAsync(ClientAttachmentImageViewState state)
