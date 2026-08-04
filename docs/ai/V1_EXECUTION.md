@@ -6,14 +6,14 @@
 
 ```text
 ExecutionStatus: running
-CurrentMilestone: M1
+CurrentMilestone: M2
 CurrentStage: 阶段 9
-ActiveTask: docs/ai/tasks/2026-08-04-stage-9-client-attachment-upload-send.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-04-stage-9-wpf-attachment-compose.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 44e5010787d1b9fa540f730fa52bef22f25cad02
-LatestGreenIntegrationCommit: 3ceabdc4ba43336aa4f7a00a2fa93c49c2b7806d
-NextAction: 仅快进集成并清理当前任务分支，随后启动 WPF 附件选择、发送状态与上传进度切片
+LatestGreenIntegrationCommit: f8e058e9e89d80686a9b15cd955e02f900bfa703
+NextAction: 实现 WPF 本地文件多选、Image/File 发送状态与客户端 content-copy 上传进度
 ClaudeCalls: 73（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败；仅关键用途调用）
 ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有四十次失败/中断调用费用 unavailable
 Blocker: none
@@ -32,8 +32,8 @@ RequiredUserGate: none
 | 里程碑 | 状态 | 当前证据 | 下一出口 |
 | --- | --- | --- | --- |
 | M0 | `completed` | 同步契约、`DEC-003`、解决方案和真实 Fast/Full 验证均通过 | 已进入 M1 |
-| M1 | `running` | 可构建骨架、认证共享契约/存储/HTTP/轮换（`DEC-004/005/006`）与管理员引导/创建用户（`DEC-007`）已完成 | 会话成员、权限、文字消息、历史与 SignalR 形成纵向闭环 |
-| M2 | `pending` | 尚未开始 | Internal Alpha 验收证据完整 |
+| M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
+| M2 | `running` | 阶段 9 服务端附件上传/下载/授权、客户端元数据缓存与 headless durable Image/File 上传发送已完成 | Internal Alpha 附件交互与验收证据完整 |
 | M3 | `pending` | 尚未开始 | Beta 验收证据完整 |
 | M4 | `pending` | 尚未开始 | RC 自动化、包与发布材料完整 |
 | M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
