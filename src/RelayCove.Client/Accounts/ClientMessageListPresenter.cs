@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Globalization;
 using RelayCove.Client.Storage;
 using RelayCove.Shared.Messages;
@@ -13,13 +14,15 @@ internal static class ClientMessageListPresenter
             messages,
             Array.Empty<LocalPendingMessage>(),
             currentUserId,
-            newMessageSeparatorBeforeMessageId: null);
+            newMessageSeparatorBeforeMessageId: null,
+            downloadedAttachmentIds: null);
 
     public static IReadOnlyList<ClientMessageListItemPresentation> Present(
         IEnumerable<MessageDto> messages,
         IEnumerable<LocalPendingMessage> pendingMessages,
         Guid currentUserId,
-        long? newMessageSeparatorBeforeMessageId = null)
+        long? newMessageSeparatorBeforeMessageId = null,
+        IReadOnlySet<Guid>? downloadedAttachmentIds = null)
     {
         ArgumentNullException.ThrowIfNull(messages);
         ArgumentNullException.ThrowIfNull(pendingMessages);
@@ -38,6 +41,7 @@ internal static class ClientMessageListPresenter
         var confirmedMessages = messages
             .OrderBy(message => message.Id)
             .ToArray();
+        var downloadedIds = downloadedAttachmentIds ?? FrozenSet<Guid>.Empty;
         var messagesById = confirmedMessages.ToDictionary(message => message.Id);
         var items = new List<ClientMessageListItemPresentation>();
         DateTime? previousLocalDate = null;
@@ -45,6 +49,7 @@ internal static class ClientMessageListPresenter
         {
             var content = PresentContent(message);
             var links = ClientMessageLinkParser.Parse(content);
+            var attachments = PresentAttachments(message, downloadedIds);
             AppendWithDateSeparator(
                 items,
                 ref previousLocalDate,
@@ -76,7 +81,9 @@ internal static class ClientMessageListPresenter
                 CanReply: true,
                 CanCopy: !string.IsNullOrEmpty(content),
                 links,
-                HasLinks: links.Count != 0));
+                HasLinks: links.Count != 0,
+                attachments,
+                HasAttachments: attachments.Count != 0));
         }
 
         foreach (var message in pendingMessages
@@ -114,7 +121,9 @@ internal static class ClientMessageListPresenter
                 CanReply: false,
                 CanCopy: !string.IsNullOrEmpty(content),
                 links,
-                HasLinks: links.Count != 0));
+                HasLinks: links.Count != 0,
+                Attachments: Array.Empty<ClientMessageAttachmentPresentation>(),
+                HasAttachments: false));
         }
 
         return items.AsReadOnly();
@@ -168,6 +177,35 @@ internal static class ClientMessageListPresenter
 
     private static string PresentContent(MessageDto message) =>
         PresentContent(message.Type, message.Content);
+
+    private static IReadOnlyList<ClientMessageAttachmentPresentation> PresentAttachments(
+        MessageDto message,
+        IReadOnlySet<Guid> downloadedAttachmentIds)
+    {
+        if (!ClientAttachmentMetadataPolicy.IsValidCollection(message.Type, message.Attachments))
+        {
+            return Array.Empty<ClientMessageAttachmentPresentation>();
+        }
+
+        return message.Attachments
+            .Select(attachment => new ClientMessageAttachmentPresentation(
+                message.ClientMessageId,
+                attachment.Id,
+                attachment.OriginalFileName,
+                FormatDisplaySize(attachment.Size),
+                attachment.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase),
+                downloadedAttachmentIds.Contains(attachment.Id)))
+            .ToArray();
+    }
+
+    private static string FormatDisplaySize(long size) =>
+        size switch
+        {
+            < 1024 => $"{size.ToString(CultureInfo.InvariantCulture)} B",
+            < 1024 * 1024 =>
+                $"{(size / 1024d).ToString("0.#", CultureInfo.InvariantCulture)} KiB",
+            _ => $"{(size / (1024d * 1024d)).ToString("0.#", CultureInfo.InvariantCulture)} MiB",
+        };
 
     private static string PresentContent(MessageType type, string? content) =>
         type switch

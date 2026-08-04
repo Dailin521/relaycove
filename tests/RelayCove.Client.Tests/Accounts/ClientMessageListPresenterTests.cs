@@ -288,6 +288,86 @@ public sealed class ClientMessageListPresenterTests
                 newMessageSeparatorBeforeMessageId: 0));
     }
 
+    [Fact]
+    public void Present_WhenConfirmedAttachmentsExist_ProjectsSafeOrderedMetadataAndDownloadState()
+    {
+        var conversationId = Guid.NewGuid();
+        var firstAttachment = CreateAttachment(
+            Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            "safe-image.png",
+            "image/png",
+            1024);
+        var secondAttachment = CreateAttachment(
+            Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            "safe-document.pdf",
+            "application/pdf",
+            1536);
+        var confirmed = new MessageDto(
+            100,
+            Guid.Parse("33333333-3333-3333-3333-333333333333"),
+            conversationId,
+            UserId,
+            "Sender",
+            MessageType.File,
+            Content: null,
+            ReplyToMessageId: null,
+            Attachments: [firstAttachment, secondAttachment],
+            MentionUserIds: Array.Empty<Guid>(),
+            CreatedAt: DateTimeOffset.Parse("2026-08-03T01:00:00Z"));
+        var pending = new LocalPendingMessage(
+            1,
+            Guid.NewGuid(),
+            conversationId,
+            UserId,
+            "Sender",
+            MessageType.Image,
+            Content: null,
+            ReplyToMessageId: null,
+            MentionUserIds: Array.Empty<Guid>(),
+            CreatedAt: DateTimeOffset.Parse("2026-08-03T02:00:00Z"),
+            MessageSendStatus.Sending)
+        {
+            AttachmentIds = [firstAttachment.Id],
+        };
+
+        var items = ClientMessageListPresenter.Present(
+            [confirmed],
+            [pending],
+            UserId,
+            downloadedAttachmentIds: new HashSet<Guid> { secondAttachment.Id });
+
+        var confirmedItem = Assert.Single(items, item => item.ServerMessageId == confirmed.Id);
+        Assert.True(confirmedItem.HasAttachments);
+        Assert.Collection(
+            confirmedItem.Attachments,
+            first =>
+            {
+                Assert.Equal(confirmed.ClientMessageId, first.MessageClientId);
+                Assert.Equal(firstAttachment.Id, first.AttachmentId);
+                Assert.Equal("safe-image.png", first.DisplayName);
+                Assert.Equal("1 KiB", first.DisplaySize);
+                Assert.True(first.IsImage);
+                Assert.False(first.IsDownloaded);
+            },
+            second =>
+            {
+                Assert.Equal(confirmed.ClientMessageId, second.MessageClientId);
+                Assert.Equal(secondAttachment.Id, second.AttachmentId);
+                Assert.Equal("safe-document.pdf", second.DisplayName);
+                Assert.Equal("1.5 KiB", second.DisplaySize);
+                Assert.False(second.IsImage);
+                Assert.True(second.IsDownloaded);
+            });
+        var pendingItem = Assert.Single(items, item => item.ServerMessageId is null);
+        Assert.False(pendingItem.HasAttachments);
+        Assert.Empty(pendingItem.Attachments);
+        Assert.DoesNotContain("safe-image.png", confirmedItem.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(confirmed.ClientMessageId.ToString(), confirmedItem.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(secondAttachment.Id.ToString(), confirmedItem.Attachments[1].ToString(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     private static MessageDto CreateMessage(
         long id,
         Guid conversationId,
@@ -307,6 +387,19 @@ public sealed class ClientMessageListPresenterTests
             Array.Empty<AttachmentDto>(),
             Array.Empty<Guid>(),
             DateTimeOffset.Parse("2026-08-03T01:00:00Z").AddMinutes(id));
+
+    private static AttachmentDto CreateAttachment(
+        Guid id,
+        string fileName,
+        string contentType,
+        long size) =>
+        new(
+            id,
+            fileName,
+            contentType,
+            size,
+            $"/api/attachments/{id:D}/download",
+            ThumbnailUrl: null);
 
     private static LocalPendingMessage CreatePending(
         long localId,

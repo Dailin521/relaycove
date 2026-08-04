@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Frozen;
 using System.Globalization;
 using System.IO;
 using Microsoft.Data.Sqlite;
@@ -3039,6 +3040,10 @@ public sealed partial class AccountScopedLocalCache : IAsyncDisposable
                 .Select(record => ToMessageDto(connection, record, transaction))
                 .ToList()
                 .AsReadOnly();
+            var downloadedAttachmentIds = ReadDownloadedAttachmentIds(
+                connection,
+                transaction,
+                records);
             var pendingMessages = beforeMessageId.HasValue
                 ? Array.Empty<LocalPendingMessage>()
                 : ReadPendingMessages(connection, transaction, conversationId);
@@ -3050,7 +3055,10 @@ public sealed partial class AccountScopedLocalCache : IAsyncDisposable
                 hasMoreBefore,
                 pendingMessages,
                 lastReadMessageId,
-                unreadCount);
+                unreadCount)
+            {
+                DownloadedAttachmentIds = downloadedAttachmentIds,
+            };
         }
         catch (SqliteException exception) when (IsBusy(exception))
         {
@@ -3072,6 +3080,42 @@ public sealed partial class AccountScopedLocalCache : IAsyncDisposable
                 LocalCacheOperationStatus.FatalScope,
                 conversationId);
         }
+    }
+
+    private static IReadOnlySet<Guid> ReadDownloadedAttachmentIds(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IReadOnlyList<LocalMessageRecord> records)
+    {
+        if (records.Count == 0)
+        {
+            return FrozenSet<Guid>.Empty;
+        }
+
+        var localMessageIdParameters = records
+            .Select((_, index) => $"$localMessageId{index}")
+            .ToArray();
+        using var command = CreateCommand(connection, transaction, $"""
+            SELECT Id
+            FROM LocalAttachments
+            WHERE LocalMessageId IN ({string.Join(", ", localMessageIdParameters)})
+              AND DownloadStatus = $downloadedStatus
+              AND LocalPath IS NOT NULL;
+            """);
+        for (var index = 0; index < records.Count; index++)
+        {
+            AddParameter(command, localMessageIdParameters[index], records[index].LocalId);
+        }
+
+        AddParameter(command, "$downloadedStatus", DownloadedAttachmentStatus);
+        var downloadedAttachmentIds = new HashSet<Guid>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            downloadedAttachmentIds.Add(Guid.ParseExact(reader.GetString(0), "D"));
+        }
+
+        return downloadedAttachmentIds.ToFrozenSet();
     }
 
     private LocalCacheOperationStatus MarkConversationRenderedThrough(

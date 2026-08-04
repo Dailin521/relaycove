@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using RelayCove.Shared.Messages;
 
 namespace RelayCove.Client.Storage;
@@ -12,6 +13,8 @@ public sealed record LocalMessagePageReadOutcome(
     long LastReadMessageId = 0,
     int UnreadCount = 0)
 {
+    public IReadOnlySet<Guid> DownloadedAttachmentIds { get; init; } = FrozenSet<Guid>.Empty;
+
     public LocalMessagePageReadOutcome(
         LocalCacheOperationStatus Status,
         Guid ConversationId,
@@ -47,6 +50,7 @@ public sealed record LocalMessagePageReadOutcome(
         $"{nameof(LocalMessagePageReadOutcome)} {{ Status = {Status}, " +
         "ConversationId = [REDACTED], Messages = [REDACTED], " +
         "PendingMessages = [REDACTED], " +
+        "DownloadedAttachmentIds = [REDACTED], " +
         $"NextBeforeMessageId = [REDACTED], HasMoreBefore = {HasMoreBefore}, " +
         "LastReadMessageId = [REDACTED], UnreadCount = [REDACTED] }";
 }

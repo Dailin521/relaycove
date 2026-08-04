@@ -23,7 +23,9 @@ internal sealed record ClientMessageListItemPresentation(
     bool CanReply,
     bool CanCopy,
     IReadOnlyList<ClientMessageLinkPresentation> Links,
-    bool HasLinks)
+    bool HasLinks,
+    IReadOnlyList<ClientMessageAttachmentPresentation> Attachments,
+    bool HasAttachments)
 {
     public override string ToString() =>
         $"{nameof(ClientMessageListItemPresentation)} {{ ServerMessageId = [REDACTED], " +
@@ -38,5 +40,6 @@ internal sealed record ClientMessageListItemPresentation(
         "ReplyContent = [REDACTED], " +
         $"HasReply = {HasReply}, IsReplyTargetAvailable = {IsReplyTargetAvailable}, " +
         $"CanReply = {CanReply}, CanCopy = {CanCopy}, Links = [REDACTED], " +
-        $"HasLinks = {HasLinks} }}";
+        $"HasLinks = {HasLinks}, Attachments = [REDACTED], " +
+        $"HasAttachments = {HasAttachments} }}";
 }

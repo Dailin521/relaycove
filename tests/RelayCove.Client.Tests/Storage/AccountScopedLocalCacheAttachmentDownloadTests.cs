@@ -83,6 +83,32 @@ public sealed class AccountScopedLocalCacheAttachmentDownloadTests : IDisposable
     }
 
     [Fact]
+    public async Task ReadMessagePageAsync_WhenPageAttachmentIsDownloaded_ProjectsOnlyDownloadedIds()
+    {
+        var identity = CreateIdentity();
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        var downloaded = CreateAttachment(Guid.Parse("11111111-1111-1111-1111-111111111111"));
+        var notDownloaded = CreateAttachment(Guid.Parse("22222222-2222-2222-2222-222222222222"));
+        await AddConfirmedAttachmentsAsync(cache, conversation, [downloaded, notDownloaded]);
+        Assert.Equal(
+            LocalAttachmentDownloadClaimResult.Claimed,
+            (await cache.ClaimAttachmentDownloadAsync(conversation.Id, downloaded.Id)).Result);
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await cache.CompleteAttachmentDownloadAsync(
+                conversation.Id,
+                downloaded.Id,
+                ManagedPath(conversation.Id, downloaded.Id)));
+
+        var page = await cache.ReadMessagePageAsync(conversation.Id, beforeMessageId: null, limit: 20);
+
+        Assert.Equal(LocalCacheOperationStatus.Ready, page.Status);
+        Assert.Contains(downloaded.Id, page.DownloadedAttachmentIds);
+        Assert.DoesNotContain(notDownloaded.Id, page.DownloadedAttachmentIds);
+    }
+
+    [Fact]
     public async Task AttachmentDownload_WhenAttachmentIsWrongConversationUnboundOrUnconfirmed_IsUnavailable()
     {
         var identity = CreateIdentity();
