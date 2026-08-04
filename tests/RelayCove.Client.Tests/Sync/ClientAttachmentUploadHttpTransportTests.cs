@@ -147,6 +147,27 @@ public sealed class ClientAttachmentUploadHttpTransportTests
     }
 
     [Fact]
+    public async Task UploadAsync_WhenUnauthorizedBodyIsEmpty_DoesNotRefreshOrReplay()
+    {
+        var source = CreateTrackingSource("one.bin", "application/octet-stream", [1]);
+        var authentication = new FakeAuthenticationSession("access-token", "refreshed-token");
+        var requestCount = 0;
+        using var httpClient = new HttpClient(new DelegateHttpHandler((_, _) =>
+        {
+            Interlocked.Increment(ref requestCount);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        }));
+
+        var result = await CreateTransport(httpClient, authentication)
+            .UploadAsync(source.Source, CancellationToken.None);
+
+        Assert.Equal(ClientAttachmentUploadHttpStatus.ProtocolError, result.Status);
+        Assert.Equal(1, Volatile.Read(ref requestCount));
+        Assert.Equal(0, authentication.RefreshCount);
+        Assert.All(source.OpenedStreams, stream => Assert.True(stream.Disposed));
+    }
+
+    [Fact]
     public async Task UploadAsync_WhenUnauthorizedEnvelopeHasDifferentCode_DoesNotRefreshOrReplay()
     {
         var source = CreateTrackingSource("one.bin", "application/octet-stream", [1]);
@@ -239,6 +260,46 @@ public sealed class ClientAttachmentUploadHttpTransportTests
         var result = await CreateTransport(httpClient).UploadAsync(source.Source, CancellationToken.None);
 
         Assert.Equal(ClientAttachmentUploadHttpStatus.TransientFailure, result.Status);
+        Assert.Equal(1, Volatile.Read(ref requestCount));
+        Assert.All(source.OpenedStreams, stream => Assert.True(stream.Disposed));
+    }
+
+    [Fact]
+    public async Task UploadAsync_WhenHttpTimeoutOccurs_DoesNotReplayAndDisposesStream()
+    {
+        var source = CreateTrackingSource("one.bin", "application/octet-stream", [1]);
+        var requestCount = 0;
+        using var httpClient = new HttpClient(new DelegateHttpHandler((_, _) =>
+        {
+            Interlocked.Increment(ref requestCount);
+            throw new OperationCanceledException("Simulated HttpClient timeout.");
+        }));
+
+        var result = await CreateTransport(httpClient)
+            .UploadAsync(source.Source, CancellationToken.None);
+
+        Assert.Equal(ClientAttachmentUploadHttpStatus.TransientFailure, result.Status);
+        Assert.Equal(1, Volatile.Read(ref requestCount));
+        Assert.All(source.OpenedStreams, stream => Assert.True(stream.Disposed));
+    }
+
+    [Fact]
+    public async Task UploadAsync_WhenCallerCancelsInFlight_DoesNotReplayAndDisposesStream()
+    {
+        var source = CreateTrackingSource("one.bin", "application/octet-stream", [1]);
+        var requestCount = 0;
+        using var cancellation = new CancellationTokenSource();
+        using var httpClient = new HttpClient(new DelegateHttpHandler((_, token) =>
+        {
+            Interlocked.Increment(ref requestCount);
+            cancellation.Cancel();
+            throw new OperationCanceledException(token);
+        }));
+
+        var result = await CreateTransport(httpClient)
+            .UploadAsync(source.Source, cancellation.Token);
+
+        Assert.Equal(ClientAttachmentUploadHttpStatus.Canceled, result.Status);
         Assert.Equal(1, Volatile.Read(ref requestCount));
         Assert.All(source.OpenedStreams, stream => Assert.True(stream.Disposed));
     }
