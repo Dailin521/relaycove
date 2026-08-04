@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 9 attach-once 消息事务、完整投影与会话授权下载
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `4e4ac09337368db4329e6bc1ae30ddcedb9e5042`
 - **工作分支：** `agent/stage-9-attachment-message-download`
 - **相关方案章节：** 7.4–7.5、8.2、10.2、11.1–11.2、12.1–12.4、14.1–14.3、阶段 9、21.2–21.3；`DEC-010`、`DEC-014`、`DEC-042`
@@ -45,13 +45,13 @@
 
 ### 验收标准
 
-- [ ] Image/File 对合法 1–10 个 actor-owned 未绑定附件返回 201，附件按规范集合一次绑定；Text 行为完全兼容，System/类型-附件/正文/MIME 非法组合稳定失败。
-- [ ] 同键同附件 replay 为 200 且不重绑/不再推送；同键不同附件为 409；不同消息并发争抢同一附件最多一个提交，失败方无消息副作用且附件不能被偷换。
-- [ ] Send/History/Around/Sync/SignalR 返回完全相同且稳定排序的 AttachmentDto；mentions×attachments 组合无重复，固定页上界与原权限/游标/幂等契约不退化。
-- [ ] metadata/download 对 Public、Private、Direct 当前成员成功；未知、未绑定、删除、禁用、撤权与跨会话猜测 fail-closed，撤权提交后的新请求不能下载。
-- [ ] 合法下载支持完整与 range，Content-Disposition 安全保留 Unicode 展示名，`nosniff/no-store` 生效；物理丢失稳定 500 且不泄露路径，原名/hash/路径不进日志。
-- [ ] 过期未绑定行按 lease 删除，绑定行/未到期行/未知文件不动；DB/file 故障与取消遵循安全顺序并可由后续 recovery 收敛。
-- [ ] Fast、两次 Full、定向重复、model drift、八项目漏洞审计、真实 Kestrel/SQLite/filesystem、日志脱敏和空白检查通过。
+- [x] Image/File 对合法 1–10 个 actor-owned 未绑定附件返回 201，附件按规范集合一次绑定；Text 行为完全兼容，System/类型-附件/正文/MIME 非法组合稳定失败。
+- [x] 同键同附件 replay 为 200 且不重绑/不再推送；同键不同附件为 409；不同消息并发争抢同一附件最多一个提交，失败方无消息副作用且附件不能被偷换。
+- [x] Send/History/Around/Sync/SignalR 返回完全相同且稳定排序的 AttachmentDto；mentions×attachments 组合无重复，固定页上界与原权限/游标/幂等契约不退化。
+- [x] metadata/download 对 Public、Private、Direct 当前成员成功；未知、未绑定、删除、禁用、撤权与跨会话猜测 fail-closed，撤权提交后的新请求不能下载。
+- [x] 合法下载支持完整与 range，Content-Disposition 安全保留 Unicode 展示名，`nosniff/no-store` 生效；物理丢失稳定 500 且不泄露路径，原名/hash/路径不进日志。
+- [x] 过期未绑定行按 lease 删除，绑定行/未到期行/未知文件不动；DB/file 故障与取消遵循安全顺序并可由后续 recovery 收敛。
+- [x] Fast、两次 Full、定向重复、model drift、八项目漏洞审计、真实 Kestrel/SQLite/filesystem、日志脱敏和空白检查通过。
 
 ### 验证命令
 
@@ -84,26 +84,33 @@ git diff --check
 
 ### 修改摘要
 
-- 待完成。
+- 普通发送端现支持 Image/File 的 1–10 个唯一附件；同一 Serializable 事务保持原 INSERT-first 幂等顺序，并在新消息插入后以 owner + `MessageId IS NULL` 条件更新完成 attach-once，精确 replay 与载荷冲突分别返回 200/409。
+- Send、History、Around、Sync 与真实 SignalR NewMessage 均返回同一按 GUID 排序的附件 DTO；mentions 与 attachments 的 SQL 组合投影在内存分组时分别去重，既有固定消息页上界、游标与撤权语义不变。
+- 新增认证 metadata/download；授权查询从附件绑定到消息及当前可见会话，未知、未绑定、删除或撤权统一 403。下载使用严格托管路径、attachment disposition、seekable 异步流、range、`nosniff` 与 `private, no-store`。
+- 未绑定 reservation 默认保留 24 小时、配置范围 1–168 小时；启动及每小时维护以 500 行短事务先提交删行，再尽力删精确托管文件，失败残留由启动 orphan recovery 收敛。文件删除异常只记录类型，不泄露本地路径。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 绿色集成头 Fast 基线 | 911/911；Shared 39、Server 241、Client 630、Updater 1。 |
-| `未验证` | 实现与最终门禁 | 任务进行中。 |
+| `已验证` | 固定代码提交最终 Fast 与两次 Full | `41f7d11e207fd984bbc3e2a8c003f9bf2ed6a2e9` 为 924/924；Shared 39、Server 255、Client 630、Updater 1；Debug/Release 均 0 警告、0 错误，format 与 `git diff --check` 通过。 |
+| `已验证` | Attachment/Message Release 定向集连续 10 轮 | 每轮 96 项，共 960/960；另有最大 10 附件、真实 SignalR payload、并发争抢、精确重放/冲突和完整投影的专用回归。 |
+| `已验证` | 授权下载与 lease 故障边界 | Public/Private/Direct、删除/撤权/未知/未绑定、完整与 Range、Unicode disposition、物理缺失/占用的 500 脱敏均通过；过期/绑定/未到期/未知文件、取消、SQLite exclusive lock、文件删除失败与启动补偿均通过。 |
+| `已验证` | 真实 Kestrel + 临时 SQLite/filesystem | EF CLI 实际应用全部 migration；真实发送 201、精确 replay 200、改附件 409、未绑定 metadata 403、授权 metadata/完整下载 200、Range 206、匿名 401；两个托管文件逐字节一致且无 staging，隔离目录与临时脚本均精确清理。 |
+| `已验证` | 模型、依赖与脱敏 | `has-pending-model-changes` 无漂移；八项目直接/传递依赖无已知漏洞；真实宿主日志未出现原名、托管名、hash 或上传路径。Claude #70 XHigh 因本机认证源优先级失败，无 job、模型、workspace、费用或结论，未冒充审查通过。 |
 
 ### 文件范围
 
-- 新增：本任务记录。
-- 修改：待完成。
+- 新增：附件访问结果/查询/DTO factory、周期维护 hosted service、附件消息与下载端到端测试。
+- 修改：Server Message/Attachment endpoint、command/query/sync/DTO/path/recovery/options/DI/config，以及消息、恢复、options、SignalR 测试和本任务/状态/执行/决策记录。
 - 删除：无。
 
 ### 决策与限制
 
-- 决策：`DEC-043` 初始边界；最终证据待补。
+- 决策：`DEC-043` — 附件集合是不可变消息幂等载荷；新消息以 INSERT 后的 owner/null 条件更新 attach-once，下载每次从当前会话权限重新授权，未绑定 lease 采用 DB-first 删除与启动补偿。
 - 已知限制：本切片只完成服务端；现有 Client 仍拒绝非空附件 DTO，客户端发送、缓存与 UI 必须在下一切片接入后才可宣称端到端附件可用。
 
 ### 下一步
 
-- 实现并验证服务端 attach-once 消息、完整附件投影、授权下载与未绑定 lease。
+- 仅快进集成本切片；随后冻结客户端附件 transport、本地缓存与最小 UI 纵向边界，继续不读取 VPS 配置。

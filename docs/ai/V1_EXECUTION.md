@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 9
 ActiveTask: docs/ai/tasks/2026-08-04-stage-9-attachment-message-download.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: a2ef8a72f24829e61f5ae8e34aa3b661ce90fd0d
+LatestGreenCodeCommit: 41f7d11e207fd984bbc3e2a8c003f9bf2ed6a2e9
 LatestGreenIntegrationCommit: 4e4ac09337368db4329e6bc1ae30ddcedb9e5042
-NextAction: 实现并验证 attach-once 消息、完整附件投影、会话授权下载与未绑定 lease
+NextAction: 仅快进集成服务端附件消息/下载切片，然后冻结客户端附件 transport/cache/UI 最小纵向任务
 ClaudeCalls: 70（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70 失败；仅关键用途调用）
 ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有三十七次失败/中断调用费用 unavailable
 Blocker: none
@@ -77,6 +77,7 @@ RequiredUserGate: none
 - 当前会话作用域提及候选最终代码检查点 `2b8a3a1d9896dd241c35d164a2e6304c33df075b` 已通过最终 Fast/两次 Full 807 项（Shared 37、Server 192、Client 577、Updater 1）、Shared/validator/真实 HTTP/SQLite endpoint 关键集 190/190、model drift、八项目漏洞审计与空白检查。最小脱敏响应、与发送授权同构的 Public/Private/Direct 查询、字面前缀、稳定 limit+1 与零结果撤权复核已收敛为 `DEC-040`；客户端 picker/token/durable 发送留在下一切片。
 - 当前客户端提及组合与可靠发送代码检查点 `82c083d5fa319ea2cb2fe8fc51ba09c5382c8a1c` 已通过最终 Fast/三次 Full 860 项（Shared 37、Server 192、Client 630、Updater 1）、提及/发送/shell 关键集 740/740、Release WPF 响应窗口/单实例/精确清理、model drift、八项目漏洞审计、敏感日志检索与空白检查。候选 selection gate、正文 token 存活条件、pending 前规范 ID 快照和重启/显式 retry 原集合已收敛为 `DEC-041`；无登录会话下 picker UIA 不适用，真实登录视觉/键盘/Narrator 留到 M5。
 - 当前服务端安全附件上传代码检查点 `a2ef8a72f24829e61f5ae8e34aa3b661ce90fd0d` 已通过最终 Fast/两次 Full 911 项（Shared 39、Server 241、Client 630、Updater 1）、Attachment Release 定向集 390/390、真实 Kestrel exact-limit 201/宿主级稳定 413/不透明字节一致落盘、migration up/down、冲突回滚与启动恢复、model drift、八项目漏洞审计、敏感日志检索和空白检查。多层有界 streaming、非公开随机文件、commit 前发布与严格崩溃恢复已收敛为 `DEC-042`；消息绑定、下载授权、客户端、长期未绑定回收和 VPS 保持后续边界。
+- 当前服务端附件消息/下载代码检查点 `41f7d11e207fd984bbc3e2a8c003f9bf2ed6a2e9` 已通过最终 Fast/两次 Full 924 项（Shared 39、Server 255、Client 630、Updater 1）、Attachment/Message Release 定向集 960/960、真实 Kestrel 的发送 201/重放 200/载荷冲突 409/未绑定 403/完整下载 200/Range 206/匿名 401、lease DB/file/cancel 故障、model drift、八项目漏洞审计、敏感日志检索和空白检查。INSERT 后 owner/null 条件 attach-once、当前会话授权下载和 DB-first 未绑定 lease 已收敛为 `DEC-043`；客户端与 VPS 保持后续边界。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 
