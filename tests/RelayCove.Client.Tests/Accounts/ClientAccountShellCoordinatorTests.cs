@@ -3611,6 +3611,60 @@ public sealed class ClientAccountShellCoordinatorTests
         Assert.Empty(coordinator.SearchResults);
     }
 
+    [Fact]
+    public async Task NavigateSearchResultAsync_WhenAroundRequiresAuthentication_ClearsSearchBeforeSlowLogout()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var result = CreateSearchResult(42, conversationId);
+        var logoutStarted = NewSignal();
+        var releaseLogout = NewSignal();
+        var invalidated = NewSignal();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            SearchMessagesAction = (_, _, _, _) => Task.FromResult(new ClientSearchOutcome(
+                ClientSearchStatus.Completed,
+                [result],
+                HasMore: false,
+                RetryAfterSeconds: null)),
+            MessageAroundLoadAction = (_, _, _, _, _) => Task.FromResult(
+                ClientMessageAroundOutcome.Failure(
+                    ClientMessageLoadStatus.AuthenticationRequired)),
+            LogoutAction = async _ =>
+            {
+                logoutStarted.TrySetResult();
+                await releaseLogout.Task;
+                return ClientLogoutStatus.LoggedOut;
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status == ClientMessageListStatus.Ready);
+        await coordinator.SearchMessagesAsync("needle", ClientSearchScope.Global);
+        coordinator.SearchResultsInvalidated += () => invalidated.TrySetResult();
+
+        var navigation = coordinator.NavigateSearchResultAsync(result);
+        await invalidated.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await logoutStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Empty(coordinator.SearchResults);
+        Assert.Equal(ClientMessageListStatus.None, coordinator.MessageList.Status);
+        Assert.False(navigation.IsCompleted);
+
+        releaseLogout.TrySetResult();
+        var outcome = await navigation;
+
+        Assert.Equal(ClientSearchNavigationStatus.AuthenticationRequired, outcome.Status);
+    }
+
     [Theory]
     [InlineData((int)ClientMessageLoadStatus.AccessDenied, (int)ClientSearchNavigationStatus.AccessDenied)]
     [InlineData((int)ClientMessageLoadStatus.ProtocolError, (int)ClientSearchNavigationStatus.ProtocolError)]

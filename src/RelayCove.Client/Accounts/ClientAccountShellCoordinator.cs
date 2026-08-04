@@ -1834,6 +1834,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         IClientAccountRuntime? detachedRuntime;
         RuntimeSubscription? subscription;
         MessageSelection? selection;
+        SearchInvalidation searchInvalidation;
         lock (stateGate)
         {
             if (!ReferenceEquals(runtime, expectedRuntime))
@@ -1850,10 +1851,12 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             selection = messageSelection;
             messageSelection = null;
             renderedConversationId = null;
+            searchInvalidation = InvalidateSearchResultsLocked();
             activeDisplayName = null;
             activeServerBaseUri = null;
         }
 
+        CompleteSearchInvalidation(searchInvalidation);
         subscription?.Detach();
         selection?.Cancel();
         PublishConversationList(LocalConversationListReadOutcome.Failure(
