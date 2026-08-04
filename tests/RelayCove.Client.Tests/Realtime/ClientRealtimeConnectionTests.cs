@@ -173,6 +173,25 @@ public sealed class ClientRealtimeConnectionTests
     }
 
     [Fact]
+    public async Task AccountAccessRevoked_WhenServerSendsCurrentMinimumVersion_DispatchesToCurrentSink()
+    {
+        await using var host = await RealtimeTestHost.StartAsync();
+        var sink = new RecordingSink();
+        await using var connection = CreateConnection(
+            host,
+            () => Task.FromResult<string?>(ValidToken),
+            sink);
+
+        await connection.StartAsync();
+        await host.HubContext.Clients.All.SendAsync(
+            "AccountAccessRevoked",
+            new AccountAccessRevokedEvent(7));
+
+        var received = await sink.AccountRevocationReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(7, received.MinimumAccessTokenVersion);
+    }
+
+    [Fact]
     public async Task Connection_WhenEstablishedTransportDrops_ReportsReconnectingThenConnected()
     {
         await using var host = await RealtimeTestHost.StartAsync();
@@ -402,6 +421,9 @@ public sealed class ClientRealtimeConnectionTests
 
         public ConcurrentQueue<MessageDto> Messages { get; } = [];
 
+        public TaskCompletionSource<AccountAccessRevokedEvent> AccountRevocationReceived { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public virtual Task OnConnectionStateChangedAsync(
             ConnectionState state,
             CancellationToken cancellationToken)
@@ -422,6 +444,14 @@ public sealed class ClientRealtimeConnectionTests
             Guid conversationId,
             CancellationToken cancellationToken) =>
             Task.CompletedTask;
+
+        public virtual Task OnAccountAccessRevokedAsync(
+            AccountAccessRevokedEvent accountAccessRevoked,
+            CancellationToken cancellationToken)
+        {
+            AccountRevocationReceived.TrySetResult(accountAccessRevoked);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class ThrowingMessageSink : RecordingSink

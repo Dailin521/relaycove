@@ -6,4 +6,5 @@ public sealed record AdminUserResponse(
     string DisplayName,
     bool IsAdmin,
     bool IsDisabled,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    DateTimeOffset? RetiredAt);

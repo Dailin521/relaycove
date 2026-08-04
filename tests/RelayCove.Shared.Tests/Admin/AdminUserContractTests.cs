@@ -32,14 +32,28 @@ public sealed class AdminUserContractTests
             "Alice",
             true,
             false,
-            new DateTimeOffset(2026, 8, 3, 12, 30, 0, TimeSpan.Zero));
+            new DateTimeOffset(2026, 8, 3, 12, 30, 0, TimeSpan.Zero),
+            new DateTimeOffset(2026, 8, 4, 12, 30, 0, TimeSpan.Zero));
 
         var json = JsonSerializer.Serialize(response, WebJson);
         using var document = JsonDocument.Parse(json);
 
         Assert.Equal(
-            ["userId", "userName", "displayName", "isAdmin", "isDisabled", "createdAt"],
+            ["userId", "userName", "displayName", "isAdmin", "isDisabled", "createdAt", "retiredAt"],
             document.RootElement.EnumerateObject().Select(property => property.Name));
         Assert.Equal(response, JsonSerializer.Deserialize<AdminUserResponse>(json, WebJson));
+    }
+
+    [Fact]
+    public void AdminUserMutationRequests_WhenSerialized_UseStableShapesAndRedactPassword()
+    {
+        const string password = "reset-password-that-must-not-appear";
+        var update = new UpdateAdminUserRequest(true);
+        var reset = new ResetUserPasswordRequest(password);
+
+        Assert.Equal("{\"isDisabled\":true}", JsonSerializer.Serialize(update, WebJson));
+        Assert.Equal("{\"password\":\"reset-password-that-must-not-appear\"}", JsonSerializer.Serialize(reset, WebJson));
+        Assert.DoesNotContain(password, reset.ToString(), StringComparison.Ordinal);
+        Assert.Contains("Password = [REDACTED]", reset.ToString(), StringComparison.Ordinal);
     }
 }

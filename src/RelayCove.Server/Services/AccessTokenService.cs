@@ -10,6 +10,7 @@ namespace RelayCove.Server.Services;
 public sealed class AccessTokenService
 {
     public const string AccessTokenType = "at+jwt";
+    public const string AccessTokenVersionClaimType = "atv";
     private readonly AuthenticationOptions options;
     private readonly ServerClock clock;
     private readonly JwtSecurityTokenHandler tokenHandler = new();
@@ -34,6 +35,7 @@ public sealed class AccessTokenService
         [
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString("D").ToLowerInvariant()),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("D").ToLowerInvariant()),
+            new(AccessTokenVersionClaimType, user.AccessTokenVersion.ToString(System.Globalization.CultureInfo.InvariantCulture), ClaimValueTypes.Integer64),
         ];
         var payload = new JwtPayload(
             options.Issuer,

@@ -9,6 +9,7 @@ internal sealed class ClientAccountRuntimeStateHub
     private readonly ILogger logger;
     private Action<ConnectionState>? connectionStateChanged;
     private Action<long>? conversationStateChanged;
+    private Func<Task>? authenticationRequired;
     private bool stopped;
 
     public ClientAccountRuntimeStateHub(ILogger logger)
@@ -58,6 +59,27 @@ internal sealed class ClientAccountRuntimeStateHub
         }
     }
 
+    public event Func<Task> AuthenticationRequired
+    {
+        add
+        {
+            lock (stateGate)
+            {
+                if (!stopped)
+                {
+                    authenticationRequired += value;
+                }
+            }
+        }
+        remove
+        {
+            lock (stateGate)
+            {
+                authenticationRequired -= value;
+            }
+        }
+    }
+
     public void PublishConnectionState(ConnectionState state)
     {
         Action<ConnectionState>? handlers;
@@ -80,6 +102,34 @@ internal sealed class ClientAccountRuntimeStateHub
         Publish(handlers, revision, "conversation");
     }
 
+    public async Task PublishAuthenticationRequiredAsync()
+    {
+        Func<Task>? handlers;
+        lock (stateGate)
+        {
+            handlers = stopped ? null : authenticationRequired;
+        }
+
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Func<Task> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                await handler().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    "Publishing account access revocation failed; errorType={ErrorType}.",
+                    exception.GetType().Name);
+            }
+        }
+    }
+
     public void Stop()
     {
         lock (stateGate)
@@ -87,6 +137,7 @@ internal sealed class ClientAccountRuntimeStateHub
             stopped = true;
             connectionStateChanged = null;
             conversationStateChanged = null;
+            authenticationRequired = null;
         }
     }
 

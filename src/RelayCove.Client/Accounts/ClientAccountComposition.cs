@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using Microsoft.Extensions.Logging;
 using RelayCove.Client.Activation;
+using RelayCove.Client.Admin;
 using RelayCove.Client.Attachments;
 using RelayCove.Client.Auth;
 using RelayCove.Client.Notifications;
@@ -95,7 +96,11 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
                 authentication,
                 runtimeFactory,
                 activationRouter,
-                loggerFactory.CreateLogger<ClientAccountShellCoordinator>());
+                loggerFactory.CreateLogger<ClientAccountShellCoordinator>(),
+                createAdminCoordinator: session => new ClientAdminCoordinator(
+                    httpClient,
+                    session,
+                    loggerFactory.CreateLogger<ClientAdminCoordinator>()));
             return new ClientAccountComposition(
                 httpClient,
                 attachmentUploadHttpClient,

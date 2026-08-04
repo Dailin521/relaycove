@@ -287,7 +287,9 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
             var realtimeSink = new ClientAccountRealtimeEventSink(
                 cacheSink,
                 syncRequestor,
-                stateHub.PublishConnectionState);
+                stateHub.PublishConnectionState,
+                _ => stateHub.PublishAuthenticationRequiredAsync(),
+                () => authenticationSession.AccessTokenVersion);
             realtimeConnection = createRealtimeConnection(
                 identity.CanonicalServerBaseUri,
                 async () => await authenticationSession.GetAccessTokenAsync()

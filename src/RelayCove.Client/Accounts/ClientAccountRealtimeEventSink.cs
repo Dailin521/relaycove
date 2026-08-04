@@ -9,17 +9,23 @@ internal sealed class ClientAccountRealtimeEventSink : IRealtimeEventSink
     private readonly IRealtimeEventSink inner;
     private readonly ClientAccountSyncRequestor syncRequestor;
     private readonly Action<ConnectionState> publishConnectionState;
+    private readonly Func<long> accessTokenVersionProvider;
+    private readonly Func<CancellationToken, Task> accountAccessRevoked;
     private int reconnectPending;
 
     public ClientAccountRealtimeEventSink(
         IRealtimeEventSink inner,
         ClientAccountSyncRequestor syncRequestor,
-        Action<ConnectionState>? publishConnectionState = null)
+        Action<ConnectionState>? publishConnectionState = null,
+        Func<CancellationToken, Task>? accountAccessRevoked = null,
+        Func<long>? accessTokenVersionProvider = null)
     {
         this.inner = inner ?? throw new ArgumentNullException(nameof(inner));
         this.syncRequestor = syncRequestor ??
             throw new ArgumentNullException(nameof(syncRequestor));
         this.publishConnectionState = publishConnectionState ?? (static _ => { });
+        this.accessTokenVersionProvider = accessTokenVersionProvider ?? (static () => 0);
+        this.accountAccessRevoked = accountAccessRevoked ?? (static _ => Task.CompletedTask);
     }
 
     public async Task OnConnectionStateChangedAsync(
@@ -64,4 +70,14 @@ internal sealed class ClientAccountRealtimeEventSink : IRealtimeEventSink
         Guid conversationId,
         CancellationToken cancellationToken) =>
         inner.OnConversationAccessRevokedAsync(conversationId, cancellationToken);
+
+    public Task OnAccountAccessRevokedAsync(
+        AccountAccessRevokedEvent accountAccessRevoked,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(accountAccessRevoked);
+        return accessTokenVersionProvider() < accountAccessRevoked.MinimumAccessTokenVersion
+            ? this.accountAccessRevoked(cancellationToken)
+            : Task.CompletedTask;
+    }
 }

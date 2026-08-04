@@ -12,10 +12,10 @@ internal sealed class NewMessagePublisher(
 {
     public async Task TryPublishAsync(MessageDto message)
     {
-        IReadOnlyList<string> recipientUserIds = [];
+        IReadOnlyList<NewMessageRecipient> recipients = [];
         try
         {
-            var recipientIds = await dbContext.Users
+            recipients = await dbContext.Users
                 .AsNoTracking()
                 .Where(user =>
                     !user.IsDisabled &&
@@ -24,17 +24,14 @@ internal sealed class NewMessagePublisher(
                         !conversation.IsDeleted &&
                         (conversation.Type == ConversationType.PublicChannel ||
                          conversation.Members.Any(member => member.UserId == user.Id))))
-                .Select(user => user.Id)
+                .Select(user => new NewMessageRecipient(user.Id, user.AccessTokenVersion))
                 .ToArrayAsync(CancellationToken.None);
-            recipientUserIds = recipientIds
-                .Select(userId => userId.ToString("D"))
-                .ToArray();
-            await transport.SendAsync(recipientUserIds, message, CancellationToken.None);
+            await transport.SendAsync(recipients, message, CancellationToken.None);
             logger.LogInformation(
                 "Published realtime message {MessageId} in {ConversationId} to {RecipientCount} users.",
                 message.Id,
                 message.ConversationId,
-                recipientUserIds.Count);
+                recipients.Count);
         }
         catch (Exception exception)
         {
@@ -43,7 +40,7 @@ internal sealed class NewMessagePublisher(
                 "Realtime delivery failed for message {MessageId} in {ConversationId} after resolving {RecipientCount} users.",
                 message.Id,
                 message.ConversationId,
-                recipientUserIds.Count);
+                recipients.Count);
         }
     }
 }

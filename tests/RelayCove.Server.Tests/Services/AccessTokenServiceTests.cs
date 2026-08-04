@@ -27,6 +27,7 @@ public sealed class AccessTokenServiceTests
         Assert.Equal([options.Audience], token.Audiences);
         Assert.Equal(user.Id.ToString("D").ToLowerInvariant(), token.Subject);
         Assert.NotNull(token.Id);
+        Assert.Equal("0", token.Claims.Single(claim => claim.Type == AccessTokenService.AccessTokenVersionClaimType).Value);
         Assert.Equal(0, result.ExpiresAt.Ticks % TimeSpan.TicksPerMillisecond);
         Assert.Equal(baseTime.UtcDateTime.AddMinutes(options.AccessTokenMinutes).AddTicks(-4321), result.ExpiresAt);
         Assert.DoesNotContain(result.Token, result.ToString(), StringComparison.Ordinal);

@@ -24,102 +24,80 @@ public sealed class RelayCoveDbContextTests
         {
             await using var context = CreateContext(databasePath);
             var migrator = context.GetService<IMigrator>();
-            await migrator.MigrateAsync("20260803042614_InitialAuthenticationStorage");
-            var retainedUser = CreateUser(Guid.Parse("67370864-a515-46ee-8554-df49a21902e6"), "retained-user");
-            context.Add(retainedUser);
-            context.Add(CreateToken(
-                Guid.Parse("bc8dc9ff-21d8-4cb8-a327-f714fac9c0e1"),
-                retainedUser.Id,
-                seed: 7,
-                expiresAt: CreatedAt.AddDays(1)));
-            await context.SaveChangesAsync();
-
-            await migrator.MigrateAsync("20260803055556_AddConversationStorage");
-            var retainedConversation = Conversation.CreateChannel(
-                Guid.Parse("95f3fb21-f5c6-48a8-a6ab-b51077681a2a"),
-                ConversationType.PrivateChannel,
-                "Retained conversation",
-                retainedUser.Id,
-                CreatedAt);
-            context.Add(retainedConversation);
-            context.Add(new ConversationMember(
-                retainedConversation.Id,
-                retainedUser.Id,
-                ConversationMemberRole.Administrator,
-                CreatedAt));
-            await context.SaveChangesAsync();
+            await migrator.MigrateAsync("20260804002739_AddAttachmentStorage");
+            var retainedUserId = Guid.Parse("67370864-a515-46ee-8554-df49a21902e6");
+            var retainedConversationId = Guid.Parse("95f3fb21-f5c6-48a8-a6ab-b51077681a2a");
+            var retainedAttachmentId = Guid.Parse("1ba10a2d-47ba-45f0-b6e8-63af3d640037");
+            const string createdAt = "2026-08-03T04:00:00.000Z";
+            const string messageCreatedAt = "2026-08-03T04:01:00.000Z";
+            const string attachmentCreatedAt = "2026-08-03T04:02:00.000Z";
+            await context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO Users (Id, UserName, NormalizedUserName, DisplayName, AvatarAttachmentId, PasswordHash, IsAdmin, IsDisabled, CreatedAt, UpdatedAt, LastLoginAt, LastOnlineAt)
+                VALUES ({retainedUserId.ToString("D")}, {"retained-user"}, {"RETAINED-USER"}, {"retained-user"}, NULL, {"password-hash"}, {1}, {0}, {createdAt}, {createdAt}, NULL, NULL);
+                INSERT INTO RefreshTokens (Id, UserId, TokenHash, DeviceName, CreatedAt, ExpiresAt, RevokedAt)
+                VALUES ({"bc8dc9ff-21d8-4cb8-a327-f714fac9c0e1"}, {retainedUserId.ToString("D")}, {new string('a', RefreshTokenHasher.EncodedHashLength)}, {"retained-device"}, {createdAt}, {"2026-08-04T04:00:00.000Z"}, NULL);
+                INSERT INTO Conversations (Id, Type, Name, AvatarAttachmentId, CreatedByUserId, CreatedAt, UpdatedAt, IsDeleted, DirectParticipantKey)
+                VALUES ({retainedConversationId.ToString("D")}, {2}, {"Retained conversation"}, NULL, {retainedUserId.ToString("D")}, {createdAt}, {createdAt}, {0}, NULL);
+                INSERT INTO ConversationMembers (ConversationId, UserId, Role, JoinedAt, LastReadMessageId, IsMuted)
+                VALUES ({retainedConversationId.ToString("D")}, {retainedUserId.ToString("D")}, {2}, {createdAt}, {0}, {0});
+                INSERT INTO Messages (ClientMessageId, ConversationId, SenderId, Type, Content, ReplyToMessageId, CreatedAt)
+                VALUES ({"d9af7c2c-7ef7-4e17-8848-b4e2960fce6a"}, {retainedConversationId.ToString("D")}, {retainedUserId.ToString("D")}, {1}, {"Retained message"}, NULL, {messageCreatedAt});
+                """);
+            var retainedMessageId = long.Parse(
+                Assert.Single(await ReadStringsAsync(databasePath, "SELECT CAST(Id AS TEXT) FROM Messages;")),
+                System.Globalization.CultureInfo.InvariantCulture);
+            await context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO MessageMentions (MessageId, MentionedUserId)
+                VALUES ({retainedMessageId}, {retainedUserId.ToString("D")});
+                INSERT INTO Attachments (Id, MessageId, UploaderUserId, OriginalFileName, StoredFileName, ContentType, Size, Sha256, CreatedAt)
+                VALUES ({retainedAttachmentId.ToString("D")}, {retainedMessageId}, {retainedUserId.ToString("D")}, {"retained.bin"}, {$"{retainedAttachmentId:N}_{new string('a', 32)}"}, {"application/octet-stream"}, {42}, {new string('b', Attachment.Sha256Length)}, {attachmentCreatedAt});
+                """);
 
             await context.Database.MigrateAsync();
 
             Assert.False(context.Database.HasPendingModelChanges());
-            Assert.Equal(1, await context.Users.CountAsync());
-            Assert.Equal(1, await context.RefreshTokens.CountAsync());
-            Assert.Equal(1, await context.Conversations.CountAsync());
-            Assert.Equal(1, await context.ConversationMembers.CountAsync());
             Assert.Equal(
-                ["Attachments", "ConversationMembers", "Conversations", "MessageMentions", "Messages", "RefreshTokens", "Users"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions', 'Attachments') ORDER BY name;"));
+                ["AppSettings", "Attachments", "ConversationMembers", "Conversations", "MessageMentions", "Messages", "RefreshTokens", "Users"],
+                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions', 'Attachments', 'AppSettings') ORDER BY name;"));
             Assert.Equal(
-                ["Id", "UserName", "NormalizedUserName", "DisplayName", "AvatarAttachmentId", "PasswordHash", "IsAdmin", "IsDisabled", "CreatedAt", "UpdatedAt", "LastLoginAt", "LastOnlineAt"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('Users') ORDER BY cid;"));
+                new[] { "Id", "UserName", "NormalizedUserName", "DisplayName", "AvatarAttachmentId", "PasswordHash", "IsAdmin", "IsDisabled", "CreatedAt", "UpdatedAt", "LastLoginAt", "LastOnlineAt", "AccessTokenVersion", "RetiredAt" }.Order(),
+                (await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('Users') ORDER BY cid;")).Order());
             Assert.Equal(
-                ["Id", "UserId", "TokenHash", "DeviceName", "CreatedAt", "ExpiresAt", "RevokedAt"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('RefreshTokens') ORDER BY cid;"));
+                ["Key", "Value", "UpdatedAt"],
+                await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('AppSettings') ORDER BY cid;"));
             Assert.Equal(
-                ["Id", "Type", "Name", "AvatarAttachmentId", "CreatedByUserId", "CreatedAt", "UpdatedAt", "IsDeleted", "DirectParticipantKey"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('Conversations') ORDER BY cid;"));
+                ["0"],
+                await ReadStringsAsync(databasePath, "SELECT CAST(AccessTokenVersion AS TEXT) FROM Users;"));
             Assert.Equal(
-                ["ConversationId", "UserId", "Role", "JoinedAt", "LastReadMessageId", "IsMuted"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('ConversationMembers') ORDER BY cid;"));
-            Assert.Equal(
-                ["Id", "ClientMessageId", "ConversationId", "SenderId", "Type", "Content", "ReplyToMessageId", "CreatedAt"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('Messages') ORDER BY cid;"));
-            Assert.Equal(
-                ["MessageId", "MentionedUserId"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('MessageMentions') ORDER BY cid;"));
-            Assert.Equal(
-                ["Id", "MessageId", "UploaderUserId", "OriginalFileName", "StoredFileName", "ContentType", "Size", "Sha256", "CreatedAt"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('Attachments') ORDER BY cid;"));
-            Assert.Equal(
-                ["IX_Attachments_MessageId", "IX_Attachments_OriginalFileName", "IX_Attachments_StoredFileName", "IX_Attachments_UploaderUserId"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'IX_Attachments_%' ORDER BY name;"));
-            Assert.Equal(
-                ["IX_ConversationMembers_UserId", "IX_Conversations_CreatedByUserId", "IX_Conversations_DirectParticipantKey", "IX_Conversations_Type"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'IX_Conversation%' ORDER BY name;"));
+                ["<null>"],
+                await ReadStringsAsync(databasePath, "SELECT COALESCE(RetiredAt, '<null>') FROM Users;"));
+            await AssertRetainedMigrationGraphAsync(
+                databasePath,
+                retainedUserId,
+                retainedConversationId,
+                retainedMessageId,
+                retainedAttachmentId);
 
-            await migrator.MigrateAsync("20260803064621_AddMessageStorage");
+            await context.Database.ExecuteSqlRawAsync(
+                "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES ('Uploads.MaximumFileBytes', '1048576', '2026-08-04T12:00:00.000Z');");
+            await migrator.MigrateAsync("20260804002739_AddAttachmentStorage");
 
-            Assert.Equal(1, await context.Users.CountAsync());
-            Assert.Equal(1, await context.RefreshTokens.CountAsync());
-            Assert.Equal(1, await context.Conversations.CountAsync());
-            Assert.Equal(1, await context.ConversationMembers.CountAsync());
             Assert.Equal(
-                ["ConversationMembers", "Conversations", "MessageMentions", "Messages", "RefreshTokens", "Users"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions', 'Attachments') ORDER BY name;"));
-
-            await migrator.MigrateAsync("20260803055556_AddConversationStorage");
-
-            Assert.Equal(1, await context.Users.CountAsync());
-            Assert.Equal(1, await context.RefreshTokens.CountAsync());
-            Assert.Equal(1, await context.Conversations.CountAsync());
-            Assert.Equal(1, await context.ConversationMembers.CountAsync());
-            Assert.Equal(
-                ["ConversationMembers", "Conversations", "RefreshTokens", "Users"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions', 'Attachments') ORDER BY name;"));
-
-            await migrator.MigrateAsync("20260803042614_InitialAuthenticationStorage");
-
-            Assert.Equal(1, await context.Users.CountAsync());
-            Assert.Equal(1, await context.RefreshTokens.CountAsync());
-            Assert.Equal(
-                ["RefreshTokens", "Users"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions', 'Attachments') ORDER BY name;"));
+                new[] { "Id", "UserName", "NormalizedUserName", "DisplayName", "AvatarAttachmentId", "PasswordHash", "IsAdmin", "IsDisabled", "CreatedAt", "UpdatedAt", "LastLoginAt", "LastOnlineAt" }.Order(),
+                (await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('Users') ORDER BY cid;")).Order());
+            Assert.Empty(await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'AppSettings';"));
+            await AssertRetainedMigrationGraphAsync(
+                databasePath,
+                retainedUserId,
+                retainedConversationId,
+                retainedMessageId,
+                retainedAttachmentId);
 
             await migrator.MigrateAsync(Migration.InitialDatabase);
 
             Assert.Empty(await ReadStringsAsync(
                 databasePath,
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions', 'Attachments') ORDER BY name;"));
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions', 'Attachments', 'AppSettings') ORDER BY name;"));
         }
         finally
         {
@@ -576,6 +554,45 @@ public sealed class RelayCoveDbContextTests
         }
 
         return values.ToArray();
+    }
+
+    private static async Task AssertRetainedMigrationGraphAsync(
+        string databasePath,
+        Guid userId,
+        Guid conversationId,
+        long messageId,
+        Guid attachmentId)
+    {
+        var userIdText = userId.ToString("D");
+        var conversationIdText = conversationId.ToString("D");
+        var messageIdText = messageId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var attachmentIdText = attachmentId.ToString("D");
+
+        Assert.Equal([userIdText], await ReadStringsAsync(databasePath, "SELECT Id FROM Users;"));
+        Assert.Equal([userIdText], await ReadStringsAsync(databasePath, "SELECT UserId FROM RefreshTokens;"));
+        Assert.Equal([userIdText], await ReadStringsAsync(databasePath, "SELECT CreatedByUserId FROM Conversations;"));
+        Assert.Equal([conversationIdText], await ReadStringsAsync(databasePath, "SELECT ConversationId FROM ConversationMembers;"));
+        Assert.Equal([userIdText], await ReadStringsAsync(databasePath, "SELECT UserId FROM ConversationMembers;"));
+        Assert.Equal([conversationIdText], await ReadStringsAsync(databasePath, "SELECT ConversationId FROM Messages;"));
+        Assert.Equal([userIdText], await ReadStringsAsync(databasePath, "SELECT SenderId FROM Messages;"));
+        Assert.Equal([messageIdText], await ReadStringsAsync(databasePath, "SELECT MessageId FROM MessageMentions;"));
+        Assert.Equal([userIdText], await ReadStringsAsync(databasePath, "SELECT MentionedUserId FROM MessageMentions;"));
+        Assert.Equal([attachmentIdText], await ReadStringsAsync(databasePath, "SELECT Id FROM Attachments;"));
+        Assert.Equal([messageIdText], await ReadStringsAsync(databasePath, "SELECT MessageId FROM Attachments;"));
+        Assert.Equal([userIdText], await ReadStringsAsync(databasePath, "SELECT UploaderUserId FROM Attachments;"));
+        Assert.Empty(await ReadStringsAsync(databasePath, "PRAGMA foreign_key_check;"));
+        Assert.Equal(
+            ["IX_Users_NormalizedUserName", "IX_Users_UserName"],
+            await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'Users' AND name LIKE 'IX_Users_%' ORDER BY name;"));
+        Assert.Equal(
+            ["IX_Attachments_MessageId", "IX_Attachments_OriginalFileName", "IX_Attachments_StoredFileName", "IX_Attachments_UploaderUserId"],
+            await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'Attachments' AND name LIKE 'IX_Attachments_%' ORDER BY name;"));
+        Assert.Equal(
+            ["IX_ConversationMembers_UserId", "IX_Conversations_CreatedByUserId", "IX_Conversations_DirectParticipantKey", "IX_Conversations_Type"],
+            await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'IX_Conversation%' ORDER BY name;"));
+        Assert.Equal(
+            ["IX_MessageMentions_MentionedUserId", "IX_Messages_ConversationId_Id", "IX_Messages_CreatedAt", "IX_Messages_ReplyToMessageId", "IX_Messages_SenderId_ClientMessageId"],
+            await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'IX_Message%' ORDER BY name;"));
     }
 
     private static async Task AssertCheckConstraintAsync(Task operation)

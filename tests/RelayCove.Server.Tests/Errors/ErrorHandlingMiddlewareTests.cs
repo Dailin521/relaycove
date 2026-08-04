@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using RelayCove.Server.Errors;
+using RelayCove.Server.Services;
 using RelayCove.Shared.Errors;
 
 namespace RelayCove.Server.Tests.Errors;
@@ -15,11 +16,14 @@ public sealed class ErrorHandlingMiddlewareTests
         context.Request.Method = HttpMethod.Post.Method;
         context.Request.Path = "/api/attachments";
         context.Response.Body = new MemoryStream();
+        var metrics = new ServerRuntimeMetrics(TimeProvider.System);
         var middleware = new ErrorHandlingMiddleware(
             _ => throw new BadHttpRequestException(
                 "Request body too large.",
                 StatusCodes.Status413PayloadTooLarge),
-            NullLogger<ErrorHandlingMiddleware>.Instance);
+            NullLogger<ErrorHandlingMiddleware>.Instance,
+            metrics,
+            TimeProvider.System);
 
         await middleware.InvokeAsync(context);
 
@@ -30,6 +34,7 @@ public sealed class ErrorHandlingMiddlewareTests
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.Equal(ApiErrorCodes.AttachmentTooLarge, response!.Code);
         Assert.False(string.IsNullOrWhiteSpace(response.TraceId));
+        Assert.Equal("AttachmentPayloadTooLarge", metrics.GetLastError()!.Category);
     }
 
     [Fact]
@@ -39,11 +44,14 @@ public sealed class ErrorHandlingMiddlewareTests
         context.Request.Method = HttpMethod.Post.Method;
         context.Request.Path = "/api/messages";
         context.Response.Body = new MemoryStream();
+        var metrics = new ServerRuntimeMetrics(TimeProvider.System);
         var middleware = new ErrorHandlingMiddleware(
             _ => throw new BadHttpRequestException(
                 "Request body too large.",
                 StatusCodes.Status413PayloadTooLarge),
-            NullLogger<ErrorHandlingMiddleware>.Instance);
+            NullLogger<ErrorHandlingMiddleware>.Instance,
+            metrics,
+            TimeProvider.System);
 
         await middleware.InvokeAsync(context);
 
@@ -53,5 +61,6 @@ public sealed class ErrorHandlingMiddlewareTests
             context.Response.Body,
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.Equal(ApiErrorCodes.ValidationFailed, response!.Code);
+        Assert.Equal("BadRequest", metrics.GetLastError()!.Category);
     }
 }

@@ -3,6 +3,7 @@ namespace RelayCove.Server.Options;
 public sealed class UploadOptions
 {
     public const string SectionName = "Uploads";
+    public const long MinimumMaximumFileBytes = 1L * 1024 * 1024;
     public const long DefaultMaximumFileBytes = 25L * 1024 * 1024;
     public const long AbsoluteMaximumFileBytes = 100L * 1024 * 1024;
     public const long MultipartOverheadBytes = 64L * 1024;

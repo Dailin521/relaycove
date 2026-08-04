@@ -7,10 +7,11 @@ public sealed record LoginResponse(
     string RefreshToken,
     DateTimeOffset ExpiresAt,
     string ServerVersion,
-    string MinimumSupportedClientVersion)
+    string MinimumSupportedClientVersion,
+    long AccessTokenVersion = 0)
 {
     public override string ToString()
     {
-        return $"{nameof(LoginResponse)} {{ UserId = {UserId:D}, DisplayName = {DisplayName}, AccessToken = [REDACTED], RefreshToken = [REDACTED], ExpiresAt = {ExpiresAt:O}, ServerVersion = {ServerVersion}, MinimumSupportedClientVersion = {MinimumSupportedClientVersion} }}";
+        return $"{nameof(LoginResponse)} {{ UserId = {UserId:D}, DisplayName = {DisplayName}, AccessToken = [REDACTED], RefreshToken = [REDACTED], ExpiresAt = {ExpiresAt:O}, ServerVersion = {ServerVersion}, MinimumSupportedClientVersion = {MinimumSupportedClientVersion}, AccessTokenVersion = {AccessTokenVersion} }}";
     }
 }

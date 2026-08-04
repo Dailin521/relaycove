@@ -6,6 +6,7 @@ namespace RelayCove.Server.Tests.Packaging;
 
 public sealed partial class ReleaseTemplateTests
 {
+    private const long MinimumMaximumFileBytes = 1L * 1024 * 1024;
     private const long AbsoluteMaximumFileBytes = 100L * 1024 * 1024;
     private const long MultipartOverheadBytes = 64L * 1024;
 
@@ -96,7 +97,7 @@ public sealed partial class ReleaseTemplateTests
             "Data Source=/var/lib/relaycove/relaycove.db;Foreign Keys=True;Default Timeout=5",
             connectionString);
         Assert.StartsWith("/var/lib/relaycove/", uploadsPath, StringComparison.Ordinal);
-        Assert.InRange(maximumFileBytes, 1, AbsoluteMaximumFileBytes);
+        Assert.InRange(maximumFileBytes, MinimumMaximumFileBytes, AbsoluteMaximumFileBytes);
         Assert.False(bootstrapEnabled);
         Assert.False(TryGetProperty(root, out _, "Authentication", "SigningKey"));
         Assert.False(TryGetProperty(root, out _, "BootstrapAdmin", "Password"));

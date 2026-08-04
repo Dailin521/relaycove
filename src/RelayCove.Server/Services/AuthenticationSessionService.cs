@@ -174,7 +174,8 @@ public sealed class AuthenticationSessionService(
             rawRefreshToken.Reveal(),
             new DateTimeOffset(accessToken.ExpiresAt),
             options.ServerVersion,
-            options.MinimumSupportedClientVersion);
+            options.MinimumSupportedClientVersion,
+            user.AccessTokenVersion);
     }
 
     private static bool IsBusy(Exception exception)

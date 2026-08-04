@@ -37,11 +37,12 @@ public sealed class UploadOptionsValidatorTests
 
     [Theory]
     [InlineData(0, 10, 60)]
+    [InlineData(1048575, 10, 60)]
     [InlineData(104857601, 10, 60)]
-    [InlineData(1, 0, 60)]
-    [InlineData(1, 1001, 60)]
-    [InlineData(1, 10, 0)]
-    [InlineData(1, 10, 86401)]
+    [InlineData(1048576, 0, 60)]
+    [InlineData(1048576, 1001, 60)]
+    [InlineData(1048576, 10, 0)]
+    [InlineData(1048576, 10, 86401)]
     public void Validate_WhenUploadOptionIsOutsideBound_Fails(
         long maximumFileBytes,
         int permitLimit,
@@ -74,6 +75,22 @@ public sealed class UploadOptionsValidatorTests
             configurationOverrides: new Dictionary<string, string?>
             {
                 ["Uploads:MaximumFileBytes"] = "0",
+            });
+
+        var exception = Assert.ThrowsAny<Exception>(() => factory.CreateClient());
+
+        Assert.Contains("Uploads:MaximumFileBytes", exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Startup_WhenUploadMaximumIsBelowOneMib_FailsValidationOnStart()
+    {
+        using var factory = new RelayCoveWebApplicationFactory(
+            1_000,
+            1_000,
+            configurationOverrides: new Dictionary<string, string?>
+            {
+                ["Uploads:MaximumFileBytes"] = (UploadOptions.MinimumMaximumFileBytes - 1).ToString(),
             });
 
         var exception = Assert.ThrowsAny<Exception>(() => factory.CreateClient());

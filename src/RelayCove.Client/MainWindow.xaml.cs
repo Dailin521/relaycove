@@ -11,6 +11,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using RelayCove.Client.Accounts;
+using RelayCove.Client.Admin;
 using RelayCove.Client.Attachments;
 using RelayCove.Client.Mentions;
 using RelayCove.Client.Notifications;
@@ -18,6 +19,8 @@ using RelayCove.Client.Search;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
 using RelayCove.Client.Updates;
+using RelayCove.Shared.Admin;
+using RelayCove.Shared.Conversations;
 using RelayCove.Shared.Messages;
 
 namespace RelayCove.Client;
@@ -89,6 +92,7 @@ public partial class MainWindow : Window
         Array.Empty<ClientSearchResultPresentation>();
     private CancellationTokenSource? messageSearchCancellationSource;
     private CancellationTokenSource? searchNavigationCancellationSource;
+    private CancellationTokenSource? adminMemberSelectionCancellationSource;
     private SearchHighlightLease? searchHighlightLease;
     private DispatcherTimer? searchHighlightTimer;
     private long mentionSearchVersion;
@@ -116,6 +120,12 @@ public partial class MainWindow : Window
         InitializeComponent();
         MessageSearchScopeComboBox.ItemsSource = messageSearchScopeOptions;
         MessageSearchScopeComboBox.SelectedIndex = 0;
+        AdminChannelTypeComboBox.ItemsSource = new[]
+        {
+            ConversationType.PublicChannel,
+            ConversationType.PrivateChannel,
+        };
+        AdminChannelTypeComboBox.SelectedIndex = 0;
         UpdateMessageSearchState();
     }
 
@@ -346,6 +356,7 @@ public partial class MainWindow : Window
         RetryButton.IsEnabled = presentation.CanRetry;
         LogoutButton.IsEnabled = presentation.CanLogout;
         OpenSearchButton.IsEnabled = snapshot.HasActiveAccount && !presentation.IsBusy;
+        ApplyAdminAvailability(snapshot.IsAdmin && snapshot.HasActiveAccount);
         CheckForUpdatesButton.IsEnabled = checkForUpdates is not null &&
             snapshot.ServerBaseUri is not null && !mandatoryUpdateGate;
         UpdateMessageSearchState();
@@ -621,6 +632,356 @@ public partial class MainWindow : Window
             SidebarNotificationText,
             ClientAccountShellPresenter.DescribeNotificationAvailability(isAvailable));
     }
+
+    private void ApplyAdminAvailability(bool isAdmin)
+    {
+        OpenAdminButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
+        if (!isAdmin)
+        {
+            CancelAdminMemberSelection();
+            AdminOverlay.Visibility = Visibility.Collapsed;
+            AdminUserList.ItemsSource = null;
+            AdminChannelList.ItemsSource = null;
+            AdminMemberList.ItemsSource = null;
+            AdminPasswordInput.Clear();
+            AdminResetPasswordInput.Clear();
+            SetLiveText(AdminLiveRegionText, string.Empty);
+        }
+    }
+
+    private async void OnOpenAdminClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        var admin = accountShell?.AdminCoordinator;
+        if (admin is null || !admin.Snapshot.IsAdmin)
+        {
+            ApplyAdminAvailability(false);
+            return;
+        }
+
+        AdminOverlay.Visibility = Visibility.Visible;
+        _ = Keyboard.Focus(CloseAdminButton);
+        await RefreshAdminAsync(admin);
+    }
+
+    private void OnCloseAdminClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        CloseAdminOverlay(restoreFocus: true);
+    }
+
+    private void CloseAdminOverlay(bool restoreFocus)
+    {
+        CancelAdminMemberSelection();
+        AdminOverlay.Visibility = Visibility.Collapsed;
+        AdminPasswordInput.Clear();
+        AdminResetPasswordInput.Clear();
+        if (restoreFocus && OpenAdminButton.IsVisible && OpenAdminButton.IsEnabled)
+        {
+            _ = Keyboard.Focus(OpenAdminButton);
+        }
+    }
+
+    private async void OnCreateAdminUserClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        var password = AdminPasswordInput.Password;
+        AdminPasswordInput.Clear();
+        var status = await RunAdminAsync(admin => admin.CreateUserAsync(new CreateUserRequest(
+            AdminUserNameInput.Text, AdminDisplayNameInput.Text, password, AdminIsAdminCheckBox.IsChecked == true)));
+        if (status == ClientAdminRequestStatus.Completed)
+        {
+            AdminUserNameInput.Clear();
+            AdminDisplayNameInput.Clear();
+        }
+    }
+
+    private async void OnToggleAdminUserClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender; _ = e;
+        if (AdminUserList.SelectedItem is AdminUserResponse user)
+        {
+            await RunAdminAsync(admin => admin.SetUserDisabledAsync(user.UserId, !user.IsDisabled));
+        }
+    }
+
+    private async void OnRetireAdminUserClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender; _ = e;
+        if (AdminUserList.SelectedItem is AdminUserResponse user)
+        {
+            if (System.Windows.MessageBox.Show(
+                    this,
+                    $"将永久退役用户 {user.UserName}。历史记录会保留，但该账号不能恢复或重新登录。是否继续？",
+                    "确认退役用户",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning,
+                    MessageBoxResult.No) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            await RunAdminAsync(admin => admin.RetireUserAsync(user.UserId));
+        }
+    }
+
+    private async void OnResetAdminPasswordClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender; _ = e;
+        if (AdminUserList.SelectedItem is not AdminUserResponse user ||
+            string.IsNullOrEmpty(AdminResetPasswordInput.Password))
+        {
+            AnnounceAdmin("请选择用户并输入新密码。");
+            return;
+        }
+
+        var password = AdminResetPasswordInput.Password;
+        AdminResetPasswordInput.Clear();
+        await RunAdminAsync(admin => admin.ResetPasswordAsync(user.UserId, password));
+    }
+
+    private async void OnCreateAdminChannelClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender; _ = e;
+        if (AdminChannelTypeComboBox.SelectedItem is ConversationType type)
+        {
+            await RunAdminAsync(admin => admin.CreateChannelAsync(new CreateConversationRequest(type, AdminChannelNameInput.Text)));
+        }
+    }
+
+    private async void OnRenameAdminChannelClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender; _ = e;
+        if (AdminChannelList.SelectedItem is AdminChannelResponse channel)
+        {
+            await RunAdminAsync(admin => admin.RenameChannelAsync(channel.Id, AdminChannelNameInput.Text));
+        }
+    }
+
+    private async void OnDeleteAdminChannelClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender; _ = e;
+        if (AdminChannelList.SelectedItem is AdminChannelResponse channel)
+        {
+            if (System.Windows.MessageBox.Show(
+                    this,
+                    $"将删除频道 {channel.Name}。客户端将立即撤销访问，是否继续？",
+                    "确认删除频道",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning,
+                    MessageBoxResult.No) != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
+            await RunAdminAsync(admin => admin.DeleteChannelAsync(channel.Id));
+        }
+    }
+
+    private async void OnAdminChannelSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        CancelAdminMemberSelection();
+        AdminMemberList.ItemsSource = null;
+        var admin = accountShell?.AdminCoordinator;
+        if (admin is null || AdminChannelList.SelectedItem is not AdminChannelResponse channel)
+        {
+            AdminMemberList.ItemsSource = null;
+            return;
+        }
+
+        if (channel.Type != ConversationType.PrivateChannel)
+        {
+            admin.ClearPrivateMembers();
+            AdminMemberList.ItemsSource = null;
+            return;
+        }
+
+        var selectionCancellation = new CancellationTokenSource();
+        adminMemberSelectionCancellationSource = selectionCancellation;
+        ClientAdminRequestStatus status;
+        try
+        {
+            status = await admin.LoadPrivateMembersAsync(channel.Id, selectionCancellation.Token);
+        }
+        finally
+        {
+            if (ReferenceEquals(adminMemberSelectionCancellationSource, selectionCancellation))
+            {
+                adminMemberSelectionCancellationSource = null;
+                selectionCancellation.Dispose();
+            }
+        }
+
+        if (!IsCurrentAdminCoordinator(admin) ||
+            !admin.Snapshot.IsAdmin ||
+            AdminChannelList.SelectedItem is not AdminChannelResponse selectedChannel ||
+            selectedChannel.Id != channel.Id ||
+            admin.Snapshot.SelectedPrivateChannelId != channel.Id)
+        {
+            return;
+        }
+
+        if (status == ClientAdminRequestStatus.Completed)
+        {
+            ApplyAdminSnapshot(admin.Snapshot);
+        }
+        else
+        {
+            AnnounceAdmin($"成员名册未加载：{DescribeAdminStatus(status)}。");
+        }
+    }
+
+    private async void OnAddPrivateMemberClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender; _ = e;
+        if (AdminChannelList.SelectedItem is AdminChannelResponse channel &&
+            channel.Type == ConversationType.PrivateChannel &&
+            AdminUserList.SelectedItem is AdminUserResponse user)
+        {
+            var status = await RunAdminAsync(admin => admin.AddPrivateMemberAsync(channel.Id,
+                new UpsertConversationMemberRequest(user.UserId, ConversationMemberRole.Member)));
+            if (status == ClientAdminRequestStatus.Completed && accountShell?.AdminCoordinator is { } admin)
+            {
+                await RunAdminAsync(_ => admin.LoadPrivateMembersAsync(channel.Id));
+            }
+        }
+    }
+
+    private async void OnRemovePrivateMemberClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender; _ = e;
+        if (AdminChannelList.SelectedItem is AdminChannelResponse channel &&
+            channel.Type == ConversationType.PrivateChannel &&
+            AdminMemberList.SelectedItem is ConversationMemberDto member &&
+            accountShell?.AdminCoordinator is { } currentAdmin &&
+            currentAdmin.Snapshot.SelectedPrivateChannelId == channel.Id &&
+            currentAdmin.Snapshot.PrivateMembers.Any(candidate => candidate.UserId == member.UserId))
+        {
+            var status = await RunAdminAsync(admin => admin.RemovePrivateMemberAsync(channel.Id, member.UserId));
+            if (status == ClientAdminRequestStatus.Completed && accountShell?.AdminCoordinator is { } admin)
+            {
+                await RunAdminAsync(_ => admin.LoadPrivateMembersAsync(channel.Id));
+            }
+        }
+    }
+
+    private async void OnSaveAdminUploadLimitClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender; _ = e;
+        if (!long.TryParse(AdminUploadLimitInput.Text, out var maximumFileBytes))
+        {
+            AnnounceAdmin("附件上限必须是十进制字节数。");
+            return;
+        }
+
+        await RunAdminAsync(admin => admin.SaveUploadLimitAsync(maximumFileBytes));
+    }
+
+    private async Task<ClientAdminRequestStatus> RunAdminAsync(
+        Func<ClientAdminCoordinator, Task<ClientAdminRequestStatus>> operation)
+    {
+        var admin = accountShell?.AdminCoordinator;
+        if (admin is null || !admin.Snapshot.IsAdmin)
+        {
+            ApplyAdminAvailability(false);
+            return ClientAdminRequestStatus.AccessDenied;
+        }
+
+        var status = await operation(admin);
+        if (!IsCurrentAdminCoordinator(admin))
+        {
+            return ClientAdminRequestStatus.Canceled;
+        }
+
+        if (status == ClientAdminRequestStatus.Completed)
+        {
+            ApplyAdminSnapshot(admin.Snapshot);
+            AnnounceAdmin("管理员操作已完成。");
+        }
+        else if (status == ClientAdminRequestStatus.AccessDenied)
+        {
+            ApplyAdminAvailability(false);
+            AnnounceAdmin("管理员权限已撤销。");
+        }
+        else if (status == ClientAdminRequestStatus.AuthenticationRequired)
+        {
+            ApplyAdminAvailability(false);
+        }
+        else
+        {
+            AnnounceAdmin($"管理员操作未完成：{DescribeAdminStatus(status)}。");
+        }
+
+        return status;
+    }
+
+    private async Task RefreshAdminAsync(ClientAdminCoordinator admin)
+    {
+        var status = await admin.RefreshAsync();
+        if (!IsCurrentAdminCoordinator(admin))
+        {
+            return;
+        }
+
+        if (status == ClientAdminRequestStatus.Completed)
+        {
+            ApplyAdminSnapshot(admin.Snapshot);
+            AnnounceAdmin("管理员数据已刷新。");
+        }
+        else
+        {
+            await RunAdminAsync(_ => Task.FromResult(status));
+        }
+    }
+
+    private void ApplyAdminSnapshot(ClientAdminSnapshot snapshot)
+    {
+        AdminUserList.ItemsSource = snapshot.Users;
+        AdminChannelList.ItemsSource = snapshot.Channels;
+        AdminMemberList.ItemsSource = snapshot.PrivateMembers;
+        if (snapshot.UploadSettings is not null)
+        {
+            AdminUploadLimitInput.Text = snapshot.UploadSettings.EffectiveMaximumFileBytes.ToString();
+        }
+
+        var status = snapshot.Status;
+        SetLiveText(AdminStatusText, status is null ? string.Empty :
+            $"版本 {status.Version}；运行 {status.UptimeSeconds}s；连接 {status.OnlineConnectionCount}；" +
+            $"数据库 {status.DatabaseBytes:N0} 字节；附件 {status.AttachmentBytes:N0} 字节；" +
+            $"最近错误 {status.LastErrorCategory ?? "无"}。");
+    }
+
+    private bool IsCurrentAdminCoordinator(ClientAdminCoordinator admin) =>
+        ReferenceEquals(accountShell?.AdminCoordinator, admin);
+
+    private void CancelAdminMemberSelection()
+    {
+        var cancellation = adminMemberSelectionCancellationSource;
+        adminMemberSelectionCancellationSource = null;
+        if (cancellation is null)
+        {
+            return;
+        }
+
+        cancellation.Cancel();
+        cancellation.Dispose();
+    }
+
+    private void AnnounceAdmin(string text) => SetLiveText(AdminLiveRegionText, text);
+
+    private static string DescribeAdminStatus(ClientAdminRequestStatus status) => status switch
+    {
+        ClientAdminRequestStatus.ValidationFailed => "输入未通过服务端验证",
+        ClientAdminRequestStatus.TransientFailure => "服务器暂时不可用",
+        ClientAdminRequestStatus.ProtocolError => "服务器响应无效",
+        ClientAdminRequestStatus.Canceled => "已有操作正在进行",
+        _ => "远端操作失败",
+    };
 
     private static string DescribeMessageState(ClientMessageListSnapshot snapshot) =>
         snapshot.Status switch
@@ -2541,6 +2902,24 @@ public partial class MainWindow : Window
         {
             e.Handled = true;
             FocusMandatoryUpdateAction();
+            return;
+        }
+
+        if (AdminOverlay.Visibility == Visibility.Visible)
+        {
+            if (e.Key == Key.Escape)
+            {
+                CloseAdminOverlay(restoreFocus: true);
+                e.Handled = true;
+                return;
+            }
+
+            if (!AdminOverlay.IsKeyboardFocusWithin)
+            {
+                _ = Keyboard.Focus(CloseAdminButton);
+                e.Handled = true;
+            }
+
             return;
         }
 

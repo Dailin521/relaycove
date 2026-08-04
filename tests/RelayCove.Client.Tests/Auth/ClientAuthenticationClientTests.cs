@@ -453,6 +453,7 @@ public sealed class ClientAuthenticationClientTests
         CreateLoginResponse() with { ServerVersion = "" },
         CreateLoginResponse() with { ServerVersion = new string('v', 65) },
         CreateLoginResponse() with { MinimumSupportedClientVersion = "" },
+        CreateLoginResponse() with { AccessTokenVersion = -1 },
     };
 
     private static (ClientAuthenticationClient Client, RecordingLogger<ClientAuthenticationClient> Logger)

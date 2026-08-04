@@ -17,6 +17,32 @@ namespace RelayCove.Server.Data.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
 
+            modelBuilder.Entity("RelayCove.Server.Data.Entities.AppSetting", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedAt")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("AppSettings", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_AppSettings_Key_NotEmpty", "length(\"Key\") BETWEEN 1 AND 128");
+
+                            t.HasCheckConstraint("CK_AppSettings_UpdatedAt_Format", "\"UpdatedAt\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'");
+
+                            t.HasCheckConstraint("CK_AppSettings_Value_NotEmpty", "length(\"Value\") > 0");
+                        });
+                });
+
             modelBuilder.Entity("RelayCove.Server.Data.Entities.Attachment", b =>
                 {
                     b.Property<string>("Id")
@@ -349,6 +375,11 @@ namespace RelayCove.Server.Data.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<long>("AccessTokenVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0L);
+
                     b.Property<string>("AvatarAttachmentId")
                         .HasColumnType("TEXT");
 
@@ -382,6 +413,9 @@ namespace RelayCove.Server.Data.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("RetiredAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("UpdatedAt")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -401,6 +435,8 @@ namespace RelayCove.Server.Data.Migrations
 
                     b.ToTable("Users", null, t =>
                         {
+                            t.HasCheckConstraint("CK_Users_AccessTokenVersion_NonNegative", "\"AccessTokenVersion\" >= 0");
+
                             t.HasCheckConstraint("CK_Users_CreatedAt_Format", "\"CreatedAt\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'");
 
                             t.HasCheckConstraint("CK_Users_DisplayName_Length", "length(\"DisplayName\") BETWEEN 1 AND 100");
@@ -420,6 +456,8 @@ namespace RelayCove.Server.Data.Migrations
                             t.HasCheckConstraint("CK_Users_NormalizedUserName_Format", "length(\"NormalizedUserName\") BETWEEN 3 AND 64 AND \"NormalizedUserName\" NOT GLOB '*[^A-Z0-9._-]*' AND \"NormalizedUserName\" GLOB '*[A-Z0-9]*' AND upper(\"NormalizedUserName\") = \"NormalizedUserName\"");
 
                             t.HasCheckConstraint("CK_Users_PasswordHash_NotEmpty", "length(\"PasswordHash\") > 0");
+
+                            t.HasCheckConstraint("CK_Users_RetiredAt_Format", "\"RetiredAt\" IS NULL OR (\"RetiredAt\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z')");
 
                             t.HasCheckConstraint("CK_Users_UpdatedAt_Format", "\"UpdatedAt\" GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'");
 

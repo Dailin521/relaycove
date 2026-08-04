@@ -104,6 +104,12 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         remove => stateHub.ConversationStateChanged -= value;
     }
 
+    public event Func<Task> AuthenticationRequired
+    {
+        add => stateHub.AuthenticationRequired += value;
+        remove => stateHub.AuthenticationRequired -= value;
+    }
+
     public ConnectionState ConnectionState => realtimeConnection.State;
 
     public override string ToString() =>

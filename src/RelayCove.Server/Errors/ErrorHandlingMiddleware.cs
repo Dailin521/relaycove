@@ -7,7 +7,9 @@ namespace RelayCove.Server.Errors;
 
 public sealed class ErrorHandlingMiddleware(
     RequestDelegate next,
-    ILogger<ErrorHandlingMiddleware> logger)
+    ILogger<ErrorHandlingMiddleware> logger,
+    ServerRuntimeMetrics runtimeMetrics,
+    TimeProvider timeProvider)
 {
     public async Task InvokeAsync(HttpContext context)
     {
@@ -19,6 +21,7 @@ public sealed class ErrorHandlingMiddleware(
             exception.StatusCode == StatusCodes.Status413PayloadTooLarge &&
             context.Request.Path.Equals("/api/attachments", StringComparison.Ordinal))
         {
+            RecordError("AttachmentPayloadTooLarge");
             logger.LogInformation(
                 "Attachment request body rejected for {Method} {Path}: {ExceptionType}.",
                 context.Request.Method,
@@ -33,6 +36,7 @@ public sealed class ErrorHandlingMiddleware(
         }
         catch (BadHttpRequestException exception)
         {
+            RecordError("BadRequest");
             logger.LogInformation("Request body rejected for {Method} {Path}: {ExceptionType}.",
                 context.Request.Method,
                 context.Request.Path,
@@ -50,6 +54,7 @@ public sealed class ErrorHandlingMiddleware(
         }
         catch (AuthenticationStorageUnavailableException exception)
         {
+            RecordError("AuthenticationStorageUnavailable");
             logger.LogWarning(exception, "Authentication storage is temporarily unavailable for {Method} {Path}.",
                 context.Request.Method,
                 context.Request.Path);
@@ -62,6 +67,7 @@ public sealed class ErrorHandlingMiddleware(
         }
         catch (SqliteException exception) when (exception.SqliteErrorCode is 5 or 6)
         {
+            RecordError("SqliteUnavailable");
             logger.LogWarning(exception, "SQLite storage is temporarily unavailable for {Method} {Path}.",
                 context.Request.Method,
                 context.Request.Path);
@@ -74,6 +80,7 @@ public sealed class ErrorHandlingMiddleware(
         }
         catch (DbUpdateException exception) when (ContainsBusyOrLockedSqlite(exception))
         {
+            RecordError("SqliteUnavailable");
             logger.LogWarning(exception, "SQLite storage is temporarily unavailable for {Method} {Path}.",
                 context.Request.Method,
                 context.Request.Path);
@@ -86,6 +93,7 @@ public sealed class ErrorHandlingMiddleware(
         }
         catch (Exception exception)
         {
+            RecordError("Unhandled");
             logger.LogError(exception, "Unhandled server error for {Method} {Path}.", context.Request.Method, context.Request.Path);
             await ApiErrorWriter.WriteAsync(
                 context,
@@ -95,6 +103,9 @@ public sealed class ErrorHandlingMiddleware(
                 cancellationToken: context.RequestAborted);
         }
     }
+
+    private void RecordError(string category) =>
+        runtimeMetrics.RecordError(category, timeProvider.GetUtcNow());
 
     private static bool ContainsBusyOrLockedSqlite(Exception exception)
     {

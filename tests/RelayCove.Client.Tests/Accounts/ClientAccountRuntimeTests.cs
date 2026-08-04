@@ -1079,6 +1079,42 @@ public sealed class ClientAccountRuntimeTests
     }
 
     [Fact]
+    public async Task RealtimeSink_WhenDelayedAccountRevocationTargetsOlderGeneration_DoesNotEndNewSession()
+    {
+        var inner = new RecordingRealtimeSink();
+        var sync = new FakeSyncCoordinator();
+        var requestor = new ClientAccountSyncRequestor(
+            sync,
+            NullLogger<ClientAccountSyncRequestor>.Instance);
+        var terminationCount = 0;
+        var sink = new ClientAccountRealtimeEventSink(
+            inner,
+            requestor,
+            accountAccessRevoked: _ =>
+            {
+                Interlocked.Increment(ref terminationCount);
+                return Task.CompletedTask;
+            },
+            accessTokenVersionProvider: () => 5);
+
+        await sink.OnAccountAccessRevokedAsync(
+            new AccountAccessRevokedEvent(4),
+            CancellationToken.None);
+        await sink.OnAccountAccessRevokedAsync(
+            new AccountAccessRevokedEvent(5),
+            CancellationToken.None);
+
+        Assert.Equal(0, Volatile.Read(ref terminationCount));
+
+        await sink.OnAccountAccessRevokedAsync(
+            new AccountAccessRevokedEvent(6),
+            CancellationToken.None);
+
+        Assert.Equal(1, Volatile.Read(ref terminationCount));
+        await sync.DisposeAsync();
+    }
+
+    [Fact]
     public async Task RetryRealtimeAsync_AfterStart_ConnectsThenRequestsReconnectSync()
     {
         using var directory = new TemporaryDirectory();
@@ -2194,6 +2230,11 @@ public sealed class ClientAccountRuntimeTests
         public Task OnConversationAccessRevokedAsync(
             Guid conversationId,
             CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task OnAccountAccessRevokedAsync(
+            AccountAccessRevokedEvent accountAccessRevoked,
+            CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 
     private sealed class FakeWindowsAttachmentShell : IWindowsAttachmentShell

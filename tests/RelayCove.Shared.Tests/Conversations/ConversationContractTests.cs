@@ -96,6 +96,18 @@ public sealed class ConversationContractTests
     }
 
     [Fact]
+    public void UpdateConversationRequest_WhenRoundTripped_PreservesName()
+    {
+        var request = new UpdateConversationRequest("Renamed channel");
+
+        var json = JsonSerializer.Serialize(request, WebJson);
+        using var document = JsonDocument.Parse(json);
+
+        Assert.Equal(["name"], document.RootElement.EnumerateObject().Select(property => property.Name));
+        Assert.Equal(request, JsonSerializer.Deserialize<UpdateConversationRequest>(json, WebJson));
+    }
+
+    [Fact]
     public void ConversationMemberContracts_WhenRoundTripped_PreserveRoleAndJoinState()
     {
         var userId = Guid.Parse("85c3711d-4a03-45cd-b198-f9c2edb28a8a");

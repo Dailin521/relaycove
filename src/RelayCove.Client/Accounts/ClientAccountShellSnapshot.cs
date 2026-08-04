@@ -14,7 +14,8 @@ internal sealed record ClientAccountShellSnapshot(
     ClientLogoutStatus? LastLogoutStatus,
     TimeSpan? RetryAfter,
     int TotalUnreadCount = 0,
-    long Revision = 0)
+    long Revision = 0,
+    bool IsAdmin = false)
 {
     public static ClientAccountShellSnapshot Initial { get; } = SignedOut(
         PersistentClientAuthenticationStatus.NoStoredCredential);

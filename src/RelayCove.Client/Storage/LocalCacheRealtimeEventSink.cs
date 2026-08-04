@@ -131,6 +131,11 @@ public sealed class LocalCacheRealtimeEventSink : IRealtimeEventSink
         }
     }
 
+    public Task OnAccountAccessRevokedAsync(
+        AccountAccessRevokedEvent accountAccessRevoked,
+        CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
     private async Task SubmitNotificationCandidateAsync(
         long notificationCandidateMessageId,
         CancellationToken cancellationToken)

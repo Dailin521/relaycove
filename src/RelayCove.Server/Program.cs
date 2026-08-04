@@ -74,6 +74,7 @@ builder.Services.AddSingleton<PasswordService>();
 builder.Services.AddSingleton<AccessTokenService>();
 builder.Services.AddScoped<AuthenticationSessionService>();
 builder.Services.AddScoped<AdminUserService>();
+builder.Services.AddScoped<AdminOperationsService>();
 builder.Services.AddScoped<ConversationCommandService>();
 builder.Services.AddScoped<ConversationQueryService>();
 builder.Services.AddScoped<MentionCandidateQueryService>();
@@ -86,13 +87,19 @@ builder.Services.AddSingleton<AttachmentStoragePaths>();
 builder.Services.AddScoped<AttachmentMultipartReader>();
 builder.Services.AddScoped<AttachmentCommandService>();
 builder.Services.AddScoped<AttachmentQueryService>();
+builder.Services.AddScoped<UploadSettingsService>();
+builder.Services.AddSingleton<ServerRuntimeMetrics>();
 builder.Services.AddSingleton<UpdateHostingService>();
 builder.Services.AddScoped<NewMessagePublisher>();
 builder.Services.AddScoped<ConversationAccessRevokedPublisher>();
+builder.Services.AddScoped<AccountAccessRevokedPublisher>();
 builder.Services.AddSingleton<INewMessageTransport, SignalRNewMessageTransport>();
 builder.Services.AddSingleton<
     IConversationAccessRevokedTransport,
     SignalRConversationAccessRevokedTransport>();
+builder.Services.AddSingleton<
+    IAccountAccessRevokedTransport,
+    SignalRAccountAccessRevokedTransport>();
 builder.Services.AddScoped<RelayCoveJwtBearerEvents>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();
@@ -140,6 +147,7 @@ app.UseRateLimiter();
 app.UseAuthorization();
 app.MapAuthenticationEndpoints();
 app.MapAdminUserEndpoints();
+app.MapAdminOperationsEndpoints();
 app.MapConversationEndpoints();
 app.MapSearchEndpoints();
 app.MapMessageEndpoints();

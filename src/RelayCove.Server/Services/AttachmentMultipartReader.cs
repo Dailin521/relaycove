@@ -4,7 +4,6 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
-using Microsoft.Extensions.Options;
 using Microsoft.Net.Http.Headers;
 using RelayCove.Server.Data.Entities;
 using RelayCove.Server.Options;
@@ -13,7 +12,7 @@ namespace RelayCove.Server.Services;
 
 public sealed class AttachmentMultipartReader(
     AttachmentStoragePaths storagePaths,
-    IOptions<UploadOptions> uploadOptions,
+    UploadSettingsService uploadSettingsService,
     ILogger<AttachmentMultipartReader> logger)
 {
     private const string FileFieldName = "file";
@@ -28,7 +27,10 @@ public sealed class AttachmentMultipartReader(
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var maximumFileBytes = uploadOptions.Value.MaximumFileBytes;
+        // Read the persisted setting exactly once before consuming the request body so
+        // an administrator update cannot make one upload observe two limits.
+        var maximumFileBytes = await uploadSettingsService
+            .GetEffectiveMaximumFileBytesAsync(cancellationToken);
         var maximumRequestBytes = checked(maximumFileBytes + UploadOptions.MultipartOverheadBytes);
         if (request.ContentLength is long contentLength && contentLength > maximumRequestBytes)
         {

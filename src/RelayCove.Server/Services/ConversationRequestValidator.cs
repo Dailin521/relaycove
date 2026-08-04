@@ -74,6 +74,17 @@ public sealed class ConversationRequestValidator
         return errors;
     }
 
+    public IReadOnlyDictionary<string, string[]> ValidateUpdate(UpdateConversationRequest? request)
+    {
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+        if (request is null || !IsValidChannelName(request.Name))
+        {
+            errors["name"] = ["A valid channel name of at most 100 characters is required."];
+        }
+
+        return errors;
+    }
+
     private static bool IsValidChannelName(string? name)
     {
         if (name is null)

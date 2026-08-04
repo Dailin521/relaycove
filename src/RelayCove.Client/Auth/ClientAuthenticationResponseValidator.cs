@@ -15,6 +15,7 @@ internal static class ClientAuthenticationResponseValidator
             response.UserId != Guid.Empty &&
             IsRequiredText(response.DisplayName, MaximumDisplayNameLength) &&
             IsValidAccessToken(response.AccessToken) &&
+            response.AccessTokenVersion >= 0 &&
             IsValidToken(response.RefreshToken) &&
             response.ExpiresAt > now &&
             IsRequiredText(response.ServerVersion, MaximumVersionLength) &&

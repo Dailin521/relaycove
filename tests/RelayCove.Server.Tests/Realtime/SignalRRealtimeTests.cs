@@ -16,6 +16,7 @@ using RelayCove.Server.Data;
 using RelayCove.Server.Hubs;
 using RelayCove.Server.Realtime;
 using RelayCove.Server.Tests.Infrastructure;
+using RelayCove.Shared.Admin;
 using RelayCove.Shared.Auth;
 using RelayCove.Shared.Conversations;
 using RelayCove.Shared.Messages;
@@ -366,17 +367,17 @@ public sealed class SignalRRealtimeTests : IClassFixture<RelayCoveWebApplication
 
         var deliveries = transport.Deliveries.ToArray();
         Assert.Equal(3, deliveries.Length);
-        var publicRecipients = deliveries[0].RecipientUserIds;
-        Assert.Contains(adminId.ToString("D"), publicRecipients);
-        Assert.Contains(memberId.ToString("D"), publicRecipients);
-        Assert.Contains(outsiderId.ToString("D"), publicRecipients);
-        Assert.DoesNotContain(disabledId.ToString("D"), publicRecipients);
+        var publicRecipients = deliveries[0].Recipients;
+        Assert.Contains(publicRecipients, recipient => recipient.UserId == adminId && recipient.AccessTokenVersion == 0);
+        Assert.Contains(publicRecipients, recipient => recipient.UserId == memberId && recipient.AccessTokenVersion == 0);
+        Assert.Contains(publicRecipients, recipient => recipient.UserId == outsiderId && recipient.AccessTokenVersion == 0);
+        Assert.DoesNotContain(publicRecipients, recipient => recipient.UserId == disabledId);
         Assert.Equal(
-            new[] { adminId.ToString("D"), memberId.ToString("D") }.Order(),
-            deliveries[1].RecipientUserIds.Order());
+            new[] { adminId, memberId }.Order(),
+            deliveries[1].Recipients.Select(recipient => recipient.UserId).Order());
         Assert.Equal(
-            new[] { adminId.ToString("D"), memberId.ToString("D") }.Order(),
-            deliveries[2].RecipientUserIds.Order());
+            new[] { adminId, memberId }.Order(),
+            deliveries[2].Recipients.Select(recipient => recipient.UserId).Order());
         var recipientSelects = factory.LogMessages
             .Skip(logOffset)
             .Where(message =>
@@ -384,6 +385,62 @@ public sealed class SignalRRealtimeTests : IClassFixture<RelayCoveWebApplication
                 message.Contains("SELECT", StringComparison.Ordinal))
             .ToArray();
         Assert.Equal(3, recipientSelects.Length);
+    }
+
+    [Fact]
+    public async Task NewMessagePublisher_WhenAccountTokenGenerationChanges_DeliversOnlyToCurrentGeneration()
+    {
+        var adminName = CreateUserName("signalr-generation-admin");
+        var memberName = CreateUserName("signalr-generation-member");
+        var adminId = await factory.CreateUserAsync(adminName, ExistingPassword, isAdmin: true);
+        var memberId = await factory.CreateUserAsync(memberName, ExistingPassword);
+        using var adminClient = await CreateAuthenticatedClientAsync(factory, adminName);
+        var conversation = await CreateChannelAsync(
+            adminClient,
+            ConversationType.PublicChannel,
+            "SignalR generation isolation");
+        var oldLogin = await LoginAsync(factory.CreateClient(), memberName);
+        var staleMessages = new ConcurrentQueue<MessageDto>();
+
+        await using var staleConnection = CreateHubConnection(factory, oldLogin.AccessToken);
+        staleConnection.On<MessageDto>(nameof(IChatClient.NewMessage), staleMessages.Enqueue);
+        var initialConnectionLogOffset = factory.LogMessages.Count;
+        await staleConnection.StartAsync();
+        await WaitForGroupJoinAsync(initialConnectionLogOffset, memberId);
+
+        using (var disable = await adminClient.PutAsJsonAsync(
+                   $"/api/admin/users/{memberId:D}",
+                   new UpdateAdminUserRequest(true)))
+        {
+            Assert.Equal(HttpStatusCode.OK, disable.StatusCode);
+        }
+
+        using (var restore = await adminClient.PutAsJsonAsync(
+                   $"/api/admin/users/{memberId:D}",
+                   new UpdateAdminUserRequest(false)))
+        {
+            Assert.Equal(HttpStatusCode.OK, restore.StatusCode);
+        }
+
+        var currentLogin = await LoginAsync(factory.CreateClient(), memberName);
+        Assert.Equal(2, currentLogin.AccessTokenVersion);
+        var currentMessages = new ConcurrentQueue<MessageDto>();
+        await using var currentConnection = CreateHubConnection(factory, currentLogin.AccessToken);
+        currentConnection.On<MessageDto>(nameof(IChatClient.NewMessage), currentMessages.Enqueue);
+        var currentConnectionLogOffset = factory.LogMessages.Count;
+        await currentConnection.StartAsync();
+        await WaitForGroupJoinAsync(currentConnectionLogOffset, memberId);
+
+        var message = CreateSyntheticMessage(conversation.Id, adminId, "current generation only");
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var publisher = scope.ServiceProvider.GetRequiredService<NewMessagePublisher>();
+            await publisher.TryPublishAsync(message);
+        }
+
+        await WaitUntilAsync(() => currentMessages.Any(candidate => candidate.Id == message.Id));
+        await Task.Delay(200);
+        Assert.DoesNotContain(staleMessages, candidate => candidate.Id == message.Id);
     }
 
     [Fact]
@@ -786,7 +843,7 @@ public sealed class SignalRRealtimeTests : IClassFixture<RelayCoveWebApplication
         public int AttemptCount => Volatile.Read(ref attemptCount);
 
         public Task SendAsync(
-            IReadOnlyList<string> recipientUserIds,
+            IReadOnlyList<NewMessageRecipient> recipients,
             MessageDto message,
             CancellationToken cancellationToken)
         {
@@ -800,17 +857,17 @@ public sealed class SignalRRealtimeTests : IClassFixture<RelayCoveWebApplication
         public ConcurrentQueue<RecordedDelivery> Deliveries { get; } = new();
 
         public Task SendAsync(
-            IReadOnlyList<string> recipientUserIds,
+            IReadOnlyList<NewMessageRecipient> recipients,
             MessageDto message,
             CancellationToken cancellationToken)
         {
-            Deliveries.Enqueue(new RecordedDelivery(recipientUserIds.ToArray(), message));
+            Deliveries.Enqueue(new RecordedDelivery(recipients.ToArray(), message));
             return Task.CompletedTask;
         }
     }
 
     private sealed record RecordedDelivery(
-        IReadOnlyList<string> RecipientUserIds,
+        IReadOnlyList<NewMessageRecipient> Recipients,
         MessageDto Message);
 
     private sealed class ThrowingAccessRevokedTransport : IConversationAccessRevokedTransport

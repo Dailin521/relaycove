@@ -70,22 +70,54 @@ public sealed class JwtAuthenticationTests(
         Assert.Null(Assert.Single(response.Headers.WwwAuthenticate).Parameter);
     }
 
+    [Fact]
+    public async Task Me_WhenAccessTokenVersionIsMissingOrCurrent_AcceptsLegacyZeroAndRejectsStaleVersion()
+    {
+        var userName = $"jwt-version-{Guid.NewGuid():N}";
+        var userId = await factory.CreateUserAsync(userName, "correct-horse-battery-staple");
+        using var client = factory.CreateClient();
+
+        using (var legacyRequest = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me"))
+        {
+            legacyRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", CreateToken(userId.ToString("D")));
+            using var legacyResponse = await client.SendAsync(legacyRequest);
+            Assert.Equal(HttpStatusCode.OK, legacyResponse.StatusCode);
+        }
+
+        using var staleRequest = new HttpRequestMessage(HttpMethod.Get, "/api/auth/me");
+        staleRequest.Headers.Authorization = new AuthenticationHeaderValue(
+            "Bearer",
+            CreateToken(userId.ToString("D"), accessTokenVersion: 1));
+        using var staleResponse = await client.SendAsync(staleRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, staleResponse.StatusCode);
+        var error = await staleResponse.Content.ReadFromJsonAsync<ApiErrorResponse>();
+        Assert.Equal(ApiErrorCodes.AuthenticationRequired, error!.Code);
+    }
+
     private string CreateToken(
         string subject,
         string issuer = "RelayCove.Server",
         string audience = "RelayCove.Client",
         string tokenType = AccessTokenService.AccessTokenType,
         DateTime? expiresAt = null,
-        bool signed = true)
+        bool signed = true,
+        long? accessTokenVersion = null)
     {
         var now = DateTime.UtcNow;
         var expiration = expiresAt ?? now.AddMinutes(5);
         var notBefore = expiration <= now ? expiration.AddMinutes(-5) : now.AddMinutes(-1);
-        Claim[] claims =
-        [
+        var claims = new List<Claim>
+        {
             new(JwtRegisteredClaimNames.Sub, subject),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("D")),
-        ];
+        };
+        if (accessTokenVersion is long version)
+        {
+            claims.Add(new Claim(
+                AccessTokenService.AccessTokenVersionClaimType,
+                version.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ClaimValueTypes.Integer64));
+        }
         var payload = new JwtPayload(issuer, audience, claims, notBefore, expiration, notBefore);
         var header = signed
             ? new JwtHeader(new SigningCredentials(

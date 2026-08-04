@@ -24,6 +24,8 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
 
     public DbSet<Attachment> Attachments => Set<Attachment>();
 
+    public DbSet<AppSetting> AppSettings => Set<AppSetting>();
+
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         ValidateUtcDateTimes();
@@ -47,6 +49,7 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
         ConfigureMessage(modelBuilder.Entity<Message>());
         ConfigureMessageMention(modelBuilder.Entity<MessageMention>());
         ConfigureAttachment(modelBuilder.Entity<Attachment>());
+        ConfigureAppSetting(modelBuilder.Entity<AppSetting>());
     }
 
     private static void ConfigureUser(EntityTypeBuilder<User> entity)
@@ -61,6 +64,8 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
             table.HasCheckConstraint("CK_Users_PasswordHash_NotEmpty", "length(\"PasswordHash\") > 0");
             table.HasCheckConstraint("CK_Users_IsAdmin_Boolean", "\"IsAdmin\" IN (0, 1)");
             table.HasCheckConstraint("CK_Users_IsDisabled_Boolean", "\"IsDisabled\" IN (0, 1)");
+            table.HasCheckConstraint("CK_Users_RetiredAt_Format", NullableUtcTextCheck("RetiredAt"));
+            table.HasCheckConstraint("CK_Users_AccessTokenVersion_NonNegative", "\"AccessTokenVersion\" >= 0");
             table.HasCheckConstraint("CK_Users_CreatedAt_Format", UtcTextCheck("CreatedAt"));
             table.HasCheckConstraint("CK_Users_UpdatedAt_Format", UtcTextCheck("UpdatedAt"));
             table.HasCheckConstraint("CK_Users_LastLoginAt_Format", NullableUtcTextCheck("LastLoginAt"));
@@ -80,6 +85,8 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
         entity.Property(user => user.UpdatedAt).HasConversion(SqliteValueConverters.UtcDateTimeToString);
         entity.Property(user => user.LastLoginAt).HasConversion(SqliteValueConverters.UtcDateTimeToString);
         entity.Property(user => user.LastOnlineAt).HasConversion(SqliteValueConverters.UtcDateTimeToString);
+        entity.Property(user => user.RetiredAt).HasConversion(SqliteValueConverters.UtcDateTimeToString);
+        entity.Property(user => user.AccessTokenVersion).HasDefaultValue(0L);
         entity.HasIndex(user => user.UserName).IsUnique();
         entity.HasIndex(user => user.NormalizedUserName).IsUnique();
     }
@@ -318,6 +325,22 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
             .WithMany(user => user.UploadedAttachments)
             .HasForeignKey(attachment => attachment.UploaderUserId)
             .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureAppSetting(EntityTypeBuilder<AppSetting> entity)
+    {
+        entity.ToTable("AppSettings", table =>
+        {
+            table.HasCheckConstraint("CK_AppSettings_Key_NotEmpty", "length(\"Key\") BETWEEN 1 AND 128");
+            table.HasCheckConstraint("CK_AppSettings_Value_NotEmpty", "length(\"Value\") > 0");
+            table.HasCheckConstraint("CK_AppSettings_UpdatedAt_Format", UtcTextCheck("UpdatedAt"));
+        });
+
+        entity.HasKey(setting => setting.Key);
+        entity.Property(setting => setting.Key).HasMaxLength(128);
+        entity.Property(setting => setting.Value).IsRequired();
+        entity.Property(setting => setting.UpdatedAt)
+            .HasConversion(SqliteValueConverters.UtcDateTimeToString);
     }
 
     private void ValidateUtcDateTimes()

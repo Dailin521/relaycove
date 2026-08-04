@@ -126,9 +126,10 @@ public sealed class AttachmentUploadEndpointTests(
     [Fact]
     public async Task Upload_WhenFileIsExactlyAtLimit_SucceedsAndLimitPlusOneReturns413WithoutLeak()
     {
+        const int limit = 1024 * 1024;
         using var limitedFactory = CreateFactory(new Dictionary<string, string?>
         {
-            ["Uploads:MaximumFileBytes"] = "8",
+            ["Uploads:MaximumFileBytes"] = "1048576",
             ["Uploads:PermitLimit"] = "100",
         });
         await limitedFactory.InitializeDatabaseAsync();
@@ -136,12 +137,12 @@ public sealed class AttachmentUploadEndpointTests(
         var userId = await limitedFactory.CreateUserAsync(userName, ExistingPassword);
         using var client = await CreateAuthenticatedClientAsync(limitedFactory, userName);
 
-        using (var exact = await UploadAsync(client, new byte[8], "exact.bin", "application/octet-stream"))
+        using (var exact = await UploadAsync(client, new byte[limit], "exact.bin", "application/octet-stream"))
         {
             Assert.Equal(HttpStatusCode.Created, exact.StatusCode);
         }
 
-        using var oversized = await UploadAsync(client, new byte[9], "oversized.bin", "application/octet-stream");
+        using var oversized = await UploadAsync(client, new byte[limit + 1], "oversized.bin", "application/octet-stream");
 
         await AssertErrorAsync(oversized, HttpStatusCode.RequestEntityTooLarge, ApiErrorCodes.AttachmentTooLarge);
         await using var scope = limitedFactory.Services.CreateAsyncScope();
@@ -153,9 +154,10 @@ public sealed class AttachmentUploadEndpointTests(
     [Fact]
     public async Task Upload_WhenLengthIsUnknown_CannotBypassStreamingLimit()
     {
+        const int limit = 1024 * 1024;
         using var limitedFactory = CreateFactory(new Dictionary<string, string?>
         {
-            ["Uploads:MaximumFileBytes"] = "8",
+            ["Uploads:MaximumFileBytes"] = "1048576",
             ["Uploads:PermitLimit"] = "100",
         });
         await limitedFactory.InitializeDatabaseAsync();
@@ -164,7 +166,7 @@ public sealed class AttachmentUploadEndpointTests(
         using var client = await CreateAuthenticatedClientAsync(limitedFactory, userName);
         var boundary = $"relaycove-{Guid.NewGuid():N}";
         using var content = new UnknownLengthContent(
-            CreateRawMultipart(boundary, new byte[9]),
+            CreateRawMultipart(boundary, new byte[limit + 1]),
             $"multipart/form-data; boundary={boundary}");
 
         using var response = await client.PostAsync("/api/attachments", content);

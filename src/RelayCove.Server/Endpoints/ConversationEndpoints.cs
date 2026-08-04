@@ -16,6 +16,8 @@ public static class ConversationEndpoints
         group.MapGet(string.Empty, ListAsync);
         group.MapPost(string.Empty, CreateAsync);
         group.MapGet("/{conversationId:guid}", GetAsync);
+        group.MapPut("/{conversationId:guid}", UpdateAsync);
+        group.MapDelete("/{conversationId:guid}", DeleteAsync);
         group.MapGet("/{conversationId:guid}/members", ListMembersAsync);
         group.MapGet(
             "/{conversationId:guid}/mention-candidates",
@@ -100,6 +102,64 @@ public static class ConversationEndpoints
         return result.Status == ConversationOperationStatus.Success
             ? Results.Ok(result.Value)
             : ConversationError(context, result.Status);
+    }
+
+    private static async Task<IResult> UpdateAsync(
+        Guid conversationId,
+        [FromBody] UpdateConversationRequest? request,
+        HttpContext context,
+        ConversationRequestValidator validator,
+        ConversationCommandService commandService,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetActorUserId(context, out var actorUserId))
+        {
+            return AuthenticationRequired(context);
+        }
+
+        var errors = validator.ValidateUpdate(request);
+        if (errors.Count > 0)
+        {
+            return ValidationError(context, errors);
+        }
+
+        var result = await commandService.UpdateChannelAsync(
+            actorUserId,
+            conversationId,
+            request!,
+            cancellationToken);
+        return result.Status == ConversationOperationStatus.Success
+            ? Results.Ok(result.Value)
+            : ConversationError(context, result.Status);
+    }
+
+    private static async Task<IResult> DeleteAsync(
+        Guid conversationId,
+        HttpContext context,
+        ConversationCommandService commandService,
+        ConversationAccessRevokedPublisher accessRevokedPublisher,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetActorUserId(context, out var actorUserId))
+        {
+            return AuthenticationRequired(context);
+        }
+
+        var result = await commandService.DeleteChannelAsync(
+            actorUserId,
+            conversationId,
+            cancellationToken);
+        if (result.Status == ConversationOperationStatus.NoContent)
+        {
+            foreach (var userId in result.RevokedUserIds!)
+            {
+                await accessRevokedPublisher.TryPublishAsync(userId, conversationId);
+            }
+
+            return Results.NoContent();
+        }
+
+        return ConversationError(context, result.Status);
     }
 
     private static async Task<IResult> ListMentionCandidatesAsync(

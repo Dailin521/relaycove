@@ -49,6 +49,10 @@ public sealed class User
 
     public bool IsDisabled { get; private set; }
 
+    public DateTime? RetiredAt { get; private set; }
+
+    public long AccessTokenVersion { get; private set; }
+
     public DateTime CreatedAt { get; private set; }
 
     public DateTime UpdatedAt { get; private set; }
@@ -90,6 +94,43 @@ public sealed class User
         AdvanceUpdatedAt(updatedAt);
     }
 
+    public bool SetDisabled(bool isDisabled, DateTime updatedAt)
+    {
+        if (RetiredAt is not null && !isDisabled)
+        {
+            throw new InvalidOperationException("Retired users cannot be restored.");
+        }
+
+        if (IsDisabled == isDisabled)
+        {
+            return false;
+        }
+
+        IsDisabled = isDisabled;
+        InvalidateAccessTokens(updatedAt);
+        return true;
+    }
+
+    public void ResetPasswordHash(string passwordHash, DateTime updatedAt)
+    {
+        SetPasswordHash(passwordHash);
+        InvalidateAccessTokens(updatedAt);
+    }
+
+    public bool Retire(DateTime retiredAt)
+    {
+        if (RetiredAt is not null)
+        {
+            return false;
+        }
+
+        var effectiveTime = AdvanceUpdatedAt(retiredAt);
+        RetiredAt = effectiveTime;
+        IsDisabled = true;
+        AccessTokenVersion = checked(AccessTokenVersion + 1);
+        return true;
+    }
+
     public void RecordLogin(DateTime loggedInAt)
     {
         var effectiveTime = AdvanceUpdatedAt(loggedInAt);
@@ -103,6 +144,12 @@ public sealed class User
     }
 
     internal static User CreatePasswordHashSubject() => new();
+
+    private void InvalidateAccessTokens(DateTime updatedAt)
+    {
+        AdvanceUpdatedAt(updatedAt);
+        AccessTokenVersion = checked(AccessTokenVersion + 1);
+    }
 
     private DateTime AdvanceUpdatedAt(DateTime value)
     {

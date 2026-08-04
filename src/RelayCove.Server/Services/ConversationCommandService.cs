@@ -134,6 +134,131 @@ public sealed class ConversationCommandService(
             targetUserId,
             cancellationToken)).Status;
 
+    public async Task<ConversationOperationResult<ConversationDto>> UpdateChannelAsync(
+        Guid actorUserId,
+        Guid conversationId,
+        UpdateConversationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (conversationId == Guid.Empty || request.Name is null)
+        {
+            return new ConversationOperationResult<ConversationDto>(ConversationOperationStatus.InvalidRequest);
+        }
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+        var actorIsAdministrator = await dbContext.Users.AnyAsync(
+            user => user.Id == actorUserId && !user.IsDisabled && user.RetiredAt == null && user.IsAdmin,
+            cancellationToken);
+        if (!actorIsAdministrator)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new ConversationOperationResult<ConversationDto>(ConversationOperationStatus.AccessDenied);
+        }
+
+        var conversation = await dbContext.Conversations
+            .SingleOrDefaultAsync(
+                candidate => candidate.Id == conversationId && !candidate.IsDeleted,
+                cancellationToken);
+        if (conversation is null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new ConversationOperationResult<ConversationDto>(ConversationOperationStatus.AccessRevoked);
+        }
+
+        if (conversation.Type == ConversationType.Direct)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new ConversationOperationResult<ConversationDto>(ConversationOperationStatus.ConversationTypeConflict);
+        }
+
+        try
+        {
+            conversation.Rename(request.Name, clock.UtcNow);
+        }
+        catch (ArgumentException)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new ConversationOperationResult<ConversationDto>(ConversationOperationStatus.InvalidRequest);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        logger.LogInformation(
+            "Administrator {ActorUserId} renamed conversation {ConversationId}.",
+            actorUserId,
+            conversationId);
+        return new ConversationOperationResult<ConversationDto>(
+            ConversationOperationStatus.Success,
+            ToConversationDto(conversation, conversation.Name, 0, false));
+    }
+
+    public async Task<ConversationChannelDeleteResult> DeleteChannelAsync(
+        Guid actorUserId,
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        if (conversationId == Guid.Empty)
+        {
+            return new ConversationChannelDeleteResult(ConversationOperationStatus.InvalidRequest);
+        }
+
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+        var actorIsAdministrator = await dbContext.Users.AnyAsync(
+            user => user.Id == actorUserId && !user.IsDisabled && user.RetiredAt == null && user.IsAdmin,
+            cancellationToken);
+        if (!actorIsAdministrator)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new ConversationChannelDeleteResult(ConversationOperationStatus.AccessDenied);
+        }
+
+        var conversation = await dbContext.Conversations
+            .SingleOrDefaultAsync(
+                candidate => candidate.Id == conversationId && !candidate.IsDeleted,
+                cancellationToken);
+        if (conversation is null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new ConversationChannelDeleteResult(ConversationOperationStatus.AccessRevoked);
+        }
+
+        if (conversation.Type == ConversationType.Direct)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new ConversationChannelDeleteResult(ConversationOperationStatus.ConversationTypeConflict);
+        }
+
+        IReadOnlyList<Guid> revokedUserIds;
+        if (conversation.Type == ConversationType.PublicChannel)
+        {
+            revokedUserIds = await dbContext.Users
+                .Where(user => !user.IsDisabled && user.RetiredAt == null)
+                .Select(user => user.Id)
+                .ToArrayAsync(cancellationToken);
+        }
+        else
+        {
+            revokedUserIds = await dbContext.ConversationMembers
+                .Where(member => member.ConversationId == conversationId)
+                .Select(member => member.UserId)
+                .ToArrayAsync(cancellationToken);
+        }
+
+        conversation.MarkDeleted(clock.UtcNow);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        logger.LogInformation(
+            "Administrator {ActorUserId} deleted conversation {ConversationId}; recipients={RecipientCount}.",
+            actorUserId,
+            conversationId,
+            revokedUserIds.Count);
+        return new ConversationChannelDeleteResult(ConversationOperationStatus.NoContent, revokedUserIds);
+    }
+
     internal async Task<ConversationMemberRemovalResult> RemoveMemberWithResultAsync(
         Guid actorUserId,
         Guid conversationId,
@@ -210,7 +335,7 @@ public sealed class ConversationCommandService(
             IsolationLevel.Serializable,
             cancellationToken);
         var actorIsAdministrator = await dbContext.Users.AnyAsync(
-            user => user.Id == actorUserId && !user.IsDisabled && user.IsAdmin,
+            user => user.Id == actorUserId && !user.IsDisabled && user.RetiredAt == null && user.IsAdmin,
             cancellationToken);
         if (!actorIsAdministrator)
         {

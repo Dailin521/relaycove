@@ -45,7 +45,8 @@ public sealed class LoginContractTests
             "refresh-token-value",
             new DateTimeOffset(2026, 8, 3, 12, 30, 0, TimeSpan.FromHours(8)),
             "1.0.0",
-            "1.0.0");
+            "1.0.0",
+            AccessTokenVersion: 3);
 
         var json = JsonSerializer.Serialize(response, WebJson);
         using var document = JsonDocument.Parse(json);
@@ -61,11 +62,13 @@ public sealed class LoginContractTests
                 "expiresAt",
                 "serverVersion",
                 "minimumSupportedClientVersion",
+                "accessTokenVersion",
             ],
             propertyNames);
         Assert.Equal("2026-08-03T12:30:00+08:00", document.RootElement.GetProperty("expiresAt").GetString());
         Assert.Equal(response, roundTripped);
         Assert.Equal(TimeSpan.FromHours(8), roundTripped!.ExpiresAt.Offset);
+        Assert.Equal(3, roundTripped.AccessTokenVersion);
     }
 
     [Fact]
@@ -112,6 +115,7 @@ public sealed class LoginContractTests
                 "ExpiresAt",
                 "ServerVersion",
                 "MinimumSupportedClientVersion",
+                "AccessTokenVersion",
             ],
             responseParameters.Select(parameter => parameter.Name),
             StringComparer.Ordinal);

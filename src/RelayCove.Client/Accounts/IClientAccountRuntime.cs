@@ -14,6 +14,8 @@ internal interface IClientAccountRuntime : IAsyncDisposable
 
     event Action<long> ConversationStateChanged;
 
+    event Func<Task> AuthenticationRequired;
+
     AccountScopeIdentity Identity { get; }
 
     ConnectionState ConnectionState { get; }

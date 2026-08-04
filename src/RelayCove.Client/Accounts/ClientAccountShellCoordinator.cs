@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using RelayCove.Client.Activation;
+using RelayCove.Client.Admin;
 using RelayCove.Client.Attachments;
 using RelayCove.Client.Auth;
 using RelayCove.Client.Mentions;
@@ -25,8 +26,10 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
     private readonly Func<string> deviceNameProvider;
     private readonly Func<string> clientVersionProvider;
     private readonly ILogger<ClientAccountShellCoordinator> logger;
+    private readonly Func<ClientAuthenticationSession, ClientAdminCoordinator>? createAdminCoordinator;
     private ClientAccountShellSnapshot snapshot = ClientAccountShellSnapshot.Initial;
     private IClientAccountRuntime? runtime;
+    private ClientAdminCoordinator? adminCoordinator;
     private RuntimeSubscription? runtimeSubscription;
     private IDisposable? activationLease;
     private ClientActivitySnapshot latestActivity = ClientActivitySnapshot.Inactive;
@@ -59,7 +62,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         ClientNotificationActivationRouter activationRouter,
         ILogger<ClientAccountShellCoordinator> logger,
         Func<string>? deviceNameProvider = null,
-        Func<string>? clientVersionProvider = null)
+        Func<string>? clientVersionProvider = null,
+        Func<ClientAuthenticationSession, ClientAdminCoordinator>? createAdminCoordinator = null)
     {
         this.authentication = authentication ??
             throw new ArgumentNullException(nameof(authentication));
@@ -70,6 +74,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.deviceNameProvider = deviceNameProvider ?? GetDeviceName;
         this.clientVersionProvider = clientVersionProvider ?? GetClientVersion;
+        this.createAdminCoordinator = createAdminCoordinator;
     }
 
     public event Action<ClientAccountShellSnapshot>? SnapshotChanged;
@@ -88,6 +93,17 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         Volatile.Read(ref conversationList);
 
     public ClientMessageListSnapshot MessageList => Volatile.Read(ref messageList);
+
+    internal ClientAdminCoordinator? AdminCoordinator
+    {
+        get
+        {
+            lock (stateGate)
+            {
+                return adminCoordinator;
+            }
+        }
+    }
 
     public IReadOnlyList<SearchResultDto> SearchResults
     {
@@ -1591,6 +1607,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         using var linkedCancellation = CreateLinkedCancellation(cancellationToken);
         await operationGate.WaitAsync(linkedCancellation.Token).ConfigureAwait(false);
         ClientAuthenticationSession? unownedSession = null;
+        ClientAdminCoordinator? unownedAdmin = null;
         try
         {
             ThrowIfStopping();
@@ -1621,6 +1638,13 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             }
 
             linkedCancellation.Token.ThrowIfCancellationRequested();
+            if (createAdminCoordinator is not null)
+            {
+                unownedAdmin = createAdminCoordinator(unownedSession);
+                unownedAdmin.AuthenticationRequired += OnAdminAuthenticationRequiredAsync;
+                _ = await unownedAdmin.ProbeAsync(linkedCancellation.Token).ConfigureAwait(false);
+            }
+
             var displayName = unownedSession.DisplayName;
             var serverBaseUri = unownedSession.ServerBaseUri;
             PublishSnapshot(new ClientAccountShellSnapshot(
@@ -1677,12 +1701,14 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                     ThrowIfStopping();
                     runtime = unownedRuntime;
                     runtimeSubscription = subscription;
+                    adminCoordinator = unownedAdmin;
                     activationLease = unownedLease;
                     activeDisplayName = displayName;
                     activeServerBaseUri = serverBaseUri;
                 }
 
                 unownedRuntime = null;
+                unownedAdmin = null;
                 unownedLease = null;
                 RestoreLatestActivity();
                 PublishActiveSnapshot(
@@ -1697,6 +1723,11 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                 if (unownedRuntime is not null)
                 {
                     await unownedRuntime.DisposeAsync().ConfigureAwait(false);
+                }
+                if (unownedAdmin is not null)
+                {
+                    unownedAdmin.AuthenticationRequired -= OnAdminAuthenticationRequiredAsync;
+                    await unownedAdmin.DisposeAsync().ConfigureAwait(false);
                 }
             }
         }
@@ -1802,7 +1833,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                 TotalUnreadCount: conversationList.Status == LocalCacheOperationStatus.Ready
                     ? conversationList.TotalUnreadCount
                     : 0,
-                Revision: Interlocked.Increment(ref shellPublicationRevision));
+                Revision: Interlocked.Increment(ref shellPublicationRevision),
+                IsAdmin: adminCoordinator?.Snapshot.IsAdmin == true);
             Volatile.Write(ref snapshot, value);
             handlers = SnapshotChanged;
         }
@@ -1833,6 +1865,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         IDisposable? lease;
         IClientAccountRuntime? detachedRuntime;
         RuntimeSubscription? subscription;
+        ClientAdminCoordinator? activeAdmin;
         MessageSelection? selection;
         SearchInvalidation searchInvalidation;
         lock (stateGate)
@@ -1848,6 +1881,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             activationLease = null;
             runtime = null;
             runtimeSubscription = null;
+            activeAdmin = adminCoordinator;
+            adminCoordinator = null;
             selection = messageSelection;
             messageSelection = null;
             renderedConversationId = null;
@@ -1858,6 +1893,11 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 
         CompleteSearchInvalidation(searchInvalidation);
         subscription?.Detach();
+        if (activeAdmin is not null)
+        {
+            activeAdmin.AuthenticationRequired -= OnAdminAuthenticationRequiredAsync;
+            await activeAdmin.DisposeAsync().ConfigureAwait(false);
+        }
         selection?.Cancel();
         PublishConversationList(LocalConversationListReadOutcome.Failure(
             LocalCacheOperationStatus.AuthoritativeSnapshotRequired,
@@ -1870,6 +1910,19 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         PublishSnapshot(ClientAccountShellSnapshot.SignedOut(
             PersistentClientAuthenticationStatus.AuthenticationFailed,
             logoutStatus));
+    }
+
+    private Task OnAdminAuthenticationRequiredAsync()
+    {
+        IClientAccountRuntime? activeRuntime;
+        lock (stateGate)
+        {
+            activeRuntime = runtime;
+        }
+
+        return activeRuntime is null
+            ? Task.CompletedTask
+            : EndAuthenticationRequiredSessionAsync(activeRuntime);
     }
 
     private async Task<ClientLogoutStatus> CompleteRuntimeLogoutAsync(
@@ -3141,6 +3194,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         out SearchInvalidation searchInvalidation)
     {
         RuntimeSubscription? subscription;
+        ClientAdminCoordinator? activeAdmin;
         MessageSelection? selection;
         lock (stateGate)
         {
@@ -3150,6 +3204,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             activationLease = null;
             runtime = null;
             runtimeSubscription = null;
+            activeAdmin = adminCoordinator;
+            adminCoordinator = null;
             selection = messageSelection;
             messageSelection = null;
             renderedConversationId = null;
@@ -3159,6 +3215,11 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         }
 
         subscription?.Detach();
+        if (activeAdmin is not null)
+        {
+            activeAdmin.AuthenticationRequired -= OnAdminAuthenticationRequiredAsync;
+            _ = activeAdmin.DisposeAsync();
+        }
         selection?.Cancel();
         PublishConversationList(LocalConversationListReadOutcome.Failure(
             LocalCacheOperationStatus.AuthoritativeSnapshotRequired,
@@ -3370,6 +3431,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 
             Runtime.ConnectionStateChanged += OnConnectionStateChanged;
             Runtime.ConversationStateChanged += OnConversationStateChanged;
+            Runtime.AuthenticationRequired += OnAuthenticationRequiredAsync;
         }
 
         public void Detach()
@@ -3381,6 +3443,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 
             Runtime.ConnectionStateChanged -= OnConnectionStateChanged;
             Runtime.ConversationStateChanged -= OnConversationStateChanged;
+            Runtime.AuthenticationRequired -= OnAuthenticationRequiredAsync;
         }
 
         private void OnConnectionStateChanged(
@@ -3389,6 +3452,9 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 
         private void OnConversationStateChanged(long revision) =>
             owner.OnRuntimeConversationStateChanged(this, revision);
+
+        private Task OnAuthenticationRequiredAsync() =>
+            owner.EndAuthenticationRequiredSessionAsync(Runtime);
     }
 
     private CancellationTokenSource CreateLinkedCancellation(

@@ -11,6 +11,9 @@ public static class ApiErrorCodes
     public const string InternalServerError = "InternalServerError";
     public const string UserNameAlreadyExists = "UserNameAlreadyExists";
     public const string UserNotFound = "UserNotFound";
+    public const string UserRetired = "UserRetired";
+    public const string LastActiveAdministrator = "LastActiveAdministrator";
+    public const string SelfActionForbidden = "SelfActionForbidden";
     public const string ConversationTypeConflict = "ConversationTypeConflict";
     public const string MessageTypeUnsupported = "MessageTypeUnsupported";
     public const string SyncCursorInvalid = "SyncCursorInvalid";

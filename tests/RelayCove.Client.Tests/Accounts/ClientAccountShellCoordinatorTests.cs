@@ -4078,6 +4078,22 @@ public sealed class ClientAccountShellCoordinatorTests
 
         public event Action<long>? ConversationStateChanged;
 
+        public event Func<Task>? AuthenticationRequired;
+
+        public async Task RaiseAuthenticationRequiredAsync()
+        {
+            var handlers = AuthenticationRequired;
+            if (handlers is null)
+            {
+                return;
+            }
+
+            foreach (Func<Task> handler in handlers.GetInvocationList())
+            {
+                await handler();
+            }
+        }
+
         public AccountScopeIdentity Identity { get; }
 
         public ConnectionState ConnectionState => ConnectionStateValue;

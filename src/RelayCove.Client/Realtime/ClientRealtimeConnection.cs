@@ -13,6 +13,7 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
     private const string HubPath = "hubs/chat";
     private const string NewMessageMethod = "NewMessage";
     private const string AccessRevokedMethod = "ConversationAccessRevoked";
+    private const string AccountAccessRevokedMethod = "AccountAccessRevoked";
     private static readonly AsyncLocal<ClientRealtimeConnection?> CurrentDispatcher = new();
 
     private readonly HubConnection hubConnection;
@@ -69,6 +70,9 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
         [
             hubConnection.On<MessageDto>(NewMessageMethod, OnNewMessageAsync),
             hubConnection.On<Guid>(AccessRevokedMethod, OnAccessRevokedAsync),
+            hubConnection.On<AccountAccessRevokedEvent>(
+                AccountAccessRevokedMethod,
+                OnAccountAccessRevokedAsync),
         ];
         hubConnection.Reconnecting += OnReconnectingAsync;
         hubConnection.Reconnected += OnReconnectedAsync;
@@ -233,6 +237,9 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
     private Task OnAccessRevokedAsync(Guid conversationId) =>
         EnqueueAsync(RealtimeEvent.ForAccessRevoked(conversationId));
 
+    private Task OnAccountAccessRevokedAsync(AccountAccessRevokedEvent accountAccessRevoked) =>
+        EnqueueAsync(RealtimeEvent.ForAccountAccessRevoked(accountAccessRevoked));
+
     private Task OnReconnectingAsync(Exception? exception) =>
         ChangeStateAsync(ConnectionState.Reconnecting, exception);
 
@@ -309,6 +316,11 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
                     case RealtimeEventKind.ConversationAccessRevoked:
                         await sink.OnConversationAccessRevokedAsync(
                             realtimeEvent.ConversationId,
+                            dispatchCancellation.Token);
+                        break;
+                    case RealtimeEventKind.AccountAccessRevoked:
+                        await sink.OnAccountAccessRevokedAsync(
+                            realtimeEvent.AccountAccessRevoked!,
                             dispatchCancellation.Token);
                         break;
                     default:
@@ -393,6 +405,7 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
         ConnectionState,
         NewMessage,
         ConversationAccessRevoked,
+        AccountAccessRevoked,
     }
 
     private sealed record RealtimeEvent(
@@ -400,6 +413,7 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
         ConnectionState ConnectionState,
         MessageDto? Message,
         Guid ConversationId,
+        AccountAccessRevokedEvent? AccountAccessRevoked,
         TaskCompletionSource Completion)
     {
         public static RealtimeEvent ForState(ConnectionState state) =>
@@ -408,6 +422,7 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
                 state,
                 Message: null,
                 ConversationId: Guid.Empty,
+                AccountAccessRevoked: null,
                 Completion: null!);
 
         public static RealtimeEvent ForMessage(MessageDto message) =>
@@ -416,6 +431,7 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
                 ConnectionState.Disconnected,
                 message,
                 message.ConversationId,
+                AccountAccessRevoked: null,
                 Completion: null!);
 
         public static RealtimeEvent ForAccessRevoked(Guid conversationId) =>
@@ -424,6 +440,17 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
                 ConnectionState.Disconnected,
                 Message: null,
                 conversationId,
+                AccountAccessRevoked: null,
+                Completion: null!);
+
+        public static RealtimeEvent ForAccountAccessRevoked(
+            AccountAccessRevokedEvent accountAccessRevoked) =>
+            new(
+                RealtimeEventKind.AccountAccessRevoked,
+                ConnectionState.Disconnected,
+                Message: null,
+                ConversationId: Guid.Empty,
+                AccountAccessRevoked: accountAccessRevoked,
                 Completion: null!);
     }
 }

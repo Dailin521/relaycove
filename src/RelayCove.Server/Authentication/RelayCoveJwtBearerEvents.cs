@@ -1,9 +1,11 @@
+using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using RelayCove.Server.Data;
 using RelayCove.Server.Errors;
 using RelayCove.Server.Hubs;
+using RelayCove.Server.Services;
 using RelayCove.Shared.Errors;
 
 namespace RelayCove.Server.Authentication;
@@ -34,12 +36,23 @@ public sealed class RelayCoveJwtBearerEvents(
             return;
         }
 
-        var activeUserExists = await dbContext.Users
-            .AsNoTracking()
-            .AnyAsync(user => user.Id == userId && !user.IsDisabled, context.HttpContext.RequestAborted);
-        if (!activeUserExists)
+        var rawTokenVersion = context.Principal?.FindFirst(AccessTokenService.AccessTokenVersionClaimType)?.Value;
+        var tokenVersion = 0L;
+        if (rawTokenVersion is not null &&
+            (!long.TryParse(rawTokenVersion, NumberStyles.None, CultureInfo.InvariantCulture, out tokenVersion) || tokenVersion < 0))
         {
-            logger.LogInformation("Access token rejected because user {UserId} is missing or disabled.", userId);
+            context.Fail("The access token version is invalid.");
+            return;
+        }
+
+        var activeUser = await dbContext.Users
+            .AsNoTracking()
+            .Where(user => user.Id == userId && !user.IsDisabled && user.RetiredAt == null)
+            .Select(user => new { user.AccessTokenVersion })
+            .SingleOrDefaultAsync(context.HttpContext.RequestAborted);
+        if (activeUser is null || activeUser.AccessTokenVersion != tokenVersion)
+        {
+            logger.LogInformation("Access token rejected because user {UserId} is inactive or its version is stale.", userId);
             context.Fail("The access token subject is not active.");
         }
     }

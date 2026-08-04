@@ -8,17 +8,20 @@ internal sealed class SignalRNewMessageTransport(
     IHubContext<ChatHub, IChatClient> hubContext) : INewMessageTransport
 {
     public async Task SendAsync(
-        IReadOnlyList<string> recipientUserIds,
+        IReadOnlyList<NewMessageRecipient> recipients,
         MessageDto message,
         CancellationToken cancellationToken)
     {
-        if (recipientUserIds.Count == 0)
+        if (recipients.Count == 0)
         {
             return;
         }
 
         await hubContext.Clients
-            .Users(recipientUserIds)
+            .Groups(recipients
+                .Select(recipient => AccountHubGroup.For(
+                    recipient.UserId,
+                    recipient.AccessTokenVersion)))
             .NewMessage(message)
             .WaitAsync(cancellationToken);
     }

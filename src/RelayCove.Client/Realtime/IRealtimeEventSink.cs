@@ -16,4 +16,8 @@ public interface IRealtimeEventSink
     Task OnConversationAccessRevokedAsync(
         Guid conversationId,
         CancellationToken cancellationToken);
+
+    Task OnAccountAccessRevokedAsync(
+        AccountAccessRevokedEvent accountAccessRevoked,
+        CancellationToken cancellationToken);
 }

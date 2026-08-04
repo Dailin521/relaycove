@@ -114,6 +114,17 @@ public sealed class ClientAuthenticationSession : IClientAuthenticationSession, 
         }
     }
 
+    public long AccessTokenVersion
+    {
+        get
+        {
+            lock (stateGate)
+            {
+                return state?.AccessTokenVersion ?? 0;
+            }
+        }
+    }
+
     public bool IsCredentialPersisted
     {
         get
@@ -603,6 +614,7 @@ public sealed class ClientAuthenticationSession : IClientAuthenticationSession, 
             ExpiresAt = response.ExpiresAt;
             ServerVersion = response.ServerVersion;
             MinimumSupportedClientVersion = response.MinimumSupportedClientVersion;
+            AccessTokenVersion = response.AccessTokenVersion;
         }
 
         public Guid UserId { get; }
@@ -618,6 +630,8 @@ public sealed class ClientAuthenticationSession : IClientAuthenticationSession, 
         public string ServerVersion { get; }
 
         public string MinimumSupportedClientVersion { get; }
+
+        public long AccessTokenVersion { get; }
 
         public static SessionState From(LoginResponse response) =>
             new(response);
