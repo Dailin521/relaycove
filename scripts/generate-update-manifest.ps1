@@ -223,15 +223,15 @@ if ($archiveInfo.Length -lt 1 -or $archiveInfo.Length -gt $maximumArtifactBytes)
     throw "Client release archive size is outside the supported range."
 }
 
-$verifyArguments = @(
-    "-Version", $Version,
-    "-OutputRoot", $resolvedClientReleaseRoot,
-    "-ExpectedCommit", $ExpectedCommit
-)
-if ($AllowDirtySource) {
-    $verifyArguments += "-AllowDirtySource"
+$verifyParameters = @{
+    Version = $Version
+    OutputRoot = $resolvedClientReleaseRoot
+    ExpectedCommit = $ExpectedCommit
 }
-& $verifyScript @verifyArguments
+if ($AllowDirtySource) {
+    $verifyParameters.AllowDirtySource = $true
+}
+& $verifyScript @verifyParameters
 $verifySucceeded = $?
 if (-not $verifySucceeded) {
     throw "Client release verification failed."

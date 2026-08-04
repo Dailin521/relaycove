@@ -4,6 +4,21 @@ public sealed class ClientReleaseScriptSafetyTests
 {
     private static readonly TimeSpan ScriptTimeout = TimeSpan.FromSeconds(30);
 
+    [Fact]
+    public async Task UpdateManifestGenerator_VerifierCall_UsesNamedParameterSplatting()
+    {
+        var scriptPath = PackagingTestPaths.GetRepositoryPath("scripts", "generate-update-manifest.ps1");
+        var script = await File.ReadAllTextAsync(scriptPath);
+
+        Assert.Contains("$verifyParameters = @{", script, StringComparison.Ordinal);
+        Assert.Contains("Version = $Version", script, StringComparison.Ordinal);
+        Assert.Contains("OutputRoot = $resolvedClientReleaseRoot", script, StringComparison.Ordinal);
+        Assert.Contains("ExpectedCommit = $ExpectedCommit", script, StringComparison.Ordinal);
+        Assert.Contains("$verifyParameters.AllowDirtySource = $true", script, StringComparison.Ordinal);
+        Assert.Contains("& $verifyScript @verifyParameters", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("& $verifyScript @verifyArguments", script, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("scripts/publish-client.ps1", "-AllowDirty")]
     [InlineData("scripts/verify-client-release.ps1", "-AllowDirtySource")]

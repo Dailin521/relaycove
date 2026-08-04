@@ -46,6 +46,7 @@ public sealed partial class ClientReleasePackageTests
             ],
             VerifyTimeout);
 
+        await AssertUpdateManifestGeneratorAsync(firstOutput.Path, first, version);
         await AssertStandaloneUpdaterAsync(firstOutput.Path, first.ArchivePath, version);
 
         var originalSidecar = await File.ReadAllTextAsync(first.SidecarPath);
@@ -302,6 +303,66 @@ public sealed partial class ClientReleasePackageTests
         Assert.NotEqual(0, invalid.ExitCode);
         Assert.DoesNotContain(packageRoot, invalid.CombinedOutput, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(expectedHash, invalid.CombinedOutput, StringComparison.Ordinal);
+    }
+
+    private static async Task AssertUpdateManifestGeneratorAsync(
+        string outputRoot,
+        ClientReleaseInspection release,
+        string version)
+    {
+        using var clientManifest = JsonDocument.Parse(release.Manifest);
+        var expectedCommit = GetProperty(clientManifest.RootElement, "commit").GetString();
+        Assert.NotNull(expectedCommit);
+        var sourceTreeClean = GetProperty(clientManifest.RootElement, "sourceTreeClean").GetBoolean();
+        var downloadUrl = $"https://updates.example.test/client/{version}.zip";
+        var arguments = new[]
+        {
+            "-Version", version,
+            "-MinimumSupportedVersion", version,
+            "-DownloadUrl", downloadUrl,
+            "-Mandatory",
+            "-ReleaseNotes", "Packaging integration release",
+            "-ClientReleaseRoot", outputRoot,
+            "-OutputRoot", outputRoot,
+            "-ExpectedCommit", expectedCommit,
+        };
+
+        if (!sourceTreeClean)
+        {
+            var rejectedDirtySource = await PowerShellProcess.RunAsync(
+                "scripts/generate-update-manifest.ps1",
+                arguments,
+                VerifyTimeout);
+            Assert.NotEqual(0, rejectedDirtySource.ExitCode);
+            Assert.Contains("dirty source tree", rejectedDirtySource.CombinedOutput, StringComparison.OrdinalIgnoreCase);
+        }
+
+        await AssertScriptSucceededAsync(
+            "scripts/generate-update-manifest.ps1",
+            [.. arguments, "-AllowDirtySource"],
+            VerifyTimeout);
+
+        var manifestPath = Path.Combine(
+            outputRoot,
+            "updates",
+            "internal-rc",
+            version,
+            "manifest.json");
+        Assert.True(File.Exists(manifestPath), $"Update manifest is missing: {manifestPath}");
+        using var updateManifest = JsonDocument.Parse(await File.ReadAllTextAsync(manifestPath));
+        var root = updateManifest.RootElement;
+        Assert.Equal(1, GetProperty(root, "schemaVersion").GetInt32());
+        Assert.Equal("internal-rc", GetProperty(root, "channel").GetString());
+        Assert.Equal(version, GetProperty(root, "version").GetString());
+        Assert.Equal(version, GetProperty(root, "minimumSupportedVersion").GetString());
+        Assert.True(GetProperty(root, "mandatory").GetBoolean());
+        Assert.Equal("Packaging integration release", GetProperty(root, "releaseNotes").GetString());
+
+        var artifact = GetProperty(root, "artifact");
+        Assert.Equal("portable-zip", GetProperty(artifact, "type").GetString());
+        Assert.Equal(downloadUrl, GetProperty(artifact, "url").GetString());
+        Assert.Equal(new FileInfo(release.ArchivePath).Length, GetProperty(artifact, "sizeBytes").GetInt64());
+        Assert.Equal(release.ArchiveSha256, GetProperty(artifact, "sha256").GetString());
     }
 
     private static async Task<PackagingProcessResult> RunExecutableAsync(
