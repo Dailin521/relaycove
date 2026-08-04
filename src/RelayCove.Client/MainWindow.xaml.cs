@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -32,8 +33,19 @@ public partial class MainWindow : Window
     private long composerContextVersion;
     private readonly Dictionary<Guid, MentionCandidateDto> composerMentions = [];
     private readonly List<ClientAttachmentDraft> composerAttachments = [];
+    private readonly Dictionary<
+        ClientAttachmentViewKey,
+        ClientAttachmentDownloadStateEntry> attachmentDownloadStates = [];
+    private readonly Dictionary<
+        ClientAttachmentViewKey,
+        ClientAttachmentDownloadOperation> attachmentDownloadOperations = [];
+    private readonly Dictionary<
+        ClientAttachmentViewKey,
+        ClientAttachmentRevealOperation> attachmentRevealOperations = [];
     private long mentionSearchVersion;
     private long attachmentSubmissionVersion;
+    private long attachmentDownloadContextVersion;
+    private Guid? attachmentDownloadConversationId;
     private bool composerContextReady;
     private bool suppressSelectionRequest;
     private bool applyingMessageSnapshot;
@@ -67,6 +79,8 @@ public partial class MainWindow : Window
         {
             cancellationSource.Cancel();
         }
+
+        ResetAttachmentDownloadContext(conversationId: null);
     }
 
     internal void ApplyAccountShellSnapshot(ClientAccountShellSnapshot snapshot)
@@ -75,6 +89,7 @@ public partial class MainWindow : Window
         {
             pendingConversationSelectionId = null;
             composerAvailable = false;
+            ResetAttachmentDownloadContext(conversationId: null);
             MessageComposerTextBox.IsEnabled = false;
             UpdateComposerConversationContext(conversationId: null, isReady: false);
             ClearComposerReply();
@@ -215,6 +230,8 @@ public partial class MainWindow : Window
         {
             return;
         }
+
+        snapshot = ReconcileAttachmentDownloadSnapshot(snapshot);
 
         var previousItems = MessageList.ItemsSource?
             .OfType<ClientMessageListItemPresentation>()
@@ -400,8 +417,7 @@ public partial class MainWindow : Window
         }
 
         textBlock.Text = value;
-        UIElementAutomationPeer.FromElement(textBlock)?.RaiseAutomationEvent(
-            AutomationEvents.LiveRegionChanged);
+        RaiseLiveRegionChanged(textBlock);
     }
 
     private async void OnLoginClicked(object sender, RoutedEventArgs e)
@@ -1224,6 +1240,320 @@ public partial class MainWindow : Window
             opened ? "已交给系统浏览器打开链接。" : "无法打开链接，请检查系统浏览器设置。");
     }
 
+    private async void OnAttachmentDownloadActionClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button
+            {
+                DataContext: ClientMessageAttachmentPresentation
+                {
+                    DownloadState: { } state,
+                } attachment,
+            } ||
+            accountShell is null ||
+            !TryResolveCurrentAttachment(state, out _, out _))
+        {
+            return;
+        }
+
+        switch (state.Action)
+        {
+            case ClientAttachmentDownloadAction.Download:
+                await StartAttachmentDownloadAsync(attachment, state);
+                break;
+            case ClientAttachmentDownloadAction.Cancel:
+                CancelAttachmentDownload(state);
+                break;
+            case ClientAttachmentDownloadAction.ShowInFolder:
+                await RevealAttachmentInFolderAsync(state);
+                break;
+        }
+    }
+
+    private async Task StartAttachmentDownloadAsync(
+        ClientMessageAttachmentPresentation attachment,
+        ClientAttachmentDownloadViewState state)
+    {
+        var shell = accountShell;
+        if (shell is null ||
+            !TryResolveCurrentAttachment(state, out var snapshot, out var currentAttachment) ||
+            !state.TryBeginDownload(
+                snapshot.Status == ClientMessageListStatus.Ready,
+                snapshot.ConversationId,
+                currentAttachment.MessageClientId,
+                currentAttachment.AttachmentId,
+                attachmentDownloadContextVersion,
+                out var flight) ||
+            flight is null)
+        {
+            return;
+        }
+
+        var key = ClientAttachmentViewKey.From(state.Context);
+        var operation = new ClientAttachmentDownloadOperation(
+            flight,
+            new CancellationTokenSource());
+        if (!attachmentDownloadOperations.TryAdd(key, operation))
+        {
+            operation.Dispose();
+            _ = state.TryApplyOutcome(
+                snapshot.Status == ClientMessageListStatus.Ready,
+                snapshot.ConversationId,
+                currentAttachment.MessageClientId,
+                currentAttachment.AttachmentId,
+                attachmentDownloadContextVersion,
+                flight,
+                flight,
+                ClientAttachmentDownloadOutcome.Failure(
+                    ClientAttachmentDownloadStatus.InProgress));
+            return;
+        }
+
+        RaiseAttachmentDownloadLiveRegion(state);
+
+        var progress = new Progress<ClientAttachmentDownloadProgress>(value =>
+            ApplyAttachmentDownloadProgressSafely(key, state, operation, value));
+        try
+        {
+            var outcome = await shell.DownloadAttachmentAsync(
+                attachment.AttachmentId,
+                operation.Cancellation.Token,
+                progress);
+            ApplyAttachmentDownloadOutcome(key, state, operation, outcome);
+        }
+        catch (OperationCanceledException)
+        {
+            ApplyAttachmentDownloadOutcome(
+                key,
+                state,
+                operation,
+                ClientAttachmentDownloadOutcome.Failure(
+                    ClientAttachmentDownloadStatus.Canceled));
+        }
+        catch (ObjectDisposedException)
+        {
+            ApplyAttachmentDownloadOutcome(
+                key,
+                state,
+                operation,
+                ClientAttachmentDownloadOutcome.Failure(
+                    ClientAttachmentDownloadStatus.Canceled));
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            Debug.WriteLine(
+                $"Attachment download presentation failed: {exception.GetType().Name}.");
+            ApplyAttachmentDownloadOutcome(
+                key,
+                state,
+                operation,
+                ClientAttachmentDownloadOutcome.Failure(
+                    ClientAttachmentDownloadStatus.LocalCacheFailure));
+        }
+        finally
+        {
+            if (attachmentDownloadOperations.TryGetValue(key, out var currentOperation) &&
+                ReferenceEquals(currentOperation, operation))
+            {
+                attachmentDownloadOperations.Remove(key);
+            }
+
+            operation.Dispose();
+        }
+    }
+
+    private void CancelAttachmentDownload(ClientAttachmentDownloadViewState state)
+    {
+        var key = ClientAttachmentViewKey.From(state.Context);
+        if (!attachmentDownloadOperations.TryGetValue(key, out var operation) ||
+            !TryResolveCurrentAttachment(state, out var snapshot, out var currentAttachment) ||
+            !state.TryCancel(
+                snapshot.Status == ClientMessageListStatus.Ready,
+                snapshot.ConversationId,
+                currentAttachment.MessageClientId,
+                currentAttachment.AttachmentId,
+                attachmentDownloadContextVersion,
+                operation.Flight,
+                operation.Flight))
+        {
+            return;
+        }
+
+        RaiseAttachmentDownloadLiveRegion(state);
+        operation.Cancel();
+    }
+
+    private async Task RevealAttachmentInFolderAsync(
+        ClientAttachmentDownloadViewState state)
+    {
+        var shell = accountShell;
+        var key = ClientAttachmentViewKey.From(state.Context);
+        if (shell is null || !TryResolveCurrentAttachment(state, out _, out _))
+        {
+            return;
+        }
+
+        var operation = new ClientAttachmentRevealOperation(
+            state.Context,
+            state,
+            new CancellationTokenSource());
+        if (!attachmentRevealOperations.TryAdd(key, operation))
+        {
+            operation.Dispose();
+            return;
+        }
+
+        SetLiveText(MessageComposerStatusText, "正在验证并定位已下载附件…");
+        try
+        {
+            var outcome = await shell.RevealAttachmentInFolderAsync(
+                state.Context.AttachmentId,
+                operation.Cancellation.Token);
+            if (!IsCurrentAttachmentRevealOperation(key, state, operation))
+            {
+                return;
+            }
+
+            if (outcome.Status is ClientAttachmentRevealStatus.NotDownloaded or
+                ClientAttachmentRevealStatus.AttachmentUnavailable or
+                ClientAttachmentRevealStatus.ValidationFailed)
+            {
+                state.SynchronizePersistedDownloaded(isDownloaded: false);
+            }
+
+            SetLiveText(
+                MessageComposerStatusText,
+                DescribeAttachmentRevealOutcome(outcome.Status));
+        }
+        catch (OperationCanceledException)
+        {
+            if (IsCurrentAttachmentRevealOperation(key, state, operation))
+            {
+                SetLiveText(MessageComposerStatusText, "附件定位已取消。");
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            if (IsCurrentAttachmentRevealOperation(key, state, operation))
+            {
+                SetLiveText(MessageComposerStatusText, "账户已结束，无法定位附件。");
+            }
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            Debug.WriteLine(
+                $"Attachment reveal presentation failed: {exception.GetType().Name}.");
+            if (IsCurrentAttachmentRevealOperation(key, state, operation))
+            {
+                SetLiveText(MessageComposerStatusText, "无法定位附件，请稍后重试。");
+            }
+        }
+        finally
+        {
+            CompleteAttachmentRevealOperation(key, operation);
+        }
+    }
+
+    private static string DescribeAttachmentRevealOutcome(
+        ClientAttachmentRevealStatus status) =>
+        status switch
+        {
+            ClientAttachmentRevealStatus.Revealed => "已在文件夹中选中附件。",
+            ClientAttachmentRevealStatus.NotDownloaded => "附件尚未下载，请重新下载。",
+            ClientAttachmentRevealStatus.AttachmentUnavailable => "附件不可用或已被移除。",
+            ClientAttachmentRevealStatus.AccessRevoked => "已失去此会话的访问权限。",
+            ClientAttachmentRevealStatus.Stale => "附件上下文已变化，请重试。",
+            ClientAttachmentRevealStatus.ValidationFailed =>
+                "本地附件未通过完整性校验，请重新下载。",
+            ClientAttachmentRevealStatus.TransientFailure => "本地状态暂时繁忙，请稍后重试。",
+            ClientAttachmentRevealStatus.LocalCacheFailure => "本地附件缓存不可用。",
+            ClientAttachmentRevealStatus.ShellUnavailable =>
+                "无法打开文件夹，请检查 Windows 文件资源管理器。",
+            _ => "附件定位已取消。",
+        };
+
+    private void ApplyAttachmentDownloadProgressSafely(
+        ClientAttachmentViewKey key,
+        ClientAttachmentDownloadViewState state,
+        ClientAttachmentDownloadOperation operation,
+        ClientAttachmentDownloadProgress progress)
+    {
+        try
+        {
+            if (!attachmentDownloadOperations.TryGetValue(key, out var activeOperation) ||
+                !ReferenceEquals(activeOperation, operation) ||
+                !TryResolveCurrentAttachment(state, out var snapshot, out var currentAttachment))
+            {
+                return;
+            }
+
+            var previousStatus = state.StatusText;
+            var applied = state.TryApplyProgress(
+                snapshot.Status == ClientMessageListStatus.Ready,
+                snapshot.ConversationId,
+                currentAttachment.MessageClientId,
+                currentAttachment.AttachmentId,
+                attachmentDownloadContextVersion,
+                operation.Flight,
+                activeOperation.Flight,
+                progress);
+            if (applied &&
+                !string.Equals(previousStatus, state.StatusText, StringComparison.Ordinal))
+            {
+                RaiseAttachmentDownloadLiveRegion(state);
+            }
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            Debug.WriteLine(
+                $"Attachment download progress presentation failed: {exception.GetType().Name}.");
+        }
+    }
+
+    private void ApplyAttachmentDownloadOutcome(
+        ClientAttachmentViewKey key,
+        ClientAttachmentDownloadViewState state,
+        ClientAttachmentDownloadOperation operation,
+        ClientAttachmentDownloadOutcome outcome)
+    {
+        if (!attachmentDownloadOperations.TryGetValue(key, out var activeOperation) ||
+            !ReferenceEquals(activeOperation, operation) ||
+            !attachmentDownloadStates.TryGetValue(key, out var entry) ||
+            !ReferenceEquals(entry.State, state) ||
+            !TryResolveCurrentAttachment(state, out var snapshot, out var currentAttachment))
+        {
+            return;
+        }
+
+        if (state.TryApplyOutcome(
+            snapshot.Status == ClientMessageListStatus.Ready,
+            snapshot.ConversationId,
+            currentAttachment.MessageClientId,
+            currentAttachment.AttachmentId,
+            attachmentDownloadContextVersion,
+                operation.Flight,
+                activeOperation.Flight,
+                outcome))
+        {
+            if (outcome.Status is ClientAttachmentDownloadStatus.Completed or
+                ClientAttachmentDownloadStatus.AlreadyDownloaded)
+            {
+                // A successful download is newer than a snapshot captured while its
+                // flight was still active. Let a later persisted projection correct it.
+                entry.PersistedDownloaded = true;
+                entry.PendingPersistedDownloaded = null;
+            }
+            else if (entry.PendingPersistedDownloaded is { } pendingDownloaded)
+            {
+                entry.PendingPersistedDownloaded = null;
+                entry.PersistedDownloaded = pendingDownloaded;
+                _ = state.SynchronizePersistedDownloaded(pendingDownloaded);
+            }
+
+            RaiseAttachmentDownloadLiveRegion(state);
+        }
+    }
+
     private void OnReplyReferenceClicked(object sender, RoutedEventArgs e)
     {
         _ = e;
@@ -1991,6 +2321,289 @@ public partial class MainWindow : Window
         ClearComposerAttachments();
     }
 
+    private ClientMessageListSnapshot ReconcileAttachmentDownloadSnapshot(
+        ClientMessageListSnapshot snapshot)
+    {
+        if (snapshot.Status != ClientMessageListStatus.Ready ||
+            snapshot.ConversationId is not { } conversationId)
+        {
+            if (attachmentDownloadConversationId.HasValue ||
+                attachmentDownloadStates.Count != 0 ||
+                attachmentDownloadOperations.Count != 0 ||
+                attachmentRevealOperations.Count != 0)
+            {
+                ResetAttachmentDownloadContext(conversationId: null);
+            }
+
+            return snapshot;
+        }
+
+        if (attachmentDownloadConversationId != conversationId)
+        {
+            ResetAttachmentDownloadContext(conversationId);
+        }
+
+        var currentKeys = new HashSet<ClientAttachmentViewKey>();
+        var messages = new List<ClientMessageListItemPresentation>(snapshot.Messages.Count);
+        foreach (var message in snapshot.Messages)
+        {
+            if (message.Attachments.Count == 0)
+            {
+                messages.Add(message);
+                continue;
+            }
+
+            var attachments = new List<ClientMessageAttachmentPresentation>(
+                message.Attachments.Count);
+            foreach (var attachment in message.Attachments)
+            {
+                var key = new ClientAttachmentViewKey(
+                    attachment.MessageClientId,
+                    attachment.AttachmentId);
+                currentKeys.Add(key);
+                if (!attachmentDownloadStates.TryGetValue(key, out var entry))
+                {
+                    var context = new ClientAttachmentDownloadContext(
+                        conversationId,
+                        attachment.MessageClientId,
+                        attachment.AttachmentId,
+                        attachmentDownloadContextVersion);
+                    entry = new ClientAttachmentDownloadStateEntry(
+                        new ClientAttachmentDownloadViewState(
+                            context,
+                            attachment.DisplayName,
+                            attachment.IsDownloaded),
+                        attachment.IsDownloaded);
+                    attachmentDownloadStates.Add(key, entry);
+                }
+                else if (entry.PersistedDownloaded != attachment.IsDownloaded ||
+                         entry.PendingPersistedDownloaded.HasValue)
+                {
+                    if (entry.State.SynchronizePersistedDownloaded(
+                            attachment.IsDownloaded))
+                    {
+                        RaiseAttachmentDownloadLiveRegion(entry.State);
+                        entry.PersistedDownloaded = attachment.IsDownloaded;
+                        entry.PendingPersistedDownloaded = null;
+                    }
+                    else
+                    {
+                        // Do not lose a durable projection merely because an owned
+                        // download flight is still rendering. Its outcome settles
+                        // this value after the flight leaves Downloading/Canceling.
+                        entry.PendingPersistedDownloaded = attachment.IsDownloaded;
+                    }
+                }
+
+                attachments.Add(attachment with { DownloadState = entry.State });
+            }
+
+            messages.Add(message with { Attachments = attachments.AsReadOnly() });
+        }
+
+        foreach (var removedKey in attachmentDownloadStates.Keys
+            .Where(key => !currentKeys.Contains(key))
+            .ToArray())
+        {
+            if (attachmentDownloadOperations.Remove(removedKey, out var operation))
+            {
+                operation.Cancel();
+            }
+
+            if (attachmentRevealOperations.Remove(removedKey, out var revealOperation))
+            {
+                revealOperation.Cancel();
+            }
+
+            attachmentDownloadStates.Remove(removedKey);
+        }
+
+        return snapshot with { Messages = messages.AsReadOnly() };
+    }
+
+    private bool TryResolveCurrentAttachment(
+        ClientAttachmentDownloadViewState state,
+        out ClientMessageListSnapshot snapshot,
+        out ClientMessageAttachmentPresentation attachment)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        snapshot = displayedMessageSnapshot ?? ClientMessageListSnapshot.Initial;
+        attachment = null!;
+        if (snapshot.Status != ClientMessageListStatus.Ready ||
+            snapshot.ConversationId is not { } conversationId ||
+            conversationId != attachmentDownloadConversationId ||
+            conversationId != state.Context.ConversationId ||
+            state.Context.ContextVersion != attachmentDownloadContextVersion)
+        {
+            return false;
+        }
+
+        var message = snapshot.Messages.FirstOrDefault(candidate =>
+            candidate.ClientMessageId == state.Context.MessageClientId);
+        attachment = message?.Attachments.FirstOrDefault(candidate =>
+            candidate.AttachmentId == state.Context.AttachmentId)!;
+        return attachment is not null &&
+            attachment.MessageClientId == state.Context.MessageClientId &&
+            ReferenceEquals(attachment.DownloadState, state);
+    }
+
+    private bool IsCurrentAttachmentRevealOperation(
+        ClientAttachmentViewKey key,
+        ClientAttachmentDownloadViewState state,
+        ClientAttachmentRevealOperation operation) =>
+        attachmentRevealOperations.TryGetValue(key, out var activeOperation) &&
+        ReferenceEquals(activeOperation, operation) &&
+        ReferenceEquals(operation.State, state) &&
+        ReferenceEquals(operation.Context, state.Context) &&
+        TryResolveCurrentAttachment(state, out _, out _);
+
+    private void CompleteAttachmentRevealOperation(
+        ClientAttachmentViewKey key,
+        ClientAttachmentRevealOperation operation)
+    {
+        if (attachmentRevealOperations.TryGetValue(key, out var activeOperation) &&
+            ReferenceEquals(activeOperation, operation))
+        {
+            attachmentRevealOperations.Remove(key);
+        }
+
+        operation.Dispose();
+    }
+
+    private void ResetAttachmentDownloadContext(Guid? conversationId)
+    {
+        attachmentDownloadContextVersion++;
+        attachmentDownloadConversationId = conversationId;
+        foreach (var operation in attachmentDownloadOperations.Values)
+        {
+            operation.Cancel();
+        }
+
+        attachmentDownloadOperations.Clear();
+        foreach (var operation in attachmentRevealOperations.Values)
+        {
+            operation.Cancel();
+        }
+
+        attachmentRevealOperations.Clear();
+        attachmentDownloadStates.Clear();
+    }
+
+    private void RaiseAttachmentDownloadLiveRegion(
+        ClientAttachmentDownloadViewState state)
+    {
+        foreach (var textBlock in FindVisualDescendants<TextBlock>(MessageList))
+        {
+            if (textBlock.DataContext is not ClientMessageAttachmentPresentation attachment ||
+                !ReferenceEquals(attachment.DownloadState, state) ||
+                AutomationProperties.GetLiveSetting(textBlock) == AutomationLiveSetting.Off)
+            {
+                continue;
+            }
+
+            RaiseLiveRegionChanged(textBlock);
+        }
+    }
+
+    private static void RaiseLiveRegionChanged(TextBlock textBlock)
+    {
+        ArgumentNullException.ThrowIfNull(textBlock);
+        var peer = UIElementAutomationPeer.FromElement(textBlock) ??
+            UIElementAutomationPeer.CreatePeerForElement(textBlock);
+        peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+    }
+
+    private readonly record struct ClientAttachmentViewKey(
+        Guid MessageClientId,
+        Guid AttachmentId)
+    {
+        public static ClientAttachmentViewKey From(
+            ClientAttachmentDownloadContext context)
+        {
+            ArgumentNullException.ThrowIfNull(context);
+            return new ClientAttachmentViewKey(
+                context.MessageClientId,
+                context.AttachmentId);
+        }
+    }
+
+    private sealed class ClientAttachmentDownloadStateEntry(
+        ClientAttachmentDownloadViewState state,
+        bool persistedDownloaded)
+    {
+        public ClientAttachmentDownloadViewState State { get; } = state;
+
+        public bool PersistedDownloaded { get; set; } = persistedDownloaded;
+
+        public bool? PendingPersistedDownloaded { get; set; }
+    }
+
+    private sealed class ClientAttachmentDownloadOperation(
+        ClientAttachmentDownloadFlight flight,
+        CancellationTokenSource cancellation) : IDisposable
+    {
+        private int disposed;
+
+        public ClientAttachmentDownloadFlight Flight { get; } = flight;
+
+        public CancellationTokenSource Cancellation { get; } = cancellation;
+
+        public void Cancel()
+        {
+            try
+            {
+                Cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                Cancellation.Dispose();
+            }
+        }
+    }
+
+    private sealed class ClientAttachmentRevealOperation(
+        ClientAttachmentDownloadContext context,
+        ClientAttachmentDownloadViewState state,
+        CancellationTokenSource cancellation) : IDisposable
+    {
+        private int disposed;
+
+        public ClientAttachmentDownloadContext Context { get; } = context ??
+            throw new ArgumentNullException(nameof(context));
+
+        public ClientAttachmentDownloadViewState State { get; } = state ??
+            throw new ArgumentNullException(nameof(state));
+
+        public CancellationTokenSource Cancellation { get; } = cancellation ??
+            throw new ArgumentNullException(nameof(cancellation));
+
+        public void Cancel()
+        {
+            try
+            {
+                Cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                Cancellation.Dispose();
+            }
+        }
+    }
+
     private static bool IsNearBottom(ScrollViewer? scrollViewer) =>
         scrollViewer is null ||
         scrollViewer.ScrollableHeight - scrollViewer.VerticalOffset <= 1.5;
@@ -2014,5 +2627,23 @@ public partial class MainWindow : Window
         }
 
         return null;
+    }
+
+    private static IEnumerable<T> FindVisualDescendants<T>(DependencyObject parent)
+        where T : DependencyObject
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is T match)
+            {
+                yield return match;
+            }
+
+            foreach (var descendant in FindVisualDescendants<T>(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 }

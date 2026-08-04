@@ -435,6 +435,88 @@
                                                                Margin="0,6,0,0"
                                                                Foreground="#FF25394D"
                                                                TextWrapping="Wrap" />
+                                                    <ItemsControl ItemsSource="{Binding Attachments}"
+                                                                  Margin="0,8,0,0">
+                                                        <ItemsControl.Style>
+                                                            <Style TargetType="ItemsControl">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding HasAttachments}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </ItemsControl.Style>
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <Border Margin="0,0,0,6"
+                                                                        Padding="9,7"
+                                                                        AutomationProperties.Name="{Binding DisplayName}"
+                                                                        AutomationProperties.HelpText="{Binding DownloadState.StatusText}"
+                                                                        Background="#FFF5F8FB"
+                                                                        BorderBrush="#FFD7E2ED"
+                                                                        BorderThickness="1"
+                                                                        CornerRadius="5">
+                                                                    <Grid>
+                                                                        <Grid.RowDefinitions>
+                                                                            <RowDefinition Height="Auto" />
+                                                                            <RowDefinition Height="Auto" />
+                                                                            <RowDefinition Height="Auto" />
+                                                                        </Grid.RowDefinitions>
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <StackPanel>
+                                                                            <TextBlock Text="{Binding DisplayName}"
+                                                                                       MaxWidth="420"
+                                                                                       Foreground="#FF25394D"
+                                                                                       FontWeight="SemiBold"
+                                                                                       TextTrimming="CharacterEllipsis" />
+                                                                            <TextBlock Text="{Binding DisplaySize}"
+                                                                                       Margin="0,2,0,0"
+                                                                                       Foreground="#FF718396"
+                                                                                       FontSize="11" />
+                                                                        </StackPanel>
+                                                                        <Button Grid.Column="1"
+                                                                                MinWidth="72"
+                                                                                Margin="12,0,0,0"
+                                                                                Padding="9,3"
+                                                                                Content="{Binding DownloadState.ActionLabel}"
+                                                                                IsEnabled="{Binding DownloadState.CanInvoke}"
+                                                                                AutomationProperties.Name="{Binding DownloadState.AutomationName}"
+                                                                                Click="OnAttachmentDownloadActionClicked" />
+                                                                        <TextBlock Grid.Row="1"
+                                                                                   Grid.ColumnSpan="2"
+                                                                                   Margin="0,5,0,0"
+                                                                                   Text="{Binding DownloadState.StatusText}"
+                                                                                   AutomationProperties.LiveSetting="Polite"
+                                                                                   Foreground="#FF52708C"
+                                                                                   FontSize="11" />
+                                                                        <ProgressBar Grid.Row="2"
+                                                                                     Grid.ColumnSpan="2"
+                                                                                     Height="4"
+                                                                                     Margin="0,5,0,0"
+                                                                                     Minimum="0"
+                                                                                     Maximum="100"
+                                                                                     Value="{Binding DownloadState.Percent, Mode=OneWay}"
+                                                                                     AutomationProperties.Name="附件下载进度">
+                                                                            <ProgressBar.Style>
+                                                                                <Style TargetType="ProgressBar">
+                                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                                    <Style.Triggers>
+                                                                                        <DataTrigger Binding="{Binding DownloadState.ShowProgress}" Value="True">
+                                                                                            <Setter Property="Visibility" Value="Visible" />
+                                                                                        </DataTrigger>
+                                                                                    </Style.Triggers>
+                                                                                </Style>
+                                                                            </ProgressBar.Style>
+                                                                        </ProgressBar>
+                                                                    </Grid>
+                                                                </Border>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
                                                     <ItemsControl ItemsSource="{Binding Links}"
                                                                   Margin="0,6,0,0">
                                                         <ItemsControl.Style>

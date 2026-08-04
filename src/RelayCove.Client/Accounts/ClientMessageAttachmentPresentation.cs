@@ -1,3 +1,5 @@
+using RelayCove.Client.Attachments;
+
 namespace RelayCove.Client.Accounts;
 
 internal sealed record ClientMessageAttachmentPresentation(
@@ -8,9 +10,12 @@ internal sealed record ClientMessageAttachmentPresentation(
     bool IsImage,
     bool IsDownloaded)
 {
+    public ClientAttachmentDownloadViewState? DownloadState { get; init; }
+
     public override string ToString() =>
         $"{nameof(ClientMessageAttachmentPresentation)} {{ MessageClientId = [REDACTED], " +
         "AttachmentId = [REDACTED], " +
         "DisplayName = [REDACTED], DisplaySize = [REDACTED], " +
-        $"IsImage = {IsImage}, IsDownloaded = {IsDownloaded} }}";
+        $"IsImage = {IsImage}, IsDownloaded = {IsDownloaded}, " +
+        "DownloadState = [REDACTED] }";
 }
