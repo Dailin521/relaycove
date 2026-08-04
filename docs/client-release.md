@@ -1,8 +1,7 @@
 # RelayCove Client Internal RC ZIP
 
 This document describes the **internal, unsigned** Windows Client RC ZIP. It is
-not an installer or a complete automatic-update experience, and is not approved
-for public distribution.
+not an installer and is not approved for public distribution.
 
 ## Build and verify
 
@@ -46,8 +45,8 @@ files.
 
 The package is a `win-x64`, self-contained, unpackaged WPF Client. Its package
 root also contains `RelayCove.Updater.exe`, a separate `win-x64`, self-contained
-single-file tool for a future Client update handoff; it is not launched by hand
-for normal use. Neither executable needs a separately installed .NET runtime.
+single-file tool used by the Client's verified update handoff; it is not launched
+by hand for normal use. Neither executable needs a separately installed .NET runtime.
 The package is unsigned: Windows trust
 warnings, SmartScreen behavior, enterprise policy, installation, uninstall, and
 file associations are outside this RC contract.
@@ -67,12 +66,12 @@ not run it.
 
 ## Explicit limits and next gates
 
-This RC does not provide an installer, code signing, timestamping, update
-manifest/API hosting, mandatory-version UI, download flow, or a Client update
-entry point. The packaged Updater implements only the offline replacement core;
-its invocation is owned by the next Client slice. Do not represent it as an
-installed or publicly releasable application.
+The Client supports an HTTPS update manifest, bounded download with exact size
+and SHA-256 verification, optional/mandatory UI, and an explicit exit handoff to
+the packaged Updater. The release operator must publish the ZIP before publishing
+the manifest that references it; an invalid or partial artifact must never become
+the current manifest target.
 
-M4 will next use a stable Client delivery format to define the Updater and
-update-manifest contract. M5 retains the real signed-installation, SmartScreen,
-VPS, real-login, dual-client, notification, and upgrade/recovery gates.
+This RC still does not provide an installer, code signing, timestamping, silent
+installation, or public-distribution trust chain. M5 retains the real VPS/TLS,
+real-login, dual-client, notification, and end-to-end upgrade/recovery gates.

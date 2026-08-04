@@ -724,15 +724,22 @@ GET  /api/attachments/{id}/download
 ### 管理员接口
 
 ```text
+GET    /api/admin/users
 POST   /api/admin/users
 PUT    /api/admin/users/{id}
 DELETE /api/admin/users/{id}
 POST   /api/admin/users/{id}/reset-password
+GET    /api/admin/channels
 GET    /api/admin/status
+GET    /api/admin/settings/upload
 PUT    /api/admin/settings/upload
 ```
 
 `POST /api/admin/users` 的 v1 请求包含 `UserName`、`DisplayName`、`Password`、`IsAdmin`；成功返回不含密码与哈希的用户响应。未认证为 401、数据库当前非管理员为 403、结构或密码策略失败为 400、规范化用户名重复为稳定 409。同名并发创建必须只有一个成功，管理员审计日志不得包含请求对象、用户名、昵称、密码或哈希。
+
+阶段 11 冻结删除用户为不可恢复的逻辑退役：设置 `RetiredAt`、禁用账号、递增 token 代际并撤销全部 refresh token，同时保留用户名和历史外键；用户名不可复用。禁用、恢复、重置密码和退役都使旧 access/refresh token 失效，禁止自禁用、自退役和移除最后一个正常管理员。频道改名/删除继续使用会话 API，Direct 不可修改，频道删除为软删除并在提交后尽力推送撤权。
+
+`AppSettings` 的 `Uploads.MaximumFileBytes` 是无行时配置默认值之上的持久覆盖，取值固定为 1–100 MiB；每个上传在读取正文前只读取一次 effective 值。状态接口只暴露版本、启动/运行时间、连接数、数据库/附件总字节、effective 上限与脱敏错误类别/时间，不暴露路径、连接串、异常正文或身份数据。
 
 ### 更新接口
 
@@ -1083,7 +1090,7 @@ SignalR 连接重建不会保留组成员关系。每次重连都必须重新执
 
 第一版服务端 Hub 固定为 `/hubs/chat` 且只允许认证连接，不暴露客户端自行加组的业务方法。JWT 的 `sub` 标准 GUID 是 SignalR 唯一用户标识；浏览器 WebSocket/SSE 所需的 `access_token` 查询参数只允许在该 Hub 路径提取，生产环境必须使用 HTTPS，并禁止默认 Information 请求日志记录完整查询字符串。连接在 access token 到期时关闭，由客户端以新 token 建立新连接。
 
-每个新连接都从数据库重新读取当前可见会话并加入对应连接组；组只用于路由优化，不是授权真源。`NewMessage` 每次发布前另以一个数据库查询计算当前正常用户中的权威收件人：Public 为全部正常用户，Private/Direct 为当前成员。服务端按用户 ID 投递到其所有连接，因此发送者的其他设备也收到回声；撤权提交前已经形成的在途帧仍由客户端 deny-set 防御，撤权提交后才开始的收件人查询不得包含该用户。
+每个新连接都从数据库重新读取当前可见会话并加入对应连接组；组只用于路由优化，不是授权真源。连接还加入 `(UserId, AccessTokenVersion)` 账户代际组。`NewMessage` 每次发布前另以一个数据库查询计算当前正常用户及其当前 token 代际：Public 为全部正常用户，Private/Direct 为当前成员；只向当前代际组投递，因此密码重置、禁用/恢复或退役前建立的旧连接不能继续收到新消息。发送者当前代际的其他设备仍收到回声；撤权提交前已经形成的在途帧仍由客户端 deny-set 防御。
 
 客户端实时入口使用与服务端一致的 `Microsoft.AspNetCore.SignalR.Client 10.0.10`。连接 URI 只能由无 user-info、query、fragment 的绝对 HTTP(S) 服务端基址组合固定相对路径 `hubs/chat`；`AccessTokenProvider` 每次从当前认证会话读取最新 access token，不把 token 固化在连接对象、状态或日志中。客户端显式启动时报告 Connecting→Connected；初始连接失败报告 ServerUnavailable 并把异常返回调用者。已建立连接使用 SignalR 默认 0/2/10/30 秒自动重连并报告 Reconnecting→Connected，默认次数耗尽或非主动 Closed 报告 ServerUnavailable，主动 Stop/Dispose 报告 Disconnected；后续账户/同步 orchestrator 可显式再次启动，不在连接层隐藏无限重试。
 
@@ -1110,6 +1117,8 @@ CreatedAt                  TEXT NOT NULL
 UpdatedAt                  TEXT NOT NULL
 LastLoginAt                TEXT NULL
 LastOnlineAt               TEXT NULL
+RetiredAt                  TEXT NULL
+AccessTokenVersion         INTEGER NOT NULL DEFAULT 0
 ```
 
 ### RefreshTokens
@@ -1128,7 +1137,7 @@ v1 登录名限制为 3–64 个 ASCII 字母、数字、点、下划线或连�
 
 服务端 GUID 以小写标准 `D` 文本保存；时间以固定 `yyyy-MM-ddTHH:mm:ss.fffZ` UTC 文本保存并拒绝非 UTC 写入。refresh token 原始值由 32 字节 CSPRNG 产生，表中只保存 `Base64Url(SHA-256(raw bytes))` 的 43 字符哈希；不得保存明文 token。密码使用 ASP.NET Core 版本化 `PasswordHasher` 格式，不自定义低层 PBKDF2 存储协议。
 
-认证 token 细节遵循 `DEC-006`：access JWT 固定 `typ=at+jwt`、HS256、issuer/audience 与 `sub/jti/iat/exp`，有效期 15 分钟并仅接受 30 秒时钟偏差；签名 key 至少 32 个随机字节且不得进入仓库。refresh token 有效期 30 天，每次使用都在 SQLite 非 deferred 写事务内条件撤销旧 token 并原子插入新 token；并发只有一个请求成功。JWT 验证后仍查库确认用户存在且未禁用，logout 对任意 token 输入幂等返回 204。
+认证 token 细节遵循 `DEC-006`：access JWT 固定 `typ=at+jwt`、HS256、issuer/audience 与 `sub/jti/iat/exp`，并携带单调 `atv` 账户 token 代际；旧 token 缺失该 claim 时只兼容为代际 0。JWT 有效期 15 分钟并仅接受 30 秒时钟偏差；签名 key 至少 32 个随机字节且不得进入仓库。refresh token 有效期 30 天，每次使用都在 SQLite 非 deferred 写事务内条件撤销旧 token 并原子插入新 token；并发只有一个请求成功。JWT 验证后仍查库确认用户存在、未禁用、未退役且代际相等，logout 对任意 token 输入幂等返回 204。
 
 管理员引导与创建账号遵循 `DEC-007`：bootstrap 默认关闭且凭据只从外部配置注入，运维先显式迁移数据库；启动服务只在整个 Users 表为空时创建首个管理员，已有任意用户时不得覆盖、提权或改密。新密码按 Unicode scalar value 要求 15–128 个字符，允许空格/Unicode、不加字符组合规则，并拒绝控制字符、常见弱密码和直接上下文派生。管理员权限不写入 access token；每次管理请求从数据库动态校验，并在创建用户写事务中再次确认 actor。
 
@@ -1746,7 +1755,7 @@ Updater 启动安装包
 
 - 创建账号；
 - 禁用账号；
-- 删除账号；
+- 删除账号（不可恢复的逻辑退役，保留历史引用）；
 - 重置密码；
 - 创建公共频道；
 - 创建私有频道；
@@ -1766,7 +1775,7 @@ Updater 启动安装包
 当前在线连接数
 数据库文件大小
 附件目录大小
-最近一次错误摘要
+最近一次脱敏错误类别与时间
 ```
 
 ## 17.4 管理权限

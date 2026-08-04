@@ -4,7 +4,7 @@
 
 ### 面向小团队的轻量级、自托管 Windows 私域聊天工具
 
-[![Status](https://img.shields.io/badge/status-scaffold-yellow.svg)](#项目状态)
+[![Status](https://img.shields.io/badge/status-internal_RC_gate-orange.svg)](#项目状态)
 [![.NET](https://img.shields.io/badge/.NET-10-512BD4.svg)](https://dotnet.microsoft.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -14,7 +14,7 @@
 
 ## 项目简介
 
-RelayCove 为拥有自有 VPS 的小团队提供一套简单、可维护的私域通信方案。它计划由 Windows 桌面客户端和轻量服务端组成，支持频道、私聊、附件、搜索、系统通知与断线补拉。
+RelayCove 为拥有自有 VPS 的小团队提供一套简单、可维护的私域通信方案。它由 Windows 桌面客户端和轻量服务端组成，支持频道、私聊、附件、搜索、系统通知与断线补拉。
 
 项目优先解决可靠性问题：
 
@@ -27,9 +27,9 @@ RelayCove 为拥有自有 VPS 的小团队提供一套简单、可维护的私�
 ## 项目状态
 
 > [!IMPORTANT]
-> RelayCove 当前处于工程骨架阶段。仓库已包含可构建的 WPF 客户端、ASP.NET Core 服务端、Updater、共享项目和测试基线，但尚未实现登录、聊天或其他业务功能。
+> RelayCove 已进入内部 RC 实机门禁。登录、频道/私聊、可靠消息、附件、搜索、Windows 通知/托盘、管理员控制面和便携 ZIP 自动更新均已有可运行实现；真实 VPS/TLS 与双 Windows 客户端验收仍在 M5 进行中，尚不代表公开发布版本。
 
-现阶段已完成第一版范围、架构与关键可靠性契约，并建立 .NET 10 解决方案。详细内容请阅读 [RelayCove 工程落地方案](./RelayCove_工程落地方案.md)；实时执行状态见 [v1 外层执行状态](./docs/ai/V1_EXECUTION.md)。
+当前代码通过统一 Fast/Full 门禁和完整自动化测试。详细范围请阅读 [RelayCove 工程落地方案](./RelayCove_工程落地方案.md)；实时执行状态、已验证证据和仍未完成的实机 Gate 见 [v1 外层执行状态](./docs/ai/V1_EXECUTION.md)。
 
 ## 构建与验证
 
@@ -42,7 +42,7 @@ pwsh ./scripts/verify.ps1 -Mode Full
 
 `Fast` 执行还原、Debug 构建和全部测试；`Full` 额外验证格式，执行 Release 构建、全部测试和 Git 空白检查。脚本任一底层命令失败都会非零退出。
 
-## 计划功能
+## 第一版功能
 
 - 公共频道、私有频道与一对一私聊
 - 文字、图片和文件附件
@@ -87,7 +87,7 @@ ASP.NET Core Server
 
 SignalR 只承担实时推送，不作为唯一可靠消息来源。发送、补拉和本地缓存共同构成完整的消息闭环。
 
-## 计划中的仓库结构
+## 仓库结构
 
 ```text
 relaycove/
@@ -112,12 +112,13 @@ relaycove/
 - [x] 明确产品边界、技术栈和可靠性原则
 - [x] 完成工程落地方案
 - [x] 初始化 .NET 解决方案、基础项目与真实验证脚本
-- [ ] 定义共享协议、服务端数据库与认证
-- [ ] 实现会话、消息入库与历史消息
-- [ ] 打通 SignalR、本地缓存、断线补拉与去重
-- [ ] 完成 Windows 通知、托盘和任务栏闪烁闭环
-- [ ] 完成聊天 UI、附件与搜索
-- [ ] 完成管理员功能、自动更新与 VPS 发布
+- [x] 定义共享协议、服务端数据库与认证
+- [x] 实现会话、消息入库与历史消息
+- [x] 打通 SignalR、本地缓存、断线补拉与去重
+- [x] 完成 Windows 通知、托盘和任务栏闪烁闭环
+- [x] 完成聊天 UI、附件与搜索
+- [x] 完成管理员功能与便携 ZIP 自动更新
+- [ ] 完成真实 VPS/TLS 部署与双 Windows 客户端 M5 Gate
 
 开发顺序以“消息不丢、通知可靠”为第一优先级，界面与体验优化将在可靠闭环稳定后推进。
 

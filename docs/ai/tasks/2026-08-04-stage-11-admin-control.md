@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 11 — 用户、频道、服务器状态与附件上限管理
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `893f68e2793c020ac15fed56a74e7edbae5bb0df`
 - **工作分支：** `agent/stage-11-admin-control`
 - **相关方案章节：** 8 管理员接口、10.2 `AppSettings`、17、阶段 11、24.1；M5 Gate
@@ -47,12 +47,12 @@
 
 ### 验收标准
 
-- [ ] 普通用户入口不可见且全部 admin endpoint 为 403；管理员 list/create、disable/restore、reset、logical-retire 成功，密码/请求/敏感字段不出日志或响应。
-- [ ] 并发禁用/退役不能移除最后 active admin，自操作被拒；全部 refresh token 与旧 access token 失效，账户撤权事件在真实 SignalR Client 收敛到登录页且发布失败不回滚权威状态。
-- [ ] 管理员可列出/创建 Public/Private、改名、软删除并管理 Private 成员；Direct/非法类型拒绝，删除后 HTTP/SignalR/cache 权限立即收敛。
-- [ ] Server status 不泄露敏感信息，连接计数不负数；上传上限更新持久化、重启保持，并在 1/上限/上限+1/100 MiB 边界真实 streaming fail-closed。
-- [ ] WPF 管理 overlay 可完成所有基础维护，401/403/账号切换/注销同步清状态；操作单飞、密码不回显、UIA 名称和 live region 可用。
-- [ ] migration up/down/model drift、定向、Fast、Full、八项目漏洞、format/空白和至少两路 Codex 独立复核通过；M5 未验证项保持诚实记录。
+- [x] 普通用户入口不可见且全部 admin endpoint 为 403；管理员 list/create、disable/restore、reset、logical-retire 成功，密码/请求/敏感字段不出日志或响应。
+- [x] 并发禁用/退役不能移除最后 active admin，自操作被拒；全部 refresh token 与旧 access token 失效，账户撤权事件在真实 SignalR Client 收敛到登录页且发布失败不回滚权威状态。
+- [x] 管理员可列出/创建 Public/Private、改名、软删除并管理 Private 成员；Direct/非法类型拒绝，删除后 HTTP/SignalR/cache 权限立即收敛。
+- [x] Server status 不泄露敏感信息，连接计数不负数；上传上限更新持久化、重启保持，并在 1/上限/上限+1/100 MiB 边界真实 streaming fail-closed。
+- [x] WPF 管理 overlay 可完成所有基础维护，401/403/账号切换/注销同步清状态；操作单飞、密码不回显、UIA 名称和 live region 可用。
+- [x] migration up/down/model drift、定向、Fast、Full、八项目漏洞、format/空白和至少两路 Codex 独立复核通过；M5 未验证项保持诚实记录。
 
 ### 验证命令
 
@@ -80,4 +80,11 @@ git diff --check
 
 ## 任务结果
 
-`进行中`。
+`已完成`。
+
+- 生产代码提交：`019b3a053a5d2e16cd60984c47d0fcecf72bb6bb`。
+- Server/Shared 已完成用户生命周期、不可恢复逻辑退役、refresh 全撤销、access token 代际、旧 SignalR 连接隔离、频道/成员、状态和持久上传上限；Client 已完成 `/me` 能力探测与单窗管理 overlay。
+- 最终 Fast/Full 通过 1,591 项（Shared 69、Server 333、Client 1,151、Updater 38），Release 0 警告/0 错误；Server 管理/会话/认证/附件定向 147 项、Client 管理定向 6 项通过。
+- EF model drift 为无变化，八项目依赖漏洞审计无发现，format 与 `git diff --check` 通过；安全、运维、客户端三路 Codex 独立复审无 P0/P1。
+- 接受为内部 RC 非阻断 P2：瞬时 `/me` 探测失败需要重新登录；私有成员变更与频道切换恰好竞态时可能需要重选频道刷新名册，但删除 guard 阻止跨频道误删；最后管理员保护已有并发回归，但未参数化覆盖 disable/retire 全组合。
+- 香港 VPS/TLS、真实账户视觉/Narrator 与双客户端端到端体验不在本切片冒充完成，继续由 stage-13 M5 Gate 验证。

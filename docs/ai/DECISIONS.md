@@ -690,3 +690,15 @@
 - **理由：** per-request manifest 重解析与 metadata/snapshot（而非 stream）缓存使 Server 每次响应的清单和 artifact 身份可复核，并避免长寿命文件句柄扩大 TOCTOU。HTTPS、响应预算、`.part` hash/size 双检与原子发布把网络故障和恶意内容隔离在成品包之外；单调 preflight 与显式退出把 mandatory UX、Client 生命周期和 Updater 的精确等待边界连成可测试的线性顺序。
 - **影响：** Server 新增 exact manifest/artifact 只读 endpoint 与 fail-closed 缓存边界；Client 新增检查、download、optional/mandatory UI、受控缓存与明确 handoff cleanup；不新增数据库、migration、更新框架、目录浏览、后台静默安装或任意进程控制。availability cache 对攻击者或运维者以相同 size 和 mtime 替换文件仍有残余可用性风险；未签名包及 TLS/发布主机失陷仍不能由 HTTPS+SHA-256 抵抗。真实 VPS/域名 TLS 与代码签名保留为 M5 Gate。
 - **来源：** 工程方案第 3.5、16、19、阶段 12/13、21.5；`DEC-054/055`；`docs/ai/tasks/2026-08-04-stage-12-update-delivery.md`；M4-04 branch HEAD `894028c`、绿色代码提交 `08417dafc3c88213712a71ed07940c00ea8a1543`；Shared/Server/Client/Updater 1,566 项（65/321/1,142/38）、Fast/Full、干净 `1.0.0-rc.12` exact ZIP `165675267` bytes / SHA-256 `e623f38cd3df9c71a62d0eb7f4e86f5a6d69457f2fd0b9d044e6c19b80f057e0` 与安全 Kestrel/safe-probe smoke。Claude #83（旧兼容 MCP 只读咨询）实际 `claude-sonnet-5` / High，`247454 ms`，精确 `$0.21073725`；其支持 validated snapshot/metadata cache、不缓存 stream 与 invalidate-before-revalidate/per-request reparse 的意见已由仓库和本机证据裁定落实。
+
+### DEC-057：阶段 11 以逻辑退役、token 代际与持久上传设置完成内部 RC 管理面
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** 工程方案要求 Windows Client 内完成账号、频道、私有成员、状态和附件上限管理。现有历史表对 User 使用 Restrict 外键，物理删除会破坏消息、附件和创建者历史；只动态拒绝 disabled user 又不能撤销已签发 access token或已建立 SignalR 连接。运行时附件默认值此前只来自进程配置，无法由管理员持久调整。
+- **决策：** `DELETE /api/admin/users/{id}` 是不可恢复的逻辑退役：写入 `RetiredAt`、禁用账号、保留用户名与全部历史引用，且禁止恢复或用户名复用。禁用、恢复、重置密码和退役在 Serializable 事务中复核数据库当前管理员，递增单调 `AccessTokenVersion` 并撤销全部 refresh token；缺失 `atv` claim 仅兼容为版本 0。禁止自禁用、自退役和移除最后一个正常管理员，自操作使用稳定 409 业务冲突而不伪装成管理员权限撤销。
+- **决策：** SignalR 连接加入 `(UserId, AccessTokenVersion)` 代际组，新消息只投递给数据库当前正常用户的当前代际。账户撤权事件携带最低有效版本，客户端只终止更旧会话，避免提交后新登录被延迟事件误杀。频道改名/软删除只允许数据库当前全局管理员，Direct 拒绝修改；删除提交后复用会话撤权事件。发布失败不回滚已提交权威状态，HTTP/同步权限仍是最终真源。
+- **决策：** `AppSettings` 当前只持久 `Uploads.MaximumFileBytes`，effective 值固定为 1–100 MiB；无行时使用同样通过范围验证的外部配置。每个上传在读取正文前取得一次快照，100 MiB route/Nginx/实体约束仍是绝对上限。状态接口只返回版本、运行时间、连接数、数据库/附件总字节、effective 上限与脱敏错误类别/时间。Windows 管理 overlay 继续由 `/me` 动态探测入口，但所有服务端 endpoint 独立授权；管理请求以 coordinator 生命周期隔离账户，私有成员名册可观察，破坏性操作需确认。
+- **理由：** 逻辑退役保留小团队所需审计和聊天历史而不引入跨表物理擦除；token/连接代际同时封闭 HTTP 与实时旧会话，版本化事件消除新会话竞态。单 key 设置和最小 WPF overlay 满足内部 RC 运维，不引入 Web 后台、RBAC、审计平台、多实例设置同步或外部监控。
+- **影响：** Server 增加 Users 两字段、AppSettings migration、管理员用户/运营 API、频道软删除与状态指标；Shared 增加管理 DTO、登录 token 版本和账户撤权事件；Client 增加管理 overlay、动态能力、账户撤权与代际过滤。当前接受两个非阻断内部 RC 限制：瞬时 `/me` 探测失败需重新登录后重试；成员增删期间恰好切换频道时可能需要重新选择频道刷新名册，但归属校验阻止跨频道误删。多实例状态、物理删除、在线角色编辑、批量管理、复杂监控和公开市场级 UI 不在 v1。
+- **来源：** 工程方案第 8、10.2、11.1、17、阶段 11；`DEC-006/007/008/014/015`；`docs/ai/tasks/2026-08-04-stage-11-admin-control.md`；production `019b3a0`；最终 Full 1,591 项（Shared 69、Server 333、Client 1,151、Updater 38）、Server/Client 定向 147/6、model drift、八项目漏洞审计、format 与空白检查。三路 Codex reviewer 的旧实时连接、新会话误杀、管理生命周期、成员名册竞态、上传下限和迁移数据保留发现均已修正并复审关闭，无剩余 P0/P1；Claude #84 在答案前失败且按单次策略未重试。

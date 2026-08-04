@@ -7,13 +7,13 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M5
-CurrentStage: M5-00 阶段 11 最小管理员控制面阻断修复
+CurrentStage: M5-01 阶段 11 管理面绿色收口并恢复实机 Gate
 ActiveTask: docs/ai/tasks/2026-08-04-stage-11-admin-control.md
-TaskStatus: in_progress
+TaskStatus: completed_pending_integration
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 08417dafc3c88213712a71ed07940c00ea8a1543
-LatestGreenIntegrationCommit: c69b98342f1a43dd46056cb73f5ca68eefc99fe6
-NextAction: 三路并行实现 Server 用户、Server 频道/状态/设置与 Client 管理 overlay；绿色集成后恢复 M5 实机 Gate
+LatestGreenCodeCommit: 019b3a053a5d2e16cd60984c47d0fcecf72bb6bb
+LatestGreenIntegrationCommit: 893f68e2793c020ac15fed56a74e7edbae5bb0df
+NextAction: 复跑 Fast、push 并仅快进集成阶段 11；随后从最新集成头恢复 stage-13 exact RC、VPS 与双客户端 Gate
 ClaudeCalls: 84（#1–#84 全部终态；#84 在答案前被旧兼容 MCP 的 $0.5 budget 终止，按单次策略不重试）
 ClaudeCostUsd: 83.3341725 exact confirmed + 94.83 local CLI displayed（#44–#50/#74–#76/#81–#82）；按显示值合计约 178.1641725；其余未返回费用保持 unavailable
 Blocker: none
@@ -36,7 +36,7 @@ RequiredUserGate: none
 | M2 | `completed` | 阶段 9 附件纵向闭环与 Internal Alpha 证据包已由 `8ff8c15` 合入绿色集成分支 | 已进入 M3 |
 | M3 | `completed` | 权限化搜索 API、客户端 Global/Current 搜索、Around-first 跳转和一次性高亮已由 `8d8d5d2` 完成绿色集成，最终 Fast/Full 1,426/1,426 | 已进入 M4 |
 | M4 | `completed` | M4-01–M4-04 已由 `c69b983` 完成绿色集成，最终 Fast/Full 1,566/1,566 与更新交付 smoke 通过 | 已进入 M5 |
-| M5 | `running` | VPS 真实只读预检已通过；独立缺口审查发现阶段 11 管理面未实现，当前以 `agent/stage-11-admin-control` 最小补齐 | 管理切片绿色集成后，exact RC 部署及真实 Windows/VPS/双客户端 Gate 完成 |
+| M5 | `running` | VPS 真实只读预检已通过；阶段 11 管理面 production `019b3a0` 已通过最终 Full 1,591 项与三路独立复审，正绿色集成 | 从最新集成头生成 exact RC，完成真实 VPS/TLS/双 Windows Client Gate |
 
 里程碑顺序来自当前 v1 执行目标；每个里程碑的功能口径和最终交付标准仍由工程方案、决策记录和对应最小纵向任务冻结，本文件不预写实现细节。
 
@@ -45,7 +45,8 @@ RequiredUserGate: none
 - `agent/v1-integration` 是本地最新绿色集成头；任务分支只有完成验证和交接提交后，才允许仅快进该分支。
 - 当前 Client release 代码检查点 `fe7a38da5f2ae097c276d69300c2fa25ec29ec08` 已通过干净 `1.0.0-rc.6` 双构建字节一致、SHA-256/manifest/PE/runtime/秘密排除离线验收、真实主窗口与第二实例、Packaging 8/8、Fast/Full 1,453/1,453、model drift、八项目漏洞审计、format/空白与两路 Codex `PASS`；未签名 ZIP 明确不是安装器，Updater/签名/VPS 保留到后续 Gate。
 - 当前 M4-03 production `84b3b955afde3bda2a3830e2e2a8be3aacbea88b` 已通过干净 `1.0.0-rc.11` 双 ZIP 字节一致（`165651787` bytes，SHA-256 `b2ccbf1a6df10dc6f413cfd391f7c88ff9f7767944823a012c4ba19959e6cb17`）、真实外层 manifest generator/verifier、rc.6→rc.11 自举等待/替换/启动 smoke、Shared Updates 24/24、Updater 33/33、Packaging 13/13、Fast/Full 1,514/1,514（Shared 65、Server 302、Client 1,114、Updater 33）、Release 0 警告/0 错误、model drift、八项目漏洞审计、format/空白和多路 Codex 最终 `PASS`。启动前 `launching` 状态封闭执行后回滚窗口；Server 托管、Client 下载/UI/Exit 交接、自举目录精确清理和签名/VPS 保留到 M4-04/M5。
-- 当前 M4-04 分支 HEAD `894028c`（绿色代码提交 `08417dafc3c88213712a71ed07940c00ea8a1543`）已完成 Server exact manifest/artifact 只读托管、Client 启动/手动检查、optional/mandatory 状态、受控下载与显式 Exit→Updater 交接。Shared/Server/Client/Updater 共 1,566 项测试通过（65/321/1,142/38），Fast 与 Full 通过；干净 `1.0.0-rc.12` exact ZIP（`165675267` bytes，SHA-256 `e623f38cd3df9c71a62d0eb7f4e86f5a6d69457f2fd0b9d044e6c19b80f057e0`）和安全的真实 Kestrel/发布目录 smoke 通过。该分支绿色，尚待提交证据、push 与对 `agent/v1-integration` 的绿色 FF；签名、真实 VPS/域名 TLS、真实登录视觉与双客户端 Gate 仍留在 M5。
+- 当前 M4-04 绿色代码提交 `08417dafc3c88213712a71ed07940c00ea8a1543` 已完成 Server exact manifest/artifact 只读托管、Client 启动/手动检查、optional/mandatory 状态、受控下载与显式 Exit→Updater 交接。Shared/Server/Client/Updater 共 1,566 项测试通过（65/321/1,142/38），Fast 与 Full 通过；干净 `1.0.0-rc.12` exact ZIP（`165675267` bytes，SHA-256 `e623f38cd3df9c71a62d0eb7f4e86f5a6d69457f2fd0b9d044e6c19b80f057e0`）和安全的真实 Kestrel/发布目录 smoke 通过，并已由 `c69b983` 绿色集成；签名、真实 VPS/域名 TLS、真实登录视觉与双客户端 Gate 仍留在 M5。
+- 当前阶段 11 production `019b3a053a5d2e16cd60984c47d0fcecf72bb6bb` 已完成 Windows 管理 overlay、账号逻辑退役与 token 代际、频道/私有成员管理、服务器状态及持久上传上限。最终 Fast/Full 1,591 项（Shared 69、Server 333、Client 1,151、Updater 38）、Server 定向 147 项、Client 管理定向 6 项、model drift、八项目漏洞审计、format/空白检查通过；三路 Codex 复审无 P0/P1。瞬时 `/me` 失败需重新登录、频道切换瞬间成员名册可能需重选刷新，以及最后管理员并发矩阵未完整参数化，按内部 RC 接受为非阻断 P2。
 - 当前管理员引导代码检查点 `419ef00069c86c85b097a7961cebe95a16730cc5` 已通过 Fast、Full、100 项测试、真实 bootstrap/动态管理员授权/同名并发、密码与日志边界及依赖漏洞审计；Claude 无候选结论，已如实降级记录 Codex 固定差异自审。
 - 当前会话存储代码检查点 `1a3c49289940d625182237fddcd1954fc40983e9` 已通过 Fast、Full、116 项测试、真实 migration up/down/旧认证数据保留、约束/唯一/外键、model drift 与漏洞审计；Claude #20 无结论，已如实降级记录 Codex 固定差异复核。
 - 当前会话访问与成员 API 代码检查点 `b9b004109183e0157bca5c16f0acdaf7a39c8940` 已通过 Full、134 项测试、真实 HTTP/SQLite Direct 与成员并发、动态授权/撤权、共享访问查询、单查询、busy 503、model drift 与漏洞审计；Claude #21 无结论，已如实降级记录 Codex 固定差异复核。
@@ -189,7 +190,7 @@ RequiredUserGate: none
 
 ## 阻塞与用户 Gate
 
-- 当前阻塞：M5 独立审查确认阶段 11 管理面是 V1 RC 缺口；`agent/stage-11-admin-control` 正最小补齐。Claude #84 无答案且不重试，Codex reviewer 与本机/实机门禁承担裁定。
+- 当前阻塞：无；阶段 11 已绿色完成，正返回 M5 exact RC、真实 VPS/TLS 与双客户端 Gate。Claude #84 无答案且不重试，Codex reviewer 与本机/实机门禁承担裁定。
 - 当前所需用户 Gate：无。
 - `进行中`：用户已提供仓库外的香港 Light-A2 协作应用主机配置汇总；M5 只最小读取所需配置，地址、密钥、凭据和 token 不提交到仓库或测试日志。
 - 只有 `AGENTS.md`、`WORKFLOW.md` 和 v1 执行目标列出的重大产品、不可逆、安全、凭据、真实体验或发布事项才请求用户裁决；普通工程实现由当前任务自行收敛。

@@ -4,11 +4,11 @@
 
 ## 当前状态
 
-- **当前阶段：** M5-00 — 阶段 11 最小管理员控制面阻断修复进行中；VPS Gate 已完成只读预检
+- **当前阶段：** M5-01 — 阶段 11 最小管理员控制面已绿色完成；恢复香港 VPS 与双 Windows Client 实机 Gate
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮；M4-01 可复现 Linux x64 Server RC、M4-02 可复现 Windows Client 自包含 ZIP、M4-03 共享更新协议、确定性清单、外部自举 Updater 与真实 rc.6→rc.11 替换恢复，以及 M4-04 Server exact 托管、Client 检查/下载、optional/mandatory UI 和显式 Exit→Updater 交接均已完成
-- **最近验证通过的状态：** M4-04 production `08417dafc3c88213712a71ed07940c00ea8a1543`、最终分支 `894028c` 的干净 `1.0.0-rc.12` exact ZIP（`165675267` bytes，SHA-256 `e623f38cd3df9c71a62d0eb7f4e86f5a6d69457f2fd0b9d044e6c19b80f057e0`）已通过受控下载、校验与安全 handoff smoke；真实 generator、离线 verifier、升级/失败恢复边界、model drift、依赖漏洞、format 与空白检查均通过
+- **最近验证通过的状态：** 阶段 11 production `019b3a0` 已完成 Windows 管理 overlay、账号逻辑退役/token 代际、频道管理、状态和持久上传上限；最终 Full 1,591 项、定向 147/6、model drift、八项目漏洞、format 与空白检查通过，三路 Codex 复审无剩余 P0/P1
 - **可构建状态：** `已验证` — Fast、Full 与 Release 构建均为 0 警告、0 错误
-- **自动化验证：** `已验证` — 最终 Fast/Full、format 与 1,566 项测试（Shared 65、Server 321、Client 1,142、Updater 38）通过。覆盖可复现 Server USTAR 与 Client ZIP、双层 manifest/SHA-256、Linux x64 ELF、Windows x64 PE、独立 single-file Updater、自包含 runtime、安全 ZIP/路径/恢复状态、部署模板、loopback 转发限流、发布脚本安全和更新交付闭环；真实 Windows、香港 VPS/TLS、真实账号、真实登录视觉/Narrator 与双客户端保持未验证
+- **自动化验证：** `已验证` — 最终 Fast、Full、format 与 1,591 项测试（Shared 69、Server 333、Client 1,151、Updater 38）通过。覆盖管理授权/迁移/token 与 SignalR 代际、可复现 Server USTAR 与 Client ZIP、双层 manifest/SHA-256、Linux/Windows 发布、Updater、部署模板和更新交付闭环；香港 VPS/TLS、真实账号、真实登录视觉/Narrator 与双客户端仍未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
 - **最近 Claude 调用：** #83 M4-04 更新交付复核已读取并本地裁定；#84 阶段 11 关键边界 challenge 在答案前被当前 Desktop 的旧 `$0.5` wrapper 终止，无可用结论且按单次策略不重试
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- M4-04 与 M5 任务记录已由 `893f68e` 绿色集成；香港 VPS 真实只读 SSH/systemd/Nginx 预检通过。独立审查确认阶段 11 管理面是内部 RC 阻断缺口，当前 `agent/stage-11-admin-control` 三路并行补齐，完成后立即恢复 exact RC 部署与双客户端 Gate。
+- 阶段 11 production `019b3a0` 已通过最终 Fast、Full 和三路复审；当前只剩证据提交、绿色 push/FF 集成。随后从最新集成头重建 stage-13 exact RC，先关闭 SignalR 查询令牌进入 Nginx access log 的发布模板风险，再按已通过的香港 VPS 只读预检继续部署与双客户端 Gate。
 
 ## 已完成
 
@@ -80,6 +80,7 @@
 - 可复现 Windows x64 self-contained Client ZIP、manifest/SHA-256、离线 fail-closed 验收、双构建确定性与真实发布目录启动/单实例验证
 - 严格更新清单/SemVer/决策、确定性 generator、包内独立 self-contained Updater、精确进程等待、同卷 staging/backup/journal 恢复与真实 rc.6→rc.11 自举升级验证
 - Server exact manifest/artifact 只读托管、Client 更新检查/受控下载/optional 与 mandatory 门禁、显式 Exit→Updater 交接和安全 smoke（`DEC-056`）
+- Windows 内最小管理面、账号逻辑退役与 HTTP/SignalR token 代际、频道软删除、状态和持久上传上限（`DEC-057`）
 
 ## 下一任务
 
