@@ -118,9 +118,9 @@ public sealed class WindowsClientNotificationHostTests
         Assert.Equal(1, manager.RegisterCount);
 
         release.Set();
-        await WaitUntilAsync(() => manager.UnregisterCount == 1);
+        await WaitUntilAsync(host.TryStart);
 
-        Assert.True(host.TryStart());
+        Assert.Equal(1, manager.UnregisterCount);
         Assert.Equal(2, manager.RegisterCount);
     }
 
