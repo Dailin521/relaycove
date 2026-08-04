@@ -56,6 +56,86 @@ public sealed class ClientUpdateCoreTests
     }
 
     [Fact]
+    public async Task FetchAsync_WhenHandlerIgnoresCancellation_ReturnsTransientFailureAtCheckTimeout()
+    {
+        var requestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var httpClient = new HttpClient(new DelegateHttpHandler((_, _) =>
+        {
+            requestStarted.TrySetResult();
+            return new TaskCompletionSource<HttpResponseMessage>(
+                TaskCreationOptions.RunContinuationsAsynchronously).Task;
+        }));
+        var transport = new ClientUpdateManifestHttpTransport(
+            httpClient,
+            NullLogger<ClientUpdateManifestHttpTransport>.Instance,
+            TimeSpan.FromMilliseconds(50));
+
+        var outcome = await transport.FetchAsync(new Uri("https://relay.example"))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        await requestStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(ClientUpdateFetchStatus.TransientFailure, outcome.Status);
+    }
+
+    [Fact]
+    public async Task FetchAsync_WhenBodyIgnoresCancellationAfterHeaders_ReturnsTransientFailureAtCheckTimeout()
+    {
+        var bodyStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var httpClient = new HttpClient(new DelegateHttpHandler((request, _) =>
+        {
+            var content = new StalledContent(bodyStarted);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                RequestMessage = request,
+                Content = content,
+            });
+        }));
+        var transport = new ClientUpdateManifestHttpTransport(
+            httpClient,
+            NullLogger<ClientUpdateManifestHttpTransport>.Instance,
+            TimeSpan.FromMilliseconds(50));
+
+        var outcome = await transport.FetchAsync(new Uri("https://relay.example"))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        await bodyStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(ClientUpdateFetchStatus.TransientFailure, outcome.Status);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenAddressChangesDuringPreflight_UsesCapturedNormalizedAddressForLogin()
+    {
+        var preflightStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePreflight = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        string? preflightAddress = null;
+        string? loginAddress = null;
+        var typedAddress = " https://first.relay.example/base ";
+
+        var attempt = ClientUpdateLoginPreflight.RunAsync(
+            typedAddress,
+            address =>
+            {
+                preflightAddress = address;
+                preflightStarted.TrySetResult();
+                return releasePreflight.Task;
+            },
+            address =>
+            {
+                loginAddress = address;
+                return Task.CompletedTask;
+            });
+
+        await preflightStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        typedAddress = "https://second.relay.example";
+        releasePreflight.TrySetResult(true);
+
+        Assert.True(await attempt);
+        Assert.Equal("https://first.relay.example/base", preflightAddress);
+        Assert.Equal(preflightAddress, loginAddress);
+    }
+
+    [Fact]
     public async Task FetchAsync_WhenRedirected_ReturnsRemoteFailure()
     {
         using var httpClient = new HttpClient(new DelegateHttpHandler((request, _) =>
@@ -619,6 +699,25 @@ public sealed class ClientUpdateCoreTests
         protected override Task SerializeToStreamAsync(
             Stream stream,
             TransportContext? context) => stream.WriteAsync(payload).AsTask();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+    }
+
+    private sealed class StalledContent(TaskCompletionSource bodyStarted) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(
+            Stream stream,
+            TransportContext? context)
+        {
+            _ = stream;
+            _ = context;
+            bodyStarted.TrySetResult();
+            return new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task;
+        }
 
         protected override bool TryComputeLength(out long length)
         {

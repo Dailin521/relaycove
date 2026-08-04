@@ -1409,20 +1409,21 @@ public partial class MainWindow : Window
         }
 
         var password = PasswordInput.Password;
+        var serverAddress = ServerAddressTextBox.Text;
         PasswordInput.Clear();
         try
         {
             if (mandatoryUpdateGate ||
-                (loginUpdatePreflight is not null &&
-                 !await loginUpdatePreflight(ServerAddressTextBox.Text)))
+                !await ClientUpdateLoginPreflight.RunAsync(
+                    serverAddress,
+                    loginUpdatePreflight,
+                    address => coordinator.LoginAsync(
+                        address,
+                        UserNameTextBox.Text,
+                        password)))
             {
                 return;
             }
-
-            await coordinator.LoginAsync(
-                ServerAddressTextBox.Text,
-                UserNameTextBox.Text,
-                password);
         }
         catch (OperationCanceledException)
         {

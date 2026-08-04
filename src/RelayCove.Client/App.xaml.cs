@@ -38,6 +38,7 @@ public partial class App : System.Windows.Application
     private WindowsDesktopNotificationAttention? notificationAttention;
     private ClientTrayHost? trayHost;
     private ClientAccountComposition? accountComposition;
+    private HttpClient? updateManifestHttpClient;
     private HttpClient? updateHttpClient;
     private ClientUpdateCoordinator? updateCoordinator;
     private string? updateCacheRoot;
@@ -178,6 +179,7 @@ public partial class App : System.Windows.Application
         notificationAttention?.StopFlashing();
         mainWindowState?.Update(nint.Zero, isForeground: false);
         _ = updateCoordinator?.DisposeAsync();
+        updateManifestHttpClient?.Dispose();
         updateHttpClient?.Dispose();
         accountComposition?.DetachForProcessExit();
         activationDispatcher?.Dispose();
@@ -255,20 +257,14 @@ public partial class App : System.Windows.Application
     {
         var localAppDataRoot = GetLocalApplicationDataRoot();
         updateCacheRoot = Path.GetFullPath(Path.Combine(localAppDataRoot, "Updates"));
-        var handler = new SocketsHttpHandler
-        {
-            AllowAutoRedirect = false,
-            AutomaticDecompression = DecompressionMethods.None,
-        };
-        updateHttpClient = new HttpClient(handler)
-        {
-            Timeout = TimeSpan.FromMinutes(10),
-        };
+        updateManifestHttpClient = CreateUpdateHttpClient(
+            ClientUpdateManifestHttpTransport.DefaultCheckTimeout);
+        updateHttpClient = CreateUpdateHttpClient(TimeSpan.FromMinutes(10));
         var updateLogger = loggerFactory!.CreateLogger<ClientUpdateCoordinator>();
         var factory = loggerFactory!;
         return new ClientUpdateCoordinator(
             new ClientUpdateManifestHttpTransport(
-                updateHttpClient,
+                updateManifestHttpClient,
                 factory.CreateLogger<ClientUpdateManifestHttpTransport>()),
             new ClientAssemblyCurrentVersionProvider(),
             new ClientUpdatePackageDownloader(
@@ -277,6 +273,16 @@ public partial class App : System.Windows.Application
                 factory.CreateLogger<ClientUpdatePackageDownloader>()),
             updateLogger);
     }
+
+    private static HttpClient CreateUpdateHttpClient(TimeSpan timeout) =>
+        new(new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = DecompressionMethods.None,
+        })
+        {
+            Timeout = timeout,
+        };
 
     private static string GetLocalApplicationDataRoot()
     {
@@ -516,6 +522,7 @@ public partial class App : System.Windows.Application
             await updateCoordinator.DisposeAsync();
         }
 
+        updateManifestHttpClient?.Dispose();
         updateHttpClient?.Dispose();
         if (accountComposition is not null)
         {

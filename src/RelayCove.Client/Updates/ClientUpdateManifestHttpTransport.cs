@@ -12,14 +12,24 @@ namespace RelayCove.Client.Updates;
 internal sealed class ClientUpdateManifestHttpTransport : IClientUpdateManifestTransport
 {
     private const long MaximumManifestBytes = 64 * 1024;
+    internal static readonly TimeSpan DefaultCheckTimeout = TimeSpan.FromSeconds(15);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient httpClient;
     private readonly ILogger logger;
+    private readonly TimeSpan checkTimeout;
 
-    public ClientUpdateManifestHttpTransport(HttpClient httpClient, ILogger logger)
+    public ClientUpdateManifestHttpTransport(
+        HttpClient httpClient,
+        ILogger logger,
+        TimeSpan? checkTimeout = null)
     {
         this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        this.checkTimeout = checkTimeout ?? DefaultCheckTimeout;
+        if (this.checkTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(checkTimeout));
+        }
     }
 
     public async Task<ClientUpdateManifestFetchOutcome> FetchAsync(
@@ -30,12 +40,17 @@ internal sealed class ClientUpdateManifestHttpTransport : IClientUpdateManifestT
 
         try
         {
+            using var timeoutCancellation = new CancellationTokenSource(checkTimeout);
+            using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                timeoutCancellation.Token);
             using var request = new HttpRequestMessage(HttpMethod.Get, manifestUri);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             using var response = await httpClient.SendAsync(
                     request,
                     HttpCompletionOption.ResponseHeadersRead,
-                    cancellationToken)
+                    requestCancellation.Token)
+                .WaitAsync(requestCancellation.Token)
                 .ConfigureAwait(false);
             if (response.StatusCode != HttpStatusCode.OK || !HasOriginalRequestUri(response, manifestUri))
             {
@@ -54,11 +69,14 @@ internal sealed class ClientUpdateManifestHttpTransport : IClientUpdateManifestT
             UpdateManifestDto? manifest;
             try
             {
-                await response.Content.LoadIntoBufferAsync(MaximumManifestBytes, cancellationToken)
+                await response.Content.LoadIntoBufferAsync(
+                        MaximumManifestBytes,
+                        requestCancellation.Token)
+                    .WaitAsync(requestCancellation.Token)
                     .ConfigureAwait(false);
                 manifest = await response.Content.ReadFromJsonAsync<UpdateManifestDto>(
                         JsonOptions,
-                        cancellationToken)
+                        requestCancellation.Token)
                     .ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is JsonException or NotSupportedException or HttpRequestException)
