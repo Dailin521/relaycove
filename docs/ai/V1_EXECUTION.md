@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M2
 CurrentStage: 阶段 9
 ActiveTask: docs/ai/tasks/2026-08-04-stage-9-safe-attachment-open.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: fabe16c28476237a1ed9d91f26a6738d09057c0f
+LatestGreenCodeCommit: f8c3dcd22c40ec511665314b5daf07a58a798a9d
 LatestGreenIntegrationCommit: a5a41a41e6622cfc9c35c42d06b0c6090e2a792c
-NextAction: 实现受控 open copy、Restricted Zone MOTW、IAttachmentExecute 与撤权/退出/启动恢复清理
+NextAction: 仅快进合入已通过最终门禁的安全关联应用打开切片，关闭 M2，并启动 M3 搜索的独立纵向任务
 ClaudeCalls: 78（全部终态；#78 在答案前因旧兼容入口强加预算失败，不重试）
 ClaudeCostUsd: 83.12343525 exact confirmed + 76.68 local CLI displayed（#44–#50/#74–#76）；按显示值合计约 159.80343525；另有四十次失败/中断调用费用 unavailable
 Blocker: none
@@ -33,7 +33,7 @@ RequiredUserGate: none
 | --- | --- | --- | --- |
 | M0 | `completed` | 同步契约、`DEC-003`、解决方案和真实 Fast/Full 验证均通过 | 已进入 M1 |
 | M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
-| M2 | `running` | 阶段 9 服务端附件上传/下载/授权、客户端元数据缓存、durable Image/File 上传发送、WPF 输入/可信下载/目录定位，以及本地图片缩略图和有界查看已完成 | 完成直接打开文件裁定，形成 Internal Alpha 附件验收证据 |
+| M2 | `running` | 阶段 9 附件纵向闭环已在绿色任务分支完成；安全打开代码 `f8c3dcd` 及 Internal Alpha 证据包通过 | 仅快进合入安全打开交接提交，随后进入 M3 |
 | M3 | `pending` | 尚未开始 | Beta 验收证据完整 |
 | M4 | `pending` | 尚未开始 | RC 自动化、包与发布材料完整 |
 | M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
@@ -84,6 +84,7 @@ RequiredUserGate: none
 - 当前附件可信下载/cache 生产代码检查点 `438f7f766e62aa4f73496cb564ed44e0fb35544b` 已通过最终 Fast/Full 1154 项（Shared 39、Server 255、Client 859、Updater 1）、Client attachment/cache/Kestrel 65/65、Server Attachment 51/51、真实动态端口 Kestrel 的 login/upload/send/授权 GET→客户端磁盘→SQLite、publish→CAS fault/restart、跨 cache 撤权/locked staging、损坏 final 与共享 quota、model drift、八项目漏洞审计、日志脱敏与空白检查。两路 Codex 最终复核均无剩余 P0–P2；Claude #75 的成立问题经 Codex 复算修正并本机复验，下载边界已收敛为 `DEC-048`。WPF 下载视觉、安全打开、缩略图/原图与 VPS/双客户端保持后续或 M5 Gate。
 - 当前 WPF 附件下载与受控目录定位 production 检查点 `6a92064f411d2ed2df499afc2939974357af48b3` 及通知测试稳定提交 `9e9d409b299b4c89ed8b7470f8f5652e80fb82ad` 已通过最终 Full 1,211 项（Shared 39、Server 255、Client 916、Updater 1）、附件/MessageListPresenter/AccountShell 定向 338/338、通知恢复最终同步版 21/21、真实 Windows Explorer 精确选中、model drift、八项目漏洞审计、日志/format/空白检查。两路 Codex reviewer 与 Windows interop 复核均无 P0–P2；Claude #76 的 exact membership/Ready 成立意见已修正，不成立意见由 Microsoft 官方契约与实机结果裁定，边界收敛为 `DEC-049`。直接打开文件、缩略图/原图与真实登录/VPS/双客户端保持后续或 M5 Gate。
 - 当前本地图片预览 production 检查点 `fabe16c28476237a1ed9d91f26a6738d09057c0f` 已通过最终 Full 1,267 项（Shared 39、Server 255、Client 972、Updater 1）、图片/附件/MessageListPresenter/AccountShell 定向 218/218、真实 PNG/JPEG 与预算/超时/撤权/ABA/recycling/viewer/focus 回归、model drift、八项目漏洞审计、format 与空白检查。两路 Codex 独立复审的 owner cleanup、critical cleanup、snapshot materialize 与自动焦点问题均已修复并补回归；Claude #77 的成立意见经 Codex 复算收敛为 `DEC-050`。直接打开文件与真实登录/VPS/双客户端保持后续或 M5 Gate。
+- 当前安全关联应用打开 production 检查点 `f8c3dcd22c40ec511665314b5daf07a58a798a9d` 已通过最终 Fast/Full 1,348 项（Shared 39、Server 255、Client 1,053、Updater 1）、附件/MessageListPresenter/AccountShell 定向 271/271、真实无害文本 MOTW/Attachment Manager 探针 1/1、Release WPF 响应窗口、model drift、八项目漏洞审计、format 与空白检查。两路 Codex 独立复审均无 P0–P2；三阶段 Prepare→commit/foreground acknowledgement→`ExecuteRelease` 已证明 COM 前 SQLite/cache/coordinator/shell gate 全部退出，边界收敛为 `DEC-051`。Claude #78 在答案前失败且无可用结果，按单次策略未重试；真实登录视觉/Narrator、恶意样本与 VPS/双客户端保持 M5 Gate。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 
