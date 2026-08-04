@@ -9,6 +9,7 @@ using RelayCove.Shared.Updates;
 
 namespace RelayCove.Client.Tests.Desktop;
 
+[Collection(WpfTestCollection.Name)]
 public sealed class ClientUpdateHandoffTests
 {
     [Fact]
