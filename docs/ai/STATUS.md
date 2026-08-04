@@ -6,7 +6,7 @@
 
 - **当前阶段：** 阶段 9 — 附件
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 认证单附件流式上传、attach-once 消息事务、完整附件投影、会话授权下载与未绑定 lease、客户端 v2 附件元数据原子入库/回读、headless 流式上传 reservation 与 durable Image/File send/retry、WPF 原生文件多选/exact 草稿门/content-copy 进度，以及 exact FileDrop 与有界内存 PNG Ctrl+V 已完成
-- **最近验证通过的状态：** 拖拽/截图输入生产代码提交 `c3a0187` 已通过 Fast/Full 1088/1088、附件/Clipboard 定向 132/132、两路 Codex 最终复核、Claude #74 关键 challenge 和真实 Release WPF lifecycle；绿色集成头仍为 `8ac80fb9b70953f6ff2e56d38b6278f2f765e2b7`，等待本任务仅快进
+- **最近验证通过的状态：** WPF FileDrop/Clipboard PNG 已仅快进集成到 `b678865e2f2a559e9e620567a5caacb4a5882ae0`；附件下载/cache core 新分支 Fast 基线 1088/1088
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — 当前最终 Fast/Full、format 与 1088 项测试（Shared 39、Server 255、Client 793、Updater 1）通过；附件/Clipboard 定向 132/132 覆盖 exact FileDrop/Copy、exact Ctrl+V、文本优先/repeat、STA 像素快照、25/100 MiB 双预算、取消/WIC 分类、精确私有 buffer、source-neutral draft 与脱敏；真实 Release WPF 响应窗口、单实例和精确进程清理通过。真实登录下 Drop/Ctrl+V 视觉/键盘/Narrator、下载内容/UI 与 VPS 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 阶段 9 文件拖拽与有界内存 PNG 截图粘贴已在 `agent/stage-9-wpf-attachment-inputs` 完成全部本地门禁，等待仅快进集成；下一纵向切片是附件下载/cache 与下载进度，当前仍不读取 VPS 配置。
+- 阶段 9 受权附件全量下载、强 ETag/hash、账户隔离 cache、原子本地状态与接收进度 core 正在 `agent/stage-9-attachment-download-cache` 实现；Claude 后台 agent `a4e60acf` 只挑战关键路径/撤权/崩溃边界，Codex 继续主导且仍不读取 VPS 配置。
 
 ## 已完成
 
@@ -71,7 +71,7 @@
 
 ## 下一任务
 
-仅快进本任务后进入附件下载/cache 与下载进度纵向链；真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
+实现并验证受权附件下载/cache core；WPF 下载/打开、缩略图/原图随后完成，真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
 
 ## 阻塞项
 

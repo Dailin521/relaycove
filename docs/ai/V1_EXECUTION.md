@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M2
 CurrentStage: 阶段 9
-ActiveTask: docs/ai/tasks/2026-08-04-stage-9-wpf-attachment-inputs.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-04-stage-9-attachment-download-cache.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: c3a018704c62294a5bd7268656981c073e25cebe
-LatestGreenIntegrationCommit: 8ac80fb9b70953f6ff2e56d38b6278f2f765e2b7
-NextAction: 仅快进集成后进入附件下载/cache 与下载进度纵向链
+LatestGreenIntegrationCommit: b678865e2f2a559e9e620567a5caacb4a5882ae0
+NextAction: 实现受权全量下载、强 ETag/hash、账户隔离 cache 与原子本地状态 core
 ClaudeCalls: 74（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败；仅关键用途调用）
 ClaudeCostUsd: 80.07301150 exact confirmed + 51.43 local CLI displayed（#44–#50/#74）；按显示值合计约 131.50301150；另有四十次失败/中断调用费用 unavailable
 Blocker: none
