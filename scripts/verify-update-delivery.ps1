@@ -183,6 +183,12 @@ function Start-SmokeServer {
     $startInfo.Environment["Update__ManifestPath"] = $ManifestPath
     $startInfo.Environment["ASPNETCORE_Kestrel__Certificates__Default__Path"] = $PfxPath
     $startInfo.Environment["ASPNETCORE_Kestrel__Certificates__Default__Password"] = $PfxPassword
+    # The isolated working directory intentionally does not load the repository
+    # appsettings.json, so supply the non-secret ValidateOnStart defaults here.
+    $startInfo.Environment["Authentication__Issuer"] = "RelayCove.Server"
+    $startInfo.Environment["Authentication__Audience"] = "RelayCove.Client"
+    $startInfo.Environment["Authentication__ServerVersion"] = "1.0.0"
+    $startInfo.Environment["Authentication__MinimumSupportedClientVersion"] = "1.0.0"
     $signingKey = [byte[]]::new(32)
     [System.Security.Cryptography.RandomNumberGenerator]::Fill($signingKey)
     $startInfo.Environment["Authentication__SigningKey"] = [Convert]::ToBase64String($signingKey)
