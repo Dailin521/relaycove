@@ -7,13 +7,13 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M4
-CurrentStage: M4-02 Windows Client 可运行内部 RC 包
+CurrentStage: M4-02 Windows Client 可运行内部 RC 包已完成，待集成
 ActiveTask: docs/ai/tasks/2026-08-04-m4-client-release-package.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: b13188643cfc72c9d0896fc919fe53448e1c7ea5
+LatestGreenCodeCommit: fe7a38da5f2ae097c276d69300c2fa25ec29ec08
 LatestGreenIntegrationCommit: a7bade17439b4ff328338f6b2bcdba0170c49355
-NextAction: 实现并验证可复现的 win-x64 self-contained unpackaged Client 内部 RC ZIP 与真实 publish 启动 smoke
+NextAction: 将绿色 M4-02 仅快进合入 agent/v1-integration，并立即启动 M4-03 最小 Updater/更新协议切片
 ClaudeCalls: 81（#1–#80 全部终态；#81 本机后台持久 Sonnet/High 只读任务运行中）
 ClaudeCostUsd: 83.12343525 exact confirmed + 76.68 local CLI displayed（#44–#50/#74–#76）；按显示值合计约 159.80343525；其余未返回费用保持 unavailable
 Blocker: none
@@ -35,7 +35,7 @@ RequiredUserGate: none
 | M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
 | M2 | `completed` | 阶段 9 附件纵向闭环与 Internal Alpha 证据包已由 `8ff8c15` 合入绿色集成分支 | 已进入 M3 |
 | M3 | `completed` | 权限化搜索 API、客户端 Global/Current 搜索、Around-first 跳转和一次性高亮已由 `8d8d5d2` 完成绿色集成，最终 Fast/Full 1,426/1,426 | 已进入 M4 |
-| M4 | `running` | M4-01 Linux Server RC 已由 `a7bade1` 完成绿色集成；M4-02 Windows Client 可运行内部 RC 包已启动 | RC 自动化、包与发布材料完整 |
+| M4 | `running` | M4-01 Linux Server RC 已由 `a7bade1` 完成绿色集成；M4-02 Windows Client 自包含内部 RC ZIP 已完成全部本机门禁，待仅快进集成 | RC 自动化、包与发布材料完整 |
 | M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
 
 里程碑顺序来自当前 v1 执行目标；每个里程碑的功能口径和最终交付标准仍由工程方案、决策记录和对应最小纵向任务冻结，本文件不预写实现细节。
@@ -43,6 +43,7 @@ RequiredUserGate: none
 ## 集成与绿色状态
 
 - `agent/v1-integration` 是本地最新绿色集成头；任务分支只有完成验证和交接提交后，才允许仅快进该分支。
+- 当前 Client release 代码检查点 `fe7a38da5f2ae097c276d69300c2fa25ec29ec08` 已通过干净 `1.0.0-rc.6` 双构建字节一致、SHA-256/manifest/PE/runtime/秘密排除离线验收、真实主窗口与第二实例、Packaging 8/8、Fast/Full 1,453/1,453、model drift、八项目漏洞审计、format/空白与两路 Codex `PASS`；未签名 ZIP 明确不是安装器，Updater/签名/VPS 保留到后续 Gate。
 - 当前管理员引导代码检查点 `419ef00069c86c85b097a7961cebe95a16730cc5` 已通过 Fast、Full、100 项测试、真实 bootstrap/动态管理员授权/同名并发、密码与日志边界及依赖漏洞审计；Claude 无候选结论，已如实降级记录 Codex 固定差异自审。
 - 当前会话存储代码检查点 `1a3c49289940d625182237fddcd1954fc40983e9` 已通过 Fast、Full、116 项测试、真实 migration up/down/旧认证数据保留、约束/唯一/外键、model drift 与漏洞审计；Claude #20 无结论，已如实降级记录 Codex 固定差异复核。
 - 当前会话访问与成员 API 代码检查点 `b9b004109183e0157bca5c16f0acdaf7a39c8940` 已通过 Full、134 项测试、真实 HTTP/SQLite Direct 与成员并发、动态授权/撤权、共享访问查询、单查询、busy 503、model drift 与漏洞审计；Claude #21 无结论，已如实降级记录 Codex 固定差异复核。

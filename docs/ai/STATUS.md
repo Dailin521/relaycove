@@ -4,11 +4,11 @@
 
 ## 当前状态
 
-- **当前阶段：** M4-02 — Windows Client 可运行内部 RC 包
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮；M4-01 可复现 Linux x64 Server RC、migration bundle、离线校验与部署材料已完成
-- **最近验证通过的状态：** M4-01 production `47c6f88/a482d35/b131886` 与交接头 `a7bade17439b4ff328338f6b2bcdba0170c49355` 已通过干净双构建归档字节一致、最新离线验证器、Packaging/代理限流 20/20、Fast/Full 1,445/1,445、两路独立复核及 P1 关闭、model drift、依赖漏洞、format 与空白检查，并已仅快进合入本地/远端 `agent/v1-integration`
+- **当前阶段：** M4-02 — Windows Client 可运行内部 RC 包已完成，待仅快进集成后进入 M4-03
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮；M4-01 可复现 Linux x64 Server RC、migration bundle、离线校验与部署材料，以及 M4-02 可复现 Windows Client 自包含内部 RC ZIP、离线校验和真实启动验证均已完成
+- **最近验证通过的状态：** M4-02 implementation `fe7a38da5f2ae097c276d69300c2fa25ec29ec08` 的干净 `1.0.0-rc.6` 双构建归档字节一致（SHA-256 `5adf9f6fb8bd9f30c376404818a26c34ab3b2e2dddbc3c4b928110ea4453ff2b`），最新 verifier、Packaging 8/8、真实主窗口/第二实例、Fast/Full 1,453/1,453、两路独立复核、model drift、八项目依赖漏洞、format 与空白检查均通过
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — 当前最终 Fast/Full、format 与 1,445 项测试（Shared 41、Server 302、Client 1,101、Updater 1）通过；Server release Packaging 与代理限流定向 20/20。覆盖可复现 USTAR、manifest/SHA-256、Linux x64 ELF/runtime、路径/秘密排除、部署模板与 loopback 转发限流；Linux/VPS/TLS、真实 migration/restore、真实登录视觉/Narrator 与双客户端保持未验证
+- **自动化验证：** `已验证` — 当前最终 Fast/Full、format 与 1,453 项测试（Shared 41、Server 302、Client 1,109、Updater 1）通过；Server release Packaging/代理限流 20/20、Client release Packaging 8/8。覆盖可复现 Server USTAR 与 Client ZIP、manifest/SHA-256、Linux x64 ELF、Windows x64 PE、自包含 runtime、路径/秘密排除、部署模板、loopback 转发限流和 Client 发布脚本安全；Linux/VPS/TLS、真实 migration/restore、真实登录视觉/Narrator 与双客户端保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
 - **最近 Claude 调用：** `运行中` — #80 客户端搜索 Sonnet/High review `213daa77` 已完成且无 P0/P1；#81 M4 服务端发布 Sonnet/High challenge `6798888b` 仍在本机后台持久运行，完成后读取并由 Codex 本地裁定，不阻塞主线
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- M4-01 已由 `a7bade1` 完成绿色集成且任务分支已清理。当前 `agent/m4-client-release-package` 正在交付可复现的 `win-x64` self-contained unpackaged Client 内部 RC ZIP、离线验收和真实 publish 启动 smoke；不实现 Updater/更新协议/安装器或签名。
+- M4-02 已在 `agent/m4-client-release-package` 完成全部本机门禁与两路 Codex `PASS`；下一步仅快进合入 `agent/v1-integration`，随后立即启动 M4-03 最小 Updater/更新协议切片。
 
 ## 已完成
 
@@ -76,10 +76,11 @@
 - 客户端搜索 runtime/request/result identity lease、Around-first 重新授权与 recycling-safe UI-only 高亮（`DEC-053`）
 - loopback 单跳可信转发头、认证限流真实客户端分区与公网伪造隔离（`DEC-054`）
 - 可复现 Linux x64 Server/migration bundle、USTAR + SHA-256、systemd/Nginx/config、离线 fail-closed 验收与部署恢复文档
+- 可复现 Windows x64 self-contained Client ZIP、manifest/SHA-256、离线 fail-closed 验收、双构建确定性与真实发布目录启动/单实例验证
 
 ## 下一任务
 
-完成 M4-02 `win-x64` Client 可运行内部 RC 包，再以稳定 Client 产物为输入分片实现 Updater/更新协议；CI/Release 汇总随后处理，真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
+以 M4-02 已冻结的 Client ZIP/manifest 为输入，启动 M4-03 最小 Updater/更新协议切片；CI/Release 汇总随后处理，真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
 
 ## 阻塞项
 

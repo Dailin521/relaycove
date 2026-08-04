@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** M4 Windows Client 可运行 RC 发布纵向切片
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `a7bade17439b4ff328338f6b2bcdba0170c49355`
 - **工作分支：** `agent/m4-client-release-package`
 - **相关方案章节：** 3.1、3.5、5.4、16、阶段 13、21.5、24.1；`DEC-029/030/031/032`
@@ -44,12 +44,12 @@
 
 ### 验收标准
 
-- [ ] 干净 checkout 上单命令只向验证后的 `artifacts/` 精确目录生成 versioned ZIP、SHA-256 和可检查 package root；失败不留下半发布的最终目录。
-- [ ] 同一 commit/version/SDK/输入连续两次构建字节一致；ZIP 无绝对路径、`..`、重复/大小写碰撞、reparse/link、源码、PDB、用户数据、秘密或临时文件。
-- [ ] Client 是 Windows x64 PE、self-contained，入口和必要的 .NET/Windows App SDK/native runtime 资产存在；manifest 与归档逐文件长度/hash/mode 口径一致。
-- [ ] verifier 拒绝损坏 sidecar/archive/manifest、错误版本/RID/commit、非 x64/空入口、缺 runtime、额外敏感文件和源树污染。
-- [ ] 最终发布目录真实启动主窗口、响应并保持现有单实例语义，检查结束后无残留测试进程；明确记录未签名 ZIP 不是安装器。
-- [ ] Packaging 定向、Fast、最终 Full、model drift、依赖漏洞、format/空白与两路 Codex 复核通过；无 Updater/API/schema/dependency/unrelated 改动。
+- [x] 干净 checkout 上单命令只向验证后的 `artifacts/` 精确目录生成 versioned ZIP、SHA-256 和可检查 package root；失败不留下半发布的最终目录。
+- [x] 同一 commit/version/SDK/输入连续两次构建字节一致；ZIP 无绝对路径、`..`、重复/大小写碰撞、reparse/link、源码、PDB、用户数据、秘密或临时文件。
+- [x] Client 是 Windows x64 PE、self-contained，入口和必要的 .NET/Windows App SDK/native runtime 资产存在；manifest 与归档逐文件长度/hash/mode 口径一致。
+- [x] verifier 拒绝损坏 sidecar/archive/manifest、错误版本/RID/commit、非 x64/空入口、缺 runtime、额外敏感文件和源树污染。
+- [x] 最终发布目录真实启动主窗口、响应并保持现有单实例语义，检查结束后无残留测试进程；明确记录未签名 ZIP 不是安装器。
+- [x] Packaging 定向、Fast、最终 Full、model drift、依赖漏洞、format/空白与两路 Codex 复核通过；无 Updater/API/schema/dependency/unrelated 改动。
 
 ### 初始验证命令
 
@@ -81,4 +81,11 @@ git diff --check
 
 ## 任务结果
 
-`进行中`。实现、双构建、真实 publish 启动、独立复核与交接完成后填写。
+`已完成`。
+
+- `fe7a38da5f2ae097c276d69300c2fa25ec29ec08` 实现 Client publisher、独立 verifier、8 项 Packaging 回归和内部运行文档。
+- 从该干净提交以 SDK `10.0.101` 并行生成两份 `1.0.0-rc.6`：每份 package root 为 813 个文件、`332,134,195` bytes，ZIP 为 814 个条目、`132,617,803` bytes；两份归档 SHA-256 均为 `5adf9f6fb8bd9f30c376404818a26c34ab3b2e2dddbc3c4b928110ea4453ff2b`，逐字节一致。manifest 记录 `sourceTreeClean=true`、`win-x64`、.NET/Windows App SDK self-contained；runtimeconfig 包含本地 `Microsoft.NETCore.App 10.0.1` 与 `Microsoft.WindowsDesktop.App 10.0.1`。
+- 真实发布目录启动验证：标题为 `RelayCove` 的主窗口出现并响应，第二实例完成转交并以 `0` 退出，结束后残留进程为 `0`。本机 `Environment.GetFolderPath(LocalApplicationData)` 不接受子进程环境变量重定向，因此没有伪称环境隔离；实测前后真实 `%LOCALAPPDATA%\RelayCove` 均不存在，未读取、创建或删除账号数据。
+- 首轮真实启动发现 `--no-build` 复用了 framework-dependent 产物；现已由 publisher 改为 self-contained publish 自行构建，并由 verifier 解析 runtimeconfig，旧假自包含包会 fail closed。审查同时关闭 manifest 排序合同冲突、`relaycove-credential.v1.bin` 漏检和 manifest commit 未绑定预期提交三个 P1。
+- Packaging `8/8`、Fast/Full `1,453/1,453`（Shared 41、Server 302、Client 1,109、Updater 1）通过；Debug/Release 均为 0 警告、0 错误。EF model drift、八项目依赖漏洞、PowerShell parser、format 与 `git diff --check` 均通过；两路独立 Codex reviewer 均 `PASS`、剩余 P0/P1 为 0。
+- 交付物明确是内部未签名 ZIP，不是安装器；Updater、更新协议、签名、SmartScreen、VPS 与真实账号验证仍按任务边界延期。
