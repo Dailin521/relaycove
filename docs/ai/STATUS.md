@@ -5,25 +5,25 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 9 — 附件
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 认证单附件流式上传、attach-once 消息事务、完整附件投影、会话授权下载与未绑定 lease、客户端 v2 附件元数据原子入库/回读、headless 流式上传 reservation 与 durable Image/File send/retry、WPF 原生文件多选/exact 草稿门/content-copy 进度、exact FileDrop/有界内存 PNG Ctrl+V，以及强 ETag 全量可信下载、账户隔离受控缓存、原子本地状态与接收进度 core 已完成
-- **最近验证通过的状态：** 附件下载/cache 生产代码检查点 `438f7f766e62aa4f73496cb564ed44e0fb35544b` 已通过 Fast/Full 1154/1154、真实动态端口 Kestrel→Client→磁盘→SQLite、故障/撤权/损坏/quota 回归与两路 Codex 最终复核；交接提交 `c53f5c9ef93f6924fbde7728df01a51a7be05505` 已仅快进合入并推送 `agent/v1-integration`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 认证单附件流式上传、attach-once 消息事务、完整附件投影、会话授权下载与未绑定 lease、客户端 v2 附件元数据原子入库/回读、headless 流式上传 reservation 与 durable Image/File send/retry、WPF 原生文件多选/exact 草稿门/content-copy 进度、exact FileDrop/有界内存 PNG Ctrl+V、强 ETag 全量可信下载/账户隔离受控缓存，以及 confirmed WPF 附件行、持久状态、下载/取消/重试和受控“在文件夹中显示”已完成
+- **最近验证通过的状态：** WPF 附件下载与受控目录定位 production 检查点 `6a92064f411d2ed2df499afc2939974357af48b3` 及通知测试稳定提交 `9e9d409b299b4c89ed8b7470f8f5652e80fb82ad` 已通过最终 Full 1,211/1,211、定向 338/338、真实 Windows Explorer 精确选中、Codex 双重复核与 Windows interop 独立复核；任务分支待交接提交后仅快进合入 `agent/v1-integration`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — 当前最终 Fast/Full、format 与 1154 项测试（Shared 39、Server 255、Client 859、Updater 1）通过；附件下载/cache/Kestrel 定向 65/65、Server Attachment 51/51，覆盖强 ETag、redirect/decompression、完整性、单飞、配额、撤权竞态、原子发布/CAS、启动恢复、真实 TCP/磁盘/SQLite 与脱敏。WPF 下载视觉、安全打开、缩略图/原图、真实登录键盘/Narrator 与 VPS 保持未验证
+- **自动化验证：** `已验证` — 当前最终 Full、format 与 1,211 项测试（Shared 39、Server 255、Client 916、Updater 1）通过；附件/MessageListPresenter/AccountShell 定向 338/338，通知恢复同步最终版 21/21。覆盖持久状态、进度/取消/重试、Ready/exact membership/flight identity、A→B→A、recycling/UIA、cache 物理复验、最终授权、零锁 shell 与退出竞态；真实 Explorer 受控选中通过。真实登录附件视觉/Narrator、缩略图/原图与 VPS 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
-- **最近 Claude 调用：** `已验证` — 附件下载/cache #75 本机 Claude Code 2.1.221 只读 Opus/XHigh 后台任务 `a4e60acf` 完成，实际 `claude-opus-5`、显示费用 `$5.18`；成立的 locked purge、redirect/decompression、同进程恢复、取消清理与 Content-Encoding 发现均由 Codex 复算修正并本机复验
+- **最近 Claude 调用：** `已验证` — WPF 附件下载/受控访问 #76 本机只读 Opus/XHigh 持久任务 `a28c24d7` 的审查答案已返回，实际 `claude-opus-5`、约 26 分钟、显示费用 `$20.07`；detached session 保持 idle、未取消。exact membership 与 Ready 门意见已修正，STA/cidl=0 质疑经官方契约、Codex 复核和真实 Explorer 反证后未采纳。后续仅主代理对每项重大架构/安全/数据库/协议/可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，子代理与普通代码审查不调用
 - **Codex 项目配置：** `已验证` — Desktop 自带 Codex `0.146.0-alpha.3.1` Doctor 与 MCP 配置检查通过
 
 ## 进行中
 
-- 阶段 9 WPF 附件行、持久下载状态、下载/取消/失败重试与受控本地访问已在 `agent/stage-9-wpf-attachment-download` 开始；第一检查点收敛下载交互与安全“在文件夹中显示”，直接打开的文件关联/MOTW 边界由关键只读 challenge 后裁定，仍不读取 VPS 配置。
+- 阶段 9 WPF 附件下载与受控“在文件夹中显示”已完成并通过最终门禁，正在交接并仅快进合入 `agent/v1-integration`；随后进入本地图片缩略图/有界原图查看。直接打开的文件关联/MOTW/扩展名与副本生命周期保持独立安全切片，仍不读取 VPS 配置。
 
 ## 已完成
 
 - 产品定位、第一版边界和工程落地方案
 - 公开仓库、README、MIT License 与基础 `.gitignore`
 - AI 工作流、任务模板、状态页、关键决策索引与独立审查模板
-- Codex 全局与项目 Fast 默认；用户级 Claude Opus XHigh Second Brain（按次支持 Max）；Terra High Explorer 与 Sol High Reviewer
+- Codex 全局与项目 Fast 默认；Claude Second Brain 仅由主代理按重大决策单次调用，默认 Sonnet/High、调用前仍未解决高风险时该次才选择 Opus/XHigh；Terra High Explorer 与 Sol High Reviewer
 - 消息同步固定上界分页、INSERT-first 幂等、统一本地合并、通知恢复和私有频道撤权契约（`DEC-003`）
 - v1 外层执行状态、绿色集成头、Claude 预算、阻塞和用户 Gate 账本
 - .NET 10 解决方案、四个源项目、四个测试项目及真实 Fast/Full 验证脚本
@@ -69,11 +69,12 @@
 - WPF 原生附件多选、路径内存边界、exact composer 草稿门与真实 content-copy 进度（`DEC-046`）
 - exact FileDrop、文本优先 Ctrl+V、STA PNG 编码、25/100 MiB 双预算与 owner-safe 单飞取消（`DEC-047`）
 - 强 ETag 全量可信下载、账户隔离 1 GiB 受控缓存、原子发布后 SQLite CAS、同 scope 撤权/配额协调与启动双向恢复（`DEC-048`）
+- exact flight/context 提交、持久 WPF 附件状态、受控目录定位、pinned 内容复验与无锁 Windows shell（`DEC-049`）
 
 ## 下一任务
 
-实现并验证 WPF 附件展示、下载/取消/失败重试与安全打开；随后完成本地缩略图/有界原图查看并关闭 M2，真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
+完成本地图片缩略图与有界原图查看；随后单独裁定直接打开文件的可信 handler/MOTW/扩展名/临时副本边界并关闭 M2，真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
 
 ## 阻塞项
 
-- 无。Claude 不设固定次数上限但只用于关键审查；所有采纳项仍必须由 Codex 以仓库和本机自动化复核。
+- 无。Claude 仅由主代理对每项重大决策调用一次，默认 Sonnet/High；调用前仍未解决的高风险争议才在该次选择 Opus/XHigh。子代理与普通代码审查不调用，所有意见仍必须由 Codex 以仓库和本机自动化复核。

@@ -9,13 +9,13 @@ ExecutionStatus: running
 CurrentMilestone: M2
 CurrentStage: 阶段 9
 ActiveTask: docs/ai/tasks/2026-08-04-stage-9-wpf-attachment-download.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 438f7f766e62aa4f73496cb564ed44e0fb35544b
+LatestGreenCodeCommit: 6a92064f411d2ed2df499afc2939974357af48b3
 LatestGreenIntegrationCommit: c53f5c9ef93f6924fbde7728df01a51a7be05505
-NextAction: 实现 confirmed 附件行、持久 Downloaded 投影、下载/取消/重试与受控本地访问
-ClaudeCalls: 75（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败；仅关键用途调用）
-ClaudeCostUsd: 80.07301150 exact confirmed + 56.61 local CLI displayed（#44–#50/#74–#75）；按显示值合计约 136.68301150；另有四十次失败/中断调用费用 unavailable
+NextAction: 完成交接并仅快进合入 agent/v1-integration，随后实现本地图片缩略图与有界原图查看
+ClaudeCalls: 76（#76 审查答案已返回，detached session 保持 idle、未取消；其余已终态；仅主代理按重大决策调用一次）
+ClaudeCostUsd: 80.07301150 exact confirmed + 76.68 local CLI displayed（#44–#50/#74–#76）；按显示值合计约 156.75301150；另有四十次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -82,6 +82,7 @@ RequiredUserGate: none
 - 当前 WPF 附件组合代码检查点 `4c8a032e46e36a9c0bb0e3cc2d9d2d21c020c037` 已通过最终 Fast/Full 1045 项（Shared 39、Server 255、Client 750、Updater 1）、附件/发送/shell 定向 176/176、原子文件 source/分类/变化/脱敏、部分批次/稳定 401/取消/pending/context-draft 回归、真实 Release WPF 响应窗口/单实例/精确清理和空白检查。路径内存边界、exact composer 草稿门、真实 content-copy 进度与 pending 恢复语义已收敛为 `DEC-046`；Codex reviewer 首轮两项 P2 修正后二轮无 P0/P1/P2。拖拽/截图、下载内容 UI、真实账户视觉/Narrator 与 VPS/双客户端保持后续或 M5 Gate。
 - 当前 WPF 附件拖拽/截图输入生产代码检查点 `c3a018704c62294a5bd7268656981c073e25cebe` 已通过最终 Fast/Full 1088 项（Shared 39、Server 255、Client 793、Updater 1）、附件/Clipboard 定向 132/132、exact FileDrop/Copy、exact Ctrl+V 文本优先/repeat、STA 像素快照、25/100 MiB 双预算、取消/WIC 分类、精确私有 buffer、source-neutral draft、真实 Release WPF 响应窗口/单实例/精确清理、format 与空白检查。两路 Codex 最终复核无剩余 P0/P1/P2；Claude #74 的成立问题经 Codex 复算修正并本机复验，输入边界已收敛为 `DEC-047`。真实登录下 Drop/Ctrl+V 视觉/键盘/Narrator、下载/cache UI 与 VPS/双客户端保持后续或 M5 Gate。
 - 当前附件可信下载/cache 生产代码检查点 `438f7f766e62aa4f73496cb564ed44e0fb35544b` 已通过最终 Fast/Full 1154 项（Shared 39、Server 255、Client 859、Updater 1）、Client attachment/cache/Kestrel 65/65、Server Attachment 51/51、真实动态端口 Kestrel 的 login/upload/send/授权 GET→客户端磁盘→SQLite、publish→CAS fault/restart、跨 cache 撤权/locked staging、损坏 final 与共享 quota、model drift、八项目漏洞审计、日志脱敏与空白检查。两路 Codex 最终复核均无剩余 P0–P2；Claude #75 的成立问题经 Codex 复算修正并本机复验，下载边界已收敛为 `DEC-048`。WPF 下载视觉、安全打开、缩略图/原图与 VPS/双客户端保持后续或 M5 Gate。
+- 当前 WPF 附件下载与受控目录定位 production 检查点 `6a92064f411d2ed2df499afc2939974357af48b3` 及通知测试稳定提交 `9e9d409b299b4c89ed8b7470f8f5652e80fb82ad` 已通过最终 Full 1,211 项（Shared 39、Server 255、Client 916、Updater 1）、附件/MessageListPresenter/AccountShell 定向 338/338、通知恢复最终同步版 21/21、真实 Windows Explorer 精确选中、model drift、八项目漏洞审计、日志/format/空白检查。两路 Codex reviewer 与 Windows interop 复核均无 P0–P2；Claude #76 的 exact membership/Ready 成立意见已修正，不成立意见由 Microsoft 官方契约与实机结果裁定，边界收敛为 `DEC-049`。直接打开文件、缩略图/原图与真实登录/VPS/双客户端保持后续或 M5 Gate。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 
@@ -164,9 +165,10 @@ RequiredUserGate: none
 | 73 | 2026-08-04 | 客户端非幂等上传与 durable 附件发送边界 | MCP 只读协议/数据库/可靠性 challenge | Opus / XHigh | 当前 Desktop 仍只暴露兼容 `consult_claude`；CLI 启动阶段失败，未返回 job、实际模型、workspace、费用、findings 或 verdict，不得冒充通过 | `unavailable` |
 | 74 | 2026-08-04 | WPF FileDrop 与剪贴板 PNG 内存/隐私边界 | 本机 Claude Code 2.1.221 后台只读 challenge | Opus / XHigh | background job `c3e1ce54`、session `c3e1ce54-4569-4199-a6b0-05230901d53b`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；实际 `claude-opus-5`、请求模型无偏差，约 16 分钟后返回。100 MiB retained、非脱离像素源、混合文本吞没、缺取消、WIC 包装分类与 buffer/命名问题经 Codex 复算，成立项全部修正；单一切片由共享 draft/context/pending 边界支撑 | `$5.46`（CLI 状态显示值） |
 | 75 | 2026-08-04 | 附件可信下载、账户隔离 cache 与撤权/崩溃边界 | 本机 Claude Code 2.1.221 后台只读 challenge | Opus / XHigh | background job `a4e60acf`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；实际 `claude-opus-5`、请求模型无偏差，约 14 分钟后返回。locked `.part` 阻断 purge、redirect/decompression、同进程恢复、publish 取消清理与 Content-Encoding 发现经 Codex 复算成立并修正；disabled actor、ETag fallback 与 hash 截断等建议按现有 server 401、强验证器任务边界和完整 SHA-256 证据裁定不采纳 | `$5.18`（CLI 状态显示值） |
+| 76 | 2026-08-04 | WPF 附件下载状态与受控本地访问 | 本机持久只读安全/可靠性 challenge | Opus / XHigh | job `a28c24d7`、session `a28c24d7-b75f-4a45-8d9c-69ddc40d82a6`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；实际 `claude-opus-5`、请求模型无偏差，约 26 分钟后审查答案已返回；detached session 保持 idle，按策略未因耗时、费用或空闲取消。exact download membership 与当前 Ready 状态门经 Codex 复算成立并修正；专用 STA 与 cidl=0 不受支持两项 P0 由 Microsoft 官方 API/COM 契约、Codex 独立 Windows interop 复核和真实 Explorer 精确选中反证后未采纳 | `$20.07`（CLI 状态显示值） |
 
-- 调用计数：`75`（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）；用户已取消固定次数上限，Claude 只用于关键架构/安全/协议/数据库/可靠性内容，普通审查由 Codex reviewer 子代理承担，且不因第二意见停止本地验证。
-- 已确认精确费用合计：`$80.07301150`；另有 #44–#50/#74–#75 本机 Claude Code 状态显示值合计 `$56.61`（界面两位小数，未伪造更高精度），按显示值总计约 `$136.68301150`。其余四十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`76`（#76 审查答案已返回且 detached session 保持 idle；其余已终态，其中 #55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构/安全/数据库/协议/可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
+- 已确认精确费用合计：`$80.07301150`；另有 #44–#50/#74–#76 本机 Claude Code 状态显示值合计 `$76.68`（界面两位小数，未伪造更高精度），按显示值总计约 `$156.75301150`。其余四十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate
