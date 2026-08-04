@@ -49,6 +49,10 @@ builder.Services.AddOptions<UploadOptions>()
     .Bind(builder.Configuration.GetSection(UploadOptions.SectionName))
     .ValidateOnStart();
 builder.Services.AddSingleton<IValidateOptions<UploadOptions>, UploadOptionsValidator>();
+builder.Services.AddOptions<UpdateOptions>()
+    .Bind(builder.Configuration.GetSection(UpdateOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<UpdateOptions>, UpdateOptionsValidator>();
 builder.Services.Configure<PasswordHasherOptions>(options =>
 {
     options.CompatibilityMode = PasswordHasherCompatibilityMode.IdentityV3;
@@ -82,6 +86,7 @@ builder.Services.AddSingleton<AttachmentStoragePaths>();
 builder.Services.AddScoped<AttachmentMultipartReader>();
 builder.Services.AddScoped<AttachmentCommandService>();
 builder.Services.AddScoped<AttachmentQueryService>();
+builder.Services.AddSingleton<UpdateHostingService>();
 builder.Services.AddScoped<NewMessagePublisher>();
 builder.Services.AddScoped<ConversationAccessRevokedPublisher>();
 builder.Services.AddSingleton<INewMessageTransport, SignalRNewMessageTransport>();
@@ -140,6 +145,7 @@ app.MapSearchEndpoints();
 app.MapMessageEndpoints();
 app.MapSyncEndpoints();
 app.MapAttachmentEndpoints();
+app.MapUpdateEndpoints();
 app.MapHub<ChatHub>(ChatHub.Route, options => options.CloseOnAuthenticationExpiration = true)
     .RequireAuthorization();
 
