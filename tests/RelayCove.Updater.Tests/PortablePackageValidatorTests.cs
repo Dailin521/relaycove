@@ -109,8 +109,14 @@ internal static class PackageFixture
             });
             var manifest = JsonSerializer.Serialize(new
             {
-                schemaVersion = 1, version = "1.0.1-rc.1", rid = "win-x64", packageRoot,
-                sourceTreeClean = true, selfContained = true, windowsAppSdkSelfContained = true, files,
+                schemaVersion = 1,
+                version = "1.0.1-rc.1",
+                rid = "win-x64",
+                packageRoot,
+                sourceTreeClean = true,
+                selfContained = true,
+                windowsAppSdkSelfContained = true,
+                files,
             });
             var manifestEntry = archive.CreateEntry($"{packageRoot}/manifest.json");
             manifestEntry.ExternalAttributes = 0x00000080;
@@ -123,11 +129,16 @@ internal static class PackageFixture
 
     internal static UpdaterOptions CreateOptions(string path, string hash, long size) => new()
     {
-        ArchivePath = path, ExpectedSha256 = hash, ExpectedSize = size,
+        ArchivePath = path,
+        ExpectedSha256 = hash,
+        ExpectedSize = size,
         ExpectedVersion = RelayCove.Shared.Updates.SemanticVersion.Parse("1.0.1-rc.1"),
         CurrentVersion = RelayCove.Shared.Updates.SemanticVersion.Parse("1.0.0"),
-        TargetPath = Path.Combine(Path.GetTempPath(), "relaycove-target"), WaitProcessId = 1,
-        WaitProcessStartTimeUtcTicks = 1, WaitTimeoutSeconds = 1, Bootstrapped = true,
+        TargetPath = Path.Combine(Path.GetTempPath(), "relaycove-target"),
+        WaitProcessId = 1,
+        WaitProcessStartTimeUtcTicks = 1,
+        WaitTimeoutSeconds = 1,
+        Bootstrapped = true,
     };
 }
 
