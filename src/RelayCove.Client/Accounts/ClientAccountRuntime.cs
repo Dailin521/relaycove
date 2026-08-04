@@ -16,6 +16,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
     private readonly IClientAccountSyncCoordinator syncCoordinator;
     private readonly IClientAccountReadThroughCoordinator readThroughCoordinator;
     private readonly ClientMessageHistoryCoordinator? messageHistoryCoordinator;
+    private readonly ClientMentionCandidateCoordinator? mentionCandidateCoordinator;
     private readonly ClientMessageSendCoordinator? messageSendCoordinator;
     private readonly ClientAutomaticSyncScheduler automaticSyncScheduler;
     private readonly IAsyncDisposable notificationCoordinator;
@@ -47,7 +48,8 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         AccountScopedLocalCache? conversationSource = null,
         ClientAccountRuntimeStateHub? stateHub = null,
         ClientMessageHistoryCoordinator? messageHistoryCoordinator = null,
-        ClientMessageSendCoordinator? messageSendCoordinator = null)
+        ClientMessageSendCoordinator? messageSendCoordinator = null,
+        ClientMentionCandidateCoordinator? mentionCandidateCoordinator = null)
     {
         Identity = identity ?? throw new ArgumentNullException(nameof(identity));
         this.authenticationSession = authenticationSession ??
@@ -64,6 +66,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         this.conversationSource = conversationSource;
         this.messageHistoryCoordinator = messageHistoryCoordinator;
         this.messageSendCoordinator = messageSendCoordinator;
+        this.mentionCandidateCoordinator = mentionCandidateCoordinator;
         this.automaticSyncScheduler = automaticSyncScheduler ??
             throw new ArgumentNullException(nameof(automaticSyncScheduler));
         this.activityState = activityState ?? throw new ArgumentNullException(nameof(activityState));
@@ -203,10 +206,27 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
                     token),
             cancellationToken);
 
+    public Task<ClientMentionCandidateOutcome> SearchMentionCandidatesAsync(
+        Guid conversationId,
+        string? query,
+        int limit = ClientMentionCandidateCoordinator.DefaultLimit,
+        CancellationToken cancellationToken = default) =>
+        TrackRuntimeOperation(
+            token => mentionCandidateCoordinator is null
+                ? Task.FromResult(ClientMentionCandidateOutcome.Failure(
+                    ClientMentionCandidateStatus.LocalCacheFailure))
+                : mentionCandidateCoordinator.SearchAsync(
+                    conversationId,
+                    query,
+                    limit,
+                    token),
+            cancellationToken);
+
     public Task<ClientMessageSendOutcome> SendTextMessageAsync(
         Guid conversationId,
         string? content,
         long? replyToMessageId = null,
+        IReadOnlyList<Guid>? mentionUserIds = null,
         CancellationToken cancellationToken = default) =>
         TrackRuntimeOperation(
             token => messageSendCoordinator is null
@@ -216,6 +236,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
                     conversationId,
                     content,
                     replyToMessageId,
+                    mentionUserIds,
                     token),
             cancellationToken);
 
@@ -610,6 +631,13 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         {
             await CaptureFailureAsync(
                     () => messageHistoryCoordinator.DisposeAsync(),
+                    failures)
+                .ConfigureAwait(false);
+        }
+        if (mentionCandidateCoordinator is not null)
+        {
+            await CaptureFailureAsync(
+                    () => mentionCandidateCoordinator.DisposeAsync(),
                     failures)
                 .ConfigureAwait(false);
         }

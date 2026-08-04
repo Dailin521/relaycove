@@ -5,6 +5,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using RelayCove.Client.Mentions;
 using RelayCove.Client.Storage;
 using RelayCove.Shared.Errors;
 using RelayCove.Shared.Messages;
@@ -245,7 +246,10 @@ internal sealed class ClientMessageSendHttpTransport
             request.AttachmentIds is null ||
             request.AttachmentIds.Count != 0 ||
             request.MentionUserIds is null ||
-            request.MentionUserIds.Count != 0)
+            !ClientMentionPolicy.TryCanonicalizeUserIds(
+                request.MentionUserIds,
+                out var canonicalMentionUserIds) ||
+            !canonicalMentionUserIds.SequenceEqual(request.MentionUserIds))
         {
             throw new ArgumentException(
                 "The Text message request is invalid or unsupported.",

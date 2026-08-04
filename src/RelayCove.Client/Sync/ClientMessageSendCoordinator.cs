@@ -1,5 +1,6 @@
 using System.Net.Http;
 using Microsoft.Extensions.Logging;
+using RelayCove.Client.Mentions;
 using RelayCove.Client.Storage;
 using RelayCove.Shared.Messages;
 
@@ -55,12 +56,16 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
         Guid conversationId,
         string? content,
         long? replyToMessageId = null,
+        IReadOnlyList<Guid>? mentionUserIds = null,
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
         if (conversationId == Guid.Empty ||
             replyToMessageId is <= 0 ||
-            !ClientTextMessageContentValidator.IsValid(content))
+            !ClientTextMessageContentValidator.IsValid(content) ||
+            !ClientMentionPolicy.TryCanonicalizeUserIds(
+                mentionUserIds ?? NoIds,
+                out var canonicalMentionUserIds))
         {
             return Task.FromResult(ClientMessageSendOutcome.Failure(
                 ClientMessageSendStatus.ValidationFailed));
@@ -74,7 +79,7 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
             MessageType.Text,
             content,
             replyToMessageId,
-            MentionUserIds: NoIds,
+            MentionUserIds: canonicalMentionUserIds,
             DateTimeOffset.UtcNow);
         return StartFlight(
             pending.ClientMessageId,

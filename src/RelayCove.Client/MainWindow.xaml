@@ -602,14 +602,16 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <Border x:Name="ReplyComposerPanel"
-                                        Grid.ColumnSpan="2"
+                                        Grid.ColumnSpan="3"
                                         Margin="0,0,0,7"
                                         Padding="10,7"
                                         Background="#FFF0F5FA"
@@ -644,8 +646,124 @@
                                                 Click="OnCancelReplyClicked" />
                                     </Grid>
                                 </Border>
+                                <Border x:Name="MentionPickerPanel"
+                                        Grid.Row="1"
+                                        Grid.ColumnSpan="3"
+                                        Margin="0,0,0,7"
+                                        Padding="10,8"
+                                        Background="#FFF7FAFD"
+                                        BorderBrush="#FFD7E2ED"
+                                        BorderThickness="1"
+                                        CornerRadius="3"
+                                        Visibility="Collapsed">
+                                    <StackPanel>
+                                        <DockPanel LastChildFill="True">
+                                            <Button DockPanel.Dock="Right"
+                                                    MinHeight="26"
+                                                    Padding="8,1"
+                                                    Content="关闭"
+                                                    Click="OnCloseMentionPickerClicked" />
+                                            <TextBlock VerticalAlignment="Center"
+                                                       Text="添加 @用户"
+                                                       FontWeight="SemiBold"
+                                                       Foreground="#FF36536D" />
+                                        </DockPanel>
+                                        <Grid Margin="0,7,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox x:Name="MentionSearchTextBox"
+                                                     MinHeight="30"
+                                                     Padding="7,4"
+                                                     MaxLength="64"
+                                                     AutomationProperties.Name="按用户名搜索提及候选"
+                                                     TextChanged="OnMentionSearchTextChanged"
+                                                     PreviewKeyDown="OnMentionSearchPreviewKeyDown" />
+                                            <Button x:Name="MentionSearchButton"
+                                                    Grid.Column="1"
+                                                    MinWidth="68"
+                                                    Margin="8,0,0,0"
+                                                    Padding="10,3"
+                                                    Content="搜索"
+                                                    Click="OnMentionSearchClicked" />
+                                        </Grid>
+                                        <TextBlock x:Name="MentionSearchStatusText"
+                                                   Margin="1,5,0,0"
+                                                   Text="输入 1–64 位用户名字符前缀后显式搜索。"
+                                                   AutomationProperties.LiveSetting="Polite"
+                                                   Foreground="#FF718396"
+                                                   FontSize="11"
+                                                   TextWrapping="Wrap" />
+                                        <ListBox x:Name="MentionCandidateList"
+                                                 Margin="0,6,0,0"
+                                                 MaxHeight="132"
+                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                 AutomationProperties.Name="提及候选">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid Margin="2,2">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel>
+                                                            <TextBlock Text="{Binding DisplayName}"
+                                                                       FontWeight="SemiBold" />
+                                                            <StackPanel Orientation="Horizontal">
+                                                                <TextBlock Text="@" Foreground="#FF718396" />
+                                                                <TextBlock Text="{Binding UserName}"
+                                                                           Foreground="#FF718396" />
+                                                            </StackPanel>
+                                                        </StackPanel>
+                                                        <Button Grid.Column="1"
+                                                                MinWidth="54"
+                                                                Margin="10,0,0,0"
+                                                                Padding="8,2"
+                                                                Content="添加"
+                                                                Click="OnMentionCandidateClicked" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                        <TextBlock x:Name="SelectedMentionHeadingText"
+                                                   Margin="1,7,0,0"
+                                                   Text="已选 0/20"
+                                                   Foreground="#FF52708C"
+                                                   FontSize="11" />
+                                        <ItemsControl x:Name="SelectedMentionList"
+                                                      Margin="0,3,0,0"
+                                                      AutomationProperties.Name="已选提及用户">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Margin="0,0,6,4"
+                                                            Padding="6,3"
+                                                            Background="#FFE8F1F8"
+                                                            CornerRadius="3">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="@" VerticalAlignment="Center" />
+                                                            <TextBlock Text="{Binding UserName}"
+                                                                       VerticalAlignment="Center" />
+                                                            <Button Margin="5,0,0,0"
+                                                                    MinWidth="24"
+                                                                    Padding="3,0"
+                                                                    Content="移除"
+                                                                    AutomationProperties.Name="移除提及用户"
+                                                                    Click="OnRemoveMentionClicked" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
                                 <TextBox x:Name="MessageComposerTextBox"
-                                         Grid.Row="1"
+                                         Grid.Row="2"
                                          MinHeight="68"
                                          MaxHeight="150"
                                          Padding="10,8"
@@ -656,9 +774,19 @@
                                          AutomationProperties.Name="消息内容"
                                          TextChanged="OnMessageComposerTextChanged"
                                          PreviewKeyDown="OnMessageComposerPreviewKeyDown" />
-                                <Button x:Name="SendMessageButton"
-                                        Grid.Row="1"
+                                <Button x:Name="MentionPickerButton"
+                                        Grid.Row="2"
                                         Grid.Column="1"
+                                        MinWidth="76"
+                                        Margin="10,0,0,0"
+                                        Padding="10,8"
+                                        Content="@用户"
+                                        IsEnabled="False"
+                                        VerticalAlignment="Stretch"
+                                        Click="OnMentionPickerClicked" />
+                                <Button x:Name="SendMessageButton"
+                                        Grid.Row="2"
+                                        Grid.Column="2"
                                         MinWidth="76"
                                         Margin="10,0,0,0"
                                         Padding="14,8"
@@ -667,8 +795,8 @@
                                         VerticalAlignment="Stretch"
                                         Click="OnSendMessageClicked" />
                                 <TextBlock x:Name="MessageComposerStatusText"
-                                           Grid.Row="2"
-                                           Grid.ColumnSpan="2"
+                                           Grid.Row="3"
+                                           Grid.ColumnSpan="3"
                                            Margin="2,5,0,0"
                                            Text="选择可用会话后发送 Text 消息；Ctrl+Enter 换行。"
                                            AutomationProperties.LiveSetting="Polite"

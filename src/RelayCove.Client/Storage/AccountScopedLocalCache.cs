@@ -3977,7 +3977,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             mentions.Add(Guid.ParseExact(reader.GetString(0), "D"));
         }
 
-        return mentions;
+        return mentions.Order().ToArray();
     }
 
     private static bool MentionSetsEqual(

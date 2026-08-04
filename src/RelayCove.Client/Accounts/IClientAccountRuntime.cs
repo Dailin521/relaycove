@@ -42,10 +42,17 @@ internal interface IClientAccountRuntime : IAsyncDisposable
         int after,
         CancellationToken cancellationToken = default);
 
+    Task<ClientMentionCandidateOutcome> SearchMentionCandidatesAsync(
+        Guid conversationId,
+        string? query,
+        int limit = ClientMentionCandidateCoordinator.DefaultLimit,
+        CancellationToken cancellationToken = default);
+
     Task<ClientMessageSendOutcome> SendTextMessageAsync(
         Guid conversationId,
         string? content,
         long? replyToMessageId = null,
+        IReadOnlyList<Guid>? mentionUserIds = null,
         CancellationToken cancellationToken = default);
 
     Task<ClientMessageSendOutcome> RetryPendingMessageAsync(

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using RelayCove.Client.Activation;
 using RelayCove.Client.Auth;
+using RelayCove.Client.Mentions;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
 using RelayCove.Shared.Auth;
@@ -332,8 +333,17 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
     public async Task<ClientMessageSendOutcome> SendTextMessageAsync(
         string? content,
         long? replyToMessageId = null,
+        IReadOnlyList<Guid>? mentionUserIds = null,
         CancellationToken cancellationToken = default)
     {
+        if (!ClientMentionPolicy.TryCanonicalizeUserIds(
+                mentionUserIds ?? Array.Empty<Guid>(),
+                out var canonicalMentionUserIds))
+        {
+            return ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.ValidationFailed);
+        }
+
         IClientAccountRuntime? activeRuntime;
         Guid conversationId;
         lock (stateGate)
@@ -365,6 +375,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                     conversationId,
                     content,
                     replyToMessageId,
+                    canonicalMentionUserIds,
                     cancellationToken)
                 .ConfigureAwait(false);
             if (outcome.Status == ClientMessageSendStatus.AuthenticationRequired)
@@ -391,6 +402,93 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                 exception.GetType().Name);
             return ClientMessageSendOutcome.Failure(
                 ClientMessageSendStatus.LocalCacheFailure);
+        }
+    }
+
+    public async Task<ClientMentionCandidateOutcome> SearchMentionCandidatesAsync(
+        string? query,
+        int limit = ClientMentionCandidateCoordinator.DefaultLimit,
+        CancellationToken cancellationToken = default)
+    {
+        IClientAccountRuntime? activeRuntime;
+        MessageSelection? selection;
+        lock (stateGate)
+        {
+            selection = messageSelection;
+            if (selection is null ||
+                !IsCurrentMessageSelectionLocked(selection) ||
+                messageList.Status != ClientMessageListStatus.Ready)
+            {
+                return ClientMentionCandidateOutcome.Failure(
+                    ClientMentionCandidateStatus.Unavailable);
+            }
+
+            activeRuntime = runtime;
+        }
+
+        if (activeRuntime is null)
+        {
+            return ClientMentionCandidateOutcome.Failure(
+                ClientMentionCandidateStatus.Unavailable);
+        }
+
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            selection.Token,
+            lifetimeCancellation.Token);
+        try
+        {
+            var outcome = await activeRuntime
+                .SearchMentionCandidatesAsync(
+                    selection.ConversationId,
+                    query,
+                    limit,
+                    linkedCancellation.Token)
+                .ConfigureAwait(false);
+            if (outcome.Status == ClientMentionCandidateStatus.AuthenticationRequired)
+            {
+                await EndAuthenticationRequiredSessionAsync(activeRuntime)
+                    .ConfigureAwait(false);
+                return outcome;
+            }
+
+            lock (stateGate)
+            {
+                if (!ReferenceEquals(runtime, activeRuntime) ||
+                    !IsCurrentMessageSelectionLocked(selection) ||
+                    messageList.Status != ClientMessageListStatus.Ready)
+                {
+                    return ClientMentionCandidateOutcome.Failure(
+                        ClientMentionCandidateStatus.Stale);
+                }
+            }
+
+            return outcome;
+        }
+        catch (OperationCanceledException)
+        {
+            lock (stateGate)
+            {
+                return IsCurrentMessageSelectionLocked(selection)
+                    ? ClientMentionCandidateOutcome.Failure(
+                        ClientMentionCandidateStatus.Canceled)
+                    : ClientMentionCandidateOutcome.Failure(
+                        ClientMentionCandidateStatus.Stale);
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientMentionCandidateOutcome.Failure(
+                ClientMentionCandidateStatus.Stale);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Searching mention candidates through the active account failed; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientMentionCandidateOutcome.Failure(
+                ClientMentionCandidateStatus.LocalCacheFailure);
         }
     }
 

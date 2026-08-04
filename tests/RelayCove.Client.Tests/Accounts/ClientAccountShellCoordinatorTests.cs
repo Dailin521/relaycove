@@ -1317,7 +1317,186 @@ public sealed class ClientAccountShellCoordinatorTests
     }
 
     [Fact]
-    public async Task SendTextMessageAsync_WhenReplyTargetIsLoaded_ForwardsExactTarget()
+    public async Task SearchMentionCandidatesAsync_WhenSelectionIsReady_ForwardsExactContext()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var candidate = new MentionCandidateDto(Guid.NewGuid(), "alpha", "Alpha");
+        Guid? searchedConversationId = null;
+        string? searchedQuery = null;
+        int? searchedLimit = null;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    Array.Empty<MessageDto>(),
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            MentionCandidateSearchAction = (id, query, limit, _) =>
+            {
+                searchedConversationId = id;
+                searchedQuery = query;
+                searchedLimit = limit;
+                return Task.FromResult(new ClientMentionCandidateOutcome(
+                    ClientMentionCandidateStatus.Completed,
+                    [candidate],
+                    HasMore: false));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        var outcome = await coordinator.SearchMentionCandidatesAsync("al", limit: 7);
+
+        Assert.Equal(ClientMentionCandidateStatus.Completed, outcome.Status);
+        Assert.Equal([candidate], outcome.Candidates);
+        Assert.Equal(conversationId, searchedConversationId);
+        Assert.Equal("al", searchedQuery);
+        Assert.Equal(7, searchedLimit);
+    }
+
+    [Fact]
+    public async Task SearchMentionCandidatesAsync_WhenNoReadySelection_DoesNotInvokeRuntime()
+    {
+        var session = CreateSession();
+        var searchCount = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(Guid.NewGuid(), 0),
+            MentionCandidateSearchAction = (_, _, _, _) =>
+            {
+                Interlocked.Increment(ref searchCount);
+                return Task.FromResult(ClientMentionCandidateOutcome.Failure(
+                    ClientMentionCandidateStatus.RemoteFailure));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+
+        var outcome = await coordinator.SearchMentionCandidatesAsync("al");
+
+        Assert.Equal(ClientMentionCandidateStatus.Unavailable, outcome.Status);
+        Assert.Equal(0, Volatile.Read(ref searchCount));
+    }
+
+    [Fact]
+    public async Task SearchMentionCandidatesAsync_WhenSelectionChanges_DiscardsLateCandidates()
+    {
+        var session = CreateSession();
+        var firstConversationId = Guid.NewGuid();
+        var secondConversationId = Guid.NewGuid();
+        var searchEntered = NewSignal();
+        var releaseSearch = NewSignal();
+        CancellationToken searchToken = default;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(
+                firstConversationId,
+                secondConversationId),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    Array.Empty<MessageDto>(),
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            MentionCandidateSearchAction = async (_, _, _, token) =>
+            {
+                searchToken = token;
+                searchEntered.TrySetResult();
+                await releaseSearch.Task;
+                return new ClientMentionCandidateOutcome(
+                    ClientMentionCandidateStatus.Completed,
+                    [new MentionCandidateDto(Guid.NewGuid(), "alpha", "Alpha")],
+                    HasMore: false);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(firstConversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready &&
+            coordinator.MessageList.ConversationId == firstConversationId);
+
+        var search = coordinator.SearchMentionCandidatesAsync("al");
+        await searchEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        coordinator.SelectConversation(secondConversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready &&
+            coordinator.MessageList.ConversationId == secondConversationId);
+        Assert.True(searchToken.IsCancellationRequested);
+        releaseSearch.TrySetResult();
+        var outcome = await search;
+
+        Assert.Equal(ClientMentionCandidateStatus.Stale, outcome.Status);
+        Assert.Empty(outcome.Candidates);
+    }
+
+    [Fact]
+    public async Task SearchMentionCandidatesAsync_WhenAuthenticationExpires_EndsSession()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    Array.Empty<MessageDto>(),
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            MentionCandidateSearchAction = (_, _, _, _) => Task.FromResult(
+                ClientMentionCandidateOutcome.Failure(
+                    ClientMentionCandidateStatus.AuthenticationRequired)),
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        var outcome = await coordinator.SearchMentionCandidatesAsync("al");
+
+        Assert.Equal(ClientMentionCandidateStatus.AuthenticationRequired, outcome.Status);
+        Assert.Equal(ClientAccountShellPhase.SignedOut, coordinator.Snapshot.Phase);
+        Assert.False(coordinator.Snapshot.HasActiveAccount);
+        Assert.Equal(1, runtime.DisposeCount);
+    }
+
+    [Fact]
+    public async Task SendTextMessageAsync_WhenReplyAndMentionsAreValid_ForwardsCanonicalPayload()
     {
         var session = CreateSession();
         var conversationId = Guid.NewGuid();
@@ -1325,6 +1504,9 @@ public sealed class ClientAccountShellCoordinatorTests
         Guid? sentConversationId = null;
         string? sentContent = null;
         long? sentReplyToMessageId = null;
+        IReadOnlyList<Guid>? sentMentionUserIds = null;
+        var firstMention = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var secondMention = Guid.Parse("22222222-2222-2222-2222-222222222222");
         var runtime = new FakeRuntime(session)
         {
             ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
@@ -1335,11 +1517,12 @@ public sealed class ClientAccountShellCoordinatorTests
                     [target],
                     NextBeforeMessageId: null,
                     HasMoreBefore: false)),
-            MessageSendAction = (conversation, content, replyToMessageId, _) =>
+            MessageSendAction = (conversation, content, replyToMessageId, mentions, _) =>
             {
                 sentConversationId = conversation;
                 sentContent = content;
                 sentReplyToMessageId = replyToMessageId;
+                sentMentionUserIds = mentions;
                 return Task.FromResult(new ClientMessageSendOutcome(
                     ClientMessageSendStatus.Completed,
                     PendingCommitted: true));
@@ -1358,12 +1541,16 @@ public sealed class ClientAccountShellCoordinatorTests
             ClientMessageListStatus.Ready &&
             coordinator.MessageList.Messages.Any(item => item.ServerMessageId == 10));
 
-        var outcome = await coordinator.SendTextMessageAsync("reply body", 10);
+        var outcome = await coordinator.SendTextMessageAsync(
+            "reply body",
+            10,
+            [secondMention, firstMention]);
 
         Assert.Equal(ClientMessageSendStatus.Completed, outcome.Status);
         Assert.Equal(conversationId, sentConversationId);
         Assert.Equal("reply body", sentContent);
         Assert.Equal(10, sentReplyToMessageId);
+        Assert.Equal([firstMention, secondMention], sentMentionUserIds);
     }
 
     [Fact]
@@ -1382,7 +1569,7 @@ public sealed class ClientAccountShellCoordinatorTests
                     [CreateMessage(10, id)],
                     NextBeforeMessageId: null,
                     HasMoreBefore: false)),
-            MessageSendAction = (_, _, _, _) =>
+            MessageSendAction = (_, _, _, _, _) =>
             {
                 Interlocked.Increment(ref sendCount);
                 return Task.FromResult(new ClientMessageSendOutcome(
@@ -1414,6 +1601,51 @@ public sealed class ClientAccountShellCoordinatorTests
     }
 
     [Fact]
+    public async Task SendTextMessageAsync_WhenMentionSetIsInvalid_DoesNotInvokeRuntime()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var sendCount = 0;
+        var duplicate = Guid.NewGuid();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    Array.Empty<MessageDto>(),
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            MessageSendAction = (_, _, _, _, _) =>
+            {
+                Interlocked.Increment(ref sendCount);
+                return Task.FromResult(ClientMessageSendOutcome.Failure(
+                    ClientMessageSendStatus.RemoteFailure));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        var outcome = await coordinator.SendTextMessageAsync(
+            "invalid mentions",
+            mentionUserIds: [duplicate, duplicate]);
+
+        Assert.Equal(ClientMessageSendStatus.ValidationFailed, outcome.Status);
+        Assert.False(outcome.PendingCommitted);
+        Assert.Equal(0, Volatile.Read(ref sendCount));
+    }
+
+    [Fact]
     public async Task SendTextMessageAsync_WhenSelectionChanges_KeepsCapturedConversationAndReplyFlight()
     {
         var session = CreateSession();
@@ -1436,7 +1668,7 @@ public sealed class ClientAccountShellCoordinatorTests
                     [CreateMessage(id == firstConversationId ? 10 : 20, id)],
                     NextBeforeMessageId: null,
                     HasMoreBefore: false)),
-            MessageSendAction = async (conversationId, _, replyToMessageId, token) =>
+            MessageSendAction = async (conversationId, _, replyToMessageId, _, token) =>
             {
                 sentConversationId = conversationId;
                 sentReplyToMessageId = replyToMessageId;
@@ -2002,7 +2234,15 @@ public sealed class ClientAccountShellCoordinatorTests
             set;
         }
 
-        public Func<Guid, string?, long?, CancellationToken, Task<ClientMessageSendOutcome>>?
+        public Func<Guid, string?, int, CancellationToken, Task<ClientMentionCandidateOutcome>>?
+            MentionCandidateSearchAction
+        {
+            get;
+            set;
+        }
+
+        public Func<Guid, string?, long?, IReadOnlyList<Guid>?, CancellationToken,
+            Task<ClientMessageSendOutcome>>?
             MessageSendAction
         {
             get;
@@ -2114,15 +2354,30 @@ public sealed class ClientAccountShellCoordinatorTests
             Task.FromResult(ClientMessageAroundOutcome.Failure(
                 ClientMessageLoadStatus.RemoteFailure));
 
+        public Task<ClientMentionCandidateOutcome> SearchMentionCandidatesAsync(
+            Guid conversationId,
+            string? query,
+            int limit = ClientMentionCandidateCoordinator.DefaultLimit,
+            CancellationToken cancellationToken = default) =>
+            MentionCandidateSearchAction?.Invoke(
+                conversationId,
+                query,
+                limit,
+                cancellationToken) ??
+            Task.FromResult(ClientMentionCandidateOutcome.Failure(
+                ClientMentionCandidateStatus.RemoteFailure));
+
         public Task<ClientMessageSendOutcome> SendTextMessageAsync(
             Guid conversationId,
             string? content,
             long? replyToMessageId = null,
+            IReadOnlyList<Guid>? mentionUserIds = null,
             CancellationToken cancellationToken = default) =>
             MessageSendAction?.Invoke(
                 conversationId,
                 content,
                 replyToMessageId,
+                mentionUserIds,
                 cancellationToken) ??
             Task.FromResult(ClientMessageSendOutcome.Failure(
                 ClientMessageSendStatus.RemoteFailure));

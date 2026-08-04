@@ -149,6 +149,112 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task SendTextAsync_WhenMentionsProvided_PersistsCanonicalSetBeforePost()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        var first = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var second = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        SendMessageRequest? captured = null;
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            captured = await request.Content!.ReadFromJsonAsync<SendMessageRequest>(
+                JsonOptions,
+                token);
+            var pendingPage = await prepared.Cache.ReadMessagePageAsync(
+                prepared.Conversation.Id,
+                beforeMessageId: null,
+                limit: 50,
+                token);
+            Assert.Equal(
+                [first, second],
+                Assert.Single(pendingPage.PendingMessages).MentionUserIds);
+            return Created(CreateResponse(captured!));
+        }));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        var outcome = await coordinator.SendTextAsync(
+            prepared.Conversation.Id,
+            "hello @first and @second",
+            mentionUserIds: [second, first]);
+
+        Assert.Equal(ClientMessageSendStatus.Completed, outcome.Status);
+        Assert.True(outcome.PendingCommitted);
+        Assert.Equal([first, second], captured!.MentionUserIds);
+        var page = await prepared.Cache.ReadMessagePageAsync(
+            prepared.Conversation.Id,
+            beforeMessageId: null,
+            limit: 50);
+        Assert.Equal([first, second], Assert.Single(page.Messages).MentionUserIds);
+    }
+
+    [Fact]
+    public async Task SendTextAsync_WhenMentionSetIsInvalid_DoesNotPersistOrPost()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        var duplicate = Guid.NewGuid();
+        IReadOnlyList<Guid>[] invalidSets =
+        [
+            [Guid.Empty],
+            [duplicate, duplicate],
+            Enumerable.Range(0, 21).Select(_ => Guid.NewGuid()).ToArray(),
+        ];
+        var requestCount = 0;
+        using var httpClient = new HttpClient(new DelegateHttpHandler((_, _) =>
+        {
+            Interlocked.Increment(ref requestCount);
+            throw new InvalidOperationException("Invalid mentions must not reach HTTP.");
+        }));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        foreach (var invalidSet in invalidSets)
+        {
+            var outcome = await coordinator.SendTextAsync(
+                prepared.Conversation.Id,
+                "invalid mentions",
+                mentionUserIds: invalidSet);
+            Assert.Equal(ClientMessageSendStatus.ValidationFailed, outcome.Status);
+            Assert.False(outcome.PendingCommitted);
+        }
+
+        Assert.Equal(0, Volatile.Read(ref requestCount));
+        Assert.Equal(0, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
+    }
+
+    [Fact]
+    public async Task SendTextAsync_WhenResponseMentionOrderDiffers_MarksPendingFailed()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        var first = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var second = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            var sent = (await request.Content!.ReadFromJsonAsync<SendMessageRequest>(
+                JsonOptions,
+                token))!;
+            return Created(CreateResponse(sent) with
+            {
+                MentionUserIds = sent.MentionUserIds.Reverse().ToArray(),
+            });
+        }));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        var outcome = await coordinator.SendTextAsync(
+            prepared.Conversation.Id,
+            "protocol order",
+            mentionUserIds: [second, first]);
+
+        Assert.Equal(ClientMessageSendStatus.ProtocolError, outcome.Status);
+        Assert.True(outcome.PendingCommitted);
+        var page = await prepared.Cache.ReadMessagePageAsync(
+            prepared.Conversation.Id,
+            beforeMessageId: null,
+            limit: 50);
+        var failed = Assert.Single(page.PendingMessages);
+        Assert.Equal(MessageSendStatus.Failed, failed.SendStatus);
+        Assert.Equal([first, second], failed.MentionUserIds);
+    }
+
+    [Fact]
     public async Task RetryAsync_WhenFirstPostIsAmbiguous_ReusesExactKeyAndPayload()
     {
         await using var prepared = await CreatePreparedAsync();
@@ -166,10 +272,13 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
         }));
         await using var coordinator = CreateCoordinator(prepared, httpClient);
 
+        var firstMention = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var secondMention = Guid.Parse("22222222-2222-2222-2222-222222222222");
         var first = await coordinator.SendTextAsync(
             prepared.Conversation.Id,
             "retry me",
-            replyToMessageId: 88);
+            replyToMessageId: 88,
+            mentionUserIds: [secondMention, firstMention]);
         var failedPage = await prepared.Cache.ReadMessagePageAsync(
             prepared.Conversation.Id,
             beforeMessageId: null,
@@ -183,13 +292,76 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
         Assert.True(first.PendingCommitted);
         Assert.Equal(MessageSendStatus.Failed, failed.SendStatus);
         Assert.Equal(88, failed.ReplyToMessageId);
+        Assert.Equal([firstMention, secondMention], failed.MentionUserIds);
         Assert.Equal(ClientMessageSendStatus.Completed, retry.Status);
         Assert.Equal(2, requests.Count);
         AssertRequestEqual(requests[0], requests[1]);
+        Assert.Equal([firstMention, secondMention], requests[0].MentionUserIds);
         Assert.Equal(2, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
         Assert.Equal(2, Scalar(
             prepared.Identity,
             "SELECT COUNT(*) FROM LocalMessages WHERE ServerMessageId IS NOT NULL;"));
+    }
+
+    [Fact]
+    public async Task RetryAsync_AfterCacheRestart_ReusesDurableMentionSet()
+    {
+        var prepared = await CreatePreparedAsync();
+        var firstMention = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var secondMention = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        using (var failingHttpClient = new HttpClient(new DelegateHttpHandler((_, _) =>
+                   Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)))))
+        {
+            await using var firstCoordinator = CreateCoordinator(prepared, failingHttpClient);
+            var first = await firstCoordinator.SendTextAsync(
+                prepared.Conversation.Id,
+                "restart retry",
+                mentionUserIds: [secondMention, firstMention]);
+            Assert.Equal(ClientMessageSendStatus.TransientFailure, first.Status);
+        }
+
+        var beforeRestart = await prepared.Cache.ReadMessagePageAsync(
+            prepared.Conversation.Id,
+            beforeMessageId: null,
+            limit: 50);
+        var clientMessageId = Assert.Single(beforeRestart.PendingMessages).ClientMessageId;
+        await prepared.Cache.DisposeAsync();
+
+        await using var reopenedCache = await AccountScopedLocalCache.CreateAsync(
+            prepared.Identity,
+            NullLogger<AccountScopedLocalCache>.Instance);
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await reopenedCache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([prepared.Conversation], Complete: true)));
+        var reopened = new PreparedSend(
+            prepared.Identity,
+            reopenedCache,
+            prepared.Conversation);
+        SendMessageRequest? retriedRequest = null;
+        using var successHttpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            retriedRequest = await request.Content!.ReadFromJsonAsync<SendMessageRequest>(
+                JsonOptions,
+                token);
+            return Ok(CreateResponse(retriedRequest!));
+        }));
+        await using var secondCoordinator = CreateCoordinator(reopened, successHttpClient);
+
+        var retry = await secondCoordinator.RetryAsync(
+            prepared.Conversation.Id,
+            clientMessageId);
+
+        Assert.Equal(ClientMessageSendStatus.Completed, retry.Status);
+        Assert.Equal([firstMention, secondMention], retriedRequest!.MentionUserIds);
+        var afterRestart = await reopenedCache.ReadMessagePageAsync(
+            prepared.Conversation.Id,
+            beforeMessageId: null,
+            limit: 50);
+        Assert.Empty(afterRestart.PendingMessages);
+        Assert.Equal(
+            [firstMention, secondMention],
+            Assert.Single(afterRestart.Messages).MentionUserIds);
     }
 
     [Fact]

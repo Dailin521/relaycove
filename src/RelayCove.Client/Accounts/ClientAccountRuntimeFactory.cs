@@ -103,6 +103,7 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
         AccountScopedLocalCache? cache = null;
         ClientReadThroughCoordinator? readThroughCoordinator = null;
         ClientMessageHistoryCoordinator? messageHistoryCoordinator = null;
+        ClientMentionCandidateCoordinator? mentionCandidateCoordinator = null;
         ClientMessageSendCoordinator? messageSendCoordinator = null;
         ClientAutomaticSyncScheduler? automaticSyncScheduler = null;
         ClientSyncCoordinator? syncCoordinator = null;
@@ -150,6 +151,13 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                 authenticationSession,
                 cache,
                 loggerFactory.CreateLogger<ClientMessageHistoryCoordinator>(),
+                notificationRoundCoordinator.ConversationRevokedAsync);
+            mentionCandidateCoordinator = new ClientMentionCandidateCoordinator(
+                identity,
+                httpClient,
+                authenticationSession,
+                cache,
+                loggerFactory.CreateLogger<ClientMentionCandidateCoordinator>(),
                 notificationRoundCoordinator.ConversationRevokedAsync);
             messageSendCoordinator = new ClientMessageSendCoordinator(
                 identity,
@@ -222,7 +230,8 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                 cache,
                 stateHub,
                 messageHistoryCoordinator,
-                messageSendCoordinator);
+                messageSendCoordinator,
+                mentionCandidateCoordinator);
             unownedNotificationRoundCoordinator = null;
             automaticSyncScheduler = null;
             return runtime;
@@ -263,6 +272,13 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
             {
                 await CaptureCleanupFailureAsync(
                         () => messageHistoryCoordinator.DisposeAsync(),
+                        cleanupFailures)
+                    .ConfigureAwait(false);
+            }
+            if (mentionCandidateCoordinator is not null)
+            {
+                await CaptureCleanupFailureAsync(
+                        () => mentionCandidateCoordinator.DisposeAsync(),
                         cleanupFailures)
                     .ConfigureAwait(false);
             }

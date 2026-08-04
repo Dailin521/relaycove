@@ -5,9 +5,11 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using RelayCove.Client.Accounts;
+using RelayCove.Client.Mentions;
 using RelayCove.Client.Notifications;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
+using RelayCove.Shared.Messages;
 
 namespace RelayCove.Client;
 
@@ -24,11 +26,14 @@ public partial class MainWindow : Window
     private long? composerReplyToMessageId;
     private Guid? composerContextConversationId;
     private long composerContextVersion;
+    private readonly Dictionary<Guid, MentionCandidateDto> composerMentions = [];
+    private long mentionSearchVersion;
     private bool composerContextReady;
     private bool suppressSelectionRequest;
     private bool applyingMessageSnapshot;
     private bool composerAvailable;
     private bool composerSubmissionRunning;
+    private bool mentionSearchRunning;
 
     public MainWindow()
     {
@@ -484,6 +489,211 @@ public partial class MainWindow : Window
     {
         _ = sender;
         _ = e;
+        composerContextVersion++;
+        ReconcileComposerMentions();
+        UpdateComposerState();
+    }
+
+    private void OnMentionPickerClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (!composerAvailable)
+        {
+            return;
+        }
+
+        MentionPickerPanel.Visibility = MentionPickerPanel.Visibility == Visibility.Visible
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        if (MentionPickerPanel.Visibility == Visibility.Visible)
+        {
+            MentionSearchTextBox.Focus();
+        }
+
+        UpdateComposerState();
+    }
+
+    private void OnCloseMentionPickerClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        MentionPickerPanel.Visibility = Visibility.Collapsed;
+        MessageComposerTextBox.Focus();
+    }
+
+    private void OnMentionSearchTextChanged(object sender, TextChangedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        UpdateComposerState();
+    }
+
+    private async void OnMentionSearchPreviewKeyDown(
+        object sender,
+        System.Windows.Input.KeyEventArgs e)
+    {
+        _ = sender;
+        if (e.Key != Key.Enter)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await SearchMentionCandidatesAsync();
+    }
+
+    private async void OnMentionSearchClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        await SearchMentionCandidatesAsync();
+    }
+
+    private async Task SearchMentionCandidatesAsync()
+    {
+        var query = MentionSearchTextBox.Text;
+        var conversationId = composerContextConversationId;
+        if (accountShell is null ||
+            mentionSearchRunning ||
+            !composerAvailable ||
+            !conversationId.HasValue ||
+            !ClientMentionPolicy.IsValidQuery(query))
+        {
+            SetLiveText(
+                MentionSearchStatusText,
+                "请输入 1–64 位 ASCII 字母、数字、点、下划线或连字符前缀。");
+            UpdateComposerState();
+            return;
+        }
+
+        var searchVersion = ++mentionSearchVersion;
+        mentionSearchRunning = true;
+        MentionCandidateList.ItemsSource = null;
+        SetLiveText(MentionSearchStatusText, "正在搜索当前会话候选…");
+        UpdateComposerState();
+        try
+        {
+            var outcome = await accountShell.SearchMentionCandidatesAsync(query);
+            if (searchVersion != mentionSearchVersion ||
+                !composerAvailable ||
+                composerContextConversationId != conversationId)
+            {
+                return;
+            }
+
+            if (outcome.Status == ClientMentionCandidateStatus.Completed)
+            {
+                MentionCandidateList.ItemsSource = outcome.Candidates;
+                SetLiveText(
+                    MentionSearchStatusText,
+                    outcome.Candidates.Count == 0
+                        ? "当前会话没有匹配候选。"
+                        : outcome.HasMore
+                            ? $"显示前 {outcome.Candidates.Count} 个候选，请继续缩小前缀。"
+                            : $"找到 {outcome.Candidates.Count} 个候选。");
+            }
+            else
+            {
+                MentionCandidateList.ItemsSource = null;
+                SetLiveText(MentionSearchStatusText, DescribeMentionSearchOutcome(outcome));
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            if (searchVersion == mentionSearchVersion)
+            {
+                SetLiveText(MentionSearchStatusText, "候选搜索已取消。");
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            if (searchVersion == mentionSearchVersion)
+            {
+                SetLiveText(MentionSearchStatusText, "账户已结束，无法继续搜索。");
+            }
+        }
+        finally
+        {
+            if (searchVersion == mentionSearchVersion)
+            {
+                mentionSearchRunning = false;
+                UpdateComposerState();
+            }
+        }
+    }
+
+    private void OnMentionCandidateClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button
+            {
+                DataContext: MentionCandidateDto candidate,
+            } ||
+            MentionCandidateList.ItemsSource is not IEnumerable<MentionCandidateDto> candidates ||
+            !candidates.Any(value => value == candidate) ||
+            !composerAvailable ||
+            (!composerMentions.ContainsKey(candidate.UserId) &&
+             composerMentions.Count >= ClientMentionPolicy.MaximumMentionCount))
+        {
+            SetLiveText(MentionSearchStatusText, "最多选择 20 个提及用户。");
+            return;
+        }
+
+        if (ClientMentionPolicy.ContainsToken(MessageComposerTextBox.Text, candidate.UserName))
+        {
+            if (!composerMentions.ContainsKey(candidate.UserId))
+            {
+                composerMentions[candidate.UserId] = candidate;
+                composerContextVersion++;
+                RefreshSelectedMentionPresentation();
+            }
+
+            SetLiveText(MentionSearchStatusText, "正文中已有 token，已关联该提及。");
+            MessageComposerTextBox.Focus();
+            UpdateComposerState();
+            return;
+        }
+
+        if (!ClientMentionPolicy.TryInsertToken(
+                MessageComposerTextBox.Text,
+                MessageComposerTextBox.SelectionStart,
+                MessageComposerTextBox.SelectionLength,
+                candidate.UserName,
+                out var edit))
+        {
+            SetLiveText(MentionSearchStatusText, "无法插入该候选，请重新搜索。");
+            return;
+        }
+
+        MessageComposerTextBox.Text = edit.Text;
+        MessageComposerTextBox.SelectionStart = edit.CaretIndex;
+        MessageComposerTextBox.SelectionLength = 0;
+        composerMentions[candidate.UserId] = candidate;
+        composerContextVersion++;
+        RefreshSelectedMentionPresentation();
+        SetLiveText(MentionSearchStatusText, "已插入提及；编辑或删除 token 会同步更新发送集合。");
+        MessageComposerTextBox.Focus();
+        UpdateComposerState();
+    }
+
+    private void OnRemoveMentionClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button
+            {
+                DataContext: MentionCandidateDto candidate,
+            } ||
+            !composerMentions.Remove(candidate.UserId))
+        {
+            return;
+        }
+
+        composerContextVersion++;
+        RefreshSelectedMentionPresentation();
+        SetLiveText(
+            MentionSearchStatusText,
+            "已移除提及 ID；正文 token 保留为普通文字。");
         UpdateComposerState();
     }
 
@@ -652,6 +862,15 @@ public partial class MainWindow : Window
         var submittedContent = MessageComposerTextBox.Text;
         var submittedConversationId = displayedMessageSnapshot?.ConversationId;
         var submittedReplyToMessageId = composerReplyToMessageId;
+        if (!ClientMentionPolicy.TryCanonicalizeUserIds(
+                composerMentions.Keys.ToArray(),
+                out var submittedMentionUserIds))
+        {
+            SetLiveText(MessageComposerStatusText, "提及用户集合无效，请重新选择。");
+            UpdateComposerState();
+            return;
+        }
+
         var submittedContextVersion = composerContextVersion;
         if (submittedReplyToMessageId.HasValue &&
             composerReplyConversationId != submittedConversationId)
@@ -668,21 +887,29 @@ public partial class MainWindow : Window
         {
             var outcome = await accountShell.SendTextMessageAsync(
                 submittedContent,
-                submittedReplyToMessageId);
+                submittedReplyToMessageId,
+                submittedMentionUserIds);
             var replyContextUnchanged = submittedReplyToMessageId.HasValue
                 ? composerReplyConversationId == submittedConversationId &&
                   composerReplyToMessageId == submittedReplyToMessageId
                 : !composerReplyToMessageId.HasValue;
+            var mentionContextUnchanged =
+                ClientMentionPolicy.TryCanonicalizeUserIds(
+                    composerMentions.Keys.ToArray(),
+                    out var currentMentionUserIds) &&
+                currentMentionUserIds.SequenceEqual(submittedMentionUserIds);
             if (outcome.PendingCommitted &&
                 displayedMessageSnapshot?.ConversationId == submittedConversationId &&
                 composerContextVersion == submittedContextVersion &&
                 replyContextUnchanged &&
+                mentionContextUnchanged &&
                 string.Equals(
                     MessageComposerTextBox.Text,
                     submittedContent,
                     StringComparison.Ordinal))
             {
                 MessageComposerTextBox.Clear();
+                ClearComposerMentions(closePicker: true);
                 ClearComposerReply();
             }
 
@@ -708,6 +935,11 @@ public partial class MainWindow : Window
         SendMessageButton.IsEnabled = composerAvailable &&
             !composerSubmissionRunning &&
             ClientTextMessageContentValidator.IsValid(MessageComposerTextBox.Text);
+        MentionPickerButton.IsEnabled = composerAvailable && !composerSubmissionRunning;
+        MentionSearchTextBox.IsEnabled = composerAvailable && !mentionSearchRunning;
+        MentionSearchButton.IsEnabled = composerAvailable &&
+            !mentionSearchRunning &&
+            ClientMentionPolicy.IsValidQuery(MentionSearchTextBox.Text);
     }
 
     private static string DescribeSendOutcome(
@@ -717,7 +949,7 @@ public partial class MainWindow : Window
         {
             ClientMessageSendStatus.Completed => isRetry ? "重试发送成功。" : "发送成功。",
             ClientMessageSendStatus.ValidationFailed =>
-                "消息需包含 1–4000 个 Unicode 字符，且不能只有空白或含不支持的控制字符。",
+                "消息正文或提及用户无效；请检查正文字符与当前候选后重试。",
             ClientMessageSendStatus.AuthenticationRequired => "登录已失效，请重新登录。",
             ClientMessageSendStatus.AccessRevoked => "会话访问已撤销。",
             ClientMessageSendStatus.AccessDenied => "当前账户无权发送到此会话。",
@@ -731,6 +963,23 @@ public partial class MainWindow : Window
             ClientMessageSendStatus.Unavailable => "请先选择可用会话。",
             ClientMessageSendStatus.Canceled => "发送已取消；已落盘消息会保留当前状态。",
             _ => "发送失败；已落盘消息会显示为失败并可重试。",
+        };
+
+    private static string DescribeMentionSearchOutcome(
+        ClientMentionCandidateOutcome outcome) =>
+        outcome.Status switch
+        {
+            ClientMentionCandidateStatus.ValidationFailed =>
+                "请输入有效的用户名字符前缀。",
+            ClientMentionCandidateStatus.AuthenticationRequired => "登录已失效，请重新登录。",
+            ClientMentionCandidateStatus.AccessRevoked => "会话访问已撤销。",
+            ClientMentionCandidateStatus.AccessDenied => "当前账户无权搜索此会话。",
+            ClientMentionCandidateStatus.TransientFailure => "网络暂时不可用，请稍后重试。",
+            ClientMentionCandidateStatus.ProtocolError => "候选响应无效，已拒绝显示。",
+            ClientMentionCandidateStatus.Canceled => "候选搜索已取消。",
+            ClientMentionCandidateStatus.Stale => "会话已切换，旧候选结果已丢弃。",
+            ClientMentionCandidateStatus.Unavailable => "请先选择可用会话。",
+            _ => "候选搜索失败，请稍后重试。",
         };
 
     private void OnMessageScrollChanged(object sender, ScrollChangedEventArgs e)
@@ -842,6 +1091,62 @@ public partial class MainWindow : Window
         SetLiveText(ReplyComposerContentText, string.Empty);
     }
 
+    private void ReconcileComposerMentions()
+    {
+        var removed = composerMentions.Values
+            .Where(candidate => !ClientMentionPolicy.ContainsToken(
+                MessageComposerTextBox.Text,
+                candidate.UserName))
+            .Select(candidate => candidate.UserId)
+            .ToArray();
+        foreach (var userId in removed)
+        {
+            composerMentions.Remove(userId);
+        }
+
+        if (removed.Length != 0)
+        {
+            RefreshSelectedMentionPresentation();
+        }
+    }
+
+    private void RefreshSelectedMentionPresentation()
+    {
+        var selected = composerMentions.Values
+            .OrderBy(candidate => candidate.UserName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(candidate => candidate.UserId)
+            .ToList()
+            .AsReadOnly();
+        SelectedMentionList.ItemsSource = selected;
+        SetLiveText(
+            SelectedMentionHeadingText,
+            $"已选 {selected.Count}/{ClientMentionPolicy.MaximumMentionCount}");
+    }
+
+    private void ClearComposerMentions(bool closePicker)
+    {
+        var hadSelectedMentions = composerMentions.Count != 0;
+        mentionSearchVersion++;
+        mentionSearchRunning = false;
+        composerMentions.Clear();
+        MentionCandidateList.ItemsSource = null;
+        SelectedMentionList.ItemsSource = null;
+        MentionSearchTextBox.Clear();
+        SetLiveText(SelectedMentionHeadingText, "已选 0/20");
+        SetLiveText(
+            MentionSearchStatusText,
+            "输入 1–64 位用户名字符前缀后显式搜索。");
+        if (closePicker)
+        {
+            MentionPickerPanel.Visibility = Visibility.Collapsed;
+        }
+
+        if (hadSelectedMentions)
+        {
+            composerContextVersion++;
+        }
+    }
+
     private void UpdateComposerConversationContext(Guid? conversationId, bool isReady)
     {
         if (composerContextConversationId == conversationId &&
@@ -853,6 +1158,7 @@ public partial class MainWindow : Window
         composerContextConversationId = conversationId;
         composerContextReady = isReady;
         composerContextVersion++;
+        ClearComposerMentions(closePicker: true);
     }
 
     private static bool IsNearBottom(ScrollViewer? scrollViewer) =>
