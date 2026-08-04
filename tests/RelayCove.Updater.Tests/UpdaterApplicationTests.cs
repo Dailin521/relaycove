@@ -3,6 +3,53 @@ namespace RelayCove.Updater.Tests;
 public sealed class UpdaterApplicationTests
 {
     [Fact]
+    public void Run_WhenPackageLocal_CreatesExactOwnedBootstrapAndForwardsToken()
+    {
+        using var temporary = new TemporaryDirectory();
+        var target = Path.Combine(temporary.Path, "RelayCove");
+        Directory.CreateDirectory(target);
+        var packageUpdater = Path.Combine(target, "RelayCove.Updater.exe");
+        File.WriteAllText(packageUpdater, "updater");
+        var fake = new FakePlatform(packageUpdater);
+        var arguments = TestArguments.Create("--target", target);
+
+        var result = UpdaterApplication.Run(arguments, fake);
+
+        var bootstrapDirectory = Path.Combine(temporary.Path, ".relaycove-updater-1234567890abcdef1234567890abcdef");
+        Assert.Equal((int)UpdaterExitCode.Success, result);
+        Assert.Equal(Path.Combine(bootstrapDirectory, "RelayCove.Updater.exe"), fake.StartedExecutablePath);
+        Assert.Equal(bootstrapDirectory, fake.StartedWorkingDirectory);
+        Assert.Equal(
+            "relaycove-bootstrap-owner:1234567890abcdef1234567890abcdef",
+            File.ReadAllText(Path.Combine(bootstrapDirectory, ".relaycove-bootstrap-owner")));
+        Assert.Contains("--bootstrapped", fake.StartedArguments);
+        Assert.Equal(
+            "1234567890abcdef1234567890abcdef",
+            fake.StartedArguments[Array.IndexOf(fake.StartedArguments.ToArray(), "--bootstrap-token") + 1]);
+    }
+
+    [Fact]
+    public void Run_WhenBootstrapStartFails_RemovesOnlyExactOwnedDirectory()
+    {
+        using var temporary = new TemporaryDirectory();
+        var target = Path.Combine(temporary.Path, "RelayCove");
+        Directory.CreateDirectory(target);
+        var packageUpdater = Path.Combine(target, "RelayCove.Updater.exe");
+        File.WriteAllText(packageUpdater, "updater");
+        var unrelated = Path.Combine(temporary.Path, ".relaycove-updater-unrelated");
+        Directory.CreateDirectory(unrelated);
+        File.WriteAllText(Path.Combine(unrelated, "keep.txt"), "keep");
+        var fake = new FakePlatform(packageUpdater) { ThrowOnStart = true };
+        var arguments = TestArguments.Create("--target", target);
+
+        var result = UpdaterApplication.Run(arguments, fake);
+
+        Assert.Equal((int)UpdaterExitCode.ApplyFailed, result);
+        Assert.False(Directory.Exists(Path.Combine(temporary.Path, ".relaycove-updater-1234567890abcdef1234567890abcdef")));
+        Assert.Equal("keep", File.ReadAllText(Path.Combine(unrelated, "keep.txt")));
+    }
+
+    [Fact]
     public void Run_WhenClientHasExited_AppliesPackageAndStartsOnlyFixedClient()
     {
         using var temporary = new TemporaryDirectory();
@@ -233,6 +280,8 @@ internal sealed class FakePlatform : IUpdaterPlatform
 
     internal string? StartedExecutablePath { get; private set; }
 
+    internal string? StartedWorkingDirectory { get; private set; }
+
     internal IReadOnlyList<string> StartedArguments { get; private set; } = [];
 
     public bool ProcessMatches(int processId, long startTimeUtcTicks) => false;
@@ -242,6 +291,7 @@ internal sealed class FakePlatform : IUpdaterPlatform
     public void Start(string executablePath, IEnumerable<string> arguments, string workingDirectory)
     {
         StartedExecutablePath = executablePath;
+        StartedWorkingDirectory = workingDirectory;
         StartedArguments = arguments.ToArray();
         OnStart?.Invoke();
         if (ThrowOnStart)

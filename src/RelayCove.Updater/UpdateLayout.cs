@@ -5,6 +5,9 @@ namespace RelayCove.Updater;
 
 internal sealed class UpdateLayout
 {
+    private const string BootstrapDirectoryPrefix = ".relaycove-updater-";
+    private const string BootstrapMarkerName = ".relaycove-bootstrap-owner";
+    private const string BootstrapMarkerPrefix = "relaycove-bootstrap-owner:";
     private const string PreparedState = "prepared";
     private const string ActivatedState = "activated";
     private const string LaunchingState = "launching";
@@ -76,20 +79,47 @@ internal sealed class UpdateLayout
     internal void StartBootstrap(UpdaterOptions options, IUpdaterPlatform platform)
     {
         ValidateBootstrapParent();
-        var bootstrapDirectory = Path.Combine(parentPath, $".relaycove-updater-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(bootstrapDirectory);
-        var bootstrapPath = Path.Combine(bootstrapDirectory, "RelayCove.Updater.exe");
-        File.Copy(executablePath, bootstrapPath, false);
-        var arguments = new List<string>
+        var bootstrapDirectory = Path.Combine(parentPath, $"{BootstrapDirectoryPrefix}{options.BootstrapToken}");
+        if (Directory.Exists(bootstrapDirectory) || File.Exists(bootstrapDirectory))
         {
-            "apply", "--archive", options.ArchivePath, "--expected-sha256", options.ExpectedSha256,
-            "--expected-size", options.ExpectedSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "--expected-version", options.ExpectedVersion.ToString(), "--current-version", options.CurrentVersion.ToString(),
-            "--target", options.TargetPath, "--wait-pid", options.WaitProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "--wait-start-time-utc-ticks", options.WaitProcessStartTimeUtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            "--wait-timeout-seconds", options.WaitTimeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture), "--bootstrapped",
-        };
-        platform.Start(bootstrapPath, arguments, bootstrapDirectory);
+            throw new InvalidDataException("Bootstrap location is already in use.");
+        }
+
+        Directory.CreateDirectory(bootstrapDirectory);
+        try
+        {
+            if (IsReparsePath(bootstrapDirectory) || Directory.EnumerateFileSystemEntries(bootstrapDirectory).Any())
+            {
+                throw new InvalidDataException("Bootstrap location is invalid.");
+            }
+
+            var markerPath = Path.Combine(bootstrapDirectory, BootstrapMarkerName);
+            var markerBytes = new UTF8Encoding(false).GetBytes($"{BootstrapMarkerPrefix}{options.BootstrapToken}");
+            using (var marker = new FileStream(markerPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            {
+                marker.Write(markerBytes);
+                marker.Flush(true);
+            }
+
+            var bootstrapPath = Path.Combine(bootstrapDirectory, "RelayCove.Updater.exe");
+            File.Copy(executablePath, bootstrapPath, false);
+            var arguments = new List<string>
+            {
+                "apply", "--archive", options.ArchivePath, "--expected-sha256", options.ExpectedSha256,
+                "--expected-size", options.ExpectedSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "--expected-version", options.ExpectedVersion.ToString(), "--current-version", options.CurrentVersion.ToString(),
+                "--target", options.TargetPath, "--wait-pid", options.WaitProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "--wait-start-time-utc-ticks", options.WaitProcessStartTimeUtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "--wait-timeout-seconds", options.WaitTimeoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                "--bootstrap-token", options.BootstrapToken, "--bootstrapped",
+            };
+            platform.Start(bootstrapPath, arguments, bootstrapDirectory);
+        }
+        catch
+        {
+            TryDeleteDirectorySafe(bootstrapDirectory);
+            throw;
+        }
     }
 
     internal FileStream AcquireLock()
@@ -344,7 +374,8 @@ internal sealed class UpdateLayout
 
     private void ValidateBootstrapParent()
     {
-        if (IsReparsePath(parentPath) || IsReparsePath(targetPath) || !Directory.Exists(parentPath))
+        if (IsReparsePath(parentPath) || IsReparsePath(targetPath) || !Directory.Exists(parentPath) ||
+            !File.Exists(executablePath) || IsReparseFile(executablePath))
         {
             throw new InvalidDataException("Update paths are invalid.");
         }

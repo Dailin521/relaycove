@@ -138,6 +138,7 @@ internal static class PackageFixture
         WaitProcessId = 1,
         WaitProcessStartTimeUtcTicks = 1,
         WaitTimeoutSeconds = 1,
+        BootstrapToken = "1234567890abcdef1234567890abcdef",
         Bootstrapped = true,
     };
 }

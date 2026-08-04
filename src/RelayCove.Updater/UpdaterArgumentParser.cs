@@ -51,7 +51,7 @@ internal static class UpdaterArgumentParser
         var required = new[]
         {
             "--archive", "--expected-sha256", "--expected-size", "--expected-version", "--current-version",
-            "--target", "--wait-pid", "--wait-start-time-utc-ticks",
+            "--target", "--wait-pid", "--wait-start-time-utc-ticks", "--bootstrap-token",
         };
         if (values.Keys.Except(required.Append("--wait-timeout-seconds"), StringComparer.Ordinal).Any() || required.Any(key => !values.ContainsKey(key)))
         {
@@ -64,7 +64,8 @@ internal static class UpdaterArgumentParser
             !long.TryParse(values["--wait-start-time-utc-ticks"], NumberStyles.None, CultureInfo.InvariantCulture, out var ticks) || ticks <= 0 ||
             !SemanticVersion.TryParse(values["--expected-version"], out var expectedVersion) ||
             !SemanticVersion.TryParse(values["--current-version"], out var currentVersion) ||
-            !IsLowerSha256(values["--expected-sha256"]))
+            !IsLowerSha256(values["--expected-sha256"]) ||
+            !IsBootstrapToken(values["--bootstrap-token"]))
         {
             return false;
         }
@@ -92,6 +93,7 @@ internal static class UpdaterArgumentParser
             WaitProcessId = waitProcessId,
             WaitProcessStartTimeUtcTicks = ticks,
             WaitTimeoutSeconds = timeout,
+            BootstrapToken = values["--bootstrap-token"],
             Bootstrapped = bootstrapped,
         };
         return true;
@@ -114,4 +116,10 @@ internal static class UpdaterArgumentParser
             return false;
         }
     }
+
+    private static bool IsBootstrapToken(string value) =>
+        value.Length == 32 &&
+        value == value.ToLowerInvariant() &&
+        Guid.TryParseExact(value, "N", out var token) &&
+        token != Guid.Empty;
 }

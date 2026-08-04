@@ -204,6 +204,7 @@ internal sealed class LayoutFixture : IDisposable
             WaitProcessId = 1,
             WaitProcessStartTimeUtcTicks = 1,
             WaitTimeoutSeconds = 1,
+            BootstrapToken = "1234567890abcdef1234567890abcdef",
             Bootstrapped = true,
         };
         Layout = UpdateLayout.Create(options, executablePath);

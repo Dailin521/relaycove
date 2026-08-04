@@ -22,5 +22,7 @@ internal sealed class UpdaterOptions
 
     internal required int WaitTimeoutSeconds { get; init; }
 
+    internal required string BootstrapToken { get; init; }
+
     internal required bool Bootstrapped { get; init; }
 }

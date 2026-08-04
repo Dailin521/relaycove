@@ -11,6 +11,7 @@ internal static class TestArguments
             "--expected-version", "1.0.1-rc.1", "--current-version", "1.0.0",
             "--target", Path.Combine(Path.GetTempPath(), "relaycove-target"),
             "--wait-pid", "12", "--wait-start-time-utc-ticks", "638000000000000000",
+            "--bootstrap-token", "1234567890abcdef1234567890abcdef",
         };
         if (replacementKey is not null)
         {

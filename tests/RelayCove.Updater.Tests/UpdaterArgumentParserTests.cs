@@ -11,6 +11,7 @@ public sealed class UpdaterArgumentParserTests
         Assert.NotNull(options);
         Assert.Equal("1.0.1-rc.1", options.ExpectedVersion.ToString());
         Assert.Equal(60, options.WaitTimeoutSeconds);
+        Assert.Equal("1234567890abcdef1234567890abcdef", options.BootstrapToken);
     }
 
     [Theory]
@@ -37,6 +38,17 @@ public sealed class UpdaterArgumentParserTests
         var arguments = TestArguments.Create(
             "--expected-size",
             (RelayCove.Shared.Updates.UpdateConstants.MaximumArtifactBytes + 1).ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        Assert.False(UpdaterArgumentParser.TryParse(arguments, out _));
+    }
+
+    [Theory]
+    [InlineData("1234567890ABCDEF1234567890ABCDEF")]
+    [InlineData("not-a-token")]
+    [InlineData("00000000000000000000000000000000")]
+    public void TryParse_WhenBootstrapTokenIsInvalid_Rejects(string bootstrapToken)
+    {
+        var arguments = TestArguments.Create("--bootstrap-token", bootstrapToken);
 
         Assert.False(UpdaterArgumentParser.TryParse(arguments, out _));
     }

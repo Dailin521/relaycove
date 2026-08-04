@@ -12,7 +12,10 @@ Each Client RC ZIP contains a separate `RelayCove.Updater.exe`. It is a
 does not depend on a machine-wide .NET installation or the files in the Client
 directory being replaced. The Client must pass a downloaded archive and its
 already validated expected size, SHA-256, target/current version, package root,
-and exact exiting Client process identity. The Updater does not download from
+exact exiting Client process identity, and a new random 32-hex bootstrap token.
+The token fixes the external directory to `.relaycove-updater-{token}` and the
+Updater writes `.relaycove-bootstrap-owner` with the exact token ownership
+marker before launch. The Updater does not download from
 the network and does not accept an arbitrary executable or command line.
 
 For this internal RC, extract releases only to a normal user-writable portable
@@ -52,5 +55,5 @@ Files, reboot scheduling, incremental updates, channels, silent updates, and
 public distribution remain outside this RC and require later release work.
 The self-contained external bootstrap can remain as a controlled sibling
 artifact if exact cleanup is interrupted or fails. M4-04 may clean only an
-exactly recorded, owned bootstrap path; it must not use wildcard sibling
-deletion.
+exactly recorded token path whose marker and fixed two-file layout match; it
+must reject reparse points and must not enumerate or wildcard-delete siblings.
