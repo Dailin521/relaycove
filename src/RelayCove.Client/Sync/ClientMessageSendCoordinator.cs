@@ -139,7 +139,8 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
         IReadOnlyList<ClientAttachmentUploadSource>? sources,
         long? replyToMessageId = null,
         IReadOnlyList<Guid>? mentionUserIds = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<ClientAttachmentSendProgress>? progress = null)
     {
         ThrowIfDisposed();
         if (sources is null)
@@ -188,7 +189,8 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
                 sourceSnapshot,
                 replyToMessageId,
                 canonicalMentionUserIds,
-                cancellationToken));
+                cancellationToken,
+                progress));
     }
 
     public ValueTask DisposeAsync()
@@ -276,12 +278,16 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
         IReadOnlyList<ClientAttachmentUploadSource> sources,
         long? replyToMessageId,
         IReadOnlyList<Guid> mentionUserIds,
-        CancellationToken callerCancellation)
+        CancellationToken callerCancellation,
+        IProgress<ClientAttachmentSendProgress>? progress)
     {
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             lifetimeCancellation.Token,
             callerCancellation);
         var storedAttachmentIds = new List<Guid>(sources.Count);
+        var progressReporter = progress is null
+            ? null
+            : new AttachmentSendProgressReporter(sources, progress, logger);
         try
         {
             var accessStatus = localCache.GetConversationAccessStatus(conversationId);
@@ -291,10 +297,20 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
                     MapLocalFailure(accessStatus));
             }
 
-            foreach (var source in sources)
+            for (var sourceIndex = 0; sourceIndex < sources.Count; sourceIndex++)
             {
+                var source = sources[sourceIndex];
+                progressReporter?.ReportUploading(sourceIndex, bytesCopied: 0, force: true);
                 var upload = await attachmentUploadTransport
-                    .UploadAsync(source, linkedCancellation.Token)
+                    .UploadAsync(
+                        source,
+                        linkedCancellation.Token,
+                        progressReporter is null
+                            ? null
+                            : bytesCopied => progressReporter.ReportUploading(
+                                sourceIndex,
+                                bytesCopied,
+                                force: false))
                     .ConfigureAwait(false);
                 if (upload.Status != ClientAttachmentUploadHttpStatus.Success)
                 {
@@ -317,6 +333,7 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
                 }
 
                 storedAttachmentIds.Add(upload.Attachment!.Id);
+                progressReporter?.CompleteAttachment(sourceIndex);
             }
 
             var canonicalAttachmentIds = storedAttachmentIds
@@ -326,6 +343,8 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
             {
                 return ClientMessageSendOutcome.Failure(ClientMessageSendStatus.ProtocolError);
             }
+
+            progressReporter?.ReportFinalizing();
 
             var pending = new PendingMessage(
                 clientMessageId,
@@ -630,6 +649,116 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
         }
     }
 
+    private sealed class AttachmentSendProgressReporter
+    {
+        private readonly IReadOnlyList<ClientAttachmentUploadSource> sources;
+        private readonly IProgress<ClientAttachmentSendProgress> progress;
+        private readonly ILogger logger;
+        private readonly long totalBytes;
+        private long completedBytes;
+        private long highestCurrentAttemptBytes;
+        private int currentIndex = -1;
+        private int lastAttachmentIndex = -1;
+        private int lastPercent = -1;
+
+        public AttachmentSendProgressReporter(
+            IReadOnlyList<ClientAttachmentUploadSource> sources,
+            IProgress<ClientAttachmentSendProgress> progress,
+            ILogger logger)
+        {
+            this.sources = sources;
+            this.progress = progress;
+            this.logger = logger;
+            totalBytes = sources.Aggregate(
+                0L,
+                static (total, source) => checked(total + source.Size));
+        }
+
+        public void ReportUploading(int sourceIndex, long bytesCopied, bool force)
+        {
+            if (sourceIndex is < 0 or >= 10 || sourceIndex >= sources.Count)
+            {
+                return;
+            }
+
+            if (currentIndex != sourceIndex)
+            {
+                currentIndex = sourceIndex;
+                highestCurrentAttemptBytes = 0;
+                force = true;
+            }
+
+            var boundedCurrentBytes = Math.Clamp(bytesCopied, 0, sources[sourceIndex].Size);
+            highestCurrentAttemptBytes = Math.Max(highestCurrentAttemptBytes, boundedCurrentBytes);
+            var aggregateBytes = Math.Clamp(
+                checked(completedBytes + highestCurrentAttemptBytes),
+                0,
+                totalBytes);
+            var percent = (int)((aggregateBytes * 100) / totalBytes);
+            if (!force && lastAttachmentIndex == sourceIndex && percent == lastPercent)
+            {
+                return;
+            }
+
+            Report(new ClientAttachmentSendProgress(
+                ClientAttachmentSendProgressStage.Uploading,
+                sourceIndex + 1,
+                sources.Count,
+                aggregateBytes,
+                totalBytes,
+                percent));
+            lastAttachmentIndex = sourceIndex;
+            lastPercent = percent;
+        }
+
+        public void CompleteAttachment(int sourceIndex)
+        {
+            if (sourceIndex != currentIndex)
+            {
+                return;
+            }
+
+            completedBytes = checked(completedBytes + sources[sourceIndex].Size);
+            highestCurrentAttemptBytes = 0;
+            var percent = (int)((completedBytes * 100) / totalBytes);
+            if (lastAttachmentIndex != sourceIndex || lastPercent != percent)
+            {
+                Report(new ClientAttachmentSendProgress(
+                    ClientAttachmentSendProgressStage.Uploading,
+                    sourceIndex + 1,
+                    sources.Count,
+                    completedBytes,
+                    totalBytes,
+                    percent));
+                lastAttachmentIndex = sourceIndex;
+                lastPercent = percent;
+            }
+        }
+
+        public void ReportFinalizing() =>
+            Report(new ClientAttachmentSendProgress(
+                ClientAttachmentSendProgressStage.Finalizing,
+                sources.Count,
+                sources.Count,
+                totalBytes,
+                totalBytes,
+                percent: 100));
+
+        private void Report(ClientAttachmentSendProgress value)
+        {
+            try
+            {
+                progress.Report(value);
+            }
+            catch (Exception exception) when (!IsCriticalException(exception))
+            {
+                logger.LogWarning(
+                    "Attachment send progress receiver failed; errorType={ErrorType}.",
+                    exception.GetType().Name);
+            }
+        }
+    }
+
     private void RemoveFlight(Guid clientMessageId)
     {
         lock (flightGate)
@@ -637,6 +766,9 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
             flights.Remove(clientMessageId);
         }
     }
+
+    private static bool IsCriticalException(Exception exception) =>
+        exception is OutOfMemoryException or StackOverflowException or AccessViolationException;
 
     private async Task DisposeCoreAsync()
     {

@@ -246,7 +246,8 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         IReadOnlyList<ClientAttachmentUploadSource>? sources,
         long? replyToMessageId = null,
         IReadOnlyList<Guid>? mentionUserIds = null,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        IProgress<ClientAttachmentSendProgress>? progress = null) =>
         TrackRuntimeOperation(
             token => messageSendCoordinator is null
                 ? Task.FromResult(ClientMessageSendOutcome.Failure(
@@ -257,7 +258,8 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
                     sources,
                     replyToMessageId,
                     mentionUserIds,
-                    token),
+                    token,
+                    progress),
             cancellationToken);
 
     public Task<ClientMessageSendOutcome> RetryPendingMessageAsync(

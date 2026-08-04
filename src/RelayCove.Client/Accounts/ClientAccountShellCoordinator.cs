@@ -405,6 +405,85 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         }
     }
 
+    public async Task<ClientMessageSendOutcome> SendAttachmentsAsync(
+        MessageType type,
+        IReadOnlyList<ClientAttachmentUploadSource>? sources,
+        long? replyToMessageId = null,
+        IReadOnlyList<Guid>? mentionUserIds = null,
+        CancellationToken cancellationToken = default,
+        IProgress<ClientAttachmentSendProgress>? progress = null)
+    {
+        if (!ClientMentionPolicy.TryCanonicalizeUserIds(
+                mentionUserIds ?? Array.Empty<Guid>(),
+                out var canonicalMentionUserIds))
+        {
+            return ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.ValidationFailed);
+        }
+
+        IClientAccountRuntime? activeRuntime;
+        Guid conversationId;
+        lock (stateGate)
+        {
+            if (messageSelection is not { } selection ||
+                !IsCurrentMessageSelectionLocked(selection) ||
+                messageList.Status != ClientMessageListStatus.Ready ||
+                replyToMessageId is <= 0 ||
+                (replyToMessageId.HasValue &&
+                 !selection.Messages.ContainsKey(replyToMessageId.Value)))
+            {
+                return ClientMessageSendOutcome.Failure(
+                    ClientMessageSendStatus.Unavailable);
+            }
+
+            activeRuntime = runtime;
+            conversationId = selection.ConversationId;
+        }
+
+        if (activeRuntime is null)
+        {
+            return ClientMessageSendOutcome.Failure(ClientMessageSendStatus.Unavailable);
+        }
+
+        try
+        {
+            var outcome = await activeRuntime
+                .SendAttachmentsAsync(
+                    conversationId,
+                    type,
+                    sources,
+                    replyToMessageId,
+                    canonicalMentionUserIds,
+                    cancellationToken,
+                    progress)
+                .ConfigureAwait(false);
+            if (outcome.Status == ClientMessageSendStatus.AuthenticationRequired)
+            {
+                await EndAuthenticationRequiredSessionAsync(activeRuntime)
+                    .ConfigureAwait(false);
+            }
+
+            return outcome;
+        }
+        catch (OperationCanceledException)
+        {
+            return ClientMessageSendOutcome.Failure(ClientMessageSendStatus.Canceled);
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientMessageSendOutcome.Failure(ClientMessageSendStatus.Canceled);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Sending an attachment message through the active account failed; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.LocalCacheFailure);
+        }
+    }
+
     public async Task<ClientMentionCandidateOutcome> SearchMentionCandidatesAsync(
         string? query,
         int limit = ClientMentionCandidateCoordinator.DefaultLimit,

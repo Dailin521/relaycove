@@ -1711,6 +1711,184 @@ public sealed class ClientAccountShellCoordinatorTests
     }
 
     [Fact]
+    public async Task SendAttachmentsAsync_WhenReplyAndMentionsAreValid_ForwardsProgressAndCanonicalPayload()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var target = CreateMessage(10, conversationId);
+        var source = new ClientAttachmentUploadSource(
+            "one.png",
+            "image/png",
+            1,
+            _ => ValueTask.FromResult<Stream>(new MemoryStream([1], writable: false)));
+        var progress = new Progress<ClientAttachmentSendProgress>(_ => { });
+        Guid? sentConversationId = null;
+        MessageType? sentType = null;
+        IReadOnlyList<ClientAttachmentUploadSource>? sentSources = null;
+        long? sentReplyToMessageId = null;
+        IReadOnlyList<Guid>? sentMentionUserIds = null;
+        IProgress<ClientAttachmentSendProgress>? sentProgress = null;
+        var firstMention = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var secondMention = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [target],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            AttachmentSendAction = (
+                conversation,
+                type,
+                sources,
+                replyToMessageId,
+                mentions,
+                _,
+                reportedProgress) =>
+            {
+                sentConversationId = conversation;
+                sentType = type;
+                sentSources = sources;
+                sentReplyToMessageId = replyToMessageId;
+                sentMentionUserIds = mentions;
+                sentProgress = reportedProgress;
+                return Task.FromResult(new ClientMessageSendOutcome(
+                    ClientMessageSendStatus.Completed,
+                    PendingCommitted: true));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready &&
+            coordinator.MessageList.Messages.Any(item => item.ServerMessageId == 10));
+
+        var outcome = await coordinator.SendAttachmentsAsync(
+            MessageType.Image,
+            [source],
+            10,
+            [secondMention, firstMention],
+            progress: progress);
+
+        Assert.Equal(ClientMessageSendStatus.Completed, outcome.Status);
+        Assert.Equal(conversationId, sentConversationId);
+        Assert.Equal(MessageType.Image, sentType);
+        Assert.Equal([source], sentSources);
+        Assert.Equal(10, sentReplyToMessageId);
+        Assert.Equal([firstMention, secondMention], sentMentionUserIds);
+        Assert.Same(progress, sentProgress);
+    }
+
+    [Fact]
+    public async Task SendAttachmentsAsync_WhenReplyOrMentionsAreInvalid_DoesNotInvokeRuntime()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var source = new ClientAttachmentUploadSource(
+            "one.bin",
+            "application/octet-stream",
+            1,
+            _ => ValueTask.FromResult<Stream>(new MemoryStream([1], writable: false)));
+        var sendCount = 0;
+        var duplicateMention = Guid.NewGuid();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [CreateMessage(10, id)],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            AttachmentSendAction = (_, _, _, _, _, _, _) =>
+            {
+                Interlocked.Increment(ref sendCount);
+                return Task.FromResult(ClientMessageSendOutcome.Failure(
+                    ClientMessageSendStatus.RemoteFailure));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        var missingReply = await coordinator.SendAttachmentsAsync(
+            MessageType.File,
+            [source],
+            replyToMessageId: 999);
+        var invalidMentions = await coordinator.SendAttachmentsAsync(
+            MessageType.File,
+            [source],
+            mentionUserIds: [duplicateMention, duplicateMention]);
+
+        Assert.Equal(ClientMessageSendStatus.Unavailable, missingReply.Status);
+        Assert.Equal(ClientMessageSendStatus.ValidationFailed, invalidMentions.Status);
+        Assert.Equal(0, Volatile.Read(ref sendCount));
+    }
+
+    [Fact]
+    public async Task SendAttachmentsAsync_WhenAuthenticationExpires_EndsSession()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var source = new ClientAttachmentUploadSource(
+            "one.bin",
+            "application/octet-stream",
+            1,
+            _ => ValueTask.FromResult<Stream>(new MemoryStream([1], writable: false)));
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    Array.Empty<MessageDto>(),
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            AttachmentSendAction = (_, _, _, _, _, _, _) => Task.FromResult(
+                ClientMessageSendOutcome.Failure(
+                    ClientMessageSendStatus.AuthenticationRequired)),
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        var outcome = await coordinator.SendAttachmentsAsync(MessageType.File, [source]);
+
+        Assert.Equal(ClientMessageSendStatus.AuthenticationRequired, outcome.Status);
+        Assert.Equal(ClientAccountShellPhase.SignedOut, coordinator.Snapshot.Phase);
+        Assert.False(coordinator.Snapshot.HasActiveAccount);
+        Assert.Equal(1, runtime.DisposeCount);
+    }
+
+    [Fact]
     public async Task RetryPendingMessageAsync_WhenFailedRowIsVisible_UsesOriginalClientKey()
     {
         var session = CreateSession();
@@ -2302,6 +2480,15 @@ public sealed class ClientAccountShellCoordinatorTests
             set;
         }
 
+        public Func<Guid, MessageType, IReadOnlyList<ClientAttachmentUploadSource>?, long?,
+            IReadOnlyList<Guid>?, CancellationToken, IProgress<ClientAttachmentSendProgress>?,
+            Task<ClientMessageSendOutcome>>?
+            AttachmentSendAction
+        {
+            get;
+            set;
+        }
+
         public Func<Guid, Guid, CancellationToken, Task<ClientMessageSendOutcome>>?
             MessageRetryAction
         {
@@ -2441,7 +2628,16 @@ public sealed class ClientAccountShellCoordinatorTests
             IReadOnlyList<ClientAttachmentUploadSource>? sources,
             long? replyToMessageId = null,
             IReadOnlyList<Guid>? mentionUserIds = null,
-            CancellationToken cancellationToken = default) =>
+            CancellationToken cancellationToken = default,
+            IProgress<ClientAttachmentSendProgress>? progress = null) =>
+            AttachmentSendAction?.Invoke(
+                conversationId,
+                type,
+                sources,
+                replyToMessageId,
+                mentionUserIds,
+                cancellationToken,
+                progress) ??
             Task.FromResult(ClientMessageSendOutcome.Failure(
                 ClientMessageSendStatus.RemoteFailure));
 

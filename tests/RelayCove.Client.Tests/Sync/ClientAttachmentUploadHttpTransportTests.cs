@@ -122,6 +122,66 @@ public sealed class ClientAttachmentUploadHttpTransportTests
     }
 
     [Fact]
+    public async Task UploadAsync_WhenContentIsCopied_ReportsAttemptBytesAndIsolatesCallbackFailure()
+    {
+        var source = CreateTrackingSource("progress.bin", "application/octet-stream", [1, 2, 3, 4]);
+        var copied = new List<long>();
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            var multipart = Assert.IsType<MultipartFormDataContent>(request.Content);
+            Assert.Equal([1, 2, 3, 4], await Assert.Single(multipart).ReadAsByteArrayAsync(token));
+            return Created(Guid.NewGuid(), source.Source);
+        }));
+
+        var result = await CreateTransport(httpClient).UploadAsync(
+            source.Source,
+            CancellationToken.None,
+            bytes =>
+            {
+                copied.Add(bytes);
+                throw new InvalidOperationException("receiver failure");
+            });
+
+        Assert.Equal(ClientAttachmentUploadHttpStatus.Success, result.Status);
+        Assert.Equal(source.Source.Size, Assert.Single(copied));
+        Assert.True(Assert.Single(source.OpenedStreams).Disposed);
+    }
+
+    [Fact]
+    public async Task UploadAsync_WhenStable401AfterContentCopy_ReportsEachReopenedAttempt()
+    {
+        var source = CreateTrackingSource("retry-progress.bin", "application/octet-stream", [1, 2, 3]);
+        var authentication = new FakeAuthenticationSession("old-token", "new-token");
+        var copied = new List<long>();
+        var requests = 0;
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            var multipart = Assert.IsType<MultipartFormDataContent>(request.Content);
+            _ = await Assert.Single(multipart).ReadAsByteArrayAsync(token);
+            if (Interlocked.Increment(ref requests) == 1)
+            {
+                return new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                {
+                    Content = JsonContent.Create(new ApiErrorResponse(
+                        ApiErrorCodes.AuthenticationRequired,
+                        "Authentication is required.")),
+                };
+            }
+
+            return Created(Guid.NewGuid(), source.Source);
+        }));
+
+        var result = await CreateTransport(httpClient, authentication).UploadAsync(
+            source.Source,
+            CancellationToken.None,
+            copied.Add);
+
+        Assert.Equal(ClientAttachmentUploadHttpStatus.Success, result.Status);
+        Assert.Equal([3, 3], copied);
+        Assert.All(source.OpenedStreams, stream => Assert.True(stream.Disposed));
+    }
+
+    [Fact]
     public async Task UploadAsync_WhenUnauthorizedEnvelopeIsMalformed_DoesNotRefreshOrReplay()
     {
         var source = CreateTrackingSource("one.bin", "application/octet-stream", [1]);

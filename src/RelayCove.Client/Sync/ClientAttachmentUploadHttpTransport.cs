@@ -37,7 +37,8 @@ internal sealed class ClientAttachmentUploadHttpTransport
 
     public async Task<ClientAttachmentUploadHttpResult> UploadAsync(
         ClientAttachmentUploadSource source,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<long>? bytesCopied = null)
     {
         ArgumentNullException.ThrowIfNull(source);
         var refreshAttempted = false;
@@ -78,7 +79,11 @@ internal sealed class ClientAttachmentUploadHttpTransport
                 request.Headers.Accept.Add(
                     new MediaTypeWithQualityHeaderValue("application/json"));
 
-                var streamContent = new StreamContent(opened.Stream);
+                var streamContent = new StreamContent(new ProgressReportingStream(
+                    opened.Stream,
+                    bytesCopied is null
+                        ? null
+                        : bytes => ReportBytesCopied(bytesCopied, bytes)));
                 streamContent.Headers.ContentType = new MediaTypeHeaderValue(source.ContentType);
                 multipart.Add(streamContent, "file", source.OriginalFileName);
 
@@ -210,6 +215,20 @@ internal sealed class ClientAttachmentUploadHttpTransport
         }
     }
 
+    private void ReportBytesCopied(Action<long> bytesCopied, long copied)
+    {
+        try
+        {
+            bytesCopied(copied);
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            logger.LogWarning(
+                "Attachment upload progress callback failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
+    }
+
     private static async Task<ClientAttachmentUploadHttpResult> ReadSuccessAsync(
         HttpResponseMessage response,
         ClientAttachmentUploadSource source,
@@ -321,4 +340,128 @@ internal sealed class ClientAttachmentUploadHttpTransport
 
     private static bool IsCriticalException(Exception exception) =>
         exception is OutOfMemoryException or StackOverflowException or AccessViolationException;
+
+    private sealed class ProgressReportingStream(Stream inner, Action<long>? reportBytesCopied) : Stream
+    {
+        private readonly Stream inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        private readonly Action<long>? reportBytesCopied = reportBytesCopied;
+        private long bytesCopied;
+        private int disposed;
+
+        public override bool CanRead => inner.CanRead;
+
+        public override bool CanSeek => inner.CanSeek;
+
+        public override bool CanWrite => inner.CanWrite;
+
+        public override long Length => inner.Length;
+
+        public override long Position
+        {
+            get => inner.Position;
+            set => inner.Position = value;
+        }
+
+        public override void Flush() => inner.Flush();
+
+        public override Task FlushAsync(CancellationToken cancellationToken) =>
+            inner.FlushAsync(cancellationToken);
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = inner.Read(buffer, offset, count);
+            Report(read);
+            return read;
+        }
+
+        public override int Read(Span<byte> buffer)
+        {
+            var read = inner.Read(buffer);
+            Report(read);
+            return read;
+        }
+
+        public override int ReadByte()
+        {
+            var value = inner.ReadByte();
+            if (value >= 0)
+            {
+                Report(1);
+            }
+
+            return value;
+        }
+
+        public override async Task<int> ReadAsync(
+            byte[] buffer,
+            int offset,
+            int count,
+            CancellationToken cancellationToken)
+        {
+            var read = await inner.ReadAsync(buffer, offset, count, cancellationToken)
+                .ConfigureAwait(false);
+            Report(read);
+            return read;
+        }
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            var read = await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            Report(read);
+            return read;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+
+        public override void SetLength(long value) => inner.SetLength(value);
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            inner.Write(buffer, offset, count);
+
+        public override void Write(ReadOnlySpan<byte> buffer) => inner.Write(buffer);
+
+        public override Task WriteAsync(
+            byte[] buffer,
+            int offset,
+            int count,
+            CancellationToken cancellationToken) =>
+            inner.WriteAsync(buffer, offset, count, cancellationToken);
+
+        public override ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default) =>
+            inner.WriteAsync(buffer, cancellationToken);
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                await inner.DisposeAsync().ConfigureAwait(false);
+            }
+
+            GC.SuppressFinalize(this);
+        }
+
+        private void Report(int read)
+        {
+            if (read <= 0 || reportBytesCopied is null)
+            {
+                return;
+            }
+
+            reportBytesCopied(Interlocked.Add(ref bytesCopied, read));
+        }
+    }
 }

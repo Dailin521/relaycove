@@ -661,13 +661,21 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
         var firstAttachment = CreateAttachment(Guid.NewGuid(), "first.txt", "text/plain", 1);
         var uploadCount = 0;
         var messageCount = 0;
-        using var httpClient = new HttpClient(new DelegateHttpHandler((request, _) =>
+        var progress = new List<ClientAttachmentSendProgress>();
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
         {
             if (request.RequestUri!.AbsolutePath.EndsWith("/api/attachments", StringComparison.Ordinal))
             {
-                return Task.FromResult(Interlocked.Increment(ref uploadCount) == 1
+                var currentUpload = Interlocked.Increment(ref uploadCount);
+                if (currentUpload == 1)
+                {
+                    var multipart = Assert.IsType<MultipartFormDataContent>(request.Content);
+                    _ = await Assert.Single(multipart).ReadAsByteArrayAsync(token);
+                }
+
+                return currentUpload == 1
                     ? Created(firstAttachment)
-                    : new HttpResponseMessage(HttpStatusCode.InternalServerError));
+                    : new HttpResponseMessage(HttpStatusCode.InternalServerError);
             }
 
             Interlocked.Increment(ref messageCount);
@@ -678,7 +686,8 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
         var outcome = await coordinator.SendAttachmentsAsync(
             prepared.Conversation.Id,
             MessageType.File,
-            [CreateSource("first.txt", "text/plain"), CreateSource("second.txt", "text/plain")]);
+            [CreateSource("first.txt", "text/plain"), CreateSource("second.txt", "text/plain")],
+            progress: new CollectingProgress(progress));
 
         Assert.Equal(ClientMessageSendStatus.TransientFailure, outcome.Status);
         Assert.False(outcome.PendingCommitted);
@@ -686,6 +695,12 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
         Assert.Equal(0, Volatile.Read(ref messageCount));
         Assert.Equal(0, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalAttachments;"));
         Assert.Equal(0, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
+        Assert.Equal(1, progress.Max(value => value.BytesCopied));
+        Assert.DoesNotContain(progress, value =>
+            value.Stage == ClientAttachmentSendProgressStage.Finalizing);
+        Assert.True(progress.Zip(progress.Skip(1)).All(pair =>
+            pair.First.BytesCopied <= pair.Second.BytesCopied &&
+            pair.First.Percent <= pair.Second.Percent));
     }
 
     [Fact]
@@ -740,6 +755,152 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
             limit: 50);
         Assert.Empty(page.PendingMessages);
         Assert.Equal(attachment.Id, Assert.Single(page.Messages).Attachments.Single().Id);
+    }
+
+    [Fact]
+    public async Task SendAttachmentsAsync_WhenCompleted_ReportsMonotonicProgressThenFinalizing()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        var attachments = new[]
+        {
+            CreateAttachment(Guid.Parse("11111111-1111-1111-1111-111111111111"), "one.txt", "text/plain", 1),
+            CreateAttachment(Guid.Parse("22222222-2222-2222-2222-222222222222"), "two.txt", "text/plain", 1),
+        };
+        var uploadIndex = 0;
+        var progress = new List<ClientAttachmentSendProgress>();
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/api/attachments", StringComparison.Ordinal))
+            {
+                var multipart = Assert.IsType<MultipartFormDataContent>(request.Content);
+                _ = await Assert.Single(multipart).ReadAsByteArrayAsync(token);
+                return Created(attachments[uploadIndex++]);
+            }
+
+            var sent = (await request.Content!.ReadFromJsonAsync<SendMessageRequest>(JsonOptions, token))!;
+            return Created(CreateResponse(sent) with { Attachments = attachments });
+        }));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        var result = await coordinator.SendAttachmentsAsync(
+            prepared.Conversation.Id,
+            MessageType.File,
+            [CreateSource("one.txt", "text/plain"), CreateSource("two.txt", "text/plain")],
+            progress: new CollectingProgress(progress));
+
+        Assert.Equal(ClientMessageSendStatus.Completed, result.Status);
+        Assert.Equal(ClientAttachmentSendProgressStage.Finalizing, progress[^1].Stage);
+        Assert.Equal(100, progress[^1].Percent);
+        Assert.Equal(2, progress[^1].BytesCopied);
+        Assert.True(progress.Zip(progress.Skip(1)).All(pair =>
+            pair.First.BytesCopied <= pair.Second.BytesCopied &&
+            pair.First.Percent <= pair.Second.Percent));
+    }
+
+    [Fact]
+    public async Task SendAttachmentsAsync_WhenStable401ReopensSource_KeepsAggregateProgressMonotonic()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        var authentication = new FakeAuthenticationSession("old-token", "new-token");
+        var attachment = CreateAttachment(Guid.NewGuid(), "retry.bin", "application/octet-stream", 3);
+        var source = new ClientAttachmentUploadSource(
+            "retry.bin",
+            "application/octet-stream",
+            size: 3,
+            _ => ValueTask.FromResult<Stream>(new MemoryStream([1, 2, 3], writable: false)));
+        var progress = new List<ClientAttachmentSendProgress>();
+        var uploadRequests = 0;
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/api/attachments", StringComparison.Ordinal))
+            {
+                var multipart = Assert.IsType<MultipartFormDataContent>(request.Content);
+                _ = await Assert.Single(multipart).ReadAsByteArrayAsync(token);
+                if (Interlocked.Increment(ref uploadRequests) == 1)
+                {
+                    return new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                    {
+                        Content = JsonContent.Create(new ApiErrorResponse(
+                            ApiErrorCodes.AuthenticationRequired,
+                            "Authentication is required.")),
+                    };
+                }
+
+                return Created(attachment);
+            }
+
+            var sent = (await request.Content!.ReadFromJsonAsync<SendMessageRequest>(
+                JsonOptions,
+                token))!;
+            return Created(CreateResponse(sent) with { Attachments = [attachment] });
+        }));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            authenticationSession: authentication);
+
+        var result = await coordinator.SendAttachmentsAsync(
+            prepared.Conversation.Id,
+            MessageType.File,
+            [source],
+            progress: new CollectingProgress(progress));
+
+        Assert.Equal(ClientMessageSendStatus.Completed, result.Status);
+        Assert.Equal(1, authentication.RefreshCount);
+        Assert.Equal(2, Volatile.Read(ref uploadRequests));
+        Assert.Equal(ClientAttachmentSendProgressStage.Finalizing, progress[^1].Stage);
+        Assert.True(progress.Zip(progress.Skip(1)).All(pair =>
+            pair.First.BytesCopied <= pair.Second.BytesCopied &&
+            pair.First.Percent <= pair.Second.Percent));
+    }
+
+    [Fact]
+    public async Task SendAttachmentsAsync_WhenUploadFails_DoesNotReportFinalizing()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        var progress = new List<ClientAttachmentSendProgress>();
+        using var httpClient = new HttpClient(new DelegateHttpHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable))));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        var result = await coordinator.SendAttachmentsAsync(
+            prepared.Conversation.Id,
+            MessageType.File,
+            [CreateSource("one.txt", "text/plain")],
+            progress: new ThrowingProgress(progress));
+
+        Assert.Equal(ClientMessageSendStatus.TransientFailure, result.Status);
+        Assert.DoesNotContain(progress, value =>
+            value.Stage == ClientAttachmentSendProgressStage.Finalizing);
+    }
+
+    [Fact]
+    public async Task SendAttachmentsAsync_WhenCanceledAfterContentCopy_DoesNotReportFinalizing()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        using var cancellation = new CancellationTokenSource();
+        var progress = new List<ClientAttachmentSendProgress>();
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            var multipart = Assert.IsType<MultipartFormDataContent>(request.Content);
+            _ = await Assert.Single(multipart).ReadAsByteArrayAsync(token);
+            cancellation.Cancel();
+            throw new OperationCanceledException(token);
+        }));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        var result = await coordinator.SendAttachmentsAsync(
+            prepared.Conversation.Id,
+            MessageType.File,
+            [CreateSource("one.txt", "text/plain")],
+            cancellationToken: cancellation.Token,
+            progress: new CollectingProgress(progress));
+
+        Assert.Equal(ClientMessageSendStatus.Canceled, result.Status);
+        Assert.Equal(1, progress.Max(value => value.BytesCopied));
+        Assert.DoesNotContain(progress, value =>
+            value.Stage == ClientAttachmentSendProgressStage.Finalizing);
+        Assert.Equal(0, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
     }
 
     [Fact]
@@ -1140,6 +1301,22 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
             currentAccessToken = refreshedToken;
             return Task.FromResult(true);
         }
+    }
+
+    private sealed class ThrowingProgress(List<ClientAttachmentSendProgress> values) :
+        IProgress<ClientAttachmentSendProgress>
+    {
+        public void Report(ClientAttachmentSendProgress value)
+        {
+            values.Add(value);
+            throw new InvalidOperationException("receiver failure");
+        }
+    }
+
+    private sealed class CollectingProgress(List<ClientAttachmentSendProgress> values) :
+        IProgress<ClientAttachmentSendProgress>
+    {
+        public void Report(ClientAttachmentSendProgress value) => values.Add(value);
     }
 
     private sealed class DelegateHttpHandler(

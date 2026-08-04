@@ -62,7 +62,8 @@ internal interface IClientAccountRuntime : IAsyncDisposable
         IReadOnlyList<ClientAttachmentUploadSource>? sources,
         long? replyToMessageId = null,
         IReadOnlyList<Guid>? mentionUserIds = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        IProgress<ClientAttachmentSendProgress>? progress = null);
 
     Task<ClientMessageSendOutcome> RetryPendingMessageAsync(
         Guid conversationId,

@@ -603,15 +603,18 @@
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <Border x:Name="ReplyComposerPanel"
-                                        Grid.ColumnSpan="3"
+                                        Grid.ColumnSpan="4"
                                         Margin="0,0,0,7"
                                         Padding="10,7"
                                         Background="#FFF0F5FA"
@@ -648,7 +651,7 @@
                                 </Border>
                                 <Border x:Name="MentionPickerPanel"
                                         Grid.Row="1"
-                                        Grid.ColumnSpan="3"
+                                        Grid.ColumnSpan="4"
                                         Margin="0,0,0,7"
                                         Padding="10,8"
                                         Background="#FFF7FAFD"
@@ -762,8 +765,63 @@
                                         </ItemsControl>
                                     </StackPanel>
                                 </Border>
+                                <Border x:Name="SelectedAttachmentPanel"
+                                        Grid.Row="2"
+                                        Grid.ColumnSpan="4"
+                                        Margin="0,0,0,7"
+                                        Padding="10,7"
+                                        Background="#FFF7FAFD"
+                                        BorderBrush="#FFD7E2ED"
+                                        BorderThickness="1"
+                                        CornerRadius="3"
+                                        Visibility="Collapsed">
+                                    <StackPanel>
+                                        <TextBlock x:Name="SelectedAttachmentHeadingText"
+                                                   Text="已选 0/10 个附件"
+                                                   AutomationProperties.LiveSetting="Polite"
+                                                   Foreground="#FF36536D"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold" />
+                                        <ItemsControl x:Name="SelectedAttachmentList"
+                                                      Margin="0,5,0,0"
+                                                      AutomationProperties.Name="已选附件">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate>
+                                                    <WrapPanel />
+                                                </ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Margin="0,0,7,5"
+                                                            Padding="7,4"
+                                                            Background="#FFE8F1F8"
+                                                            CornerRadius="3">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="{Binding DisplayName}"
+                                                                       MaxWidth="230"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       VerticalAlignment="Center" />
+                                                            <TextBlock Margin="5,0,0,0"
+                                                                       Text="{Binding DisplaySize}"
+                                                                       Foreground="#FF718396"
+                                                                       FontSize="10"
+                                                                       VerticalAlignment="Center" />
+                                                            <Button Margin="5,0,0,0"
+                                                                    MinWidth="24"
+                                                                    MinHeight="22"
+                                                                    Padding="3,0"
+                                                                    Content="移除"
+                                                                    AutomationProperties.Name="移除附件"
+                                                                    Click="OnRemoveAttachmentClicked" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
                                 <TextBox x:Name="MessageComposerTextBox"
-                                         Grid.Row="2"
+                                         Grid.Row="3"
                                          MinHeight="68"
                                          MaxHeight="150"
                                          Padding="10,8"
@@ -774,9 +832,21 @@
                                          AutomationProperties.Name="消息内容"
                                          TextChanged="OnMessageComposerTextChanged"
                                          PreviewKeyDown="OnMessageComposerPreviewKeyDown" />
-                                <Button x:Name="MentionPickerButton"
-                                        Grid.Row="2"
+                                <Button x:Name="SelectAttachmentsButton"
+                                        Grid.Row="3"
                                         Grid.Column="1"
+                                        MinWidth="68"
+                                        Margin="10,0,0,0"
+                                        Padding="10,8"
+                                        Content="附件"
+                                        ToolTip="正文为空且未选择 @用户时，可以选择最多 10 个本地文件。"
+                                        AutomationProperties.Name="选择附件"
+                                        IsEnabled="False"
+                                        VerticalAlignment="Stretch"
+                                        Click="OnSelectAttachmentsClicked" />
+                                <Button x:Name="MentionPickerButton"
+                                        Grid.Row="3"
+                                        Grid.Column="2"
                                         MinWidth="76"
                                         Margin="10,0,0,0"
                                         Padding="10,8"
@@ -785,8 +855,8 @@
                                         VerticalAlignment="Stretch"
                                         Click="OnMentionPickerClicked" />
                                 <Button x:Name="SendMessageButton"
-                                        Grid.Row="2"
-                                        Grid.Column="2"
+                                        Grid.Row="3"
+                                        Grid.Column="3"
                                         MinWidth="76"
                                         Margin="10,0,0,0"
                                         Padding="14,8"
@@ -794,11 +864,36 @@
                                         IsEnabled="False"
                                         VerticalAlignment="Stretch"
                                         Click="OnSendMessageClicked" />
+                                <Grid x:Name="AttachmentUploadProgressPanel"
+                                      Grid.Row="4"
+                                      Grid.ColumnSpan="4"
+                                      Margin="2,7,0,0"
+                                      Visibility="Collapsed">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <ProgressBar x:Name="AttachmentUploadProgressBar"
+                                                 Height="8"
+                                                 Minimum="0"
+                                                 Maximum="100"
+                                                 Value="0"
+                                                 VerticalAlignment="Center"
+                                                 AutomationProperties.Name="附件上传进度" />
+                                    <TextBlock x:Name="AttachmentUploadProgressText"
+                                               Grid.Column="1"
+                                               Margin="10,0,0,0"
+                                               Text="准备附件上传…"
+                                               AutomationProperties.LiveSetting="Polite"
+                                               Foreground="#FF52708C"
+                                               FontSize="11"
+                                               TextWrapping="Wrap" />
+                                </Grid>
                                 <TextBlock x:Name="MessageComposerStatusText"
-                                           Grid.Row="3"
-                                           Grid.ColumnSpan="3"
+                                           Grid.Row="5"
+                                           Grid.ColumnSpan="4"
                                            Margin="2,5,0,0"
-                                           Text="选择可用会话后发送 Text 消息；Ctrl+Enter 换行。"
+                                           Text="选择可用会话后发送文字；正文为空时可选择附件。Ctrl+Enter 换行。"
                                            AutomationProperties.LiveSetting="Polite"
                                            Foreground="#FF718396"
                                            FontSize="11"
