@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M2
 CurrentStage: 阶段 9
-ActiveTask: docs/ai/tasks/2026-08-04-stage-9-attachment-download-cache.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-04-stage-9-wpf-attachment-download.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 438f7f766e62aa4f73496cb564ed44e0fb35544b
-LatestGreenIntegrationCommit: b678865e2f2a559e9e620567a5caacb4a5882ae0
-NextAction: 仅快进集成后进入 WPF 附件展示、下载/取消/失败重试与安全打开
+LatestGreenIntegrationCommit: c53f5c9ef93f6924fbde7728df01a51a7be05505
+NextAction: 实现 confirmed 附件行、持久 Downloaded 投影、下载/取消/重试与受控本地访问
 ClaudeCalls: 75（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败；仅关键用途调用）
 ClaudeCostUsd: 80.07301150 exact confirmed + 56.61 local CLI displayed（#44–#50/#74–#75）；按显示值合计约 136.68301150；另有四十次失败/中断调用费用 unavailable
 Blocker: none

@@ -6,7 +6,7 @@
 
 - **当前阶段：** 阶段 9 — 附件
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 认证单附件流式上传、attach-once 消息事务、完整附件投影、会话授权下载与未绑定 lease、客户端 v2 附件元数据原子入库/回读、headless 流式上传 reservation 与 durable Image/File send/retry、WPF 原生文件多选/exact 草稿门/content-copy 进度、exact FileDrop/有界内存 PNG Ctrl+V，以及强 ETag 全量可信下载、账户隔离受控缓存、原子本地状态与接收进度 core 已完成
-- **最近验证通过的状态：** 附件下载/cache 生产代码检查点 `438f7f766e62aa4f73496cb564ed44e0fb35544b` 已通过 Fast/Full 1154/1154、真实动态端口 Kestrel→Client→磁盘→SQLite、故障/撤权/损坏/quota 回归与两路 Codex 最终复核；等待仅快进集成
+- **最近验证通过的状态：** 附件下载/cache 生产代码检查点 `438f7f766e62aa4f73496cb564ed44e0fb35544b` 已通过 Fast/Full 1154/1154、真实动态端口 Kestrel→Client→磁盘→SQLite、故障/撤权/损坏/quota 回归与两路 Codex 最终复核；交接提交 `c53f5c9ef93f6924fbde7728df01a51a7be05505` 已仅快进合入并推送 `agent/v1-integration`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — 当前最终 Fast/Full、format 与 1154 项测试（Shared 39、Server 255、Client 859、Updater 1）通过；附件下载/cache/Kestrel 定向 65/65、Server Attachment 51/51，覆盖强 ETag、redirect/decompression、完整性、单飞、配额、撤权竞态、原子发布/CAS、启动恢复、真实 TCP/磁盘/SQLite 与脱敏。WPF 下载视觉、安全打开、缩略图/原图、真实登录键盘/Narrator 与 VPS 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 阶段 9 受权附件下载/cache core 已在 `agent/stage-9-attachment-download-cache` 完成全部门禁与交接记录，正在仅快进合入 `agent/v1-integration`；随后直接进入 WPF 附件行、下载/取消/失败重试与安全打开切片，仍不读取 VPS 配置。
+- 阶段 9 WPF 附件行、持久下载状态、下载/取消/失败重试与受控本地访问已在 `agent/stage-9-wpf-attachment-download` 开始；第一检查点收敛下载交互与安全“在文件夹中显示”，直接打开的文件关联/MOTW 边界由关键只读 challenge 后裁定，仍不读取 VPS 配置。
 
 ## 已完成
 
