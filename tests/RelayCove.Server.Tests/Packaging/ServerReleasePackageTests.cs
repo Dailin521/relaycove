@@ -93,8 +93,19 @@ public sealed partial class ServerReleasePackageTests
         AssertManifest(manifestText, fileRecords, packageName, version);
         AssertStagedProductionConfiguration(fileRecords, version);
         var packageRoot = System.IO.Path.Combine(releaseDirectory, packageName);
-        AssertLinuxX64Elf(System.IO.Path.Combine(packageRoot, "app", "RelayCove.Server"));
-        AssertLinuxX64Elf(System.IO.Path.Combine(packageRoot, "migrate", "RelayCove.Migrations"));
+        foreach (var relativePath in new[]
+        {
+            "app/RelayCove.Server",
+            "app/libhostfxr.so",
+            "app/libhostpolicy.so",
+            "app/libcoreclr.so",
+            "migrate/RelayCove.Migrations",
+        })
+        {
+            AssertLinuxX64Elf(System.IO.Path.Combine(
+                packageRoot,
+                relativePath.Replace('/', System.IO.Path.DirectorySeparatorChar)));
+        }
 
         return new ReleasePackageInspection(archivePath, archiveHash, sidecarText, manifestText);
     }

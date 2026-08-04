@@ -506,6 +506,8 @@ function Assert-DeployMaterials {
         "server 127.0.0.1:5080;",
         "client_max_body_size 102464k;",
         "location /hubs/chat",
+        'proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+        'proxy_set_header X-Forwarded-Proto $scheme;',
         'proxy_set_header Upgrade $http_upgrade;',
         'proxy_set_header Connection $relaycove_connection_upgrade;')) {
         if (-not $nginx.Contains($requiredLine, [System.StringComparison]::Ordinal)) {
@@ -557,10 +559,13 @@ function Get-ReleaseSummary {
             throw "Archive is missing required entry '$expectedPath'."
         }
     }
-    foreach ($executablePath in @(
+    foreach ($elfPath in @(
         "app/RelayCove.Server",
+        "app/libhostfxr.so",
+        "app/libhostpolicy.so",
+        "app/libcoreclr.so",
         "migrate/$migrationBundleName")) {
-        Assert-LinuxX64Elf $entryMap["$packageName/$executablePath"] $executablePath
+        Assert-LinuxX64Elf $entryMap["$packageName/$elfPath"] $elfPath
     }
 
     foreach ($entry in $archive.Entries) {
