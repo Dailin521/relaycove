@@ -666,3 +666,15 @@
 - **理由：** 单一可信 hop 让认证限流重新按真实客户端地址分区，同时把伪造边界限制在本机反向代理；中间件顺序使现有按 `RemoteIpAddress` 分区的策略无需新增公共协议或状态。
 - **影响：** 细化 `DEC-006` 的“当前不读取转发头”前提；Server 启动管线新增受限 Forwarded Headers 配置，部署材料明确 loopback/Nginx 边界，并增加两个代理客户端各自限流、同一客户端仍被限流的回归。没有 API、数据库、migration 或依赖变化；多级代理、CDN 与非 loopback sidecar 需要另行决策和配置。
 - **来源：** 工程方案第 14、16、阶段 13、21.5；`DEC-006`；`docs/ai/tasks/2026-08-04-m4-server-release-package.md`；production `a482d35fd0225feb9a412933fba0d5c6c444a4ed`；认证限流与 Packaging 定向 20/20、最终 Fast/Full 1,445/1,445（Shared 41、Server 302、Client 1,101、Updater 1）、Release 0 警告/0 错误、model drift 与八项目漏洞审计通过。
+
+### DEC-055：内部 RC 先以完整便携 ZIP 和外部自举 Updater 交付更新
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** 工程方案把第一版更新描述为“完整安装包”，但 M4-02 当前真实交付物是未签名、self-contained 的便携 ZIP，仓库没有安装器技术、签名凭据或安装位置契约。为个人/小团队内部使用现在引入 MSI/MSIX/WiX/Inno、提权与公开分发信任链会推迟可运行闭环；直接让包内 Updater 覆盖自身或活动目录，又会遇到 Windows 文件锁、半更新和任意路径风险。
+- **决策：** M4 内部 RC 明确采用完整 `portable-zip`，不冒充方案中的正式安装包。外层 schema 1 更新清单固定单通道 `internal-rc`，携带严格 SemVer 目标/最低版本、mandatory、HTTPS URL、精确 size/lowercase SHA-256 和有界 release notes；ZIP 内 M4-02 `manifest.json` 继续提供逐文件证据。共享层负责验证、比较与更新决策，生成器只从已通过现有 verifier 的 Client RC 产物产生确定性清单。
+- **决策：** Updater 保持离线且只接受结构化参数，不接受任意 executable/argument。它先复制并启动目标目录外、同父目录下的独立 single-file 自身，再核对 archive size/hash、版本前进、内层 manifest、逐文件长度/hash、必需 Client/Updater 和安全 ZIP 路径；staging/backup/journal 均在目标父目录同卷，拒绝 root、reparse、跨卷与不可写便携目标。
+- **决策：** 调用者必须先请求 Client 显式 Exit，并传入 PID 与进程启动时间；Updater 只做有界精确等待，不强杀。替换以 `target -> backup`、`staging -> target` 两次目录 rename 和持久 journal 为提交边界：第二步前失败恢复旧目录，遗留 journal 在下次运行先收敛；新 Client 从固定 `RelayCove.Client.exe` 启动。成功 `Process.Start` 后不把短期进程退出解释成安装失败，也不做复杂自动回滚。
+- **理由：** 复用已验证的完整 ZIP 能最快形成真正可用的内部升级路径；外部自举、同卷 staging 和最小 journal 避免自覆盖与最危险的半替换，同时把网络下载、UI 和进程退出所有权留给 Client 下一切片。
+- **影响：** 这是对工程方案“完整安装包”的有意内部 RC 偏离，不满足安装/签名/SmartScreen/Program Files 或公开分发要求。更新清单与 ZIP 同源 HTTPS + SHA-256 只防传输损坏和非预期内容，不能抵抗发布主机或 TLS 信任链失陷；小团队受控主机暂接受该残余风险，M5 的签名/发布 Gate 仍保留。Server 托管和 Client 检查、下载、强制阻断、显式 Exit 交接在 M4-04 完成。
+- **来源：** 工程方案第 16、阶段 12/13；M4-02 Client ZIP/manifest 实证；`docs/ai/tasks/2026-08-04-m4-portable-updater-core.md`；三路 Codex 仓库调查；Claude #82 Sonnet/High 后台只读 challenge `c5c5ab8c`（运行中，完成后补充裁定与证据）。

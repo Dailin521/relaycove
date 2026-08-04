@@ -7,14 +7,14 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M4
-CurrentStage: M4-02 Windows Client 可运行内部 RC 包已完成，待集成
-ActiveTask: docs/ai/tasks/2026-08-04-m4-client-release-package.md
-TaskStatus: completed
+CurrentStage: M4-03 便携 ZIP 更新协议与本机替换核心
+ActiveTask: docs/ai/tasks/2026-08-04-m4-portable-updater-core.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: fe7a38da5f2ae097c276d69300c2fa25ec29ec08
-LatestGreenIntegrationCommit: a7bade17439b4ff328338f6b2bcdba0170c49355
-NextAction: 将绿色 M4-02 仅快进合入 agent/v1-integration，并立即启动 M4-03 最小 Updater/更新协议切片
-ClaudeCalls: 81（#1–#80 全部终态；#81 本机后台持久 Sonnet/High 只读任务运行中）
+LatestGreenIntegrationCommit: 1a802d613f1d1a7fd07eda7a657b71efd559efa6
+NextAction: 三路并行实现 M4-03 Shared 更新协议、Updater 替换核心和 Client 发布接线，再做真实 apply/recovery 验证
+ClaudeCalls: 82（#1–#80 全部终态；#81/#82 本机后台持久 Sonnet/High 只读任务运行中）
 ClaudeCostUsd: 83.12343525 exact confirmed + 76.68 local CLI displayed（#44–#50/#74–#76）；按显示值合计约 159.80343525；其余未返回费用保持 unavailable
 Blocker: none
 RequiredUserGate: none
@@ -35,7 +35,7 @@ RequiredUserGate: none
 | M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
 | M2 | `completed` | 阶段 9 附件纵向闭环与 Internal Alpha 证据包已由 `8ff8c15` 合入绿色集成分支 | 已进入 M3 |
 | M3 | `completed` | 权限化搜索 API、客户端 Global/Current 搜索、Around-first 跳转和一次性高亮已由 `8d8d5d2` 完成绿色集成，最终 Fast/Full 1,426/1,426 | 已进入 M4 |
-| M4 | `running` | M4-01 Linux Server RC 已由 `a7bade1` 完成绿色集成；M4-02 Windows Client 自包含内部 RC ZIP 已完成全部本机门禁，待仅快进集成 | RC 自动化、包与发布材料完整 |
+| M4 | `running` | M4-01 Linux Server RC 与 M4-02 Windows Client 自包含内部 RC ZIP 已由 `1a802d6` 完成绿色集成；M4-03 便携 ZIP Updater 核心进行中 | 更新检查/下载/交接与 RC 自动化完整 |
 | M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
 
 里程碑顺序来自当前 v1 执行目标；每个里程碑的功能口径和最终交付标准仍由工程方案、决策记录和对应最小纵向任务冻结，本文件不预写实现细节。
@@ -177,14 +177,15 @@ RequiredUserGate: none
 | 79 | 2026-08-04 | 搜索公共协议、权限过滤、SQLite LIKE 与结果边界 | 当前会话旧兼容 MCP 只读协议/安全 challenge | Sonnet / XHigh | 唯一一次调用在答案前失败：本机 MCP 配置已指向 0.5.0 持久工具，但当前 Desktop 任务仍只暴露旧 `consult_claude`，其内部命令再次强加 `$0.5` budget 后退出；无持久 job、正式答案、可靠实际模型、duration 或费用。按策略不重试，由仓库证据、SQLite/EF 官方契约与三路 Codex 只读调查替代 | `unavailable` |
 | 80 | 2026-08-04 | 客户端搜索撤权、迟到结果与 Around-first 导航边界 | 本机 Claude Code 2.1.221 后台持久只读 challenge | Sonnet / High | background `213daa77`、session `213daa77-e08a-4667-9d5f-0c9633e8c489`，`workspace=E:\WorkSpace\RelayCove`，实际 `claude-sonnet-5`；已完成并读取，结论无 P0/P1，仅“输入即清结果”产品细节与未重走全部高亮门控两项非阻塞 P2，经本地证据裁定不影响交付 | `unavailable` |
 | 81 | 2026-08-04 | M4 服务端 RC 发布矩阵、migration bundle、systemd 与 Nginx 边界 | 本机 Claude Code 2.1.221 后台持久只读 challenge | Sonnet / High | 有效 background `6798888b`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；运行中，完成后读取并由 Codex 本地裁定。此前两个 CLI 参数解析产生的空会话未发送模型任务并已停止，不计调用 | `running` |
+| 82 | 2026-08-04 | M4 内部便携 ZIP 更新协议、外部自举与替换恢复边界 | 本机 Claude Code 后台持久只读 challenge | Sonnet / High | 有效 background `c5c5ab8c`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；运行中，完成后读取并由 Codex 本地裁定，不阻塞三路实现 | `running` |
 
-- 调用计数：`81`（#1–#80 全部终态；#81 运行中；#78/#79 在答案前失败且分别按单次策略不重试；#80 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构、安全、数据库、协议或可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
+- 调用计数：`82`（#1–#80 全部终态；#81/#82 运行中；#78/#79 在答案前失败且分别按单次策略不重试；#80 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构、安全、数据库、协议或可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
 - 已确认精确费用合计：`$83.12343525`；另有 #44–#50/#74–#76 本机 Claude Code 状态显示值合计 `$76.68`（界面两位小数，未伪造更高精度），按显示值总计约 `$159.80343525`。其余未返回费用保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate
 
-- 当前阻塞：无；Claude #81 后台运行不阻塞当前仓库证据、双构建产物、本机门禁与 Codex 复核，完成后必须读取并裁定。
+- 当前阻塞：无；Claude #81/#82 后台运行不阻塞当前仓库证据、实现、本机门禁与 Codex 复核，完成后必须读取并裁定。
 - 当前所需用户 Gate：无。
 - `未验证`：用户已提供仓库外的香港 Light-A2 协作应用主机配置汇总，保留到 M5 真实 VPS/双客户端 Gate；当前不读取，届时仅最小读取所需配置且不把地址、密钥或凭据提交到仓库或测试日志。
 - 只有 `AGENTS.md`、`WORKFLOW.md` 和 v1 执行目标列出的重大产品、不可逆、安全、凭据、真实体验或发布事项才请求用户裁决；普通工程实现由当前任务自行收敛。
