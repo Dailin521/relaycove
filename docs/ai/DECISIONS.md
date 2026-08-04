@@ -632,3 +632,15 @@
 - **理由：** opaque cache 与随机带扩展副本分离，既保留原 cache 的完整性和账户隔离，又让 Windows 在受限 zone 下进行当前关联/企业策略/提示裁决。预接管三阶段 job 同时封住 commit 后 enqueue 失败窗口与持有 SQLite/cache/state gate 时进入不受控 COM 的窗口，专用 foreground STA 避免 UI/MTA 承担不受控 COM/杀毒耗时；独立配额和严格恢复阻止反复打开绕过 cache 上限。
 - **影响：** Client 新增无 schema、无协议、无第三方依赖的 open store、STA Attachment Manager service、runtime/shell/WPF“打开”动作与恢复清理；不改 Shared/Server/SQLite、cache 文件、下载 URL 或原附件。已启动的外部应用不可召回；锁定文件删除是 best effort，失败记录为 pending，并在后续 revoke/logout/dispose/recovery cleanup 触发时重试，不承诺后台重试或有界次数；真实登录视觉/Narrator、恶意样本、VPS 与双客户端仍留到 M5 Gate。
 - **来源：** 工程方案第 2.1、9.4、14.3–14.5、阶段 9、21.3；`DEC-038/048/049/050`；`docs/ai/tasks/2026-08-04-stage-9-safe-attachment-open.md`；production `f8c3dcd22c40ec511665314b5daf07a58a798a9d`；最终相关定向 271/271、Fast/Full 1,348/1,348（Shared 39、Server 255、Client 1,053、Updater 1）、Release WPF `RelayCove` 窗口响应、真实 Windows 无害文本 MOTW/Attachment Manager 探针 1/1、model drift、八项目漏洞审计、format 与空白检查。两路 Codex 独立复审均无 P0–P2；Claude #78 在正式答案前因旧兼容入口强加 `$0.5` 预算失败，无 job、正式答案、可靠实际模型、duration 或费用，按单次策略未重试。
+
+### DEC-052：消息与附件字面搜索以内嵌可见性、唯一消息限额和主体限流交付
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** 阶段 10 需要中文消息正文与附件原名搜索，但直接从附件 join、先查权限再查结果或把用户输入直接作为 SQLite `LIKE` pattern，会分别造成重复消息/错误限额、撤权竞态泄漏和 `%`/`_` 通配符扩大。前导 `%keyword%` 的未命中查询还会随历史增长扫描，若认证账号无独立限流可持续放大 SQLite CPU/I/O。
+- **决策：** 新增认证 `GET /api/search`，`keyword` trim 后为 1–64 个有效 Unicode scalar，拒绝纯空白、Control 和无效 UTF-16，不做 normalization；`%`、`_`、`\` 以三参数 `LIKE ... ESCAPE '\'` 按字面搜索。第一版冻结 SQLite 默认语义：ASCII 字母忽略大小写，非 ASCII 按码点大小写精确匹配。`conversationId` 可选，指定未知/删除/不可见会话统一 403；`limit` 为 1–50、默认 50。
+- **决策：** 结果从 `ConversationAccessQuery.VisibleTo` 相关消息驱动，权限谓词、正文 `LIKE`、已绑定 `message.Attachments.Any`、`Message.Id DESC` 和 `Take(limit + 1)` 位于同一 EF/SQLite 查询；管理员没有 Private/Direct 旁路。每条消息只返回一次，多个匹配附件按 ID 稳定选一个文件名；Direct 名称取另一成员。纯文本 snippet 围绕与 SQLite 等价的首次正文命中且至多 160 scalar，不切 surrogate；response/result `ToString()` 与日志隐藏 keyword、正文、文件名、显示名和内部 ID。
+- **决策：** 搜索策略在认证后按签名 JWT subject 固定窗口分区，每账号每分钟 30 次、零排队；第 31 次复用统一 `RateLimitExceeded` 429，不同 subject 不共享配额。第一版不加 Content 索引、migration、FTS/ICU、外部服务、相关性或 cursor；若真实规模 profiling 证明有必要，另开 schema/搜索基础设施决策。
+- **理由：** 以唯一 Message 为查询根并把可见性嵌入结果 SQL，使动态撤权和附件匹配都不能在限额前扩大或泄漏结果；字面转义与明确大小写契约让 SQL 命中和 snippet 可由真实 SQLite 回归固定。响应上限约束输出，subject 限流约束重复扫描，在约 20 人首版规模下避免过早引入 FTS/migration。
+- **影响：** Shared 增加脱敏 search response/result，Server 增加 validator、权限化 query、endpoint 与限流，无 schema、migration、生产依赖或客户端变化。客户端 current/global 搜索、迟到撤权门、Around 跳转和一次性高亮进入下一切片；本地缓存搜索、自动 typeahead、完整 Unicode case-fold 和 VPS Gate 不在本决策范围。
+- **来源：** 工程方案第 1.5、4.1、11.2、12.8、15、阶段 10、21.4；`DEC-003/009/010/012/040/043`；SQLite 与 EF Core SQLite 官方 `LIKE`/`ESCAPE` 契约；`docs/ai/tasks/2026-08-04-stage-10-search-api.md`；production `4c4edbab9fd8a3178d39cd7fbddd49c36c16c82c`；最终 Search 30/30、Fast/Full 1,378/1,378（Shared 41、Server 283、Client 1,053、Updater 1）、真实 HTTP/SQLite 权限/大小写/snippet/限流回归、model drift、八项目漏洞审计、format 与空白检查。安全与协议两路 Codex reviewer 的 P2 均已修正并复审 `PASS`；Claude #79 在正式答案前失败且无可用结论，按单次策略未重试。
