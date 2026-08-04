@@ -17,6 +17,7 @@ using RelayCove.Client.Notifications;
 using RelayCove.Client.Search;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
+using RelayCove.Client.Updates;
 using RelayCove.Shared.Messages;
 
 namespace RelayCove.Client;
@@ -44,6 +45,16 @@ public partial class MainWindow : Window
         new(ClientSearchScope.CurrentConversation, "当前会话"),
     ];
     private ClientAccountShellCoordinator? accountShell;
+    private Func<string, Task<bool>>? loginUpdatePreflight;
+    private Func<Task>? checkForUpdates;
+    private Func<Task>? downloadUpdate;
+    private Action? cancelUpdateDownload;
+    private Func<Task>? applyUpdate;
+    private Action? requestExplicitExit;
+    private bool mandatoryUpdateGate;
+    private bool optionalUpdateActionApplies;
+    private bool optionalUpdateActionCancels;
+    private string? updateHandoffFailure;
     private Guid? pendingConversationSelectionId;
     private long lastConversationRevision;
     private long lastMessageRevision;
@@ -123,6 +134,130 @@ public partial class MainWindow : Window
         ApplyMessageListSnapshot(coordinator.MessageList);
     }
 
+    internal void BindUpdateActions(
+        Func<string, Task<bool>> loginUpdatePreflight,
+        Func<Task> checkForUpdates,
+        Func<Task> downloadUpdate,
+        Action cancelUpdateDownload,
+        Func<Task> applyUpdate,
+        Action requestExplicitExit)
+    {
+        this.loginUpdatePreflight = loginUpdatePreflight ??
+            throw new ArgumentNullException(nameof(loginUpdatePreflight));
+        this.checkForUpdates = checkForUpdates ??
+            throw new ArgumentNullException(nameof(checkForUpdates));
+        this.downloadUpdate = downloadUpdate ??
+            throw new ArgumentNullException(nameof(downloadUpdate));
+        this.cancelUpdateDownload = cancelUpdateDownload ??
+            throw new ArgumentNullException(nameof(cancelUpdateDownload));
+        this.applyUpdate = applyUpdate ?? throw new ArgumentNullException(nameof(applyUpdate));
+        this.requestExplicitExit = requestExplicitExit ??
+            throw new ArgumentNullException(nameof(requestExplicitExit));
+    }
+
+    internal void ApplyUpdateState(ClientUpdateState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (state.IsMandatory)
+        {
+            mandatoryUpdateGate = true;
+        }
+        else if (state.Phase is ClientUpdatePhase.NoUpdate or ClientUpdatePhase.OptionalAvailable)
+        {
+            mandatoryUpdateGate = false;
+            updateHandoffFailure = null;
+        }
+
+        var version = state.Manifest?.Version;
+        var status = state.Phase switch
+        {
+            ClientUpdatePhase.Idle => "更新：尚未检查",
+            ClientUpdatePhase.Checking => "更新：正在检查…",
+            ClientUpdatePhase.NoUpdate => "更新：已是最新版本",
+            ClientUpdatePhase.OptionalAvailable => $"更新：可升级到 {version}" +
+                (string.IsNullOrWhiteSpace(state.Manifest?.ReleaseNotes)
+                    ? string.Empty
+                    : $"\n更新说明：{state.Manifest.ReleaseNotes}"),
+            ClientUpdatePhase.MandatoryAvailable => $"更新：必须升级到 {version}",
+            ClientUpdatePhase.Downloading => "更新：正在下载…",
+            ClientUpdatePhase.Downloaded => $"更新：{version} 已下载，等待安装",
+            ClientUpdatePhase.Failed => "更新：检查或下载失败，可重试",
+            _ => "更新：状态未知",
+        };
+        SetLiveText(UpdateStatusText, status);
+        CheckForUpdatesButton.IsEnabled = checkForUpdates is not null && !mandatoryUpdateGate;
+        optionalUpdateActionApplies = state.Phase == ClientUpdatePhase.Downloaded &&
+            !mandatoryUpdateGate;
+        optionalUpdateActionCancels = state.Phase == ClientUpdatePhase.Downloading &&
+            !mandatoryUpdateGate;
+        OptionalUpdateActionButton.Visibility = !mandatoryUpdateGate && state.Phase is
+            ClientUpdatePhase.OptionalAvailable or ClientUpdatePhase.Downloading or ClientUpdatePhase.Downloaded
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        OptionalUpdateActionButton.Content = optionalUpdateActionCancels
+            ? "取消下载"
+            : optionalUpdateActionApplies
+                ? "关闭并更新"
+                : "下载更新";
+        OptionalUpdateActionButton.IsEnabled = optionalUpdateActionCancels
+            ? cancelUpdateDownload is not null
+            : optionalUpdateActionApplies
+            ? applyUpdate is not null
+            : downloadUpdate is not null;
+
+        MandatoryUpdateOverlay.Visibility = mandatoryUpdateGate
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        if (!mandatoryUpdateGate)
+        {
+            return;
+        }
+
+        var notes = state.Manifest?.ReleaseNotes;
+        SetLiveText(
+            MandatoryUpdateDetailText,
+            string.IsNullOrWhiteSpace(version)
+                ? "此客户端版本已不再受支持。请重新检查并下载更新后继续。"
+                : $"当前客户端需要升级到 {version} 后才能继续使用。" +
+                    (string.IsNullOrWhiteSpace(notes) ? string.Empty : $"\n\n更新说明：{notes}"));
+        var progress = state.Progress;
+        MandatoryUpdateProgressBar.Visibility = progress is null
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        MandatoryUpdateProgressBar.Value = progress?.Percent ?? 0;
+        SetLiveText(
+            MandatoryUpdateProgressText,
+            progress is null
+                ? string.Empty
+                : $"已下载 {progress.BytesWritten:N0} / {progress.TotalBytes:N0} 字节（{progress.Percent:F0}%）。");
+        SetLiveText(
+            MandatoryUpdateErrorText,
+            updateHandoffFailure ?? DescribeUpdateFailure(state.Failure));
+        RetryMandatoryUpdateButton.IsEnabled = checkForUpdates is not null &&
+            state.Phase is not ClientUpdatePhase.Checking and not ClientUpdatePhase.Downloading;
+        DownloadMandatoryUpdateButton.Visibility = state.Phase == ClientUpdatePhase.Downloaded
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        DownloadMandatoryUpdateButton.IsEnabled = downloadUpdate is not null &&
+            state.Manifest is not null && state.Phase is not ClientUpdatePhase.Checking and
+            not ClientUpdatePhase.Downloading;
+        CancelMandatoryUpdateButton.Visibility = state.Phase == ClientUpdatePhase.Downloading
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        CancelMandatoryUpdateButton.IsEnabled = cancelUpdateDownload is not null;
+        ApplyMandatoryUpdateButton.Visibility = state.Phase == ClientUpdatePhase.Downloaded
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ApplyMandatoryUpdateButton.IsEnabled = applyUpdate is not null;
+    }
+
+    internal void ShowUpdateHandoffFailure(string message)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        updateHandoffFailure = message;
+        SetLiveText(MandatoryUpdateErrorText, message);
+    }
+
     internal Guid? SelectedConversationId =>
         (ConversationList.SelectedItem as ClientConversationListItemPresentation)?.Id;
 
@@ -183,6 +318,8 @@ public partial class MainWindow : Window
         RetryButton.IsEnabled = presentation.CanRetry;
         LogoutButton.IsEnabled = presentation.CanLogout;
         OpenSearchButton.IsEnabled = snapshot.HasActiveAccount && !presentation.IsBusy;
+        CheckForUpdatesButton.IsEnabled = checkForUpdates is not null &&
+            snapshot.ServerBaseUri is not null && !mandatoryUpdateGate;
         UpdateMessageSearchState();
     }
 
@@ -926,6 +1063,18 @@ public partial class MainWindow : Window
         CloseSearchButton.IsEnabled = true;
     }
 
+    private static string DescribeUpdateFailure(ClientUpdateFailure failure) => failure switch
+    {
+        ClientUpdateFailure.None => string.Empty,
+        ClientUpdateFailure.Canceled => "下载已取消。请重新检查或再次下载更新。",
+        ClientUpdateFailure.CurrentVersionInvalid => "当前客户端版本无效，无法安全更新。",
+        ClientUpdateFailure.ManifestUnavailable => "暂时无法检查更新，请确认服务器可访问后重试。",
+        ClientUpdateFailure.ManifestInvalid => "服务器返回的更新信息无效，已拒绝继续。",
+        ClientUpdateFailure.DownloadFailed => "更新包下载或校验失败，当前客户端未被修改。请重试。",
+        ClientUpdateFailure.NoUpdateAvailable => "当前没有可下载的更新。",
+        _ => "更新失败，请重试。",
+    };
+
     private static string DescribeMessageSearchOutcome(ClientSearchOutcome outcome) =>
         outcome.Status switch
         {
@@ -1236,6 +1385,13 @@ public partial class MainWindow : Window
         PasswordInput.Clear();
         try
         {
+            if (mandatoryUpdateGate ||
+                (loginUpdatePreflight is not null &&
+                 !await loginUpdatePreflight(ServerAddressTextBox.Text)))
+            {
+                return;
+            }
+
             await coordinator.LoginAsync(
                 ServerAddressTextBox.Text,
                 UserNameTextBox.Text,
@@ -1247,6 +1403,81 @@ public partial class MainWindow : Window
         catch (ObjectDisposedException)
         {
         }
+    }
+
+    private async void OnCheckForUpdatesClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (checkForUpdates is not null)
+        {
+            await checkForUpdates();
+        }
+    }
+
+    private async void OnRetryMandatoryUpdateClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (checkForUpdates is not null)
+        {
+            await checkForUpdates();
+        }
+    }
+
+    private async void OnDownloadUpdateClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (downloadUpdate is not null)
+        {
+            await downloadUpdate();
+        }
+    }
+
+    private void OnCancelUpdateDownloadClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        cancelUpdateDownload?.Invoke();
+    }
+
+    private async void OnApplyUpdateClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (applyUpdate is not null)
+        {
+            await applyUpdate();
+        }
+    }
+
+    private async void OnOptionalUpdateActionClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (optionalUpdateActionCancels)
+        {
+            cancelUpdateDownload?.Invoke();
+        }
+        else if (optionalUpdateActionApplies)
+        {
+            if (applyUpdate is not null)
+            {
+                await applyUpdate();
+            }
+        }
+        else if (downloadUpdate is not null)
+        {
+            await downloadUpdate();
+        }
+    }
+
+    private void OnExitForMandatoryUpdateClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        requestExplicitExit?.Invoke();
     }
 
     private async void OnRetryClicked(object sender, RoutedEventArgs e)

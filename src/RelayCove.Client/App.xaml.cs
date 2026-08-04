@@ -1,5 +1,9 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Text;
 using System.Windows;
 using System.Windows.Interop;
 using Microsoft.Extensions.Logging;
@@ -8,12 +12,23 @@ using RelayCove.Client.Activation;
 using RelayCove.Client.Desktop;
 using RelayCove.Client.Notifications;
 using RelayCove.Client.Storage;
+using RelayCove.Client.Updates;
 using RelayCove.Shared.Realtime;
+using RelayCove.Shared.Updates;
 
 namespace RelayCove.Client;
 
 public partial class App : System.Windows.Application
 {
+    private const string BootstrapRecordFileName = "owned-bootstrap-token.v1";
+    private const string BootstrapMarkerFileName = ".relaycove-bootstrap-owner";
+    private static readonly TimeSpan UpdaterParentExitTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan[] BootstrapCleanupDelays =
+    [
+        TimeSpan.Zero,
+        TimeSpan.FromMilliseconds(250),
+        TimeSpan.FromSeconds(1),
+    ];
     private ILoggerFactory? loggerFactory;
     private WindowsSingleInstanceHost? singleInstanceHost;
     private ClientNotificationActivationRouter? notificationActivationRouter;
@@ -23,9 +38,13 @@ public partial class App : System.Windows.Application
     private WindowsDesktopNotificationAttention? notificationAttention;
     private ClientTrayHost? trayHost;
     private ClientAccountComposition? accountComposition;
+    private HttpClient? updateHttpClient;
+    private ClientUpdateCoordinator? updateCoordinator;
+    private string? updateCacheRoot;
     private bool? notificationRegistrationReady;
     private int lifecycleStopping;
     private int explicitExitRequested;
+    private int updateHandoffStarted;
     private long lastAccountShellRevision;
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -91,6 +110,8 @@ public partial class App : System.Windows.Application
             accountComposition.Coordinator.ConversationListChanged +=
                 OnConversationListChanged;
             accountComposition.Coordinator.MessageListChanged += OnMessageListChanged;
+            updateCoordinator = CreateUpdateCoordinator();
+            updateCoordinator.StateChanged += OnUpdateStateChanged;
         }
         catch (Exception exception)
         {
@@ -131,6 +152,18 @@ public partial class App : System.Windows.Application
 
         try
         {
+            _ = CleanupOwnedBootstrapAsync();
+            var savedServerBaseUri = await accountComposition.GetStoredServerBaseUriAsync();
+            if (savedServerBaseUri is not null)
+            {
+                await updateCoordinator.CheckAsync(savedServerBaseUri);
+            }
+
+            if (updateCoordinator.State.IsMandatory)
+            {
+                return;
+            }
+
             await accountComposition.Coordinator.RestoreAsync();
         }
         catch (ObjectDisposedException) when (Volatile.Read(ref lifecycleStopping) != 0)
@@ -144,6 +177,8 @@ public partial class App : System.Windows.Application
         trayHost?.Dispose();
         notificationAttention?.StopFlashing();
         mainWindowState?.Update(nint.Zero, isForeground: false);
+        _ = updateCoordinator?.DisposeAsync();
+        updateHttpClient?.Dispose();
         accountComposition?.DetachForProcessExit();
         activationDispatcher?.Dispose();
         notificationActivationRouter?.Dispose();
@@ -208,6 +243,43 @@ public partial class App : System.Windows.Application
 
     private ClientAccountComposition CreateAccountComposition()
     {
+        var localAppDataRoot = GetLocalApplicationDataRoot();
+        return ClientAccountComposition.Create(
+            localAppDataRoot,
+            notificationActivationRouter!,
+            notificationAttention!,
+            loggerFactory!);
+    }
+
+    private ClientUpdateCoordinator CreateUpdateCoordinator()
+    {
+        var localAppDataRoot = GetLocalApplicationDataRoot();
+        updateCacheRoot = Path.GetFullPath(Path.Combine(localAppDataRoot, "Updates"));
+        var handler = new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = DecompressionMethods.None,
+        };
+        updateHttpClient = new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromMinutes(10),
+        };
+        var updateLogger = loggerFactory!.CreateLogger<ClientUpdateCoordinator>();
+        var factory = loggerFactory!;
+        return new ClientUpdateCoordinator(
+            new ClientUpdateManifestHttpTransport(
+                updateHttpClient,
+                factory.CreateLogger<ClientUpdateManifestHttpTransport>()),
+            new ClientAssemblyCurrentVersionProvider(),
+            new ClientUpdatePackageDownloader(
+                updateCacheRoot,
+                updateHttpClient,
+                factory.CreateLogger<ClientUpdatePackageDownloader>()),
+            updateLogger);
+    }
+
+    private static string GetLocalApplicationDataRoot()
+    {
         var localAppData = Environment.GetFolderPath(
             Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrWhiteSpace(localAppData))
@@ -216,11 +288,7 @@ public partial class App : System.Windows.Application
                 "The current Windows user does not expose a LocalAppData directory.");
         }
 
-        return ClientAccountComposition.Create(
-            Path.GetFullPath(Path.Combine(localAppData, "RelayCove")),
-            notificationActivationRouter!,
-            notificationAttention!,
-            loggerFactory!);
+        return Path.GetFullPath(Path.Combine(localAppData, "RelayCove"));
     }
 
     private WindowsClientNotificationHost CreateNotificationHost() =>
@@ -329,6 +397,18 @@ public partial class App : System.Windows.Application
             window.BindAccountShell(accountComposition.Coordinator);
         }
 
+        if (updateCoordinator is not null)
+        {
+            window.BindUpdateActions(
+                CheckTypedServerBeforeLoginAsync,
+                CheckForUpdatesAsync,
+                DownloadUpdateAsync,
+                CancelUpdateDownload,
+                ApplyDownloadedUpdateAsync,
+                RequestExplicitExit);
+            window.ApplyUpdateState(updateCoordinator.State);
+        }
+
         window.SetNotificationAvailability(notificationRegistrationReady);
 
         window.SourceInitialized += OnMainWindowStateChanged;
@@ -430,6 +510,13 @@ public partial class App : System.Windows.Application
     private async Task StopPrimaryAndShutdownAsync()
     {
         var host = notificationHost;
+        if (updateCoordinator is not null)
+        {
+            updateCoordinator.StateChanged -= OnUpdateStateChanged;
+            await updateCoordinator.DisposeAsync();
+        }
+
+        updateHttpClient?.Dispose();
         if (accountComposition is not null)
         {
             accountComposition.Coordinator.SnapshotChanged -= OnAccountShellSnapshotChanged;
@@ -536,6 +623,380 @@ public partial class App : System.Windows.Application
             window.ApplyMessageListSnapshot(snapshot);
         }
     }
+
+    private void OnUpdateStateChanged(ClientUpdateState state)
+    {
+        if (Volatile.Read(ref lifecycleStopping) != 0)
+        {
+            return;
+        }
+
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(() => OnUpdateStateChanged(state));
+            return;
+        }
+
+        if (MainWindow is MainWindow window)
+        {
+            window.ApplyUpdateState(state);
+        }
+    }
+
+    private async Task<bool> CheckTypedServerBeforeLoginAsync(string serverAddress)
+    {
+        if (!Uri.TryCreate(serverAddress, UriKind.Absolute, out var parsedServerUri))
+        {
+            return true;
+        }
+
+        try
+        {
+            var serverBaseUri = Auth.ClientAuthenticationUri.CanonicalizeServerBaseUri(parsedServerUri);
+            await updateCoordinator!.CheckAsync(serverBaseUri);
+            return !updateCoordinator.State.IsMandatory;
+        }
+        catch (ArgumentException)
+        {
+            // The authentication flow owns validation feedback for a malformed address.
+            return true;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        var serverBaseUri = accountComposition?.Coordinator.Snapshot.ServerBaseUri;
+        if (serverBaseUri is null || updateCoordinator is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await updateCoordinator.CheckAsync(serverBaseUri);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private async Task DownloadUpdateAsync()
+    {
+        try
+        {
+            if (updateCoordinator is not null)
+            {
+                await updateCoordinator.DownloadAsync();
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private void CancelUpdateDownload()
+    {
+        updateCoordinator?.CancelDownload();
+    }
+
+    private async Task ApplyDownloadedUpdateAsync()
+    {
+        var coordinator = updateCoordinator;
+        var state = coordinator?.State;
+        if (state is null || state.Phase != ClientUpdatePhase.Downloaded ||
+            state.Manifest is null || string.IsNullOrWhiteSpace(state.ArchivePath) ||
+            string.IsNullOrWhiteSpace(state.CurrentVersion) ||
+            Interlocked.CompareExchange(ref updateHandoffStarted, 1, 0) != 0)
+        {
+            return;
+        }
+
+        var token = Guid.NewGuid().ToString("N");
+        if (!TryPersistBootstrapToken(token))
+        {
+            ShowUpdateHandoffFailure("无法安全记录更新交接状态，请重试。");
+            Interlocked.Exchange(ref updateHandoffStarted, 0);
+            return;
+        }
+
+        var updaterStarted = false;
+        var parentExited = false;
+        try
+        {
+            var appDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory));
+            var updaterPath = Path.Combine(appDirectory, "RelayCove.Updater.exe");
+            if (!File.Exists(updaterPath) || IsReparsePoint(updaterPath))
+            {
+                throw new InvalidOperationException("The package-local updater is unavailable.");
+            }
+
+            using var currentProcess = Process.GetCurrentProcess();
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = updaterPath,
+                WorkingDirectory = appDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            AddUpdaterArguments(
+                startInfo,
+                state.Manifest,
+                state.ArchivePath,
+                state.CurrentVersion,
+                appDirectory,
+                currentProcess.Id,
+                currentProcess.StartTime.ToUniversalTime().Ticks,
+                token);
+
+            using var updaterProcess = Process.Start(startInfo) ??
+                throw new InvalidOperationException("The package-local updater did not start.");
+            updaterStarted = true;
+            await updaterProcess.WaitForExitAsync().WaitAsync(UpdaterParentExitTimeout);
+            parentExited = true;
+            if (updaterProcess.ExitCode != 0)
+            {
+                throw new InvalidOperationException("The package-local updater rejected the handoff.");
+            }
+
+            // Exit code 0 means only that the external bootstrap accepted ownership.
+            // It is intentionally not an apply-complete signal.
+            RequestExplicitExit();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or
+            System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or TimeoutException)
+        {
+            if (!updaterStarted || parentExited)
+            {
+                TryDeleteBootstrapRecord();
+            }
+            loggerFactory?.CreateLogger<App>().LogWarning(
+                "Update handoff was not accepted; errorType={ErrorType}.",
+                exception.GetType().Name);
+            ShowUpdateHandoffFailure("更新程序未能接受交接；当前 RelayCove 仍可继续使用，请重试。");
+            Interlocked.Exchange(ref updateHandoffStarted, 0);
+        }
+    }
+
+    private void ShowUpdateHandoffFailure(string message)
+    {
+        if (MainWindow is MainWindow window)
+        {
+            window.ShowUpdateHandoffFailure(message);
+        }
+    }
+
+    internal static void AddUpdaterArguments(
+        ProcessStartInfo startInfo,
+        UpdateManifestDto manifest,
+        string archivePath,
+        string currentVersion,
+        string targetDirectory,
+        int currentProcessId,
+        long currentProcessStartTimeUtcTicks,
+        string bootstrapToken)
+    {
+        ArgumentNullException.ThrowIfNull(startInfo);
+        ArgumentNullException.ThrowIfNull(manifest);
+        ArgumentException.ThrowIfNullOrWhiteSpace(archivePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(currentVersion);
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetDirectory);
+        if (currentProcessId <= 0 || currentProcessStartTimeUtcTicks <= 0 ||
+            !IsBootstrapToken(bootstrapToken))
+        {
+            throw new ArgumentOutOfRangeException(nameof(currentProcessId));
+        }
+
+        startInfo.ArgumentList.Add("apply");
+        startInfo.ArgumentList.Add("--archive");
+        startInfo.ArgumentList.Add(Path.GetFullPath(archivePath));
+        startInfo.ArgumentList.Add("--expected-sha256");
+        startInfo.ArgumentList.Add(manifest.Artifact.Sha256);
+        startInfo.ArgumentList.Add("--expected-size");
+        startInfo.ArgumentList.Add(manifest.Artifact.SizeBytes.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add("--expected-version");
+        startInfo.ArgumentList.Add(manifest.Version);
+        startInfo.ArgumentList.Add("--current-version");
+        startInfo.ArgumentList.Add(currentVersion);
+        startInfo.ArgumentList.Add("--target");
+        startInfo.ArgumentList.Add(Path.GetFullPath(targetDirectory));
+        startInfo.ArgumentList.Add("--wait-pid");
+        startInfo.ArgumentList.Add(currentProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add("--wait-start-time-utc-ticks");
+        startInfo.ArgumentList.Add(currentProcessStartTimeUtcTicks.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add("--bootstrap-token");
+        startInfo.ArgumentList.Add(bootstrapToken);
+    }
+
+    private bool TryPersistBootstrapToken(string token)
+    {
+        if (!IsBootstrapToken(token) || string.IsNullOrWhiteSpace(updateCacheRoot))
+        {
+            return false;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(updateCacheRoot);
+            if (IsReparsePoint(updateCacheRoot))
+            {
+                return false;
+            }
+
+            var recordPath = GetBootstrapRecordPath();
+            var temporaryPath = recordPath + ".tmp";
+            if ((File.Exists(recordPath) && IsReparsePoint(recordPath)) ||
+                (File.Exists(temporaryPath) && IsReparsePoint(temporaryPath)))
+            {
+                return false;
+            }
+
+            File.Delete(temporaryPath);
+            File.WriteAllText(temporaryPath, token, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            File.Move(temporaryPath, recordPath, overwrite: true);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+            System.Security.SecurityException)
+        {
+            loggerFactory?.CreateLogger<App>().LogWarning(
+                "Update bootstrap ownership record failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return false;
+        }
+    }
+
+    private async Task CleanupOwnedBootstrapAsync()
+    {
+        if (string.IsNullOrWhiteSpace(updateCacheRoot))
+        {
+            return;
+        }
+
+        string? token;
+        try
+        {
+            var recordPath = GetBootstrapRecordPath();
+            token = File.Exists(recordPath) && !IsReparsePoint(recordPath)
+                ? await File.ReadAllTextAsync(recordPath)
+                : null;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            loggerFactory?.CreateLogger<App>().LogWarning(
+                "Update bootstrap ownership read failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return;
+        }
+
+        if (!IsBootstrapToken(token))
+        {
+            TryDeleteBootstrapRecord();
+            return;
+        }
+
+        foreach (var delay in BootstrapCleanupDelays)
+        {
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay);
+            }
+
+            if (TryDeleteOwnedBootstrap(token!))
+            {
+                TryDeleteBootstrapRecord();
+                return;
+            }
+        }
+    }
+
+    private bool TryDeleteOwnedBootstrap(string token)
+    {
+        try
+        {
+            var appDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory));
+            var packageParent = Directory.GetParent(appDirectory)?.FullName;
+            if (string.IsNullOrWhiteSpace(packageParent) || IsReparsePoint(packageParent))
+            {
+                return false;
+            }
+
+            var expectedDirectory = Path.GetFullPath(Path.Combine(
+                packageParent,
+                ".relaycove-updater-" + token));
+            if (!string.Equals(Path.GetDirectoryName(expectedDirectory), packageParent,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (!Directory.Exists(expectedDirectory))
+            {
+                return true;
+            }
+
+            if (IsReparsePoint(expectedDirectory))
+            {
+                return false;
+            }
+
+            var expectedUpdater = Path.Combine(expectedDirectory, "RelayCove.Updater.exe");
+            var expectedMarker = Path.Combine(expectedDirectory, BootstrapMarkerFileName);
+            var entries = Directory.GetFileSystemEntries(expectedDirectory);
+            if (entries.Length != 2 || entries.Any(entry =>
+                    !string.Equals(entry, expectedUpdater, StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(entry, expectedMarker, StringComparison.OrdinalIgnoreCase)) ||
+                !File.Exists(expectedUpdater) || !File.Exists(expectedMarker) ||
+                IsReparsePoint(expectedUpdater) || IsReparsePoint(expectedMarker) ||
+                !string.Equals(
+                    File.ReadAllText(expectedMarker, Encoding.UTF8),
+                    "relaycove-bootstrap-owner:" + token,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            File.Delete(expectedMarker);
+            File.Delete(expectedUpdater);
+            Directory.Delete(expectedDirectory, recursive: false);
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+            System.Security.SecurityException)
+        {
+            return false;
+        }
+    }
+
+    private string GetBootstrapRecordPath() => Path.Combine(updateCacheRoot!, BootstrapRecordFileName);
+
+    private void TryDeleteBootstrapRecord()
+    {
+        try
+        {
+            var path = GetBootstrapRecordPath();
+            if (!File.Exists(path) || !IsReparsePoint(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            loggerFactory?.CreateLogger<App>().LogWarning(
+                "Update bootstrap ownership record cleanup failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
+    }
+
+    private static bool IsBootstrapToken(string? value) =>
+        value?.Length == 32 && value.All(character =>
+            character is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    private static bool IsReparsePoint(string path) =>
+        (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
 
     private void TryStartTrayHost()
     {

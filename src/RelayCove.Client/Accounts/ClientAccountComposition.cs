@@ -16,6 +16,7 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
     private readonly object stateGate = new();
     private readonly HttpClient httpClient;
     private readonly HttpClient attachmentUploadHttpClient;
+    private readonly ClientCredentialStore? credentialStore;
     private readonly IWindowsAttachmentOpenService? attachmentOpenService;
     private Task? disposeTask;
     private bool detachedForProcessExit;
@@ -31,13 +32,15 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
         HttpClient httpClient,
         HttpClient attachmentUploadHttpClient,
         ClientAccountShellCoordinator coordinator,
-        IWindowsAttachmentOpenService? attachmentOpenService = null)
+        IWindowsAttachmentOpenService? attachmentOpenService = null,
+        ClientCredentialStore? credentialStore = null)
     {
         this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         this.attachmentUploadHttpClient = attachmentUploadHttpClient ??
             throw new ArgumentNullException(nameof(attachmentUploadHttpClient));
         Coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         this.attachmentOpenService = attachmentOpenService;
+        this.credentialStore = credentialStore;
     }
 
     public ClientAccountShellCoordinator Coordinator { get; }
@@ -97,7 +100,8 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
                 httpClient,
                 attachmentUploadHttpClient,
                 coordinator,
-                attachmentOpenService);
+                attachmentOpenService,
+                credentialStore);
         }
         catch
         {
@@ -140,6 +144,24 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
         }
 
         return new ValueTask(sharedDispose);
+    }
+
+    /// <summary>
+    /// Reads only the persisted server origin needed to perform the anonymous update
+    /// preflight. The refresh credential remains inside the authentication boundary.
+    /// </summary>
+    internal async Task<Uri?> GetStoredServerBaseUriAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (credentialStore is null)
+        {
+            return null;
+        }
+
+        var outcome = await credentialStore.LoadAsync(cancellationToken).ConfigureAwait(false);
+        return outcome.Status == ClientCredentialReadStatus.Loaded
+            ? outcome.Credential?.ServerBaseUri
+            : null;
     }
 
     public void DetachForProcessExit()

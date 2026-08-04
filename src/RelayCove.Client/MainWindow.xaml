@@ -99,6 +99,25 @@
                                Foreground="#FF9FB3C8"
                                TextWrapping="Wrap"
                                TextTrimming="CharacterEllipsis" />
+                    <Button x:Name="CheckForUpdatesButton"
+                            Margin="0,14,0,0"
+                            Padding="10,5"
+                            HorizontalAlignment="Left"
+                            Content="检查更新"
+                            AutomationProperties.Name="检查更新"
+                            Click="OnCheckForUpdatesClicked" />
+                    <TextBlock x:Name="UpdateStatusText"
+                               Margin="0,8,0,0"
+                               AutomationProperties.LiveSetting="Polite"
+                               Foreground="#FF9FB3C8"
+                               Text="更新：尚未检查"
+                               TextWrapping="Wrap" />
+                    <Button x:Name="OptionalUpdateActionButton"
+                            Margin="0,8,0,0"
+                            Padding="10,5"
+                            HorizontalAlignment="Left"
+                            Visibility="Collapsed"
+                            Click="OnOptionalUpdateActionClicked" />
                 </StackPanel>
 
                 <TextBlock x:Name="SidebarUnreadText"
@@ -1338,6 +1357,79 @@
                                TextWrapping="Wrap"
                                AutomationProperties.LiveSetting="Polite" />
                 </Grid>
+            </Border>
+        </Grid>
+        <Grid x:Name="MandatoryUpdateOverlay"
+              Grid.ColumnSpan="2"
+              Panel.ZIndex="200"
+              Visibility="Collapsed"
+              Background="#E610243E"
+              Focusable="True"
+              KeyboardNavigation.TabNavigation="Cycle"
+              AutomationProperties.Name="需要更新"
+              AutomationProperties.LiveSetting="Assertive">
+            <Border MaxWidth="620"
+                    Margin="36"
+                    Padding="32"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="White"
+                    BorderBrush="#FF1677D2"
+                    BorderThickness="2"
+                    CornerRadius="12">
+                <StackPanel>
+                    <TextBlock Text="需要更新 RelayCove"
+                               Foreground="#FF17263A"
+                               FontSize="24"
+                               FontWeight="SemiBold" />
+                    <TextBlock x:Name="MandatoryUpdateDetailText"
+                               Margin="0,12,0,0"
+                               Foreground="#FF4F6275"
+                               TextWrapping="Wrap"
+                               AutomationProperties.LiveSetting="Polite" />
+                    <TextBlock x:Name="MandatoryUpdateProgressText"
+                               Margin="0,12,0,0"
+                               Foreground="#FF1677D2"
+                               TextWrapping="Wrap"
+                               AutomationProperties.LiveSetting="Polite" />
+                    <ProgressBar x:Name="MandatoryUpdateProgressBar"
+                                 Margin="0,8,0,0"
+                                 Height="8"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 Visibility="Collapsed" />
+                    <TextBlock x:Name="MandatoryUpdateErrorText"
+                               Margin="0,12,0,0"
+                               Foreground="#FFB42318"
+                               TextWrapping="Wrap"
+                               AutomationProperties.LiveSetting="Assertive" />
+                    <WrapPanel Margin="0,22,0,0">
+                        <Button x:Name="RetryMandatoryUpdateButton"
+                                Margin="0,0,10,0"
+                                Content="重新检查"
+                                Click="OnRetryMandatoryUpdateClicked" />
+                        <Button x:Name="DownloadMandatoryUpdateButton"
+                                Margin="0,0,10,0"
+                                Content="下载更新"
+                                Background="#FF1677D2"
+                                Foreground="White"
+                                Click="OnDownloadUpdateClicked" />
+                        <Button x:Name="CancelMandatoryUpdateButton"
+                                Margin="0,0,10,0"
+                                Content="取消下载"
+                                Visibility="Collapsed"
+                                Click="OnCancelUpdateDownloadClicked" />
+                        <Button x:Name="ApplyMandatoryUpdateButton"
+                                Margin="0,0,10,0"
+                                Content="关闭并更新"
+                                Background="#FF1677D2"
+                                Foreground="White"
+                                Visibility="Collapsed"
+                                Click="OnApplyUpdateClicked" />
+                        <Button Content="退出 RelayCove"
+                                Click="OnExitForMandatoryUpdateClicked" />
+                    </WrapPanel>
+                </StackPanel>
             </Border>
         </Grid>
     </Grid>
