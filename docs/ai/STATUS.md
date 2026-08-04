@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-- **当前阶段：** M4-03 — 便携 ZIP 更新协议与本机替换核心已完成，待绿色集成后进入 M4-04
+- **当前阶段：** M4-04 — 更新托管、下载、mandatory UI 与显式 Exit 交接进行中
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮；M4-01 可复现 Linux x64 Server RC、M4-02 可复现 Windows Client 自包含 ZIP，以及 M4-03 共享更新协议、确定性清单、外部自举 Updater 与真实 rc.6→rc.11 替换恢复均已完成
 - **最近验证通过的状态：** M4-03 production `84b3b955afde3bda2a3830e2e2a8be3aacbea88b` 的干净 `1.0.0-rc.11` 双构建归档字节一致（`165651787` bytes，SHA-256 `b2ccbf1a6df10dc6f413cfd391f7c88ff9f7767944823a012c4ba19959e6cb17`），真实 generator、离线 verifier、rc.6→rc.11 自举/精确等待/替换/启动 smoke、Shared Updates 24/24、Updater 33/33、Packaging 13/13、Fast/Full 1,514/1,514、多路独立复核、model drift、八项目依赖漏洞、format 与空白检查均通过
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- M4-03 已完成内部 `portable-zip` 的共享清单/版本决策、外部自举 Updater、本机安全替换/恢复和 Client 发布接线；当前执行绿色 push/仅快进集成，随后在 M4-04 完成 Server 托管与 Client 检查/下载/UI/显式 Exit 交接。
+- M4-03 已由 `6444656` 绿色集成；M4-04 当前完成 Server exact manifest/artifact 只读托管、Client 启动/手动检查、受控下载、optional/mandatory UI 和显式 Exit→Updater 交接，签名/VPS/真实账号仍留到 M5。
 
 ## 已完成
 
@@ -82,7 +82,7 @@
 
 ## 下一任务
 
-推送并仅快进集成 M4-03，随后启动 M4-04：Server 托管更新清单/ZIP，Client 完成检查、下载、mandatory 阻断、进度/UI 与显式 Exit→Updater 交接；真实登录视觉、香港 VPS 与双客户端 Gate 保留到 M5。
+并行实现 M4-04 的 Server exact 更新托管、Client 检查/下载状态机及 WPF/显式 Exit 交接，再做真实 HTTP 与发布目录升级 smoke；真实登录视觉、香港 VPS 与双客户端 Gate 保留到 M5。
 
 ## 阻塞项
 

@@ -7,13 +7,13 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M4
-CurrentStage: M4-03 便携 ZIP 更新协议与本机替换核心已完成
-ActiveTask: docs/ai/tasks/2026-08-04-m4-portable-updater-core.md
-TaskStatus: completed
+CurrentStage: M4-04 更新托管、下载与客户端交接
+ActiveTask: docs/ai/tasks/2026-08-04-stage-12-update-delivery.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 84b3b955afde3bda2a3830e2e2a8be3aacbea88b
-LatestGreenIntegrationCommit: 1a802d613f1d1a7fd07eda7a657b71efd559efa6
-NextAction: 提交 M4-03 证据，push 并仅快进 agent/v1-integration，随后启动 M4-04 Server 托管与 Client 下载/交接
+LatestGreenIntegrationCommit: 6444656cc966780cf1fea7ee77beab5940e79f66
+NextAction: 并行实现 Server exact manifest/artifact 托管、Client 检查/下载状态机与 WPF mandatory/Exit→Updater 交接
 ClaudeCalls: 82（#1–#82 全部终态；#81/#82 实际 claude-sonnet-5 / High 答案均已读取并本地裁定）
 ClaudeCostUsd: 83.12343525 exact confirmed + 94.83 local CLI displayed（#44–#50/#74–#76/#81–#82）；按显示值合计约 177.95343525；其余未返回费用保持 unavailable
 Blocker: none
@@ -35,7 +35,7 @@ RequiredUserGate: none
 | M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
 | M2 | `completed` | 阶段 9 附件纵向闭环与 Internal Alpha 证据包已由 `8ff8c15` 合入绿色集成分支 | 已进入 M3 |
 | M3 | `completed` | 权限化搜索 API、客户端 Global/Current 搜索、Around-first 跳转和一次性高亮已由 `8d8d5d2` 完成绿色集成，最终 Fast/Full 1,426/1,426 | 已进入 M4 |
-| M4 | `running` | M4-01 Linux Server RC、M4-02 Windows Client 自包含 ZIP 已由 `1a802d6` 绿色集成；M4-03 便携 ZIP Updater 核心已通过最终门禁，待本次仅快进集成 | M4-04 更新托管、检查、下载、mandatory 阻断与显式 Exit 交接 |
+| M4 | `running` | M4-01/M4-02 与 M4-03 便携 ZIP Updater 核心已由 `6444656` 完成绿色集成；M4-04 更新交付闭环进行中 | 更新托管、检查、下载、mandatory 阻断与显式 Exit 交接完整 |
 | M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
 
 里程碑顺序来自当前 v1 执行目标；每个里程碑的功能口径和最终交付标准仍由工程方案、决策记录和对应最小纵向任务冻结，本文件不预写实现细节。
