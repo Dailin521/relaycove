@@ -61,6 +61,7 @@ internal sealed class ClientUpdateCoordinator : IAsyncDisposable
                 if (activeDownload is not null)
                 {
                     activeDownload.Cancellation.Cancel();
+                    activeDownload = null;
                     downloader.Cancel();
                 }
 

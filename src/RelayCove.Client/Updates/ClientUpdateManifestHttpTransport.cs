@@ -11,7 +11,7 @@ namespace RelayCove.Client.Updates;
 
 internal sealed class ClientUpdateManifestHttpTransport : IClientUpdateManifestTransport
 {
-    private const long MaximumManifestBytes = 32 * 1024;
+    private const long MaximumManifestBytes = 64 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient httpClient;
     private readonly ILogger logger;

@@ -41,31 +41,7 @@ internal sealed class ClientUpdatePackageDownloader : IClientUpdateDownloader, I
             throw new ArgumentException("The update manifest is invalid.", nameof(manifest));
         }
 
-        DownloadFlight flight;
-        lock (gate)
-        {
-            if (activeFlight is { } existing)
-            {
-                if (!HasSameArtifact(existing.Manifest, manifest))
-                {
-                    return Task.FromResult(ClientUpdateDownloadOutcome.Failure(
-                        ClientUpdateDownloadStatus.InProgress));
-                }
-
-                existing.AddProgress(progress);
-                flight = existing;
-            }
-            else
-            {
-                flight = new DownloadFlight(manifest, progress);
-                activeFlight = flight;
-                flight.Task = DownloadCoreAsync(flight);
-            }
-        }
-
-        return cancellationToken.CanBeCanceled
-            ? flight.Task!.WaitAsync(cancellationToken)
-            : flight.Task!;
+        return JoinOrStartAsync(manifest, progress, cancellationToken);
     }
 
     public void Cancel()
@@ -88,6 +64,81 @@ internal sealed class ClientUpdatePackageDownloader : IClientUpdateDownloader, I
 
     public override string ToString() =>
         $"{nameof(ClientUpdatePackageDownloader)} {{ CacheRoot = [REDACTED] }}";
+
+    private async Task<ClientUpdateDownloadOutcome> JoinOrStartAsync(
+        UpdateManifestDto manifest,
+        Action<ClientUpdateDownloadProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            ThrowIfDisposed();
+            Task<ClientUpdateDownloadOutcome>? flightTask = null;
+            Task<ClientUpdateDownloadOutcome>? canceledFlightTask = null;
+            lock (gate)
+            {
+                if (activeFlight is { } existing)
+                {
+                    if (existing.Cancellation.IsCancellationRequested)
+                    {
+                        canceledFlightTask = existing.Task!;
+                    }
+                    else if (HasSameArtifact(existing.Manifest, manifest))
+                    {
+                        existing.AddProgress(progress);
+                        flightTask = existing.Task!;
+                    }
+                    else
+                    {
+                        return ClientUpdateDownloadOutcome.Failure(
+                            ClientUpdateDownloadStatus.InProgress);
+                    }
+                }
+                else
+                {
+                    var flight = new DownloadFlight(manifest, progress);
+                    activeFlight = flight;
+                    flight.Task = DownloadCoreAsync(flight);
+                    flightTask = flight.Task;
+                }
+            }
+
+            if (canceledFlightTask is not null)
+            {
+                await DrainCanceledFlightAsync(canceledFlightTask, cancellationToken).ConfigureAwait(false);
+                continue;
+            }
+
+            return await WaitForCallerAsync(flightTask!, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static Task<ClientUpdateDownloadOutcome> WaitForCallerAsync(
+        Task<ClientUpdateDownloadOutcome> flightTask,
+        CancellationToken cancellationToken) =>
+        cancellationToken.CanBeCanceled
+            ? flightTask.WaitAsync(cancellationToken)
+            : flightTask;
+
+    private async Task DrainCanceledFlightAsync(
+        Task<ClientUpdateDownloadOutcome> canceledFlightTask,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await WaitForCallerAsync(canceledFlightTask, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException and not AccessViolationException)
+        {
+            logger.LogWarning(
+                "Canceled update package flight drained with a failure; errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
+    }
 
     private async Task<ClientUpdateDownloadOutcome> DownloadCoreAsync(DownloadFlight flight)
     {
