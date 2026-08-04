@@ -202,7 +202,7 @@ function New-SmokeHttpClient {
     $handler.UseProxy = $false
     # The Kestrel instance has an ephemeral test-only self-signed certificate.
     # Production Client TLS validation is deliberately not relaxed.
-    $handler.ServerCertificateCustomValidationCallback = { $true }
+    $handler.ServerCertificateCustomValidationCallback = [System.Net.Http.HttpClientHandler]::DangerousAcceptAnyServerCertificateValidator
     $client = [System.Net.Http.HttpClient]::new($handler)
     $client.Timeout = [TimeSpan]::FromMinutes(2)
     $client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Encoding", "identity") | Out-Null
@@ -227,6 +227,7 @@ function Wait-ForServer {
             finally { $response.Dispose() }
         }
         catch [System.Net.Http.HttpRequestException] {
+            $lastStatus = "HTTP exception $($_.Exception.GetType().Name): $($_.Exception.Message)"
         }
         Start-Sleep -Milliseconds 250
     }
@@ -486,7 +487,7 @@ New-Item -ItemType Directory -Path $runRoot | Out-Null
 $server = $null
 $certificateThumbprint = $null
 $httpClient = $null
-$smokeClientIds = @()
+$smokeClientProcesses = @()
 try {
     $releaseRoot = Join-Path $runRoot "releases"
     New-Item -ItemType Directory -Path $releaseRoot | Out-Null
@@ -579,7 +580,21 @@ try {
     Wait-ForManifestVersion $target $NewVersion
     Assert-Condition (Test-Path -LiteralPath (Join-Path $target "RelayCove.Client.exe") -PathType Leaf) "Updater did not activate a runnable Client executable."
     $newClientIds = @(Wait-ForNewClientStart $clientExecutablePath $existingClientIds)
-    $smokeClientIds = $newClientIds
+    $smokeClientProcesses = @(
+        foreach ($clientId in $newClientIds) {
+            $client = Get-Process -Id $clientId -ErrorAction Stop
+            try {
+                Assert-Condition ([string]::Equals($client.Path, $clientExecutablePath, [System.StringComparison]::OrdinalIgnoreCase)) "Observed Client PID has an unexpected executable path."
+                [pscustomobject]@{
+                    Id = $client.Id
+                    Path = $client.Path
+                    StartTimeUtcTicks = $client.StartTime.ToUniversalTime().Ticks
+                }
+            }
+            finally {
+                $client.Dispose()
+            }
+        })
     Wait-ForProcessExitAtPath (Join-Path $bootstrapDirectory "RelayCove.Updater.exe")
     Remove-ExactOwnedBootstrapDirectory $bootstrapDirectory $token
     Assert-Condition (-not (Test-Path -LiteralPath $bootstrapDirectory)) "Exact owned bootstrap directory cleanup failed."
@@ -604,14 +619,21 @@ try {
 }
 finally {
     if ($null -ne $httpClient) { $httpClient.Dispose() }
-    foreach ($clientId in $smokeClientIds) {
-        $client = Get-Process -Id $clientId -ErrorAction SilentlyContinue
+    foreach ($expectedClient in $smokeClientProcesses) {
+        $client = Get-Process -Id $expectedClient.Id -ErrorAction SilentlyContinue
         if ($null -ne $client) {
-            # The PID was observed from this run's isolated package path. This is
-            # post-evidence smoke cleanup, never the Updater's Client-exit strategy.
-            $client.Kill($true)
-            $client.WaitForExit()
-            $client.Dispose()
+            try {
+                if ([string]::Equals($client.Path, $expectedClient.Path, [System.StringComparison]::OrdinalIgnoreCase) -and
+                    $client.StartTime.ToUniversalTime().Ticks -eq $expectedClient.StartTimeUtcTicks) {
+                    # This is post-evidence cleanup of the exact process observed
+                    # from this unique smoke package, never the Updater's strategy.
+                    $client.Kill($true)
+                    $client.WaitForExit()
+                }
+            }
+            finally {
+                $client.Dispose()
+            }
         }
     }
     if ($null -ne $server) {
