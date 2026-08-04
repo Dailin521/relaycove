@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 12 内部 RC 更新交付闭环
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `6444656cc966780cf1fea7ee77beab5940e79f66`
 - **工作分支：** `agent/stage-12-update-delivery`
 - **相关方案章节：** 3.5、4、16、19、阶段 12/13、21.5；`DEC-055`
@@ -46,11 +46,11 @@
 
 ### 验收标准
 
-- [ ] Server 匿名返回通过 Shared 验证的当前清单，并只下载该清单对应 ZIP；缺失、超限、非法清单、路径逃逸和非当前 artifact fail closed。
-- [ ] Client 启动/手动检查能正确显示无更新、optional、mandatory、错误与 release notes；mandatory 时不能继续使用旧版，optional 可稍后。
-- [ ] 下载全程有界且可取消，只有精确 size/SHA-256 匹配才原子发布；失败、取消、重试不把 `.part` 当成完整包，也不破坏当前 Client。
-- [ ] Client 以固定结构化参数启动包内 Updater 并走显式 Exit；真实临时/发布目录 smoke 证明旧进程退出、新版启动、失败仍保留可运行旧版，且只清理本次明确拥有的 bootstrap 目录。
-- [ ] 定向测试、Fast、Full、真实 HTTP/下载/handoff smoke、model drift、依赖漏洞、format/空白和两路 Codex 独立复核通过；签名/VPS/真实登录视觉保持 `未验证`。
+- [x] Server 匿名返回通过 Shared 验证的当前清单，并只下载该清单对应 ZIP；缺失、超限、非法清单、路径逃逸和非当前 artifact fail closed。
+- [x] Client 启动/手动检查能正确显示无更新、optional、mandatory、错误与 release notes；mandatory 时不能继续使用旧版，optional 可稍后。
+- [x] 下载全程有界且可取消，只有精确 size/SHA-256 匹配才原子发布；失败、取消、重试不把 `.part` 当成完整包，也不破坏当前 Client。
+- [x] Client 以固定结构化参数启动包内 Updater 并走显式 Exit；真实临时/发布目录 smoke 证明旧进程退出、新版启动、失败仍保留可运行旧版，且只清理本次明确拥有的 bootstrap 目录。
+- [x] 定向测试、Fast、Full、真实 HTTP/下载/handoff smoke、model drift、依赖漏洞、format/空白和两路 Codex 独立复核通过；签名/VPS/真实登录视觉保持 `未验证`。
 
 ### 验证命令
 
@@ -78,4 +78,19 @@ git diff --check
 
 ## 任务结果
 
-`进行中`。
+`已完成`。production 提交为 `08417dafc3c88213712a71ed07940c00ea8a1543`；工作分支 HEAD 为 `894028c98f23024ac07df4ab9252115883b2b48b`。
+
+### 已验证
+
+- 最终定向与全量验证均通过：`pwsh ./scripts/verify.ps1 -Mode Fast`、`pwsh ./scripts/verify.ps1 -Mode Full`；共 `1,566` 项测试（Shared `65`、Server `321`、Client `1,142`、Updater `38`）。
+- model drift、`dotnet list RelayCove.sln package --vulnerable --include-transitive`、format 与 whitespace（`git diff --check`）均为绿色。
+- 安全 smoke 已通过，证据为 `artifacts/update-delivery-smoke/7ac200823c2a442abeb5e64637c7d076/evidence.json`；覆盖真实 HTTP manifest/artifact、受控下载与显式 Exit→Updater handoff 的成功和失败保留旧版边界。
+- exact `rc.12` artifact 为 `165675267` bytes，SHA-256 `e623f38cd3df9c71a62d0eb7f4e86f5a6d69457f2fd0b9d044e6c19b80f057e0`；derived safe probe 为 `198575899` bytes，SHA-256 `ed5c87e3b381449c2542f73104e85739bc162a562056c7df0ba3b468c26a8e0b`。
+- 两路 Codex 独立复核均为 `PASS`；Claude Second Brain #83 已完成并读取，结论已纳入本地验证裁定。
+
+### 未验证 / 保留到 M5
+
+- 当前清单端点未知或不可达时 Client 为内部 RC 可用性而 fail-open；只有已经验证为 mandatory 的状态阻止继续使用旧版。这是已接受的产品边界，不是公开发布的安全承诺。
+- Server 的 snapshot identity 使用状态、长度与 `LastWriteTimeUtc`；同长度、同时间戳的原位替换可能延迟重新 hash，但 Client 最终 SHA-256 仍拒绝不匹配字节，因此残余影响是可用性而不是把错误包交给 Updater。
+- safe smoke 启动的是从 exact 下载包派生的无害 WinExe probe，不启动真实 WPF Client；Kestrel 只读了既有 ASP.NET Core Data Protection key，未写 RelayCove 用户配置。真实登录、通知、Narrator 与更新后的 WPF 视觉仍未冒充通过。
+- 代码签名、真实 VPS/域名/TLS、真实账号、双客户端与公开发布信任链仍为 `未验证`；本任务没有将其作为内部 RC 更新交付闭环的完成前提。

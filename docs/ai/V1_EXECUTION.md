@@ -7,15 +7,15 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M4
-CurrentStage: M4-04 更新托管、下载与客户端交接
+CurrentStage: M4-04 更新托管、下载与客户端交接（completed；branch green pending integration）
 ActiveTask: docs/ai/tasks/2026-08-04-stage-12-update-delivery.md
-TaskStatus: in_progress
+TaskStatus: completed_branch_green_pending_integration
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 84b3b955afde3bda2a3830e2e2a8be3aacbea88b
+LatestGreenCodeCommit: 08417dafc3c88213712a71ed07940c00ea8a1543
 LatestGreenIntegrationCommit: 6444656cc966780cf1fea7ee77beab5940e79f66
-NextAction: 并行实现 Server exact manifest/artifact 托管、Client 检查/下载状态机与 WPF mandatory/Exit→Updater 交接
-ClaudeCalls: 82（#1–#82 全部终态；#81/#82 实际 claude-sonnet-5 / High 答案均已读取并本地裁定）
-ClaudeCostUsd: 83.12343525 exact confirmed + 94.83 local CLI displayed（#44–#50/#74–#76/#81–#82）；按显示值合计约 177.95343525；其余未返回费用保持 unavailable
+NextAction: 提交证据、push、FF 集成，然后进入 M5
+ClaudeCalls: 83（#1–#83 全部终态；#81–#83 实际 claude-sonnet-5 / High 答案均已读取并本地裁定）
+ClaudeCostUsd: 83.3341725 exact confirmed + 94.83 local CLI displayed（#44–#50/#74–#76/#81–#82）；按显示值合计约 178.1641725；其余未返回费用保持 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -35,7 +35,7 @@ RequiredUserGate: none
 | M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
 | M2 | `completed` | 阶段 9 附件纵向闭环与 Internal Alpha 证据包已由 `8ff8c15` 合入绿色集成分支 | 已进入 M3 |
 | M3 | `completed` | 权限化搜索 API、客户端 Global/Current 搜索、Around-first 跳转和一次性高亮已由 `8d8d5d2` 完成绿色集成，最终 Fast/Full 1,426/1,426 | 已进入 M4 |
-| M4 | `running` | M4-01/M4-02 与 M4-03 便携 ZIP Updater 核心已由 `6444656` 完成绿色集成；M4-04 更新交付闭环进行中 | 更新托管、检查、下载、mandatory 阻断与显式 Exit 交接完整 |
+| M4 | `completed` | M4-01/M4-02/M4-03 已由 `6444656` 绿色集成；M4-04 已在任务分支绿色完成，待绿色 FF 集成 | 提交证据、push、绿色 FF 后进入 M5 |
 | M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
 
 里程碑顺序来自当前 v1 执行目标；每个里程碑的功能口径和最终交付标准仍由工程方案、决策记录和对应最小纵向任务冻结，本文件不预写实现细节。
@@ -45,6 +45,7 @@ RequiredUserGate: none
 - `agent/v1-integration` 是本地最新绿色集成头；任务分支只有完成验证和交接提交后，才允许仅快进该分支。
 - 当前 Client release 代码检查点 `fe7a38da5f2ae097c276d69300c2fa25ec29ec08` 已通过干净 `1.0.0-rc.6` 双构建字节一致、SHA-256/manifest/PE/runtime/秘密排除离线验收、真实主窗口与第二实例、Packaging 8/8、Fast/Full 1,453/1,453、model drift、八项目漏洞审计、format/空白与两路 Codex `PASS`；未签名 ZIP 明确不是安装器，Updater/签名/VPS 保留到后续 Gate。
 - 当前 M4-03 production `84b3b955afde3bda2a3830e2e2a8be3aacbea88b` 已通过干净 `1.0.0-rc.11` 双 ZIP 字节一致（`165651787` bytes，SHA-256 `b2ccbf1a6df10dc6f413cfd391f7c88ff9f7767944823a012c4ba19959e6cb17`）、真实外层 manifest generator/verifier、rc.6→rc.11 自举等待/替换/启动 smoke、Shared Updates 24/24、Updater 33/33、Packaging 13/13、Fast/Full 1,514/1,514（Shared 65、Server 302、Client 1,114、Updater 33）、Release 0 警告/0 错误、model drift、八项目漏洞审计、format/空白和多路 Codex 最终 `PASS`。启动前 `launching` 状态封闭执行后回滚窗口；Server 托管、Client 下载/UI/Exit 交接、自举目录精确清理和签名/VPS 保留到 M4-04/M5。
+- 当前 M4-04 分支 HEAD `894028c`（绿色代码提交 `08417dafc3c88213712a71ed07940c00ea8a1543`）已完成 Server exact manifest/artifact 只读托管、Client 启动/手动检查、optional/mandatory 状态、受控下载与显式 Exit→Updater 交接。Shared/Server/Client/Updater 共 1,566 项测试通过（65/321/1,142/38），Fast 与 Full 通过；干净 `1.0.0-rc.12` exact ZIP（`165675267` bytes，SHA-256 `e623f38cd3df9c71a62d0eb7f4e86f5a6d69457f2fd0b9d044e6c19b80f057e0`）和安全的真实 Kestrel/发布目录 smoke 通过。该分支绿色，尚待提交证据、push 与对 `agent/v1-integration` 的绿色 FF；签名、真实 VPS/域名 TLS、真实登录视觉与双客户端 Gate 仍留在 M5。
 - 当前管理员引导代码检查点 `419ef00069c86c85b097a7961cebe95a16730cc5` 已通过 Fast、Full、100 项测试、真实 bootstrap/动态管理员授权/同名并发、密码与日志边界及依赖漏洞审计；Claude 无候选结论，已如实降级记录 Codex 固定差异自审。
 - 当前会话存储代码检查点 `1a3c49289940d625182237fddcd1954fc40983e9` 已通过 Fast、Full、116 项测试、真实 migration up/down/旧认证数据保留、约束/唯一/外键、model drift 与漏洞审计；Claude #20 无结论，已如实降级记录 Codex 固定差异复核。
 - 当前会话访问与成员 API 代码检查点 `b9b004109183e0157bca5c16f0acdaf7a39c8940` 已通过 Full、134 项测试、真实 HTTP/SQLite Direct 与成员并发、动态授权/撤权、共享访问查询、单查询、busy 503、model drift 与漏洞审计；Claude #21 无结论，已如实降级记录 Codex 固定差异复核。
@@ -179,14 +180,15 @@ RequiredUserGate: none
 | 80 | 2026-08-04 | 客户端搜索撤权、迟到结果与 Around-first 导航边界 | 本机 Claude Code 2.1.221 后台持久只读 challenge | Sonnet / High | background `213daa77`、session `213daa77-e08a-4667-9d5f-0c9633e8c489`，`workspace=E:\WorkSpace\RelayCove`，实际 `claude-sonnet-5`；已完成并读取，结论无 P0/P1，仅“输入即清结果”产品细节与未重走全部高亮门控两项非阻塞 P2，经本地证据裁定不影响交付 | `unavailable` |
 | 81 | 2026-08-04 | M4 服务端 RC 发布矩阵、migration bundle、systemd 与 Nginx 边界 | 本机 Claude Code 2.1.221 后台持久只读 challenge | Sonnet / High | 有效 background `6798888b`、session `6798888b-694d-4b65-9f8f-75dc69d1b0f8`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；实际 `claude-sonnet-5`，答案已读取，无 P0/P1。两项非阻塞建议为运行时 CVE 重发节奏文档与附件物理文件名差异说明，经 Codex 裁定不阻塞 M4-01 | `$12.44`（CLI 状态显示值） |
 | 82 | 2026-08-04 | M4 内部便携 ZIP 更新协议、外部自举与替换恢复边界 | 本机 Claude Code 后台持久只读 challenge | Sonnet / High | 有效 background `c5c5ab8c`、session `c5c5ab8c-7890-47a5-8495-3f80896ced31`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；实际 `claude-sonnet-5`，答案已读取，支持 portable ZIP 与 M4-03→M4-04 分层。指出的 stale lock/journal recovery 风险已修正；当前版本检查、bootstrap handoff 文档已落实，精确自举残留清理留到 M4-04 | `$5.71`（CLI 状态显示值） |
+| 83 | 2026-08-04 | M4-04 Server snapshot/metadata cache、Client 更新下载与 mandatory/Exit 可靠性边界 | 当前会话旧兼容 MCP 只读咨询 | Sonnet / High | 实际 `claude-sonnet-5` / High，`247454 ms`，答案已读取；支持 validated snapshot/metadata cache、绝不缓存 stream，并确认 invalidate-before-revalidate 与 per-request reparse 已落实。对 Client HTTPS/loopback、64 KiB/15 s 响应界限、`.part` SHA 原子发布、optional/mandatory fail-open、单调 login preflight、显式 Exit/Updater token cleanup 及安全 Kestrel/safe-probe smoke 的分层，经 Codex 以仓库与本机证据裁定为 M4-04 交付边界 | `$0.21073725` |
 
-- 调用计数：`82`（#1–#82 全部终态；#78/#79 在答案前失败且分别按单次策略不重试；#80–#82 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构、安全、数据库、协议或可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
-- 已确认精确费用合计：`$83.12343525`；另有 #44–#50/#74–#76/#81–#82 本机 Claude Code 状态显示值合计 `$94.83`（界面两位小数，未伪造更高精度），按显示值总计约 `$177.95343525`。其余未返回费用保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`83`（#1–#83 全部终态；#78/#79 在答案前失败且分别按单次策略不重试；#80–#83 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构、安全、数据库、协议或可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
+- 已确认精确费用合计：`$83.3341725`；另有 #44–#50/#74–#76/#81–#82 本机 Claude Code 状态显示值合计 `$94.83`（界面两位小数，未伪造更高精度），按显示值总计约 `$178.1641725`。其余未返回费用保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate
 
-- 当前阻塞：无；Claude #81/#82 已完成、读取并由 Codex 以仓库与本机证据裁定。
+- 当前阻塞：无；Claude #81–#83 已完成、读取并由 Codex 以仓库与本机证据裁定。M4-04 分支绿色，待提交证据、push 与绿色 FF 集成。
 - 当前所需用户 Gate：无。
 - `未验证`：用户已提供仓库外的香港 Light-A2 协作应用主机配置汇总，保留到 M5 真实 VPS/双客户端 Gate；当前不读取，届时仅最小读取所需配置且不把地址、密钥或凭据提交到仓库或测试日志。
 - 只有 `AGENTS.md`、`WORKFLOW.md` 和 v1 执行目标列出的重大产品、不可逆、安全、凭据、真实体验或发布事项才请求用户裁决；普通工程实现由当前任务自行收敛。
