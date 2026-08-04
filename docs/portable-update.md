@@ -33,6 +33,28 @@ explicit process exit. It must not synchronously wait for apply completion while
 remaining alive, because the external Updater is waiting for that exact Client
 process to exit.
 
+The package-local parent does not wait for the Client or for apply completion;
+the Client may asynchronously wait for that short-lived parent to reach a
+definitive exit code. It must not turn an uncertain timeout into a second
+handoff. Only parent exit code `0` permits the explicit Client exit.
+
+## Internal release hosting
+
+Remote manifest checks require HTTPS; HTTP is accepted only for an explicit
+loopback development address. Publish the ZIP first and replace `manifest.json`
+last. Do not preserve both the old ZIP length and last-write timestamp when
+replacing its bytes: the internal Server caches a fully validated manifest/ZIP
+snapshot by those metadata and re-hashes only after a detectable change. Every
+Client still verifies the exact declared size and SHA-256 before publishing a
+download, so an accidental same-size/same-timestamp replacement is rejected by
+the Client even if the Server cache has not yet refreshed; restart the Server or
+bump either metadata to refresh immediately.
+
+An unavailable or invalid update endpoint does not disable ordinary chat for
+this small-team RC. The blocking gate applies only after a valid manifest proves
+the current Client is mandatory/unsupported. This favors chat availability over
+enforcing an unknown minimum version during a transient update-host outage.
+
 ## Recovery and data
 
 The updater keeps its staging, backup, and recovery journal beside the portable
