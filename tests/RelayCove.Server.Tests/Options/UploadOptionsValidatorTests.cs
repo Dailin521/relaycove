@@ -16,9 +16,23 @@ public sealed class UploadOptionsValidatorTests
             MaximumFileBytes = UploadOptions.DefaultMaximumFileBytes,
             PermitLimit = 10,
             RateLimitWindowSeconds = 60,
+            UnboundRetentionHours = UploadOptions.DefaultUnboundRetentionHours,
         });
 
         Assert.True(result.Succeeded);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(169)]
+    public void Validate_WhenUnboundRetentionIsOutsideBound_Fails(int retentionHours)
+    {
+        var result = uploadValidator.Validate(null, new UploadOptions
+        {
+            UnboundRetentionHours = retentionHours,
+        });
+
+        Assert.True(result.Failed);
     }
 
     [Theory]

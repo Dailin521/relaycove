@@ -82,7 +82,7 @@ public sealed class MessageEndpointTests(
 
         using (var unsupported = await client.PostAsJsonAsync(
                    "/api/messages",
-                   CreateSendRequest(conversation.Id, null) with { Type = MessageType.Image }))
+                   CreateSendRequest(conversation.Id, "system") with { Type = MessageType.System }))
         {
             await AssertErrorAsync(unsupported, HttpStatusCode.Conflict, ApiErrorCodes.MessageTypeUnsupported);
         }

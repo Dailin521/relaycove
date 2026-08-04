@@ -77,6 +77,9 @@ public sealed class MessageSyncService(RelayCoveDbContext dbContext)
                 .Take(limit + 1);
             var rows = await (
                     from message in candidates
+                    join attachment in dbContext.Attachments.AsNoTracking()
+                        on message.Id equals attachment.MessageId into attachmentGroup
+                    from attachment in attachmentGroup.DefaultIfEmpty()
                     join mention in dbContext.MessageMentions.AsNoTracking()
                         on message.Id equals mention.MessageId into mentionGroup
                     from mention in mentionGroup.DefaultIfEmpty()
@@ -91,6 +94,10 @@ public sealed class MessageSyncService(RelayCoveDbContext dbContext)
                         message.Content,
                         message.ReplyToMessageId,
                         message.CreatedAt,
+                        attachment == null ? null : (Guid?)attachment.Id,
+                        attachment == null ? null : attachment.OriginalFileName,
+                        attachment == null ? null : attachment.ContentType,
+                        attachment == null ? null : (long?)attachment.Size,
                         mention == null ? null : (Guid?)mention.MentionedUserId))
                 .ToArrayAsync(cancellationToken);
             var projectedMessages = rows
@@ -107,9 +114,23 @@ public sealed class MessageSyncService(RelayCoveDbContext dbContext)
                         message.Type,
                         message.Content,
                         message.ReplyToMessageId,
-                        Array.Empty<AttachmentDto>(),
+                        group
+                            .Where(row => row.AttachmentId.HasValue)
+                            .GroupBy(row => row.AttachmentId!.Value)
+                            .OrderBy(attachmentGroup => attachmentGroup.Key)
+                            .Select(attachmentGroup =>
+                            {
+                                var attachment = attachmentGroup.First();
+                                return AttachmentDtoFactory.Create(
+                                    attachment.AttachmentId!.Value,
+                                    attachment.AttachmentOriginalFileName!,
+                                    attachment.AttachmentContentType!,
+                                    attachment.AttachmentSize!.Value);
+                            })
+                            .ToArray(),
                         group.Where(row => row.MentionedUserId.HasValue)
                             .Select(row => row.MentionedUserId!.Value)
+                            .Distinct()
                             .Order()
                             .ToArray(),
                         new DateTimeOffset(message.CreatedAt));
@@ -141,5 +162,9 @@ public sealed class MessageSyncService(RelayCoveDbContext dbContext)
         string? Content,
         long? ReplyToMessageId,
         DateTime CreatedAt,
+        Guid? AttachmentId,
+        string? AttachmentOriginalFileName,
+        string? AttachmentContentType,
+        long? AttachmentSize,
         Guid? MentionedUserId);
 }

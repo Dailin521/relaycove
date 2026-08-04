@@ -10,6 +10,7 @@ namespace RelayCove.Server.Services;
 
 public sealed class MessageCommandService(
     RelayCoveDbContext dbContext,
+    AttachmentStoragePaths storagePaths,
     ServerClock clock,
     ILogger<MessageCommandService> logger)
 {
@@ -21,6 +22,8 @@ public sealed class MessageCommandService(
         if (actorUserId == Guid.Empty ||
             request.ClientMessageId == Guid.Empty ||
             request.ConversationId == Guid.Empty ||
+            request.AttachmentIds is null ||
+            request.MentionUserIds is null ||
             !Enum.IsDefined(request.Type))
         {
             return new MessageOperationResult<MessageDto>(MessageOperationStatus.InvalidRequest);
@@ -45,10 +48,20 @@ public sealed class MessageCommandService(
             return new MessageOperationResult<MessageDto>(MessageOperationStatus.AccessRevoked);
         }
 
-        if (request.Type != MessageType.Text)
+        if (request.Type == MessageType.System)
         {
             await transaction.RollbackAsync(cancellationToken);
             return new MessageOperationResult<MessageDto>(MessageOperationStatus.MessageTypeUnsupported);
+        }
+
+        if (request.Type == MessageType.Text && request.AttachmentIds.Count != 0 ||
+            request.Type is MessageType.Image or MessageType.File &&
+            (request.AttachmentIds.Count is < 1 or > Message.MaximumAttachmentCount ||
+             request.AttachmentIds.Any(attachmentId => attachmentId == Guid.Empty) ||
+             request.AttachmentIds.Distinct().Count() != request.AttachmentIds.Count))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new MessageOperationResult<MessageDto>(MessageOperationStatus.AttachmentInvalid);
         }
 
         if (request.ReplyToMessageId is long replyToMessageId &&
@@ -65,6 +78,34 @@ public sealed class MessageCommandService(
         {
             await transaction.RollbackAsync(cancellationToken);
             return new MessageOperationResult<MessageDto>(MessageOperationStatus.MentionInvalid);
+        }
+
+        var attachmentIds = request.AttachmentIds.Order().ToArray();
+        var attachments = attachmentIds.Length == 0
+            ? []
+            : await dbContext.Attachments
+                .AsNoTracking()
+                .Where(attachment =>
+                    attachmentIds.Contains(attachment.Id) &&
+                    attachment.UploaderUserId == actorUserId)
+                .OrderBy(attachment => attachment.Id)
+                .ToArrayAsync(cancellationToken);
+        if (attachments.Length != attachmentIds.Length ||
+            request.Type == MessageType.Image &&
+            attachments.Any(attachment =>
+                !attachment.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new MessageOperationResult<MessageDto>(MessageOperationStatus.AttachmentInvalid);
+        }
+
+        foreach (var attachment in attachments)
+        {
+            var storedPath = storagePaths.GetStoredFilePath(attachment.StoredFileName);
+            if (!File.Exists(storedPath))
+            {
+                throw new InvalidOperationException("An attachment metadata row has no physical file.");
+            }
         }
 
         Message message;
@@ -101,6 +142,7 @@ public sealed class MessageCommandService(
                 .AsNoTracking()
                 .Include(candidate => candidate.Sender)
                 .Include(candidate => candidate.Mentions)
+                .Include(candidate => candidate.Attachments)
                 .SingleOrDefaultAsync(
                     candidate =>
                         candidate.SenderId == actorUserId &&
@@ -109,7 +151,7 @@ public sealed class MessageCommandService(
                 ?? throw new InvalidOperationException(
                     "The idempotency constraint was reported without a matching message row.",
                     exception);
-            if (!PayloadMatches(existing, request, mentionUserIds))
+            if (!PayloadMatches(existing, request, mentionUserIds, attachmentIds))
             {
                 await transaction.RollbackAsync(cancellationToken);
                 logger.LogWarning(
@@ -131,6 +173,25 @@ public sealed class MessageCommandService(
                 MessageDtoFactory.Create(existing, existing.Sender.DisplayName));
         }
 
+        if (attachmentIds.Length > 0)
+        {
+            var attachedCount = await dbContext.Attachments
+                .Where(attachment =>
+                    attachmentIds.Contains(attachment.Id) &&
+                    attachment.UploaderUserId == actorUserId &&
+                    attachment.MessageId == null)
+                .ExecuteUpdateAsync(
+                    setters => setters.SetProperty(
+                        attachment => attachment.MessageId,
+                        message.Id),
+                    cancellationToken);
+            if (attachedCount != attachmentIds.Length)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+                return new MessageOperationResult<MessageDto>(MessageOperationStatus.AttachmentInvalid);
+            }
+        }
+
         conversation.Touch(message.CreatedAt);
         await dbContext.SaveChangesAsync(cancellationToken);
         var senderDisplayName = await dbContext.Users
@@ -146,7 +207,7 @@ public sealed class MessageCommandService(
             conversation.Id);
         return new MessageOperationResult<MessageDto>(
             MessageOperationStatus.Created,
-            MessageDtoFactory.Create(message, senderDisplayName));
+            MessageDtoFactory.Create(message, senderDisplayName, attachments));
     }
 
     private async Task<bool> AreMentionsAccessibleAsync(
@@ -173,12 +234,16 @@ public sealed class MessageCommandService(
     private static bool PayloadMatches(
         Message existing,
         SendMessageRequest request,
-        IReadOnlyList<Guid> mentionUserIds) =>
+        IReadOnlyList<Guid> mentionUserIds,
+        IReadOnlyList<Guid> attachmentIds) =>
         existing.ConversationId == request.ConversationId &&
         existing.Type == request.Type &&
         string.Equals(existing.Content, request.Content, StringComparison.Ordinal) &&
         existing.ReplyToMessageId == request.ReplyToMessageId &&
-        request.AttachmentIds.Count == 0 &&
+        existing.Attachments
+            .Select(attachment => attachment.Id)
+            .Order()
+            .SequenceEqual(attachmentIds) &&
         existing.Mentions
             .Select(mention => mention.MentionedUserId)
             .Order()

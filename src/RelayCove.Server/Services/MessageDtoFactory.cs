@@ -6,6 +6,12 @@ namespace RelayCove.Server.Services;
 internal static class MessageDtoFactory
 {
     public static MessageDto Create(Message message, string senderDisplayName) =>
+        Create(message, senderDisplayName, message.Attachments);
+
+    public static MessageDto Create(
+        Message message,
+        string senderDisplayName,
+        IEnumerable<Attachment> attachments) =>
         new(
             message.Id,
             message.ClientMessageId,
@@ -15,7 +21,10 @@ internal static class MessageDtoFactory
             message.Type,
             message.Content,
             message.ReplyToMessageId,
-            Array.Empty<AttachmentDto>(),
+            attachments
+                .OrderBy(attachment => attachment.Id)
+                .Select(AttachmentDtoFactory.Create)
+                .ToArray(),
             message.Mentions
                 .Select(mention => mention.MentionedUserId)
                 .Order()

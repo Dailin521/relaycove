@@ -179,6 +179,51 @@ public sealed class SignalRRealtimeTests : IClassFixture<RelayCoveWebApplication
     }
 
     [Fact]
+    public async Task MessageSend_WhenFileIsAttached_PublishesTheCanonicalAttachmentPayload()
+    {
+        var adminName = CreateUserName("signalr-attachment-admin");
+        var adminId = await factory.CreateUserAsync(adminName, ExistingPassword, isAdmin: true);
+        using var client = await CreateAuthenticatedClientAsync(factory, adminName);
+        var login = await LoginAsync(factory.CreateClient(), adminName);
+        var conversation = await CreateChannelAsync(
+            client,
+            ConversationType.PublicChannel,
+            "SignalR attachment delivery");
+        var received = new ConcurrentQueue<MessageDto>();
+        await using var connection = CreateHubConnection(factory, login.AccessToken);
+        connection.On<MessageDto>(nameof(IChatClient.NewMessage), received.Enqueue);
+        var connectionLogOffset = factory.LogMessages.Count;
+        await connection.StartAsync();
+        await WaitForGroupJoinAsync(connectionLogOffset, adminId);
+
+        using var form = new MultipartFormDataContent($"relaycove-{Guid.NewGuid():N}");
+        var file = new ByteArrayContent([4, 2]);
+        file.Headers.ContentType = MediaTypeHeaderValue.Parse("application/octet-stream");
+        form.Add(file, "file", "signalr-attachment.bin");
+        using var uploadResponse = await client.PostAsync("/api/attachments", form);
+        Assert.Equal(HttpStatusCode.Created, uploadResponse.StatusCode);
+        var attachment = (await uploadResponse.Content.ReadFromJsonAsync<AttachmentDto>())!;
+        var request = new SendMessageRequest(
+            Guid.NewGuid(),
+            conversation.Id,
+            MessageType.File,
+            null,
+            null,
+            [attachment.Id],
+            []);
+
+        using var response = await client.PostAsJsonAsync("/api/messages", request);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var sent = (await response.Content.ReadFromJsonAsync<MessageDto>())!;
+        await WaitUntilAsync(() => received.Any(message => message.ClientMessageId == request.ClientMessageId));
+        var published = Assert.Single(received, message =>
+            message.ClientMessageId == request.ClientMessageId);
+        Assert.Equal(sent.Attachments, published.Attachments);
+        Assert.Equal([attachment], published.Attachments);
+    }
+
+    [Fact]
     public async Task MessageSend_WhenCreated_PublishesOnceToCurrentAuthorizedUsers()
     {
         var adminName = CreateUserName("signalr-send-admin");

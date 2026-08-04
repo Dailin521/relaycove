@@ -23,6 +23,12 @@ public sealed class UploadOptionsValidator : IValidateOptions<UploadOptions>
             failures.Add("Uploads:RateLimitWindowSeconds must be between 1 and 86400.");
         }
 
+        if (options.UnboundRetentionHours is < 1 or > UploadOptions.MaximumUnboundRetentionHours)
+        {
+            failures.Add(
+                $"Uploads:UnboundRetentionHours must be between 1 and {UploadOptions.MaximumUnboundRetentionHours}.");
+        }
+
         return failures.Count == 0
             ? ValidateOptionsResult.Success
             : ValidateOptionsResult.Fail(failures);

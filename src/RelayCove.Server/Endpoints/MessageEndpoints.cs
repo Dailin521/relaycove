@@ -182,6 +182,12 @@ public static class MessageEndpoints
                 {
                     ["mentionUserIds"] = ["One or more mentioned users are unavailable in this conversation."],
                 }),
+            MessageOperationStatus.AttachmentInvalid => ValidationError(
+                context,
+                new Dictionary<string, string[]>
+                {
+                    ["attachmentIds"] = ["One or more attachments are unavailable for this message."],
+                }),
             MessageOperationStatus.MessageTargetInvalid => ValidationError(
                 context,
                 new Dictionary<string, string[]>

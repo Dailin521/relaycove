@@ -60,6 +60,16 @@ public sealed class AttachmentStoragePaths(
         fileName.Where((_, index) => index != 32).All(character =>
             character is (>= '0' and <= '9') or (>= 'a' and <= 'f'));
 
+    public string GetStoredFilePath(string storedFileName)
+    {
+        if (!IsManagedStoredFileName(storedFileName))
+        {
+            throw new InvalidOperationException("Stored attachment names must use the managed format.");
+        }
+
+        return GetManagedPath(storedFileName);
+    }
+
     private string GetManagedPath(string fileName)
     {
         if (Path.GetFileName(fileName) != fileName)

@@ -33,7 +33,7 @@ public sealed class MessageRequestValidator
         {
             errors["type"] = ["The message type is invalid."];
         }
-        else if (request.Type == MessageType.Text)
+        else if (request.Type is MessageType.Text or MessageType.Image or MessageType.File)
         {
             try
             {
@@ -41,8 +41,9 @@ public sealed class MessageRequestValidator
             }
             catch (ArgumentException)
             {
-                errors["content"] =
-                    [$"Text content must contain 1 to {Message.MaximumContentLength} valid characters."];
+                errors["content"] = request.Type == MessageType.Text
+                    ? [$"Text content must contain 1 to {Message.MaximumContentLength} valid characters."]
+                    : [$"Optional content must contain 1 to {Message.MaximumContentLength} valid characters when supplied."];
             }
         }
 
@@ -55,9 +56,17 @@ public sealed class MessageRequestValidator
         {
             errors["attachmentIds"] = ["Attachment IDs are required."];
         }
-        else if (request.AttachmentIds.Count > 0)
+        else if (request.Type == MessageType.Text && request.AttachmentIds.Count > 0)
         {
-            errors["attachmentIds"] = ["Attachments are not supported by this endpoint yet."];
+            errors["attachmentIds"] = ["Text messages cannot contain attachments."];
+        }
+        else if (request.Type is MessageType.Image or MessageType.File &&
+                 (request.AttachmentIds.Count is < 1 or > Message.MaximumAttachmentCount ||
+                  request.AttachmentIds.Any(attachmentId => attachmentId == Guid.Empty) ||
+                  request.AttachmentIds.Distinct().Count() != request.AttachmentIds.Count))
+        {
+            errors["attachmentIds"] =
+                [$"Image and file attachment IDs must be unique, non-empty, and contain between 1 and {Message.MaximumAttachmentCount} items."];
         }
 
         if (request.MentionUserIds is null)

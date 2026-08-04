@@ -60,12 +60,6 @@ public sealed class AttachmentCommandService(
             attachment.Id);
         return new AttachmentUploadResult(
             AttachmentUploadStatus.Created,
-            new AttachmentDto(
-                attachment.Id,
-                attachment.OriginalFileName,
-                attachment.ContentType,
-                attachment.Size,
-                $"/api/attachments/{attachment.Id:D}/download",
-                null));
+            AttachmentDtoFactory.Create(attachment));
     }
 }

@@ -34,6 +34,9 @@ public sealed class MessageQueryService(RelayCoveDbContext dbContext)
                 join message in candidates
                     on conversation.Id equals message.ConversationId into messageGroup
                 from message in messageGroup.DefaultIfEmpty()
+                join attachment in dbContext.Attachments.AsNoTracking()
+                    on message.Id equals attachment.MessageId into attachmentGroup
+                from attachment in attachmentGroup.DefaultIfEmpty()
                 join mention in dbContext.MessageMentions.AsNoTracking()
                     on message.Id equals mention.MessageId into mentionGroup
                 from mention in mentionGroup.DefaultIfEmpty()
@@ -48,6 +51,10 @@ public sealed class MessageQueryService(RelayCoveDbContext dbContext)
                     message == null ? null : message.Content,
                     message == null ? null : message.ReplyToMessageId,
                     message == null ? null : (DateTime?)message.CreatedAt,
+                    attachment == null ? null : (Guid?)attachment.Id,
+                    attachment == null ? null : attachment.OriginalFileName,
+                    attachment == null ? null : attachment.ContentType,
+                    attachment == null ? null : (long?)attachment.Size,
                     mention == null ? null : (Guid?)mention.MentionedUserId))
             .ToArrayAsync(cancellationToken);
         if (rows.Length == 0)
@@ -70,9 +77,11 @@ public sealed class MessageQueryService(RelayCoveDbContext dbContext)
                 message.Type!.Value,
                 message.Content,
                 message.ReplyToMessageId,
-                Array.Empty<AttachmentDto>(),
+                CreateAttachments(group),
                 group.Where(row => row.MentionedUserId.HasValue)
                     .Select(row => row.MentionedUserId!.Value)
+                    .Distinct()
+                    .Order()
                     .ToArray(),
                 new DateTimeOffset(message.CreatedAt!.Value));
             })
@@ -142,6 +151,9 @@ public sealed class MessageQueryService(RelayCoveDbContext dbContext)
             .Concat(afterCandidates);
         var rows = await (
                 from message in candidates
+                join attachment in dbContext.Attachments.AsNoTracking()
+                    on message.Id equals attachment.MessageId into attachmentGroup
+                from attachment in attachmentGroup.DefaultIfEmpty()
                 join mention in dbContext.MessageMentions.AsNoTracking()
                     on message.Id equals mention.MessageId into mentionGroup
                 from mention in mentionGroup.DefaultIfEmpty()
@@ -155,6 +167,10 @@ public sealed class MessageQueryService(RelayCoveDbContext dbContext)
                     message.Content,
                     message.ReplyToMessageId,
                     message.CreatedAt,
+                    attachment == null ? null : (Guid?)attachment.Id,
+                    attachment == null ? null : attachment.OriginalFileName,
+                    attachment == null ? null : attachment.ContentType,
+                    attachment == null ? null : (long?)attachment.Size,
                     mention == null ? null : (Guid?)mention.MentionedUserId))
             .ToArrayAsync(cancellationToken);
         var projectedMessages = rows
@@ -171,9 +187,10 @@ public sealed class MessageQueryService(RelayCoveDbContext dbContext)
                     message.Type,
                     message.Content,
                     message.ReplyToMessageId,
-                    Array.Empty<AttachmentDto>(),
+                    CreateAttachments(group),
                     group.Where(row => row.MentionedUserId.HasValue)
                         .Select(row => row.MentionedUserId!.Value)
+                        .Distinct()
                         .Order()
                         .ToArray(),
                     new DateTimeOffset(message.CreatedAt));
@@ -218,7 +235,11 @@ public sealed class MessageQueryService(RelayCoveDbContext dbContext)
         string? Content,
         long? ReplyToMessageId,
         DateTime? CreatedAt,
-        Guid? MentionedUserId);
+        Guid? AttachmentId,
+        string? AttachmentOriginalFileName,
+        string? AttachmentContentType,
+        long? AttachmentSize,
+        Guid? MentionedUserId) : IAttachmentProjection;
 
     private sealed record MessageAroundProjection(
         long Id,
@@ -230,5 +251,38 @@ public sealed class MessageQueryService(RelayCoveDbContext dbContext)
         string? Content,
         long? ReplyToMessageId,
         DateTime CreatedAt,
-        Guid? MentionedUserId);
+        Guid? AttachmentId,
+        string? AttachmentOriginalFileName,
+        string? AttachmentContentType,
+        long? AttachmentSize,
+        Guid? MentionedUserId) : IAttachmentProjection;
+
+    private static AttachmentDto[] CreateAttachments<TProjection>(
+        IEnumerable<TProjection> rows)
+        where TProjection : IAttachmentProjection =>
+        rows
+            .Where(row => row.AttachmentId.HasValue)
+            .GroupBy(row => row.AttachmentId!.Value)
+            .OrderBy(group => group.Key)
+            .Select(group =>
+            {
+                var attachment = group.First();
+                return AttachmentDtoFactory.Create(
+                    attachment.AttachmentId!.Value,
+                    attachment.AttachmentOriginalFileName!,
+                    attachment.AttachmentContentType!,
+                    attachment.AttachmentSize!.Value);
+            })
+            .ToArray();
+
+    private interface IAttachmentProjection
+    {
+        Guid? AttachmentId { get; }
+
+        string? AttachmentOriginalFileName { get; }
+
+        string? AttachmentContentType { get; }
+
+        long? AttachmentSize { get; }
+    }
 }

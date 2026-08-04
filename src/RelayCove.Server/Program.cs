@@ -77,6 +77,7 @@ builder.Services.AddScoped<MessageSyncService>();
 builder.Services.AddSingleton<AttachmentStoragePaths>();
 builder.Services.AddScoped<AttachmentMultipartReader>();
 builder.Services.AddScoped<AttachmentCommandService>();
+builder.Services.AddScoped<AttachmentQueryService>();
 builder.Services.AddScoped<NewMessagePublisher>();
 builder.Services.AddScoped<ConversationAccessRevokedPublisher>();
 builder.Services.AddSingleton<INewMessageTransport, SignalRNewMessageTransport>();
@@ -98,7 +99,10 @@ builder.Services.AddScoped<IAuthorizationHandler, AdministratorAuthorizationHand
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IUserIdProvider, SubjectUserIdProvider>();
 builder.Services.AddHostedService<BootstrapAdminHostedService>();
-builder.Services.AddHostedService<AttachmentStorageRecoveryHostedService>();
+builder.Services.AddSingleton<AttachmentStorageRecoveryHostedService>();
+builder.Services.AddHostedService(serviceProvider =>
+    serviceProvider.GetRequiredService<AttachmentStorageRecoveryHostedService>());
+builder.Services.AddHostedService<AttachmentStorageMaintenanceHostedService>();
 builder.Services.AddSingleton<IConfigureOptions<Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerOptions>, ConfigureJwtBearerOptions>();
 builder.Services.AddRateLimiter(_ => { });
 builder.Services.AddSingleton<IConfigureOptions<RateLimiterOptions>, ConfigureAuthenticationRateLimitingOptions>();

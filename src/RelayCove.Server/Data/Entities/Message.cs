@@ -9,6 +9,7 @@ public sealed class Message
 {
     public const int MaximumContentLength = 4_000;
     public const int MaximumMentionCount = 20;
+    public const int MaximumAttachmentCount = 10;
 
     private Message()
     {

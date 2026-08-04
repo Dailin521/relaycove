@@ -10,6 +10,7 @@ public enum MessageOperationStatus
     MessageTypeUnsupported,
     ReplyInvalid,
     MentionInvalid,
+    AttachmentInvalid,
     MessageTargetInvalid,
     IdempotencyKeyReuse,
 }
