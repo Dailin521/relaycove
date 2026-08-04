@@ -580,3 +580,16 @@
 - **理由：** UI STA 物化与后台有界编码把线程亲和、像素预算和可重开上传源分开；25/100 MiB 双预算同时对齐服务端默认传输边界并限制未压缩图像，single-flight 则约束无法由 PNG 长度代表的短时峰值。读取前后 exact 门覆盖 OLE delayed rendering 可能泵消息的重入窗口，避免错会话/错收件人附件。
 - **影响：** Client 增加无依赖、无 schema 的 FileDrop/Clipboard adapter、有界内存流、source-neutral draft 与 WPF 接线；不改 Shared/Server、SQLite migration、上传/pending 协议或依赖。粘贴文件、shell 虚拟文件、caption、下载/cache/缩略图/打开、真实登录视觉/键盘/Narrator 与 VPS/双客户端仍属后续切片或 M5 Gate。
 - **来源：** 工程方案第 2.1、9.2–9.4、14.1–14.2、阶段 9、21.3；`DEC-042/045/046`；`docs/ai/tasks/2026-08-04-stage-9-wpf-attachment-inputs.md`；production `c3a0187`；最终 Fast/Full 1088 项、附件/Clipboard 定向 132/132、真实 Release WPF 窗口/单实例/精确清理、两路 Codex 最终复核与日志/format/空白检查。Claude #74 实际 `claude-opus-5` 关键 challenge 的内存、物化、文本优先、取消、WIC 分类与 buffer 发现均经 Codex 复算、修正并本机验证；合并切片由共享 draft/context/pending 边界支撑，未改变公共协议。
+
+### DEC-048：附件下载以强 ETag 全量校验后原子发布到账户隔离缓存
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-043/044` 已提供当前会话授权下载与 `LocalAttachments.LocalPath/DownloadStatus` 预留字段，但客户端尚不能取得或持久化内容。仅信任 URL、Content-Length、原名或数据库路径会分别留下重定向越权、截断/替换、路径控制和损坏状态；下载期间的撤权、进程崩溃以及同账户多个 cache 实例还可能把未验证或已失权内容暴露为可用文件。
+- **决策：** 服务端授权完整与 Range 响应都使用数据库已有 lowercase SHA-256 生成同一 quoted 强 ETag；匿名、未知、未绑定、删除或当前不可访问均在设置 ETag 前 fail-closed。客户端首版只发严格同源精确 download route 的无 Range GET，使用独立长时、禁 redirect、禁自动解压的 HTTP 边界；只接受 200，并同时验证强 ETag、metadata Size、可用 Content-Length、实际 EOF 和流式 SHA-256。206、Content-Range、Content-Encoding、重定向后的有效 URI 或任一不一致都不得发布。
+- **决策：** 物理根固定为 `%LOCALAPPDATA%/RelayCove/cache/<AccountScopeId>`；最终名只由规范 conversation ID、attachment ID 和完整 SHA-256 构成，staging 是同目录随机 `CreateNew` `.part`。原名、MIME、URL 和 SQLite 任意字符串均不能决定路径；所有操作限制为顶层严格托管名称并拒绝 reparse point。每账户固定 1 GiB，达到上限显式失败，不自动驱逐；同一进程的同 scope store 共享 gate 与 reservation，匹配当前单实例 WPF 宿主边界。
+- **决策：** 下载状态固定为 0 NotDownloaded、1 Downloading、2 Downloaded、3 Failed，不新增 schema。短 SQLite claim 后释放 gate 执行网络 I/O；响应写 staging 并完成 flush/长度/hash 复验后，以同卷无覆盖 move 发布，再用短条件更新提交 `LocalPath/Downloaded`。SQLite CAS 失败必须删除刚发布 final；启动把遗留 Downloading 复位，逐项验证 DB 引用并删除严格托管 orphan/temp。已存在合法 final 可复用，损坏 final 在同 scope gate 内由已验证 staging 替换。
+- **决策：** 同附件每账户只有一个活动 flight。调用取消、runtime 终止或撤权先取消 I/O；稳定 `ConversationAccessRevoked` 才建立 deny/tombstone 并触发 durable cascade，普通 403/网络/429/5xx 不做破坏性 purge。撤权事件与 purge 订阅在同一进程的同 scope cache 间共享，删除逐文件继续并在最后一个 flight 释放 staging 后重试；任何返回本地路径前都重新检查取消与当前会话权限。接收进度只代表写入 staging 的响应字节，不代表 hash、发布或 SQLite 成功。
+- **理由：** “网络完整性→同卷可见性→SQLite 可发现性”的单向顺序让每个失败方向都能由删除或启动恢复收敛，且不会让 DB 指向 partial/缺失/未校验文件。完整 SHA-256 同时作为授权响应 validator、内容校验和托管文件身份，避免截断或替换；同 scope 共享协调封闭了当前生产进程内的撤权与 quota 竞争，而不虚构跨进程或断点续传能力。
+- **影响：** Server 只增加授权响应 ETag 投影，不改 Shared DTO、数据库或 Range 行为。Client 增加下载 transport/coordinator、物理 cache、LocalAttachments 状态/recovery 和 runtime/shell surface；不新增生产依赖或 migration。WPF 下载/取消/失败视觉、安全打开、缩略图/原图、Range resume、自动驱逐和 VPS/双客户端继续分片实现或保留到 M5 Gate。
+- **来源：** 工程方案第 3.4、9.3–9.4、12.7–12.8、14.3–14.5、阶段 9、21.3；`DEC-017/018/043/044/045/047`；`docs/ai/tasks/2026-08-04-stage-9-attachment-download-cache.md`；生产代码检查点 `438f7f766e62aa4f73496cb564ed44e0fb35544b`；最终 Fast/Full 1154 项（Shared 39、Server 255、Client 859、Updater 1）、Client attachment/cache/Kestrel 65/65、Server Attachment 51/51、真实动态端口 Kestrel→客户端磁盘→SQLite、publish→CAS fault/restart、撤权/损坏/quota 竞态、model drift、八项目漏洞审计、日志脱敏与空白检查。两路 Codex 最终复核均无剩余 P0–P2；Claude #75 实际 `claude-opus-5` 关键 challenge 的成立发现均经 Codex 复算、修正并本机复验。

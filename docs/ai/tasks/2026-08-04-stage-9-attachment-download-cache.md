@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 9 已确认附件的可信全量下载、账户隔离缓存与原子本地状态
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `b678865e2f2a559e9e620567a5caacb4a5882ae0`
 - **工作分支：** `agent/stage-9-attachment-download-cache`
 - **相关方案章节：** 3.4、9.3–9.4、12.7–12.8、14.3–14.5、阶段 9、21.3；`DEC-017/018/043/044/045/047`
@@ -44,12 +44,12 @@
 
 ### 验收标准
 
-- [ ] 授权完整/Range 响应携带同一合法强 SHA-256 ETag；匿名、未知、未绑定、删除或撤权响应不泄露 ETag/hash，既有授权/Range 行为不回归。
-- [ ] Client 只请求严格同源 route 且不跟随 redirect；完整 200 必须同时通过 ETag、metadata Size、Content-Length（若存在）、实际 EOF 长度与流式 SHA-256，任何失败不发布可见文件或成功 DB 状态。
-- [ ] staging → flush → atomic move → SQLite CAS 顺序经故障注入与重启 recovery 验证；DB 不指向 partial/缺失/越界/错误 hash 文件，orphan/temp 可恢复清理，缓存路径不受原名/远端/损坏 DB 控制。
-- [ ] 1 GiB quota、两个账户同 attachment ID 隔离、同附件并发单 GET、取消/退出、稳定撤权 headers/midstream/publish 竞态均 fail-closed；普通 403/网络/429/5xx 不触发破坏性 purge。
-- [ ] 接收进度只表示写入 staging 的响应内容字节，单调且不冒充 hash/原子发布/SQLite 完成；回调异常隔离，日志、错误与 `ToString()` 不含 token、URL、ID、原名、MIME、hash 或路径。
-- [ ] 定向、Fast、最终一次 Full、真实 Kestrel/磁盘/SQLite 场景、Codex reviewer、关键 Claude challenge、model drift、依赖漏洞、日志脱敏与空白检查完成。
+- [x] 授权完整/Range 响应携带同一合法强 SHA-256 ETag；匿名、未知、未绑定、删除或撤权响应不泄露 ETag/hash，既有授权/Range 行为不回归。
+- [x] Client 只请求严格同源 route 且不跟随 redirect；完整 200 必须同时通过 ETag、metadata Size、Content-Length（若存在）、实际 EOF 长度与流式 SHA-256，任何失败不发布可见文件或成功 DB 状态。
+- [x] staging → flush → atomic move → SQLite CAS 顺序经故障注入与重启 recovery 验证；DB 不指向 partial/缺失/越界/错误 hash 文件，orphan/temp 可恢复清理，缓存路径不受原名/远端/损坏 DB 控制。
+- [x] 1 GiB quota、两个账户同 attachment ID 隔离、同附件并发单 GET、取消/退出、稳定撤权 headers/midstream/publish 竞态均 fail-closed；普通 403/网络/429/5xx 不触发破坏性 purge。
+- [x] 接收进度只表示写入 staging 的响应内容字节，单调且不冒充 hash/原子发布/SQLite 完成；回调异常隔离，日志、错误与 `ToString()` 不含 token、URL、ID、原名、MIME、hash 或路径。
+- [x] 定向、Fast、最终一次 Full、真实 Kestrel/磁盘/SQLite 场景、Codex reviewer、关键 Claude challenge、model drift、依赖漏洞、日志脱敏与空白检查完成。
 
 ### 验证命令
 
@@ -58,6 +58,8 @@ dotnet test tests/RelayCove.Server.Tests/RelayCove.Server.Tests.csproj --configu
 dotnet test tests/RelayCove.Client.Tests/RelayCove.Client.Tests.csproj --configuration Debug --no-restore --filter "FullyQualifiedName~AttachmentDownload|FullyQualifiedName~AttachmentCache"
 pwsh ./scripts/verify.ps1 -Mode Fast
 pwsh ./scripts/verify.ps1 -Mode Full
+dotnet ef migrations has-pending-model-changes --project src/RelayCove.Server/RelayCove.Server.csproj --startup-project src/RelayCove.Server/RelayCove.Server.csproj --context RelayCoveDbContext --configuration Release --no-build
+dotnet list RelayCove.sln package --vulnerable --include-transitive
 git diff --check
 ```
 
@@ -81,27 +83,35 @@ git diff --check
 
 ### 修改摘要
 
-- 待完成。
+- 服务端授权下载以数据库 SHA-256 输出完整/Range 共用的 quoted lowercase 强 ETag；所有失败授权分支继续在设置 ETag 前返回。
+- 客户端增加禁重定向/禁解压的长时 transport、流式 hash/长度/ETag 校验、真实接收进度，以及同源精确 route、稳定 401 refresh 与稳定/普通 403 分类。
+- 增加按 `AccountScopeId` 隔离的 1 GiB 受控缓存、随机 `.part`、flush/复验/同卷无覆盖发布、路径与 reparse 防护、同 scope 配额预留，以及 `LocalAttachments` claim/CAS/recovery/revocation 状态机。
+- runtime/shell 接入下载 surface；同附件 single-flight、跨 cache 撤权取消、durable purge、损坏 final 自愈和 publish→SQLite 故障恢复均有自动化覆盖。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 新分支 Fast 基线 | 1088/1088；Shared 39、Server 255、Client 793、Updater 1；0 警告、0 错误。 |
-| `进行中` | Claude 关键 challenge | 后台 agent `a4e60acf`，只读 Opus/XHigh，无费用/时间上限；等待终态。 |
-| `未验证` | 本任务最终门禁 | 实现完成后填写。 |
+| `已验证` | Server/Client 定向 | Server Attachment 51/51；修复后 Client attachment/cache/Kestrel 65/65；Client 完整套件 859/859。 |
+| `已验证` | 最终 Fast / Full | 1154/1154；Shared 39、Server 255、Client 859、Updater 1；Debug/Release 均 0 警告、0 错误；format 与 `git diff --check` 通过。 |
+| `已验证` | 真实 Kestrel→Client→磁盘→SQLite | `UseKestrel(0)` 在 `127.0.0.1` 动态端口完成 login/upload/send/授权 GET；强 ETag/内容校验后发布账户缓存并提交 `DownloadStatus=2`，匿名 401 无 ETag。 |
+| `已验证` | 崩溃/竞态/恢复 | publish 后 SQLite commit fault 确认 final 已出现、失败即删除；模拟重启把遗留 Downloading 复位且无 orphan。跨 cache 撤权、locked staging、publish race、损坏 final 和共享 quota 均通过。 |
+| `已验证` | 两路 Codex reviewer | 两轮修正 cached-path 撤权竞态、损坏 final、自愈证据、跨 cache 取消与配额后，最终均无剩余 P0–P2。 |
+| `已验证` | Claude 关键 challenge | 后台 agent `a4e60acf`，实际 `claude-opus-5`、只读 Opus/XHigh，约 14 分钟，显示费用 `$5.18`；成立的 locked purge、redirect/decompression、同进程恢复、取消清理和 Content-Encoding 发现均由 Codex 复算、修正并复验。 |
+| `已验证` | 模型、依赖与脱敏 | EF 无 pending model changes；八个项目直接/传递依赖均无已知漏洞；新增日志只记录枚举状态或异常类型，结果模型与路径/hash/token/URL 均脱敏。 |
 
 ### 文件范围
 
-- 新增：待完成。
-- 修改：待完成。
-- 删除：待完成。
+- 新增：Client 下载 transport/coordinator/status/progress、物理 cache store、LocalAttachments 下载状态/recovery 模型与对应 Storage/Sync/Kestrel 测试。
+- 修改：Server 附件授权投影/endpoint，Client cache/runtime/composition/shell，故障注入接口与对应账户/endpoint 测试；本任务、状态、执行与决策记录。
+- 删除：无。
 
 ### 决策与限制
 
-- 决策：待 Claude challenge、实现与 Codex reviewer 收敛后记录为 `DEC-048`。
-- 已知限制：WPF 下载视觉、打开/目录、缩略图/原图、Range/resume、自动缓存驱逐和 VPS 留在后续切片。
+- 决策：`DEC-048` 冻结强 ETag 全量可信下载、账户隔离受控缓存、原子发布后 SQLite CAS、进程内同 scope 撤权/配额协调和启动双向恢复。
+- 已知限制：当前 production 是单实例 WPF，因此跨 OS 进程不协调下载或 quota；WPF 下载视觉、打开/目录、缩略图/原图、Range/resume、自动缓存驱逐和 VPS 留在后续切片。
 
 ### 下一步
 
-- 完成本 core 后接 WPF 附件展示、下载/取消/失败重试与安全打开；随后完成本地缩略图/有界原图查看并关闭 M2。
+- 仅快进集成后接 WPF 附件展示、下载/取消/失败重试与安全打开；随后完成本地缩略图/有界原图查看并关闭 M2。
