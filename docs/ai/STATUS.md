@@ -5,10 +5,10 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 9 — 附件
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送已完成
-- **最近验证通过的状态：** 客户端提及组合完成记录 `556efd49acdf707fd433152d60ee130084939825` 已仅快进到远端绿色集成分支；阶段 9 上传切片 Fast 基线 860/860
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 认证单附件流式上传、事务元数据和崩溃恢复已完成
+- **最近验证通过的状态：** 服务端安全附件上传代码 `a2ef8a72f24829e61f5ae8e34aa3b661ce90fd0d` 已通过全部任务门禁，等待完成记录与仅快进集成
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — 客户端提及组合最终 Fast 与三次 Full、format、860 项测试（Shared 37、Server 192、Client 630、Updater 1）；提及/发送/shell 关键集每轮 74 项、Release 连续 10 轮 740/740；候选 HTTP、token 边界、selection 迟到/认证失效、pending-before-HTTP、重启/显式 retry 原集合、model drift、八项目漏洞审计、日志检索和空白检查通过；Release WPF 主窗口响应、单实例与精确清理通过，登录态 picker 视觉、VPS、双客户端与 Narrator 保持未验证
+- **自动化验证：** `已验证` — 附件上传最终 Fast 与两次 Full、format、911 项测试（Shared 39、Server 241、Client 630、Updater 1）；Attachment Release 定向集每轮 39 项、连续 10 轮 390/390；真实 Kestrel exact-limit 201/宿主级 413/不透明字节一致落盘、migration up/down、崩溃恢复、model drift、八项目漏洞审计、日志检索与空白检查通过；消息绑定、下载授权、客户端、VPS 与长期未绑定回收保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
 - **最近 Claude 调用：** `已验证` — 附件上传架构/安全 #69 MCP 只读 challenge 因认证源优先级失败，无 job、模型、workspace、费用或结论；失败不冒充通过，Codex 继续实现与验证
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 阶段 9 服务端认证单附件流式上传、物理存储与 SQLite 元数据切片进行中；不读取 VPS 配置。
+- 阶段 9 服务端认证单附件流式上传、物理存储与 SQLite 元数据切片已完成，等待仅快进集成；不读取 VPS 配置。
 
 ## 已完成
 
@@ -62,10 +62,11 @@
 - selection 冻结未读边界、分页证明精确位置与新消息分割线（`DEC-039`）
 - 会话作用域最小提及候选、与发送授权同构的 Public/Private/Direct 查询、字面前缀与有界结果（`DEC-040`）
 - 客户端显式提及 picker、正文 token 存活语义、selection/context 竞态门和 durable 规范 ID 集合（`DEC-041`）
+- 认证单附件多层有界 streaming、随机非公开物理存储、事务元数据与崩溃残留恢复（`DEC-042`）
 
 ## 下一任务
 
-完成服务端单附件上传、崩溃残留恢复与元数据 migration；下载、消息绑定、客户端与真实 VPS Gate 后续推进。
+仅快进集成服务端附件上传切片，然后冻结 attach-once 消息事务与会话授权下载；客户端与真实 VPS Gate 后续推进。
 
 ## 阻塞项
 

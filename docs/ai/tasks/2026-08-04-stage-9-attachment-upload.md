@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 9 认证附件上传、物理文件与 SQLite 元数据闭环
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `556efd49acdf707fd433152d60ee130084939825`
 - **工作分支：** `agent/stage-9-attachment-upload`
 - **相关方案章节：** 3.4、7.5、8.1–8.2、10.2、11.1–11.2、14.1–14.2、17.2、18.1、18.4、阶段 9、21.3；`DEC-003`、`DEC-004`、`DEC-010`
@@ -44,11 +44,11 @@
 
 ### 验收标准
 
-- [ ] 真实 multipart HTTP 对合法二进制、Unicode 名称和缺省/规范 MIME 返回 201；DB 的大小/hash/上传者/创建时间与不可预测 basename 正确，磁盘字节完全一致且原始名从未进入路径。
-- [ ] 匿名/禁用用户、错误 content type/boundary、零文件、空文件、错字段、额外字段/文件、恶意/超长名称、非法 MIME、超限、限流与取消得到稳定结果，且不留下 DB 行或文件。
-- [ ] 请求总量、section、header 与流复制均有独立上界；exact-limit 成功、limit+1 为 413，慢/未知长度流不能绕过。
-- [ ] DB busy/保存失败、目标冲突、磁盘异常与取消保持“无已提交坏行”；正常异常路径清零暂存，启动恢复删除严格命名的无行残留但不触碰未知文件。
-- [ ] migration up/down 保留既有数据并固定 GUID/UTC/长度/hash/FK/CHECK/索引；Fast、两次 Full、定向重复、model drift、八项目漏洞审计、日志脱敏和空白检查通过。
+- [x] 真实 multipart HTTP 对合法二进制、Unicode 名称和缺省/规范 MIME 返回 201；DB 的大小/hash/上传者/创建时间与不可预测 basename 正确，磁盘字节完全一致且原始名从未进入路径。
+- [x] 匿名/禁用用户、错误 content type/boundary、零文件、空文件、错字段、额外字段/文件、恶意/超长名称、非法 MIME、超限、限流与取消得到稳定结果，且不留下 DB 行或文件。
+- [x] 请求总量、section、header 与流复制均有独立上界；exact-limit 成功、limit+1 为 413，慢/未知长度流不能绕过。
+- [x] DB busy/保存失败、目标冲突、磁盘异常与取消保持“无已提交坏行”；正常异常路径清零暂存，启动恢复删除严格命名的无行残留但不触碰未知文件。
+- [x] migration up/down 保留既有数据并固定 GUID/UTC/长度/hash/FK/CHECK/索引；Fast、两次 Full、定向重复、model drift、八项目漏洞审计、日志脱敏和空白检查通过。
 
 ### 验证命令
 
@@ -80,26 +80,34 @@ git diff --check
 
 ### 修改摘要
 
-- 待完成。
+- 新增认证的 `POST /api/attachments`，以 `MultipartReader` 只接受一个 `file` section；总请求、boundary、header、section 与实际复制分别有界，超限稳定返回 `AttachmentTooLarge`。
+- 内容以 `CreateNew` 流入同目录随机暂存文件并同步计算 SHA-256；原始文件名只作严格有界展示元数据，物理 basename 无扩展、不透明且不可覆盖。
+- 新增 `Attachment` 实体、关系、SQLite CHECK/索引与真实 migration；SQLite 写事务在提交前完成无覆盖 rename，actor 状态在事务内复核，busy/冲突/取消不产生已提交坏行。
+- 新增启动恢复，只删除严格托管命名的暂存文件和无数据库行最终文件；数据库行缺文件时 fail-closed，未知文件和已跟踪文件保持不动。
+- 新增 subject 固定窗口上传限流、启动 options 校验、宿主 413 错误映射与 DTO/日志脱敏；匿名请求绕过上传 limiter 后仍稳定由授权层返回 401。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 绿色集成头 Fast 基线 | 860/860；Shared 37、Server 192、Client 630、Updater 1。 |
-| `未验证` | 实现与最终门禁 | 任务进行中。 |
+| `已验证` | 固定代码提交最终 Fast 与两次 Full | `a2ef8a72f24829e61f5ae8e34aa3b661ce90fd0d` 为 911/911；Shared 39、Server 241、Client 630、Updater 1；Debug/Release 均 0 警告、0 错误，format 与 `git diff --check` 通过。 |
+| `已验证` | Attachment Release 定向集连续 10 轮 | 每轮 39 项，共 390/390；覆盖真实 HTTP/SQLite/filesystem、解析边界、限流、冲突回滚、取消与启动恢复。 |
+| `已验证` | 真实 Kestrel + 临时 SQLite/filesystem | EF CLI 实际应用全部 migration；8 字节 configured exact-limit 返回 201，70 KiB multipart 触发宿主级稳定 413；仅一个严格命名、字节一致的最终文件，无暂存残留；隔离目录随后精确清理。 |
+| `已验证` | migration、模型与依赖安全 | 自动化 up/down 保留既有认证/会话数据且固定表/列/FK/CHECK/索引；`has-pending-model-changes` 无漂移；八项目直接/传递依赖无已知漏洞。 |
+| `已验证` | 脱敏与独立审查边界 | 敏感 logger 检索无命中，响应/result/staged DTO 的 `ToString()` 脱敏；Claude #69 XHigh 因本机认证源优先级失败，无 job、模型、workspace、费用或结论，未冒充审查通过。 |
 
 ### 文件范围
 
-- 新增：本任务记录。
-- 修改：待完成。
+- 新增：Attachment entity/migration、上传 endpoint、streaming reader、staged/path/command/recovery services、storage/upload options、上传限流及对应 Shared/Server 测试、本任务记录。
+- 修改：Server DbContext/entity relationships/Program/config/错误中间件、Shared error/DTO 脱敏、测试工厂与状态/执行/决策记录。
 - 删除：无。
 
 ### 决策与限制
 
-- 决策：`DEC-042` 初始边界；最终证据待补。
+- 决策：`DEC-042` — 未绑定附件只作为上传者的不可下载 reservation；内容经多层有界 streaming 进入非静态随机文件，文件在 SQLite commit 前发布，崩溃歧义由严格启动恢复收敛。
 - 已知限制：本切片上传的附件尚不能下载或发入会话；内容未扫描且未绑定附件的长期租约/回收尚未实现，因此物理内容保持非静态、不可下载状态。
 
 ### 下一步
 
-- 实现并验证服务端单附件流式上传与持久存储。
+- 仅快进集成本切片；随后冻结并实现附件 attach-once 消息事务与会话授权下载，仍不提前开放客户端或 VPS Gate。
