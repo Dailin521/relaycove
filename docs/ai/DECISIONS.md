@@ -516,3 +516,16 @@
 - **理由：** 上传 endpoint 尚无会话信息，只有“上传者拥有的未绑定 reservation”是可证明的最小授权状态；真正加入消息时仍须在消息写事务内验证上传者、未绑定状态与会话权限。无扩展随机名、非静态根与不可下载状态把任意内容保持为不执行、不分发的 opaque blob；多层限长与 subject 限流约束单请求和短期滥用。
 - **影响：** Server 新增 attachment schema/migration、options、流式 parser、文件存储/启动恢复、上传 endpoint 和限流；Shared 只补稳定过大错误码与 `AttachmentDto` 脱敏，不改变 JSON 字段。消息仍只支持 Text 且要求空附件，Client/schema/Sync/Realtime 不变。病毒扫描、内容嗅探、长期未绑定租约/配额、下载和 attach-once 消息事务必须在开放内容读取前继续决策。
 - **来源：** 工程落地方案第 3.4、7.5、8.2、10.2、11.1–11.2、14.1–14.2、17.2、18.4、阶段 9、21.3；Microsoft ASP.NET Core 10 上传与限流官方文档（2026-08-04）；`docs/ai/tasks/2026-08-04-stage-9-attachment-upload.md`；最终 Fast/两次 Full 911 项（Shared 39、Server 241、Client 630、Updater 1）、Attachment Release 定向集 390/390、真实 Kestrel exact-limit 201/宿主级 413/不透明字节一致落盘、migration up/down、冲突回滚与启动恢复、model drift、八项目漏洞审计、敏感日志检索与空白检查。Claude #69 因认证源优先级失败，无结论；Codex 固定差异、威胁建模与本机门禁为最终依据。
+
+### DEC-043：附件集合是消息幂等载荷并以条件更新 attach-once
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-010/042` 已分别冻结消息 INSERT-first 幂等和未绑定附件 reservation，但尚未连接二者。简单地先把附件设为某条消息再插入消息会在幂等冲突前产生副作用；只做“先查 MessageId 为空、随后普通 UPDATE”又允许两个并发消息基于旧读结果重绑同一附件。下载若只按 uploader 或附件 ID 返回，还会绕过当前会话撤权。
+- **决策：** 普通发送端开放 Image/File，各携带 1–10 个唯一非空附件 ID；Text 仍严格为空，System 仍不开放。附件 ID 与 mentions 都是无序不可变 payload，按 GUID 规范排序。Image/File 正文可为 null，非 null 复用 Text 内容边界；Image 只接受声明为 `image/*` 的附件，但 MIME 仍不作为内容可信证明。
+- **决策：** 同一 Serializable 写事务先按现有规则复核 actor、会话、Reply、mentions，并确认所有附件属于 actor 且物理文件完整；预检允许附件已绑定，以便相同幂等键 replay 到 INSERT 冲突后比较原集合。新消息必须先 INSERT，再以 `Id IN (...) AND UploaderUserId=actor AND MessageId IS NULL` 条件一次更新绑定，受影响行数必须精确等于规范集合；不相等即回滚新消息。目标幂等冲突只回读同发送者原消息及完整 attachments/mentions；完全相同返回 200，不同返回 409，均不重绑或发布。
+- **决策：** Send/History/Around/Sync/SignalR 返回同一稳定排序 AttachmentDto 集合。metadata/download 授权查询必须把 attachment -> message -> 当前可见且未删除 conversation 绑定在一起；未知、未绑定、删除和不可访问统一 fail-closed。下载只打开严格托管路径，使用 attachment disposition、range、`nosniff` 与 `private, no-store`，不在日志/错误中暴露原名、物理名、路径或 hash。
+- **决策：** 未绑定 reservation 默认 24 小时、最多配置 168 小时并至少每小时清理。清理先在 SQLite 写事务提交删除过期未绑定行，再尽力删除物理文件；失败或崩溃只留下无行文件，由严格托管 orphan recovery 后续回收。绑定行、未到期行和未知文件不删除。
+- **理由：** INSERT 后的 owner/null 条件更新同时保持原幂等顺序和数据库裁决的 attach-once；允许已绑定预检使合法 replay 不会被“只能绑定一次”的新建规则误拒绝。授权查询从消息会话重新求值，确保撤权后的新下载请求不能借 uploader 或陈旧 DTO 绕过。DB-first TTL 删除把失败方向限制为可恢复孤儿文件，而不是不可恢复的“行存在但文件缺失”。
+- **影响：** Server 扩展消息验证/命令/投影、附件查询/下载和后台 lease 清理，无新消息 ID、Sync cursor 或数据库列。现有 Client 明确拒绝非空附件 DTO，本切片不宣称客户端兼容；客户端发送/cache/UI、病毒扫描、搜索和 VPS 另开任务。最终来源和门禁待本任务完成记录补齐。
+- **来源：** 工程落地方案第 7.4–7.5、8.2、10.2、11.1–11.2、12.1–12.4、14.1–14.3、阶段 9、21.2–21.3；`DEC-010`、`DEC-014`、`DEC-042`；`docs/ai/tasks/2026-08-04-stage-9-attachment-message-download.md`；绿色集成头 Fast 911 项基线和当前消息/附件/客户端兼容证据。Claude #70 因认证源优先级失败，无结论；最终门禁待本任务完成记录补齐。
