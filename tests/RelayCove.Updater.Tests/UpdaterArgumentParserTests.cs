@@ -32,6 +32,24 @@ public sealed class UpdaterArgumentParserTests
     }
 
     [Fact]
+    public void TryParse_WhenArtifactExceedsMaximum_Rejects()
+    {
+        var arguments = TestArguments.Create(
+            "--expected-size",
+            (RelayCove.Shared.Updates.UpdateConstants.MaximumArtifactBytes + 1).ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        Assert.False(UpdaterArgumentParser.TryParse(arguments, out _));
+    }
+
+    [Fact]
+    public void CreateLayout_WhenTargetIsUnc_Rejects()
+    {
+        Assert.True(UpdaterArgumentParser.TryParse(TestArguments.Create("--target", @"\\server\share\RelayCove"), out var options));
+
+        Assert.Throws<InvalidDataException>(() => UpdateLayout.Create(options!, Path.Combine(Path.GetTempPath(), "RelayCove.Updater.exe")));
+    }
+
+    [Fact]
     public void IsHelp_WhenHelpRequested_ReturnsTrue()
     {
         Assert.True(UpdaterArgumentParser.IsHelp(["--help"]));

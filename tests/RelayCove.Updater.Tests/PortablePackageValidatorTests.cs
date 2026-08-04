@@ -50,6 +50,25 @@ public sealed class PortablePackageValidatorTests
 
         Assert.Throws<InvalidDataException>(() => new PortablePackageValidator().ValidateAndExtract(options, Path.Combine(temporary.Path, "staging")));
     }
+
+    [Fact]
+    public void ValidateAndExtract_WhileReadingArchive_BlocksReplacementAndDeletion()
+    {
+        using var temporary = new TemporaryDirectory();
+        var archive = PackageFixture.Create(temporary.Path);
+        var options = PackageFixture.CreateOptions(archive.Path, archive.Hash, archive.Size);
+        var callbackRan = false;
+        var validator = new PortablePackageValidator(() =>
+        {
+            callbackRan = true;
+            Assert.Throws<IOException>(() => new FileStream(archive.Path, FileMode.Open, FileAccess.ReadWrite, FileShare.None));
+            Assert.Throws<IOException>(() => File.Delete(archive.Path));
+        });
+
+        validator.ValidateAndExtract(options, Path.Combine(temporary.Path, "staging"));
+
+        Assert.True(callbackRan);
+    }
 }
 
 internal static class PackageFixture

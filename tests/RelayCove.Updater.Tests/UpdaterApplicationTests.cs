@@ -8,7 +8,7 @@ public sealed class UpdaterApplicationTests
         using var temporary = new TemporaryDirectory();
         var target = Path.Combine(temporary.Path, "RelayCove");
         Directory.CreateDirectory(target);
-        File.WriteAllText(Path.Combine(target, "RelayCove.Client.exe"), "old-client");
+        WriteInstalledClient(target);
         File.WriteAllText(Path.Combine(target, "old.txt"), "old");
         var archive = PackageFixture.Create(temporary.Path);
         var fake = new FakePlatform(Path.Combine(temporary.Path, "external", "RelayCove.Updater.exe"));
@@ -24,6 +24,7 @@ public sealed class UpdaterApplicationTests
 
         Assert.Equal(0, result);
         Assert.True(File.Exists(Path.Combine(target, "RelayCove.Client.exe")));
+        Assert.True(File.Exists(Path.Combine(target, "manifest.json")));
         Assert.False(File.Exists(Path.Combine(target, "old.txt")));
         Assert.Equal(Path.Combine(target, "RelayCove.Client.exe"), fake.StartedExecutablePath);
         Assert.Empty(fake.StartedArguments);
@@ -35,7 +36,7 @@ public sealed class UpdaterApplicationTests
         using var temporary = new TemporaryDirectory();
         var target = Path.Combine(temporary.Path, "RelayCove");
         Directory.CreateDirectory(target);
-        File.WriteAllText(Path.Combine(target, "RelayCove.Client.exe"), "old-client");
+        WriteInstalledClient(target);
         File.WriteAllText(Path.Combine(target, "old.txt"), "old");
         var archive = PackageFixture.Create(temporary.Path);
         var fake = new FakePlatform(Path.Combine(temporary.Path, "external", "RelayCove.Updater.exe")) { IsRunning = true };
@@ -60,7 +61,7 @@ public sealed class UpdaterApplicationTests
         using var temporary = new TemporaryDirectory();
         var target = Path.Combine(temporary.Path, "RelayCove");
         Directory.CreateDirectory(target);
-        File.WriteAllText(Path.Combine(target, "RelayCove.Client.exe"), "old-client");
+        WriteInstalledClient(target);
         File.WriteAllText(Path.Combine(target, "old.txt"), "old");
         var archive = PackageFixture.Create(temporary.Path);
         var fake = new FakePlatform(Path.Combine(temporary.Path, "external", "RelayCove.Updater.exe")) { ThrowOnStart = true };
@@ -85,7 +86,7 @@ public sealed class UpdaterApplicationTests
         using var temporary = new TemporaryDirectory();
         var target = Path.Combine(temporary.Path, "RelayCove");
         Directory.CreateDirectory(target);
-        File.WriteAllText(Path.Combine(target, "RelayCove.Client.exe"), "old-client");
+        WriteInstalledClient(target);
         File.WriteAllText(Path.Combine(temporary.Path, ".RelayCove.relaycove-update.json"), "{\"state\":\"prepared\"}");
         var archive = PackageFixture.Create(temporary.Path);
         var fake = new FakePlatform(Path.Combine(temporary.Path, "external", "RelayCove.Updater.exe"));
@@ -99,6 +100,38 @@ public sealed class UpdaterApplicationTests
 
         Assert.Equal(0, UpdaterApplication.Run(arguments, fake));
         Assert.False(File.Exists(Path.Combine(temporary.Path, ".RelayCove.relaycove-update.json")));
+    }
+
+    [Fact]
+    public void Run_WhenInstalledManifestVersionDoesNotMatch_LeavesTargetUnchanged()
+    {
+        using var temporary = new TemporaryDirectory();
+        var target = Path.Combine(temporary.Path, "RelayCove");
+        Directory.CreateDirectory(target);
+        WriteInstalledClient(target, "0.9.0");
+        File.WriteAllText(Path.Combine(target, "old.txt"), "old");
+        var archive = PackageFixture.Create(temporary.Path);
+        var fake = new FakePlatform(Path.Combine(temporary.Path, "external", "RelayCove.Updater.exe"));
+        File.WriteAllText(fake.ExecutablePath, "fake");
+        var arguments = TestArguments.Create();
+        Replace(arguments, "--archive", archive.Path);
+        Replace(arguments, "--expected-sha256", archive.Hash);
+        Replace(arguments, "--expected-size", archive.Size.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Replace(arguments, "--target", target);
+        arguments = [.. arguments, "--bootstrapped"];
+
+        var result = UpdaterApplication.Run(arguments, fake);
+
+        Assert.Equal((int)UpdaterExitCode.ValidationFailed, result);
+        Assert.Equal("old-client", File.ReadAllText(Path.Combine(target, "RelayCove.Client.exe")));
+        Assert.True(File.Exists(Path.Combine(target, "old.txt")));
+        Assert.Null(fake.StartedExecutablePath);
+    }
+
+    private static void WriteInstalledClient(string target, string version = "1.0.0")
+    {
+        File.WriteAllText(Path.Combine(target, "RelayCove.Client.exe"), "old-client");
+        File.WriteAllText(Path.Combine(target, "manifest.json"), $"{{\"version\":\"{version}\"}}");
     }
 
     private static void Replace(string[] arguments, string key, string value) => arguments[Array.IndexOf(arguments, key) + 1] = value;

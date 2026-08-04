@@ -1,14 +1,19 @@
+using System.Text;
 using System.Text.Json;
 
 namespace RelayCove.Updater;
 
 internal sealed class UpdateLayout
 {
+    private const string PreparedState = "prepared";
+    private const string ActivatedState = "activated";
+    private const string RestoringState = "restoring";
     private readonly string executablePath;
     private readonly string targetPath;
     private readonly string parentPath;
     private readonly string targetName;
     private readonly string backupPath;
+    private readonly string quarantinePath;
     private readonly string journalPath;
     private readonly string lockPath;
 
@@ -19,6 +24,7 @@ internal sealed class UpdateLayout
         this.parentPath = parentPath;
         this.targetName = targetName;
         backupPath = Path.Combine(parentPath, $".{targetName}.relaycove-backup");
+        quarantinePath = Path.Combine(parentPath, $".{targetName}.relaycove-quarantine");
         journalPath = Path.Combine(parentPath, $".{targetName}.relaycove-update.json");
         lockPath = Path.Combine(parentPath, $".{targetName}.relaycove-update.lock");
     }
@@ -28,17 +34,25 @@ internal sealed class UpdateLayout
     internal static UpdateLayout Create(UpdaterOptions options, string executablePath)
     {
         var target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(options.TargetPath));
+        if (IsUnc(target))
+        {
+            throw new InvalidDataException("Target directory is invalid.");
+        }
+
         var parent = Directory.GetParent(target)?.FullName ?? throw new InvalidDataException("Target directory is invalid.");
         return new UpdateLayout(Path.GetFullPath(executablePath), target, parent, Path.GetFileName(target));
     }
 
-    internal void ValidateInputs(string archivePath)
+    internal void ValidateInputs(string archivePath, string currentVersion)
     {
         var clientExecutable = Path.Combine(targetPath, "RelayCove.Client.exe");
+        var installedManifest = Path.Combine(targetPath, "manifest.json");
         if (!Directory.Exists(targetPath) || !File.Exists(clientExecutable) || IsVolumeRoot(targetPath) || !File.Exists(archivePath) ||
+            !File.Exists(installedManifest) ||
             IsInside(archivePath, targetPath) || IsReparsePath(parentPath) || IsReparsePath(targetPath) ||
             IsReparsePath(Path.GetDirectoryName(archivePath) ?? archivePath) || IsReparsePath(Path.GetDirectoryName(executablePath) ?? executablePath) ||
-            IsReparseFile(archivePath) || IsReparseFile(clientExecutable))
+            IsReparseFile(archivePath) || IsReparseFile(clientExecutable) || IsReparseFile(installedManifest) ||
+            !InstalledManifestHasVersion(installedManifest, currentVersion))
         {
             throw new InvalidDataException("Update paths are invalid.");
         }
@@ -76,99 +90,43 @@ internal sealed class UpdateLayout
         platform.Start(bootstrapPath, arguments, bootstrapDirectory);
     }
 
-    internal void RecoverIfNecessary()
+    internal FileStream AcquireLock()
     {
-        if (IsVolumeRoot(targetPath) || !Directory.Exists(parentPath) || IsReparsePath(parentPath) || IsReparsePath(targetPath) ||
-            (Directory.Exists(backupPath) && IsReparsePath(backupPath)) ||
-            (File.Exists(journalPath) && (File.GetAttributes(journalPath) & FileAttributes.ReparsePoint) != 0))
+        if (!Directory.Exists(parentPath) || IsReparsePath(parentPath) || IsReparseFile(lockPath))
         {
-            throw new InvalidDataException("Update recovery state is invalid.");
+            throw new InvalidDataException("Update lock path is invalid.");
         }
 
+        return new FileStream(
+            lockPath,
+            FileMode.OpenOrCreate,
+            FileAccess.ReadWrite,
+            FileShare.None,
+            4096,
+            FileOptions.DeleteOnClose);
+    }
+
+    internal void RecoverIfNecessary()
+    {
+        ValidateRecoveryPaths();
         if (!File.Exists(journalPath))
         {
+            if (Directory.Exists(backupPath) || Directory.Exists(quarantinePath))
+            {
+                throw new InvalidDataException("Update recovery state is invalid.");
+            }
+
             return;
         }
 
         var state = ReadJournalState();
-
-        if (Directory.Exists(targetPath) && !Directory.Exists(backupPath) && state == "prepared")
+        if (state is PreparedState or ActivatedState)
         {
-            File.Delete(journalPath);
+            RecoverActivation(state);
             return;
         }
 
-        if (!Directory.Exists(targetPath) && Directory.Exists(backupPath))
-        {
-            Directory.Move(backupPath, targetPath);
-            File.Delete(journalPath);
-            return;
-        }
-
-        if (Directory.Exists(targetPath) && Directory.Exists(backupPath) && state is "prepared" or "activated")
-        {
-            DeleteDirectorySafe(backupPath);
-            File.Delete(journalPath);
-            return;
-        }
-
-        throw new InvalidDataException("Update recovery state is invalid.");
-    }
-
-    internal void RestoreAfterLaunchFailure()
-    {
-        if (!Directory.Exists(backupPath) || !Directory.Exists(targetPath))
-        {
-            throw new InvalidDataException("Update recovery state is invalid.");
-        }
-
-        DeleteDirectorySafe(targetPath);
-        Directory.Move(backupPath, targetPath);
-        if (File.Exists(journalPath))
-        {
-            File.Delete(journalPath);
-        }
-    }
-
-    internal FileStream AcquireLock() => new(lockPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-
-    internal void DeleteLock()
-    {
-        if (File.Exists(lockPath))
-        {
-            File.Delete(lockPath);
-        }
-    }
-
-    internal void CleanupStaleBootstrapDirectories()
-    {
-        var currentDirectory = Path.GetDirectoryName(executablePath);
-        foreach (var candidate in Directory.EnumerateDirectories(parentPath, ".relaycove-updater-*").Take(16))
-        {
-            if (string.Equals(candidate, currentDirectory, StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            try
-            {
-                var info = new DirectoryInfo(candidate);
-                if ((info.Attributes & FileAttributes.ReparsePoint) == 0 &&
-                    info.LastWriteTimeUtc < DateTime.UtcNow.AddMinutes(-1) &&
-                    File.Exists(Path.Combine(candidate, "RelayCove.Updater.exe")))
-                {
-                    Directory.Delete(candidate, true);
-                }
-            }
-            catch (IOException)
-            {
-                // A concurrent or externally locked stale bootstrap is left for a later run.
-            }
-            catch (UnauthorizedAccessException)
-            {
-                // Cleanup is best effort and never widens update authority.
-            }
-        }
+        RecoverRestoration();
     }
 
     internal string CreateStaging()
@@ -180,27 +138,46 @@ internal sealed class UpdateLayout
 
     internal void Activate(string stagingPath)
     {
-        if (Directory.Exists(backupPath))
+        if (Directory.Exists(backupPath) || Directory.Exists(quarantinePath) || File.Exists(journalPath))
         {
-            throw new InvalidDataException("Previous update backup is present.");
+            throw new InvalidDataException("Previous update state is present.");
         }
 
-        File.WriteAllText(journalPath, JsonSerializer.Serialize(new { state = "prepared" }));
+        WriteJournal(PreparedState);
         Directory.Move(targetPath, backupPath);
         try
         {
             Directory.Move(stagingPath, targetPath);
-            File.WriteAllText(journalPath, JsonSerializer.Serialize(new { state = "activated" }));
+            WriteJournal(ActivatedState);
         }
         catch
         {
-            if (!Directory.Exists(targetPath) && Directory.Exists(backupPath))
+            if (Directory.Exists(targetPath) && Directory.Exists(backupPath) && !Directory.Exists(quarantinePath))
+            {
+                WriteJournal(RestoringState);
+                RecoverRestoration();
+            }
+            else if (!Directory.Exists(targetPath) && Directory.Exists(backupPath))
             {
                 Directory.Move(backupPath, targetPath);
+                ClearJournal();
             }
 
             throw;
         }
+    }
+
+    internal void RestoreAfterLaunchFailure()
+    {
+        if (!Directory.Exists(backupPath) || !Directory.Exists(targetPath) || Directory.Exists(quarantinePath))
+        {
+            throw new InvalidDataException("Update recovery state is invalid.");
+        }
+
+        WriteJournal(RestoringState);
+        Directory.Move(targetPath, quarantinePath);
+        Directory.Move(backupPath, targetPath);
+        FinishRestoration();
     }
 
     internal void Complete()
@@ -210,9 +187,99 @@ internal sealed class UpdateLayout
             DeleteDirectorySafe(backupPath);
         }
 
-        if (File.Exists(journalPath))
+        ClearJournal();
+    }
+
+    private void RecoverActivation(string state)
+    {
+        var targetExists = Directory.Exists(targetPath);
+        var backupExists = Directory.Exists(backupPath);
+        if (Directory.Exists(quarantinePath))
         {
-            File.Delete(journalPath);
+            throw new InvalidDataException("Update recovery state is invalid.");
+        }
+
+        if (targetExists && !backupExists)
+        {
+            ClearJournal();
+            return;
+        }
+
+        if (!targetExists && backupExists)
+        {
+            Directory.Move(backupPath, targetPath);
+            ClearJournal();
+            return;
+        }
+
+        if (targetExists && backupExists)
+        {
+            if (state == PreparedState)
+            {
+                WriteJournal(RestoringState);
+                RecoverRestoration();
+                return;
+            }
+
+            DeleteDirectorySafe(backupPath);
+            ClearJournal();
+            return;
+        }
+
+        throw new InvalidDataException("Update recovery state is invalid.");
+    }
+
+    private void RecoverRestoration()
+    {
+        var targetExists = Directory.Exists(targetPath);
+        var backupExists = Directory.Exists(backupPath);
+        var quarantineExists = Directory.Exists(quarantinePath);
+
+        if (targetExists && backupExists && !quarantineExists)
+        {
+            Directory.Move(targetPath, quarantinePath);
+            Directory.Move(backupPath, targetPath);
+            FinishRestoration();
+            return;
+        }
+
+        if (!targetExists && backupExists)
+        {
+            Directory.Move(backupPath, targetPath);
+            FinishRestoration();
+            return;
+        }
+
+        if (targetExists && !backupExists)
+        {
+            FinishRestoration();
+            return;
+        }
+
+        throw new InvalidDataException("Update recovery state is invalid.");
+    }
+
+    private void FinishRestoration()
+    {
+        if (!Directory.Exists(targetPath) || Directory.Exists(backupPath))
+        {
+            throw new InvalidDataException("Update recovery state is invalid.");
+        }
+
+        if (Directory.Exists(quarantinePath) && !TryDeleteDirectorySafe(quarantinePath))
+        {
+            throw new IOException("Update quarantine cleanup failed.");
+        }
+
+        ClearJournal();
+    }
+
+    private void ValidateRecoveryPaths()
+    {
+        if (IsVolumeRoot(targetPath) || !Directory.Exists(parentPath) || IsReparsePath(parentPath) || IsReparsePath(targetPath) ||
+            IsReparsePath(backupPath) || IsReparsePath(quarantinePath) || IsReparseFile(journalPath))
+        {
+            throw new InvalidDataException("Update recovery state is invalid.");
         }
     }
 
@@ -228,7 +295,7 @@ internal sealed class UpdateLayout
     {
         try
         {
-            if (new FileInfo(journalPath).Length > 256)
+            if (new FileInfo(journalPath).Length is <= 0 or > 256)
             {
                 throw new InvalidDataException("Update recovery state is invalid.");
             }
@@ -241,7 +308,7 @@ internal sealed class UpdateLayout
             }
 
             var value = state.GetString();
-            if (value is not "prepared" and not "activated")
+            if (value is not PreparedState and not ActivatedState and not RestoringState)
             {
                 throw new InvalidDataException("Update recovery state is invalid.");
             }
@@ -251,6 +318,100 @@ internal sealed class UpdateLayout
         catch (JsonException)
         {
             throw new InvalidDataException("Update recovery state is invalid.");
+        }
+    }
+
+    private void WriteJournal(string state)
+    {
+        var temporaryPath = $"{journalPath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            var bytes = new UTF8Encoding(false).GetBytes(JsonSerializer.Serialize(new { state }));
+            using (var stream = new FileStream(
+                       temporaryPath,
+                       FileMode.CreateNew,
+                       FileAccess.Write,
+                       FileShare.None,
+                       4096,
+                       FileOptions.WriteThrough))
+            {
+                stream.Write(bytes);
+                stream.Flush(true);
+            }
+
+            File.Move(temporaryPath, journalPath, true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                try
+                {
+                    File.Delete(temporaryPath);
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+        }
+    }
+
+    private void ClearJournal()
+    {
+        if (File.Exists(journalPath))
+        {
+            File.Delete(journalPath);
+        }
+    }
+
+    private static bool TryDeleteDirectorySafe(string path)
+    {
+        try
+        {
+            DeleteDirectorySafe(path);
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static bool InstalledManifestHasVersion(string manifestPath, string currentVersion)
+    {
+        try
+        {
+            var file = new FileInfo(manifestPath);
+            if (file.Length is <= 0 or > 8 * 1024 * 1024)
+            {
+                return false;
+            }
+
+            using var stream = new FileStream(manifestPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var document = JsonDocument.Parse(stream);
+            return document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty("version", out var version) &&
+                version.ValueKind == JsonValueKind.String &&
+                string.Equals(version.GetString(), currentVersion, StringComparison.Ordinal);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
         }
     }
 
@@ -265,6 +426,8 @@ internal sealed class UpdateLayout
     }
 
     private static bool IsVolumeRoot(string path) => string.Equals(Path.GetPathRoot(path), Path.TrimEndingDirectorySeparator(path), StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsUnc(string path) => path.StartsWith("\\\\", StringComparison.Ordinal);
 
     private static bool IsInside(string path, string root)
     {

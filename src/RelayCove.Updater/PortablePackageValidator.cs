@@ -2,24 +2,40 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using RelayCove.Shared.Updates;
 
 namespace RelayCove.Updater;
 
 internal sealed class PortablePackageValidator
 {
     private const int MaximumEntries = 10_000;
-    private const long MaximumUncompressedBytes = 2L * 1024 * 1024 * 1024;
+    private const long MaximumUncompressedBytes = UpdateConstants.MaximumArtifactBytes;
     private const long MaximumManifestBytes = 8L * 1024 * 1024;
+    private readonly Action? archiveLocked;
+
+    internal PortablePackageValidator(Action? archiveLocked = null)
+    {
+        this.archiveLocked = archiveLocked;
+    }
 
     internal PackageValidationResult ValidateAndExtract(UpdaterOptions options, string stagingPath)
     {
-        if (!File.Exists(options.ArchivePath) || new FileInfo(options.ArchivePath).Length != options.ExpectedSize ||
-            !string.Equals(HashFile(options.ArchivePath), options.ExpectedSha256, StringComparison.Ordinal))
+        using var archiveStream = new FileStream(
+            options.ArchivePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            64 * 1024,
+            FileOptions.SequentialScan);
+        if (archiveStream.Length != options.ExpectedSize || options.ExpectedSize > UpdateConstants.MaximumArtifactBytes ||
+            !string.Equals(HashStream(archiveStream), options.ExpectedSha256, StringComparison.Ordinal))
         {
             throw new InvalidDataException("Update archive validation failed.");
         }
 
-        using var archive = ZipFile.OpenRead(options.ArchivePath);
+        archiveStream.Position = 0;
+        archiveLocked?.Invoke();
+        using var archive = new ZipArchive(archiveStream, ZipArchiveMode.Read, leaveOpen: false);
         var packageRoot = $"RelayCove.Client-{options.ExpectedVersion}-win-x64";
         var prefix = packageRoot + "/";
         var files = new Dictionary<string, ZipArchiveEntry>(StringComparer.OrdinalIgnoreCase);
@@ -50,11 +66,6 @@ internal sealed class PortablePackageValidator
         Directory.CreateDirectory(stagingPath);
         foreach (var pair in files)
         {
-            if (string.Equals(pair.Key, "manifest.json", StringComparison.Ordinal))
-            {
-                continue;
-            }
-
             var destination = Path.Combine(stagingPath, pair.Key.Replace('/', Path.DirectorySeparatorChar));
             var destinationDirectory = Path.GetDirectoryName(destination) ?? throw new InvalidDataException("Update package path is invalid.");
             Directory.CreateDirectory(destinationDirectory);
@@ -175,7 +186,7 @@ internal sealed class PortablePackageValidator
     private static bool HasNumber(JsonElement element, string name, int expected) => element.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var value) && value == expected;
     private static bool HasString(JsonElement element, string name, string expected) => element.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.String && property.GetString() == expected;
     private static bool HasBoolean(JsonElement element, string name, bool expected) => element.TryGetProperty(name, out var property) && property.ValueKind is JsonValueKind.True or JsonValueKind.False && property.GetBoolean() == expected;
-    private static string HashFile(string path) { using var stream = File.OpenRead(path); return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant(); }
+    private static string HashStream(Stream stream) => Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     private static string HashEntry(ZipArchiveEntry entry) { using var stream = entry.Open(); return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant(); }
     private static bool IsLowerSha256(string value) => value.Length == 64 && value == value.ToLowerInvariant() && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
 }

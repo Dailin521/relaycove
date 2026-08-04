@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using System.ComponentModel;
 
 namespace RelayCove.Updater;
 
@@ -42,6 +42,11 @@ internal static class UpdaterApplication
             Console.Error.WriteLine("Update could not be applied.");
             return (int)UpdaterExitCode.ApplyFailed;
         }
+        catch (Win32Exception)
+        {
+            Console.Error.WriteLine("Update could not be applied.");
+            return (int)UpdaterExitCode.ApplyFailed;
+        }
     }
 
     private static int RunApply(UpdaterOptions options, IUpdaterPlatform platform)
@@ -58,48 +63,35 @@ internal static class UpdaterApplication
             throw new InvalidDataException("Bootstrap location is invalid.");
         }
 
-        var lockAcquired = false;
-        try
+        using (layout.AcquireLock())
         {
-            using (layout.AcquireLock())
+            layout.RecoverIfNecessary();
+            layout.ValidateInputs(options.ArchivePath, options.CurrentVersion.ToString());
+            WaitForClient(options, platform);
+            var staging = layout.CreateStaging();
+            try
             {
-                lockAcquired = true;
-                layout.CleanupStaleBootstrapDirectories();
-                layout.RecoverIfNecessary();
-                layout.ValidateInputs(options.ArchivePath);
-                WaitForClient(options, platform);
-                var staging = layout.CreateStaging();
+                new PortablePackageValidator().ValidateAndExtract(options, staging);
+                layout.Activate(staging);
                 try
                 {
-                    new PortablePackageValidator().ValidateAndExtract(options, staging);
-                    layout.Activate(staging);
-                    try
-                    {
-                        platform.Start(Path.Combine(options.TargetPath, "RelayCove.Client.exe"), Array.Empty<string>(), options.TargetPath);
-                    }
-                    catch
-                    {
-                        layout.RestoreAfterLaunchFailure();
-                        throw;
-                    }
-                    layout.Complete();
-                    Console.Out.WriteLine("Update applied.");
-                    return (int)UpdaterExitCode.Success;
+                    platform.Start(Path.Combine(options.TargetPath, "RelayCove.Client.exe"), Array.Empty<string>(), options.TargetPath);
                 }
-                finally
+                catch
                 {
-                    if (Directory.Exists(staging))
-                    {
-                        Directory.Delete(staging, true);
-                    }
+                    layout.RestoreAfterLaunchFailure();
+                    throw;
                 }
+                layout.Complete();
+                Console.Out.WriteLine("Update applied.");
+                return (int)UpdaterExitCode.Success;
             }
-        }
-        finally
-        {
-            if (lockAcquired)
+            finally
             {
-                layout.DeleteLock();
+                if (Directory.Exists(staging))
+                {
+                    Directory.Delete(staging, true);
+                }
             }
         }
     }

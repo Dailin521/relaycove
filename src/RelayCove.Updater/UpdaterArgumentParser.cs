@@ -58,7 +58,8 @@ internal static class UpdaterArgumentParser
             return false;
         }
 
-        if (!long.TryParse(values["--expected-size"], NumberStyles.None, CultureInfo.InvariantCulture, out var expectedSize) || expectedSize <= 0 ||
+        if (!long.TryParse(values["--expected-size"], NumberStyles.None, CultureInfo.InvariantCulture, out var expectedSize) ||
+            expectedSize is <= 0 or > UpdateConstants.MaximumArtifactBytes ||
             !int.TryParse(values["--wait-pid"], NumberStyles.None, CultureInfo.InvariantCulture, out var waitProcessId) || waitProcessId <= 0 ||
             !long.TryParse(values["--wait-start-time-utc-ticks"], NumberStyles.None, CultureInfo.InvariantCulture, out var ticks) || ticks <= 0 ||
             !SemanticVersion.TryParse(values["--expected-version"], out var expectedVersion) ||
