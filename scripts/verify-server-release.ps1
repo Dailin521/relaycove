@@ -95,6 +95,9 @@ function Get-ExpectedPaths {
         "$PackageName/app/RelayCove.Server",
         "$PackageName/app/RelayCove.Server.deps.json",
         "$PackageName/app/RelayCove.Server.runtimeconfig.json",
+        "$PackageName/app/libhostfxr.so",
+        "$PackageName/app/libhostpolicy.so",
+        "$PackageName/app/libcoreclr.so",
         "$PackageName/migrate/$migrationBundleName",
         "$PackageName/deploy/relaycove.service",
         "$PackageName/deploy/nginx.conf",
@@ -123,15 +126,40 @@ function Format-LinuxMode {
 function Test-ForbiddenPath {
     param([Parameter(Mandatory)][string] $RelativePath)
 
-    return $RelativePath -match '(?i)(^|/)(bin|obj|uploads|logs)(/|$)|\.pdb$|\.cs$|\.csproj$|\.sln$|(^|/)appsettings\.Development\.json$|(^|/).*\.(db|sqlite)(-wal|-shm)?$'
+    return $RelativePath -match '(?i)(^|/)(bin|obj|uploads|logs)(/|$)|\.pdb$|\.cs$|\.csproj$|\.sln$|(^|/)appsettings\.Development\.json$|(^|/).*\.(db|sqlite)(-wal|-shm)?$|(^|/)\.env(?:\.|$)|(^|/)[^/]*secret[^/]*\.json$|\.(pfx|p12|pem|key|user|bak|tmp)$'
 }
 
-function Get-StreamHash {
+function Get-StreamInspection {
     param([Parameter(Mandatory)][System.IO.Stream] $Stream)
 
-    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    $sha256 = [System.Security.Cryptography.IncrementalHash]::CreateHash(
+        [System.Security.Cryptography.HashAlgorithmName]::SHA256)
     try {
-        return ([System.Convert]::ToHexString($sha256.ComputeHash($Stream))).ToLowerInvariant()
+        $buffer = [byte[]]::new(81920)
+        $prefix = [byte[]]::new(20)
+        [long] $length = 0
+        $prefixLength = 0
+        while (($bytesRead = $Stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            if ($prefixLength -lt $prefix.Length) {
+                $bytesToCopy = [Math]::Min($bytesRead, $prefix.Length - $prefixLength)
+                [System.Array]::Copy($buffer, 0, $prefix, $prefixLength, $bytesToCopy)
+                $prefixLength += $bytesToCopy
+            }
+            $sha256.AppendData($buffer, 0, $bytesRead)
+            $length += $bytesRead
+        }
+
+        if ($prefixLength -ne $prefix.Length) {
+            $shortPrefix = [byte[]]::new($prefixLength)
+            [System.Array]::Copy($prefix, $shortPrefix, $prefixLength)
+            $prefix = $shortPrefix
+        }
+
+        return [pscustomobject]@{
+            Hash = ([System.Convert]::ToHexString($sha256.GetHashAndReset())).ToLowerInvariant()
+            Length = $length
+            Prefix = $prefix
+        }
     }
     finally {
         $sha256.Dispose()
@@ -216,6 +244,7 @@ function Read-Archive {
                         isDirectory = $true
                         length = 0
                         sha256 = $null
+                        prefix = $null
                         mode = "0755"
                     })
                 continue
@@ -260,10 +289,18 @@ function Read-Archive {
                 $sha256 = [System.Security.Cryptography.SHA256]::HashData($bytes)
                 $hash = ([System.Convert]::ToHexString($sha256)).ToLowerInvariant()
                 $length = $bytes.LongLength
+                $prefixLength = [Math]::Min($bytes.Length, 20)
+                $prefix = [byte[]]::new($prefixLength)
+                [System.Array]::Copy($bytes, $prefix, $prefixLength)
             }
             else {
-                $length = $entry.Length
-                $hash = Get-StreamHash $entry.DataStream
+                $inspection = Get-StreamInspection $entry.DataStream
+                if ($inspection.Length -ne $entry.Length) {
+                    throw "Archive entry '$entryName' ended before or after its declared length."
+                }
+                $length = $inspection.Length
+                $hash = $inspection.Hash
+                $prefix = $inspection.Prefix
             }
 
             $entries.Add([pscustomobject]@{
@@ -271,6 +308,7 @@ function Read-Archive {
                     isDirectory = $false
                     length = $length
                     sha256 = $hash
+                    prefix = $prefix
                     mode = (Format-LinuxMode $entry.Mode)
                 })
         }
@@ -378,6 +416,66 @@ function Assert-ProductionConfiguration {
     }
 }
 
+function Assert-NoSensitiveConfiguration {
+    param(
+        [AllowNull()][object] $Value,
+        [string] $Path = "root"
+    )
+
+    if ($null -eq $Value) {
+        return
+    }
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        foreach ($key in $Value.Keys) {
+            $keyName = [string] $key
+            $childPath = "$Path.$keyName"
+            if ($keyName -match '(?i)(Password|SigningKey|ApiKey|ClientSecret|PrivateKey|AccessToken|RefreshToken|Secret|Token)$') {
+                throw "Packaged application settings contain a sensitive key at '$childPath'."
+            }
+            Assert-NoSensitiveConfiguration $Value[$key] $childPath
+        }
+        return
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $index = 0
+        foreach ($item in $Value) {
+            Assert-NoSensitiveConfiguration $item "$Path[$index]"
+            $index++
+        }
+        return
+    }
+
+    if ($Value -is [string]) {
+        if ($Value -match '(?i)-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----') {
+            throw "Packaged application settings contain a private-key value at '$Path'."
+        }
+        if ($Value -match '(?i)(?:^|;)\s*(?:Password|Pwd|User ID)\s*=') {
+            throw "Packaged application settings contain a credential-bearing connection string at '$Path'."
+        }
+    }
+}
+
+function Assert-LinuxX64Elf {
+    param(
+        [Parameter(Mandatory)][object] $Entry,
+        [Parameter(Mandatory)][string] $RelativePath
+    )
+
+    if ($Entry.length -lt 20 -or $null -eq $Entry.prefix -or $Entry.prefix.Length -lt 20 -or
+        $Entry.prefix[0] -ne 0x7f -or
+        $Entry.prefix[1] -ne 0x45 -or
+        $Entry.prefix[2] -ne 0x4c -or
+        $Entry.prefix[3] -ne 0x46 -or
+        $Entry.prefix[4] -ne 0x02 -or
+        $Entry.prefix[5] -ne 0x01 -or
+        $Entry.prefix[18] -ne 0x3e -or
+        $Entry.prefix[19] -ne 0x00) {
+        throw "Archive executable '$RelativePath' is not a non-empty Linux x86-64 ELF binary."
+    }
+}
+
 function Assert-DeployMaterials {
     param(
         [Parameter(Mandatory)][hashtable] $TextEntries,
@@ -459,6 +557,11 @@ function Get-ReleaseSummary {
             throw "Archive is missing required entry '$expectedPath'."
         }
     }
+    foreach ($executablePath in @(
+        "app/RelayCove.Server",
+        "migrate/$migrationBundleName")) {
+        Assert-LinuxX64Elf $entryMap["$packageName/$executablePath"] $executablePath
+    }
 
     foreach ($entry in $archive.Entries) {
         $relativePath = $entry.name.Substring($packageName.Length).Trim('/')
@@ -497,6 +600,7 @@ function Get-ReleaseSummary {
              $applicationSettings.BootstrapAdmin.ContainsKey("DisplayName")))) {
         throw "Packaged application settings contain authentication or bootstrap credentials."
     }
+    Assert-NoSensitiveConfiguration $applicationSettings
     Assert-DeployMaterials $archive.TextEntries $packageName $RequestedVersion
 
     $manifest = $archive.ManifestJson | ConvertFrom-Json -AsHashtable

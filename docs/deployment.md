@@ -41,11 +41,16 @@ sha256sum -c RelayCove.Server-<version>-linux-x64.tar.gz.sha256
 Extract only after that command reports `OK`, and always use a new versioned directory; never overwrite the active release in place.
 
 ```sh
+set -eu
+
 sudo install -d -o root -g root -m 0755 /opt/relaycove/releases/<version>
 sudo tar --extract --file RelayCove.Server-<version>-linux-x64.tar.gz \
   --directory /opt/relaycove/releases/<version> --no-same-owner --no-same-permissions
+release_root=/opt/relaycove/releases/<version>/RelayCove.Server-<version>-linux-x64
 sudo chown -R root:root /opt/relaycove/releases/<version>
-sudo chmod -R go-w /opt/relaycove/releases/<version>
+sudo find "$release_root" -type d -exec chmod 0755 {} +
+sudo find "$release_root" -type f -exec chmod 0644 {} +
+sudo chmod 0755 "$release_root/app/RelayCove.Server" "$release_root/migrate/RelayCove.Migrations"
 ```
 
 Do not change `/opt/relaycove/current` yet. Prepare and validate the new version by its explicit release path; the migration procedure changes the active link atomically only after the migration succeeds.
@@ -57,6 +62,8 @@ The release scripts own the archive format and migration-bundle filename. Before
 Copy `deploy/appsettings.Production.example.json` from the new version's explicit release path to its `app/appsettings.Production.json`, then replace `REPLACE_WITH_PACKAGE_VERSION` and `chat.example.com`. This application loads production settings from its content root, so placing this file only in `/etc/relaycove` has no effect. Keep the release tree root-owned and only update this file as part of an intentional release configuration change.
 
 ```sh
+set -eu
+
 release_root=/opt/relaycove/releases/<version>/RelayCove.Server-<version>-linux-x64
 sudo install -o root -g relaycove -m 0640 \
   "$release_root/deploy/appsettings.Production.example.json" \
@@ -77,21 +84,31 @@ Set `Authentication__SigningKey` in the environment file to a new Base64 value t
 Copy the supplied templates, replace the DNS and certificate paths in the Nginx file, then validate before reload. `client_max_body_size 102464k` is exactly the endpoint's 100 MiB plus 64 KiB ceiling; it does not relax the application's own multipart or configured file checks.
 
 ```sh
+set -eu
+
 release_root=/opt/relaycove/releases/<version>/RelayCove.Server-<version>-linux-x64
 sudo install -o root -g root -m 0644 "$release_root/deploy/relaycove.service" /etc/systemd/system/relaycove.service
 sudo install -o root -g root -m 0644 "$release_root/deploy/nginx.conf" /etc/nginx/conf.d/relaycove.conf
 sudo nginx -t
+sudo systemctl enable nginx
+if sudo systemctl is-active --quiet nginx; then
+  sudo systemctl reload nginx
+else
+  sudo systemctl start nginx
+fi
 sudo systemctl daemon-reload
 sudo systemctl enable relaycove.service
 ```
 
-The Nginx template uses a standard HTTP-to-HTTPS redirect, explicit TLS certificate paths, a loopback upstream, and WebSocket upgrade headers only where needed for `/hubs/chat`. Its `map` directive must be included from Nginx's `http {}` context, as is normal for `conf.d`; do not paste it inside a `server {}` block.
+The Nginx template uses a standard HTTP-to-HTTPS redirect, explicit TLS certificate paths, a loopback upstream, and WebSocket upgrade headers only where needed for `/hubs/chat`. Its `map` directive must be included from Nginx's `http {}` context, as is normal for `conf.d`; do not paste it inside a `server {}` block. The Server accepts one forwarded hop only from loopback, so authentication rate limits remain partitioned by the real client address without trusting public `X-Forwarded-*` input.
 
 ## First migration and start
 
 Migrations are an explicit maintenance action. The safe order is **stop → consistent backup → migration → start**. Do not run two service instances against the same SQLite database, and do not attempt an online migration.
 
 ```sh
+set -eu
+
 sudo systemctl stop relaycove.service
 sudo systemctl is-active --quiet relaycove.service && exit 1
 
@@ -125,7 +142,25 @@ If archive verification, configuration validation, migration, Nginx validation, 
 1. Keep `relaycove.service` stopped; do not retry by running the application against a partly migrated database.
 2. Record `journalctl -u relaycove.service` output without copying environment values or secrets.
 3. If migration failed, note that `current` still identifies the prior release; do not start it against a possibly changed database until an operator has selected and restored a known-good stopped-service backup when restoration is required.
-4. Restore the database and any copied WAL/SHM files as one stopped-service set, retain or atomically repoint `/opt/relaycove/current` to the selected known-good release, and re-check its configuration and permissions before starting.
+4. Restore the database as an exact stopped-service three-file set: first remove the current `relaycove.db`, `relaycove.db-wal`, and `relaycove.db-shm`, then copy back each file that exists in the selected backup. A sidecar absent from the backup must also be absent from the restored state; an intentionally empty first-deployment backup therefore removes every database file created by the failed attempt.
+5. Retain or atomically repoint `/opt/relaycove/current` to the selected known-good release, and re-check its configuration and permissions before starting.
+
+Example exact-set restore after selecting the backup deliberately:
+
+```sh
+set -eu
+backup_root=/var/backups/relaycove/<selected-stamp>
+sudo systemctl stop relaycove.service
+sudo rm -f /var/lib/relaycove/relaycove.db \
+  /var/lib/relaycove/relaycove.db-wal \
+  /var/lib/relaycove/relaycove.db-shm
+for database_file in relaycove.db relaycove.db-wal relaycove.db-shm; do
+  if sudo test -e "$backup_root/$database_file"; then
+    sudo cp -a "$backup_root/$database_file" "/var/lib/relaycove/$database_file"
+    sudo chown relaycove:relaycove "/var/lib/relaycove/$database_file"
+  fi
+done
+```
 
 There is no automatic migration rollback, automatic database restore, or multi-instance SQLite failover in this release slice. Treat a failed migration as an operator decision, not as a reason to start the service with uncertain state.
 

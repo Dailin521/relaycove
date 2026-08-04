@@ -48,6 +48,34 @@ public sealed class AuthenticationRateLimitTests
         Assert.Equal(HttpStatusCode.OK, meResponse.StatusCode);
     }
 
+    [Fact]
+    public async Task LoginRateLimit_WhenRequestsArriveThroughLoopbackProxy_PartitionsByForwardedClientAddress()
+    {
+        using var factory = new RelayCoveWebApplicationFactory(loginPermitLimit: 1, refreshPermitLimit: 10);
+        await factory.InitializeDatabaseAsync();
+        using var firstClient = CreateProxiedClient(factory, "198.51.100.10");
+        using var secondClient = CreateProxiedClient(factory, "198.51.100.11");
+        var request = new LoginRequest("missing-user", Password, "device", "1.0.0");
+
+        using var firstResponse = await firstClient.PostAsJsonAsync("/api/auth/login", request);
+        using var secondResponse = await secondClient.PostAsJsonAsync("/api/auth/login", request);
+        using var limitedFirstResponse = await firstClient.PostAsJsonAsync("/api/auth/login", request);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, firstResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, secondResponse.StatusCode);
+        await AssertRateLimitedAsync(limitedFirstResponse);
+    }
+
+    private static HttpClient CreateProxiedClient(
+        RelayCoveWebApplicationFactory factory,
+        string forwardedAddress)
+    {
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Forwarded-For", forwardedAddress);
+        client.DefaultRequestHeaders.Add("X-Forwarded-Proto", "https");
+        return client;
+    }
+
     private static async Task AssertRateLimitedAsync(HttpResponseMessage response)
     {
         Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);

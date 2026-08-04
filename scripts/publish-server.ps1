@@ -226,6 +226,73 @@ function Assert-ProductionConfiguration {
     }
 }
 
+function Assert-NoSensitiveConfiguration {
+    param(
+        [Parameter(Mandatory)][object] $Value,
+        [string] $Location = "root"
+    )
+
+    if ($Value -is [System.Collections.IDictionary]) {
+        foreach ($key in $Value.Keys) {
+            $keyName = [string] $key
+            if ($keyName -match '(?i)(Password|SigningKey|ApiKey|ClientSecret|PrivateKey|AccessToken|RefreshToken|Secret|Token)$') {
+                throw "Application settings contain a sensitive configuration key at '${Location}.${keyName}'."
+            }
+            Assert-NoSensitiveConfiguration $Value[$key] "${Location}.${keyName}"
+        }
+        return
+    }
+
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $index = 0
+        foreach ($item in $Value) {
+            Assert-NoSensitiveConfiguration $item "${Location}[$index]"
+            $index++
+        }
+        return
+    }
+
+    if ($Value -is [string]) {
+        if ($Value -match '(?i)-----BEGIN(?: [A-Z0-9-]+)? PRIVATE KEY-----') {
+            throw "Application settings contain private-key material at '$Location'."
+        }
+        if ($Value -match '(?i)(?:^|;)\s*(?:Password|Pwd|User\s*ID)\s*=') {
+            throw "Application settings contain credential-bearing connection data at '$Location'."
+        }
+    }
+}
+
+function Assert-LinuxX64Elf {
+    param(
+        [Parameter(Mandatory)][string] $Path,
+        [Parameter(Mandatory)][string] $Description
+    )
+
+    $header = [byte[]]::new(20)
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $read = 0
+        while ($read -lt $header.Length) {
+            $count = $stream.Read($header, $read, $header.Length - $read)
+            if ($count -eq 0) {
+                break
+            }
+            $read += $count
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+
+    if ($read -ne $header.Length -or
+        $header[0] -ne 0x7f -or $header[1] -ne 0x45 -or
+        $header[2] -ne 0x4c -or $header[3] -ne 0x46 -or
+        $header[4] -ne 2 -or $header[5] -ne 1 -or
+        [System.BitConverter]::ToUInt16($header, 18) -ne 62) {
+        throw "Release package file '$Description' must be a 64-bit little-endian x86-64 ELF executable or shared library."
+    }
+}
+
 function Assert-PackagePaths {
     param(
         [Parameter(Mandatory)][string] $PackageRoot,
@@ -237,6 +304,9 @@ function Assert-PackagePaths {
         "app/RelayCove.Server",
         "app/RelayCove.Server.deps.json",
         "app/RelayCove.Server.runtimeconfig.json",
+        "app/libhostfxr.so",
+        "app/libhostpolicy.so",
+        "app/libcoreclr.so",
         "migrate/$migrationBundleName",
         "deploy/relaycove.service",
         "deploy/nginx.conf",
@@ -260,7 +330,7 @@ function Assert-PackagePaths {
             throw "Release package contains an unsafe or duplicate path '$relativePath'."
         }
 
-        if ($relativePath -match '(?i)(^|/)(bin|obj|uploads|logs)(/|$)|\.pdb$|\.cs$|\.csproj$|\.sln$|^app/appsettings\.(?!json$)|(^|/).*\.(db|sqlite)(-wal|-shm)?$') {
+        if ($relativePath -match '(?i)(^|/)(bin|obj|uploads|logs)(/|$)|\.pdb$|\.cs$|\.csproj$|\.sln$|^app/appsettings\.(?!json$)|(^|/).*\.(db|sqlite)(-wal|-shm)?$|(^|/)\.env(?:\.[^/]*)?$|(^|/)[^/]*secrets?[^/]*\.json$|\.(pfx|p12|pem|key|user|bak|tmp)$') {
             throw "Release package contains forbidden file '$relativePath'."
         }
     }
@@ -273,6 +343,16 @@ function Assert-PackagePaths {
              $applicationSettings.BootstrapAdmin.ContainsKey("UserName") -or
              $applicationSettings.BootstrapAdmin.ContainsKey("DisplayName")))) {
         throw "Application settings must not package authentication or bootstrap credentials."
+    }
+    Assert-NoSensitiveConfiguration $applicationSettings
+
+    foreach ($relativePath in @(
+            "app/RelayCove.Server",
+            "app/libhostfxr.so",
+            "app/libhostpolicy.so",
+            "app/libcoreclr.so",
+            "migrate/$migrationBundleName")) {
+        Assert-LinuxX64Elf (Join-Path $PackageRoot $relativePath) $relativePath
     }
 
     Assert-EnvironmentExample ([System.IO.File]::ReadAllText(

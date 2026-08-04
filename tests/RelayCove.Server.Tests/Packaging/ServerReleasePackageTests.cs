@@ -92,6 +92,9 @@ public sealed partial class ServerReleasePackageTests
         AssertPackageEntries(fileRecords, packageName);
         AssertManifest(manifestText, fileRecords, packageName, version);
         AssertStagedProductionConfiguration(fileRecords, version);
+        var packageRoot = System.IO.Path.Combine(releaseDirectory, packageName);
+        AssertLinuxX64Elf(System.IO.Path.Combine(packageRoot, "app", "RelayCove.Server"));
+        AssertLinuxX64Elf(System.IO.Path.Combine(packageRoot, "migrate", "RelayCove.Migrations"));
 
         return new ReleasePackageInspection(archivePath, archiveHash, sidecarText, manifestText);
     }
@@ -218,6 +221,9 @@ public sealed partial class ServerReleasePackageTests
         var requiredPaths = new[]
         {
             "app/RelayCove.Server",
+            "app/libhostfxr.so",
+            "app/libhostpolicy.so",
+            "app/libcoreclr.so",
             "migrate/RelayCove.Migrations",
             "deploy/relaycove.service",
             "deploy/nginx.conf",
@@ -349,6 +355,22 @@ public sealed partial class ServerReleasePackageTests
         Assert.True(file.Length > 0, $"Executable is empty: {path}");
     }
 
+    private static void AssertLinuxX64Elf(string path)
+    {
+        Span<byte> header = stackalloc byte[20];
+        using var stream = File.OpenRead(path);
+        stream.ReadExactly(header);
+
+        Assert.Equal((byte)0x7f, header[0]);
+        Assert.Equal((byte)'E', header[1]);
+        Assert.Equal((byte)'L', header[2]);
+        Assert.Equal((byte)'F', header[3]);
+        Assert.Equal((byte)2, header[4]);
+        Assert.Equal((byte)1, header[5]);
+        Assert.Equal((byte)0x3e, header[18]);
+        Assert.Equal((byte)0, header[19]);
+    }
+
     private static async Task AssertScriptSucceededAsync(
         string scriptPath,
         IReadOnlyList<string> arguments,
@@ -375,7 +397,7 @@ public sealed partial class ServerReleasePackageTests
     private static partial Regex DriveRootRegex();
 
     [GeneratedRegex(
-        @"(?:^|/)(?:uploads?|logs?|obj|bin|\.git)(?:/|$)|(?:^|/)appsettings\.Development\.json$|\.(?:pdb|cs|csproj|sln|user|db|db-wal|db-shm|tmp|bak)$|(?:^|/)(?:relaycove\.env|\.env)$",
+        @"(?:^|/)(?:uploads?|logs?|obj|bin|\.git)(?:/|$)|(?:^|/)appsettings\.Development\.json$|\.(?:pdb|cs|csproj|sln|user|db|db-wal|db-shm|tmp|bak|pfx|p12|pem|key)$|(?:^|/)\.env(?:\.|$)|(?:^|/)[^/]*secret[^/]*\.json$",
         RegexOptions.IgnoreCase)]
     private static partial Regex ForbiddenPathRegex();
 }
