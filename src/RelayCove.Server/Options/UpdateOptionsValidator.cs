@@ -18,7 +18,16 @@ public sealed class UpdateOptionsValidator : IValidateOptions<UpdateOptions>
 
         try
         {
-            _ = Path.GetFullPath(options.ManifestPath);
+            var fullPath = Path.GetFullPath(options.ManifestPath);
+            var rootPath = Path.GetPathRoot(fullPath);
+            if (string.Equals(fullPath, rootPath, StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrEmpty(Path.GetDirectoryName(options.ManifestPath)) ||
+                options.ManifestPath.EndsWith(Path.DirectorySeparatorChar) ||
+                options.ManifestPath.EndsWith(Path.AltDirectorySeparatorChar) ||
+                Directory.Exists(fullPath))
+            {
+                return ValidateOptionsResult.Fail("Update:ManifestPath must identify a file under a parent directory.");
+            }
         }
         catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
         {

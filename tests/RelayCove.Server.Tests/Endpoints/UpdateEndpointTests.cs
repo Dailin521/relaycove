@@ -2,6 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
+using RelayCove.Server.Options;
+using RelayCove.Server.Services;
 using RelayCove.Server.Tests.Infrastructure;
 using RelayCove.Shared.Updates;
 
@@ -77,7 +80,7 @@ public sealed class UpdateEndpointTests : IAsyncLifetime, IDisposable
     }
 
     [Fact]
-    public async Task DownloadArtifact_WhenCurrentArtifactIsMissing_FailsClosed()
+    public async Task ManifestAndDownload_WhenCurrentArtifactIsMissing_FailClosed()
     {
         await WriteManifestAsync(CreateManifest(
             $"https://updates.example.test/api/updates/artifacts/{ArtifactFileName}",
@@ -85,9 +88,11 @@ public sealed class UpdateEndpointTests : IAsyncLifetime, IDisposable
             new string('a', 64)));
         using var client = factory.CreateClient();
 
-        using var response = await client.GetAsync($"/api/updates/artifacts/{ArtifactFileName}");
+        using var manifestResponse = await client.GetAsync("/api/updates/manifest");
+        using var artifactResponse = await client.GetAsync($"/api/updates/artifacts/{ArtifactFileName}");
 
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, manifestResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, artifactResponse.StatusCode);
     }
 
     [Fact]
@@ -105,6 +110,138 @@ public sealed class UpdateEndpointTests : IAsyncLifetime, IDisposable
         Assert.DoesNotContain(updatesDirectory, logs, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain(ArtifactFileName, logs, StringComparison.Ordinal);
         Assert.DoesNotContain(expected.Artifact.Sha256, logs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetManifest_WhenArtifactHasSameLengthButWrongHash_FailsClosed()
+    {
+        var expected = await WriteCurrentReleaseAsync([1, 2, 3, 4]);
+        await File.WriteAllBytesAsync(Path.Combine(updatesDirectory, ArtifactFileName), [4, 3, 2, 1]);
+        File.SetLastWriteTimeUtc(
+            Path.Combine(updatesDirectory, ArtifactFileName),
+            DateTime.UtcNow.AddMinutes(1));
+        using var client = factory.CreateClient();
+
+        using var manifestResponse = await client.GetAsync("/api/updates/manifest");
+        using var artifactResponse = await client.GetAsync($"/api/updates/artifacts/{ArtifactFileName}");
+
+        Assert.Equal(HttpStatusCode.NotFound, manifestResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, artifactResponse.StatusCode);
+        var logs = string.Join('\n', factory.LogMessages);
+        Assert.DoesNotContain(expected.Artifact.Sha256, logs, StringComparison.Ordinal);
+        Assert.DoesNotContain(ArtifactFileName, logs, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GetManifest_WhenCachedArtifactLaterBecomesCorrupt_InvalidatesSnapshot()
+    {
+        await WriteCurrentReleaseAsync([1, 2, 3, 4]);
+        using var client = factory.CreateClient();
+        using var initialResponse = await client.GetAsync("/api/updates/manifest");
+        Assert.Equal(HttpStatusCode.OK, initialResponse.StatusCode);
+        var artifactPath = Path.Combine(updatesDirectory, ArtifactFileName);
+        var initialWriteTime = File.GetLastWriteTimeUtc(artifactPath);
+        await File.WriteAllBytesAsync(artifactPath, [4, 3, 2, 1]);
+        File.SetLastWriteTimeUtc(artifactPath, initialWriteTime.AddSeconds(1));
+
+        using var response = await client.GetAsync("/api/updates/manifest");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task VerifiedSnapshot_WhenFilesAreUnchanged_HashesArtifactOnlyOnceAcrossConcurrentRequests()
+    {
+        var expected = await WriteCurrentReleaseAsync([1, 2, 3, 4, 5, 6]);
+        var hashCount = 0;
+        var service = new UpdateHostingService(
+            Microsoft.Extensions.Options.Options.Create(new UpdateOptions
+            {
+                ManifestPath = Path.Combine(updatesDirectory, "manifest.json"),
+            }),
+            NullLogger<UpdateHostingService>.Instance,
+            async (stream, cancellationToken) =>
+            {
+                Interlocked.Increment(ref hashCount);
+                return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken))
+                    .ToLowerInvariant();
+            });
+
+        var manifests = await Task.WhenAll(
+            Enumerable.Range(0, 12).Select(_ => service.GetManifestAsync(CancellationToken.None)));
+        await using var firstArtifact = await service.OpenCurrentArtifactAsync(
+            ArtifactFileName,
+            CancellationToken.None);
+        await using var secondArtifact = await service.OpenCurrentArtifactAsync(
+            ArtifactFileName,
+            CancellationToken.None);
+
+        Assert.All(manifests, manifest => Assert.Equal(expected, manifest));
+        Assert.NotNull(firstArtifact);
+        Assert.NotNull(secondArtifact);
+        Assert.Equal(1, hashCount);
+    }
+
+    [Fact]
+    public async Task InvalidSnapshot_WhenFilesAreUnchanged_DoesNotRepeatedlyHashCorruptArtifact()
+    {
+        Directory.CreateDirectory(updatesDirectory);
+        await File.WriteAllBytesAsync(Path.Combine(updatesDirectory, ArtifactFileName), [1, 2, 3, 4]);
+        await WriteManifestAsync(CreateManifest(
+            $"https://updates.example.test/api/updates/artifacts/{ArtifactFileName}",
+            4,
+            new string('a', 64)));
+        var hashCount = 0;
+        var service = new UpdateHostingService(
+            Microsoft.Extensions.Options.Options.Create(new UpdateOptions
+            {
+                ManifestPath = Path.Combine(updatesDirectory, "manifest.json"),
+            }),
+            NullLogger<UpdateHostingService>.Instance,
+            async (stream, cancellationToken) =>
+            {
+                Interlocked.Increment(ref hashCount);
+                return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken))
+                    .ToLowerInvariant();
+            });
+
+        var first = await service.GetManifestAsync(CancellationToken.None);
+        var second = await service.GetManifestAsync(CancellationToken.None);
+
+        Assert.Null(first);
+        Assert.Null(second);
+        Assert.Equal(1, hashCount);
+    }
+
+    [Fact]
+    public async Task ManifestAndDownload_WhenArtifactLeafIsSymbolicLink_FailClosed()
+    {
+        Directory.CreateDirectory(updatesDirectory);
+        var targetPath = Path.Combine(updatesDirectory, "linked-target.zip");
+        var artifactPath = Path.Combine(updatesDirectory, ArtifactFileName);
+        var artifact = new byte[] { 1, 2, 3, 4 };
+        await File.WriteAllBytesAsync(targetPath, artifact);
+        try
+        {
+            _ = File.CreateSymbolicLink(artifactPath, targetPath);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or PlatformNotSupportedException or NotSupportedException)
+        {
+            return;
+        }
+
+        await WriteManifestAsync(CreateManifest(
+            $"https://updates.example.test/api/updates/artifacts/{ArtifactFileName}",
+            artifact.LongLength,
+            Convert.ToHexString(SHA256.HashData(artifact)).ToLowerInvariant()));
+        using var client = factory.CreateClient();
+
+        using var manifestResponse = await client.GetAsync("/api/updates/manifest");
+        using var artifactResponse = await client.GetAsync($"/api/updates/artifacts/{ArtifactFileName}");
+
+        Assert.Equal(HttpStatusCode.NotFound, manifestResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, artifactResponse.StatusCode);
     }
 
     [Theory]
