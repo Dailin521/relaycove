@@ -7,6 +7,7 @@ internal sealed class UpdateLayout
 {
     private const string PreparedState = "prepared";
     private const string ActivatedState = "activated";
+    private const string CommittingState = "committing";
     private const string RestoringState = "restoring";
     private readonly string executablePath;
     private readonly string targetPath;
@@ -122,7 +123,13 @@ internal sealed class UpdateLayout
         var state = ReadJournalState();
         if (state is PreparedState or ActivatedState)
         {
-            RecoverActivation(state);
+            RecoverActivation();
+            return;
+        }
+
+        if (state == CommittingState)
+        {
+            RecoverCommit();
             return;
         }
 
@@ -182,15 +189,49 @@ internal sealed class UpdateLayout
 
     internal void Complete()
     {
-        if (Directory.Exists(backupPath))
+        if (!Directory.Exists(targetPath) || !Directory.Exists(backupPath) || Directory.Exists(quarantinePath))
         {
-            DeleteDirectorySafe(backupPath);
+            throw new InvalidDataException("Update commit state is invalid.");
         }
 
+        WriteJournal(CommittingState);
+        DeleteDirectorySafe(backupPath);
         ClearJournal();
     }
 
-    private void RecoverActivation(string state)
+    private void RecoverCommit()
+    {
+        var targetExists = Directory.Exists(targetPath);
+        var backupExists = Directory.Exists(backupPath);
+        if (Directory.Exists(quarantinePath))
+        {
+            throw new InvalidDataException("Update recovery state is invalid.");
+        }
+
+        if (targetExists && backupExists)
+        {
+            DeleteDirectorySafe(backupPath);
+            ClearJournal();
+            return;
+        }
+
+        if (targetExists && !backupExists)
+        {
+            ClearJournal();
+            return;
+        }
+
+        if (!targetExists && backupExists)
+        {
+            Directory.Move(backupPath, targetPath);
+            ClearJournal();
+            return;
+        }
+
+        throw new InvalidDataException("Update recovery state is invalid.");
+    }
+
+    private void RecoverActivation()
     {
         var targetExists = Directory.Exists(targetPath);
         var backupExists = Directory.Exists(backupPath);
@@ -214,15 +255,8 @@ internal sealed class UpdateLayout
 
         if (targetExists && backupExists)
         {
-            if (state == PreparedState)
-            {
-                WriteJournal(RestoringState);
-                RecoverRestoration();
-                return;
-            }
-
-            DeleteDirectorySafe(backupPath);
-            ClearJournal();
+            WriteJournal(RestoringState);
+            RecoverRestoration();
             return;
         }
 
@@ -308,7 +342,7 @@ internal sealed class UpdateLayout
             }
 
             var value = state.GetString();
-            if (value is not PreparedState and not ActivatedState and not RestoringState)
+            if (value is not PreparedState and not ActivatedState and not CommittingState and not RestoringState)
             {
                 throw new InvalidDataException("Update recovery state is invalid.");
             }

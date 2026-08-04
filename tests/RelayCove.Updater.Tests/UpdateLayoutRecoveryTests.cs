@@ -57,12 +57,28 @@ public sealed class UpdateLayoutRecoveryTests
     }
 
     [Fact]
-    public void RecoverIfNecessary_WhenActivatedCleanupCrashed_KeepsTargetAndRemovesBackup()
+    public void RecoverIfNecessary_WhenActivatedBeforeLaunchCrashed_RestoresBackup()
     {
         using var fixture = new LayoutFixture();
         fixture.CreateTarget("new");
         fixture.CreateBackup("old");
         fixture.WriteJournal("activated");
+
+        fixture.Layout.RecoverIfNecessary();
+
+        Assert.Equal("old", fixture.ReadTargetMarker());
+        Assert.False(Directory.Exists(fixture.BackupPath));
+        Assert.False(Directory.Exists(fixture.QuarantinePath));
+        Assert.False(File.Exists(fixture.JournalPath));
+    }
+
+    [Fact]
+    public void RecoverIfNecessary_WhenCommittingCleanupCrashed_KeepsTargetAndRemovesBackup()
+    {
+        using var fixture = new LayoutFixture();
+        fixture.CreateTarget("new");
+        fixture.CreateBackup("old");
+        fixture.WriteJournal("committing");
 
         fixture.Layout.RecoverIfNecessary();
 
