@@ -33,6 +33,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictNamespaces=true
 LockPersonality=true
 ReadWritePaths=/var/lib/relaycove
+ReadOnlyPaths=/var/lib/relaycove/updates
 
 [Install]
 WantedBy=multi-user.target

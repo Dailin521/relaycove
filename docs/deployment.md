@@ -18,7 +18,7 @@ The following commands require an administrator account. They are examples for a
 ```sh
 sudo useradd --system --user-group --home-dir /var/lib/relaycove --shell /usr/sbin/nologin relaycove
 sudo install -d -o relaycove -g relaycove -m 0700 /var/lib/relaycove
-sudo install -d -o relaycove -g relaycove -m 0750 /var/lib/relaycove/updates
+sudo install -d -o root -g relaycove -m 0750 /var/lib/relaycove/updates
 sudo install -d -o root -g root -m 0755 /opt/relaycove/releases /etc/relaycove
 sudo install -d -o root -g root -m 0755 /var/www/certbot
 ```
@@ -113,13 +113,22 @@ set -eu
 sudo systemctl stop relaycove.service
 sudo systemctl is-active --quiet relaycove.service && exit 1
 
-# While the service is stopped, copy the database and any present SQLite sidecars together.
+# While the service is stopped, stage the database, any present SQLite sidecars,
+# and uploads together. Publish the backup only after its integrity file is complete.
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
-sudo install -d -o root -g root -m 0700 /var/backups/relaycove/$stamp
-sudo test ! -e /var/lib/relaycove/relaycove.db || sudo cp -a /var/lib/relaycove/relaycove.db /var/backups/relaycove/$stamp/
-sudo test ! -e /var/lib/relaycove/relaycove.db-wal || sudo cp -a /var/lib/relaycove/relaycove.db-wal /var/backups/relaycove/$stamp/
-sudo test ! -e /var/lib/relaycove/relaycove.db-shm || sudo cp -a /var/lib/relaycove/relaycove.db-shm /var/backups/relaycove/$stamp/
-sudo test ! -d /var/lib/relaycove/uploads || sudo cp -a /var/lib/relaycove/uploads /var/backups/relaycove/$stamp/
+backup_root=/var/backups/relaycove/$stamp
+backup_staging=/var/backups/relaycove/.$stamp.staging
+sudo test ! -e "$backup_root"
+sudo test ! -e "$backup_staging"
+sudo install -d -o root -g root -m 0700 "$backup_staging"
+sudo test ! -e /var/lib/relaycove/relaycove.db || sudo cp -a /var/lib/relaycove/relaycove.db "$backup_staging/"
+sudo test ! -e /var/lib/relaycove/relaycove.db-wal || sudo cp -a /var/lib/relaycove/relaycove.db-wal "$backup_staging/"
+sudo test ! -e /var/lib/relaycove/relaycove.db-shm || sudo cp -a /var/lib/relaycove/relaycove.db-shm "$backup_staging/"
+sudo test ! -d /var/lib/relaycove/uploads || sudo cp -a /var/lib/relaycove/uploads "$backup_staging/"
+sudo touch "$backup_staging/BACKUP.CONTENTS"
+sudo sh -c "cd '$backup_staging' && find . -type f ! -name BACKUP.SHA256 ! -name BACKUP.COMPLETE -print0 | sort -z | xargs -0 sha256sum > BACKUP.SHA256"
+sudo touch "$backup_staging/BACKUP.COMPLETE"
+sudo mv -T "$backup_staging" "$backup_root"
 
 release_root=/opt/relaycove/releases/<version>/RelayCove.Server-<version>-linux-x64
 sudo -H -u relaycove "$release_root/migrate/RelayCove.Migrations" \
@@ -154,21 +163,22 @@ set -eu
 backup_root=/var/backups/relaycove/<selected-stamp>
 restore_hold=/var/backups/relaycove/pre-restore-$(date -u +%Y%m%dT%H%M%SZ)
 sudo systemctl stop relaycove.service
+sudo test -d "$backup_root"
+sudo test -f "$backup_root/BACKUP.COMPLETE"
+sudo test -f "$backup_root/BACKUP.SHA256"
+sudo sh -c "cd '$backup_root' && sha256sum -c BACKUP.SHA256"
 sudo install -d -o root -g root -m 0700 "$restore_hold"
-sudo test ! -e /var/lib/relaycove/uploads || sudo mv /var/lib/relaycove/uploads "$restore_hold/uploads"
-sudo rm -f /var/lib/relaycove/relaycove.db \
-  /var/lib/relaycove/relaycove.db-wal \
-  /var/lib/relaycove/relaycove.db-shm
-for database_file in relaycove.db relaycove.db-wal relaycove.db-shm; do
-  if sudo test -e "$backup_root/$database_file"; then
-    sudo cp -a "$backup_root/$database_file" "/var/lib/relaycove/$database_file"
-    sudo chown relaycove:relaycove "/var/lib/relaycove/$database_file"
+for state_item in relaycove.db relaycove.db-wal relaycove.db-shm uploads; do
+  if sudo test -e "/var/lib/relaycove/$state_item"; then
+    sudo mv "/var/lib/relaycove/$state_item" "$restore_hold/$state_item"
   fi
 done
-if sudo test -d "$backup_root/uploads"; then
-  sudo cp -a "$backup_root/uploads" /var/lib/relaycove/uploads
-  sudo chown -R relaycove:relaycove /var/lib/relaycove/uploads
-fi
+for state_item in relaycove.db relaycove.db-wal relaycove.db-shm uploads; do
+  if sudo test -e "$backup_root/$state_item"; then
+    sudo cp -a "$backup_root/$state_item" "/var/lib/relaycove/$state_item"
+    sudo chown -R relaycove:relaycove "/var/lib/relaycove/$state_item"
+  fi
+done
 ```
 
 There is no automatic migration rollback, automatic database restore, or multi-instance SQLite failover in this release slice. Treat a failed migration as an operator decision, not as a reason to start the service with uncertain state.
@@ -177,6 +187,24 @@ There is no automatic migration rollback, automatic database restore, or multi-i
 
 After the service and Nginx are running, use host-approved monitoring to check `systemctl status relaycove.service`, `journalctl -u relaycove.service`, Nginx error logs, certificate expiry, disk capacity under `/var/lib/relaycove`, and backup restore drills. Do not log the signing key, bootstrap credentials, Authorization headers, tokens, upload contents, or private attachment paths.
 
-Publish update artifacts to `/var/lib/relaycove/updates` with owner `root:relaycove` and mode `0640`. Copy and verify the exact Client ZIP first, then atomically replace `manifest.json` last; the manifest generator does not copy the ZIP. Never publish a manifest that names an absent or partially transferred artifact.
+The service can read but cannot write `/var/lib/relaycove/updates`; only an administrator publishes updates. The manifest generator does not copy the Client ZIP. Use same-filesystem temporary names, verify the ZIP, publish it first, and atomically replace `manifest.json` last:
+
+```sh
+set -eu
+update_root=/var/lib/relaycove/updates
+artifact_name=RelayCove.Client-<version>-win-x64.zip
+artifact_source=/root/relaycove-staging/$artifact_name
+manifest_source=/root/relaycove-staging/manifest.json
+expected_artifact_sha256=<verified-lowercase-sha256>
+
+sudo install -o root -g relaycove -m 0640 "$artifact_source" "$update_root/.$artifact_name.next"
+actual_artifact_sha256=$(sudo sha256sum "$update_root/.$artifact_name.next" | cut -d ' ' -f 1)
+test "$actual_artifact_sha256" = "$expected_artifact_sha256"
+sudo mv -Tf "$update_root/.$artifact_name.next" "$update_root/$artifact_name"
+sudo install -o root -g relaycove -m 0640 "$manifest_source" "$update_root/.manifest.json.next"
+sudo mv -Tf "$update_root/.manifest.json.next" "$update_root/manifest.json"
+```
+
+Never publish a manifest that names an absent or partially transferred artifact.
 
 Before declaring deployment ready, perform the M5 Linux/VPS gate in the real target environment: HTTPS and certificate renewal, public firewall rules, Nginx WebSocket reconnects, service restart recovery, database backup and restore, upload limit behaviour, real-client login, and two-client authorization/revocation behaviour. These remain `未验证` for this Windows/offline M4 package work.

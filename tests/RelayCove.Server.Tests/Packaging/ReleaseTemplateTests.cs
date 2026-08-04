@@ -39,6 +39,7 @@ public sealed partial class ReleaseTemplateTests
         AssertDirective(unit, "EnvironmentFile", "/etc/relaycove/relaycove.env");
         AssertDirective(unit, "StateDirectory", "relaycove");
         AssertDirective(unit, "UMask", "0077");
+        AssertDirective(unit, "ReadOnlyPaths", "/var/lib/relaycove/updates");
         Assert.Contains("ExecStart=/opt/relaycove/current/app/RelayCove.Server", unit, StringComparison.Ordinal);
         Assert.Contains("ASPNETCORE_URLS=http://127.0.0.1:", unit, StringComparison.Ordinal);
         Assert.True(
@@ -157,6 +158,43 @@ public sealed partial class ReleaseTemplateTests
         Assert.True(atomicSwitch > explicitMigration, "The active link must change only after migration succeeds.");
         Assert.True(serviceStart > atomicSwitch, "The service must start only after the atomic active-link switch.");
         Assert.DoesNotContain("/opt/relaycove/current/migrate/", guide, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeploymentGuide_WhenInspected_PublishesCompleteBackupBeforeRecoverableRestore()
+    {
+        var guide = ReadRepositoryText("docs", "deployment.md");
+        Assert.Contains(
+            "install -d -o root -g relaycove -m 0750 /var/lib/relaycove/updates",
+            guide,
+            StringComparison.Ordinal);
+        var backupIntegrity = guide.IndexOf("BACKUP.SHA256", StringComparison.Ordinal);
+        var backupComplete = guide.IndexOf("BACKUP.COMPLETE", backupIntegrity, StringComparison.Ordinal);
+        var backupPublish = guide.IndexOf("mv -T \"$backup_staging\" \"$backup_root\"", StringComparison.Ordinal);
+        var restoreValidation = guide.LastIndexOf("sha256sum -c BACKUP.SHA256", StringComparison.Ordinal);
+        var restoreQuarantine = guide.IndexOf("sudo mv \"/var/lib/relaycove/$state_item\"", StringComparison.Ordinal);
+        var quarantineLoopEnd = guide.IndexOf("\ndone", restoreQuarantine, StringComparison.Ordinal);
+        var restoreCopy = guide.IndexOf("sudo cp -a \"$backup_root/$state_item\"", StringComparison.Ordinal);
+
+        Assert.True(backupIntegrity >= 0 && backupComplete > backupIntegrity);
+        Assert.True(backupPublish > backupComplete, "An incomplete backup must not receive its final path.");
+        Assert.True(restoreValidation > backupPublish);
+        Assert.True(restoreQuarantine > restoreValidation, "Restore must validate before moving current state.");
+        Assert.True(restoreCopy > quarantineLoopEnd, "All current state must be quarantined before any backup item is copied.");
+        Assert.DoesNotContain("sudo rm -f /var/lib/relaycove/relaycove.db", guide, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeploymentGuide_WhenInspected_PublishesVerifiedArtifactBeforeManifest()
+    {
+        var guide = ReadRepositoryText("docs", "deployment.md");
+        var artifactVerification = guide.IndexOf("actual_artifact_sha256", StringComparison.Ordinal);
+        var artifactPublish = guide.IndexOf("mv -Tf \"$update_root/.$artifact_name.next\"", StringComparison.Ordinal);
+        var manifestPublish = guide.IndexOf("mv -Tf \"$update_root/.manifest.json.next\"", StringComparison.Ordinal);
+
+        Assert.True(artifactVerification >= 0);
+        Assert.True(artifactPublish > artifactVerification);
+        Assert.True(manifestPublish > artifactPublish, "The manifest must be published after its exact artifact.");
     }
 
     private static string ReadRepositoryText(params string[] segments) =>
