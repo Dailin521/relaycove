@@ -240,6 +240,26 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
                     token),
             cancellationToken);
 
+    public Task<ClientMessageSendOutcome> SendAttachmentsAsync(
+        Guid conversationId,
+        MessageType type,
+        IReadOnlyList<ClientAttachmentUploadSource>? sources,
+        long? replyToMessageId = null,
+        IReadOnlyList<Guid>? mentionUserIds = null,
+        CancellationToken cancellationToken = default) =>
+        TrackRuntimeOperation(
+            token => messageSendCoordinator is null
+                ? Task.FromResult(ClientMessageSendOutcome.Failure(
+                    ClientMessageSendStatus.LocalCacheFailure))
+                : messageSendCoordinator.SendAttachmentsAsync(
+                    conversationId,
+                    type,
+                    sources,
+                    replyToMessageId,
+                    mentionUserIds,
+                    token),
+            cancellationToken);
+
     public Task<ClientMessageSendOutcome> RetryPendingMessageAsync(
         Guid conversationId,
         Guid clientMessageId,

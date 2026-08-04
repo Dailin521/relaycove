@@ -385,6 +385,214 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
     }
 
     [Fact]
+    public async Task UnboundAttachmentReservation_WhenStoredCleanedAndRestarted_UsesExactRowsAndProcessGate()
+    {
+        var identity = CreateIdentity(UserId);
+        var firstAttachment = CreateAttachment(Guid.Parse("44444444-4444-4444-4444-444444444444"));
+        var secondAttachment = CreateAttachment(Guid.Parse("55555555-5555-5555-5555-555555555555"));
+        await using (var first = await CreateCacheAsync(identity))
+        {
+            var stored = await first.StoreUnboundAttachmentReservationAsync(firstAttachment);
+            var duplicate = await first.StoreUnboundAttachmentReservationAsync(firstAttachment);
+            var conflict = await first.StoreUnboundAttachmentReservationAsync(
+                firstAttachment with { Size = firstAttachment.Size + 1 });
+            var secondStored = await first.StoreUnboundAttachmentReservationAsync(secondAttachment);
+            var cleanup = await first.RemoveUnboundAttachmentReservationsAsync([firstAttachment.Id]);
+
+            Assert.Equal(LocalAttachmentReservationResult.Stored, stored.Result);
+            Assert.Equal(LocalAttachmentReservationResult.AlreadyExists, duplicate.Result);
+            Assert.Equal(LocalAttachmentReservationResult.Conflict, conflict.Result);
+            Assert.Equal(LocalAttachmentReservationResult.Stored, secondStored.Result);
+            Assert.Equal(LocalCacheOperationStatus.Ready, cleanup);
+            Assert.Equal(1, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments WHERE LocalMessageId IS NULL;"));
+
+            await using var second = await CreateCacheAsync(identity);
+            Assert.Equal(1, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments WHERE LocalMessageId IS NULL;"));
+        }
+
+        AccountScopedLocalCache.ResetProcessStateForTest(identity);
+        await using var restarted = await CreateCacheAsync(identity);
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments WHERE LocalMessageId IS NULL;"));
+    }
+
+    [Fact]
+    public async Task PendingAttachmentMessage_WhenReservationsAreValid_BindsAllRowsAtomicallyAndReadsIds()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        var attachments = new[]
+        {
+            CreateAttachment(Guid.Parse("66666666-6666-6666-6666-666666666666")),
+            CreateAttachment(Guid.Parse("77777777-7777-7777-7777-777777777777")),
+        }.OrderBy(attachment => attachment.Id).ToArray();
+        await ApplyCompleteSnapshotAsync(cache, conversation);
+        foreach (var attachment in attachments)
+        {
+            Assert.Equal(
+                LocalAttachmentReservationResult.Stored,
+                (await cache.StoreUnboundAttachmentReservationAsync(attachment)).Result);
+        }
+
+        var pending = CreatePendingMessage(conversation.Id) with
+        {
+            Type = MessageType.Image,
+            Content = null,
+            AttachmentIds = attachments.Select(attachment => attachment.Id).ToArray(),
+        };
+        var created = await cache.CreatePendingMessageAsync(pending);
+        var page = await cache.ReadMessagePageAsync(conversation.Id, null, 50);
+
+        Assert.Equal(LocalPendingMessageMutationResult.Created, created.Result);
+        Assert.Equal(pending.AttachmentIds, created.Message!.AttachmentIds);
+        Assert.Equal(pending.AttachmentIds, Assert.Single(page.PendingMessages).AttachmentIds);
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments WHERE LocalMessageId IS NULL;"));
+        Assert.Equal(2, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments WHERE LocalMessageId IS NOT NULL;"));
+    }
+
+    [Fact]
+    public async Task PendingAttachmentMessage_WhenReservationIsMissing_RollsBackMessageAndMentions()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        var attachment = CreateAttachment(Guid.Parse("88888888-8888-8888-8888-888888888888"));
+        await ApplyCompleteSnapshotAsync(cache, conversation);
+        await cache.StoreUnboundAttachmentReservationAsync(attachment);
+        var pending = CreatePendingMessage(conversation.Id) with
+        {
+            Type = MessageType.Image,
+            Content = null,
+            AttachmentIds = [attachment.Id, Guid.Parse("99999999-9999-9999-9999-999999999999")],
+        };
+
+        var outcome = await cache.CreatePendingMessageAsync(pending);
+
+        Assert.Equal(LocalPendingMessageMutationResult.Conflict, outcome.Result);
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessageMentions;"));
+        Assert.Equal(1, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments WHERE LocalMessageId IS NULL;"));
+    }
+
+    [Fact]
+    public async Task PendingAttachmentMessage_WhenBindingFaultOccurs_RollsBackAllBoundRows()
+    {
+        var identity = CreateIdentity(UserId);
+        var faultInjector = new PendingAttachmentBindingThrowingFaultInjector();
+        await using var cache = await AccountScopedLocalCache.CreateAsync(
+            identity,
+            NullLogger<AccountScopedLocalCache>.Instance,
+            faultInjector);
+        var conversation = CreateConversation();
+        var attachments = new[]
+        {
+            CreateAttachment(Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")),
+            CreateAttachment(Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")),
+        }.OrderBy(attachment => attachment.Id).ToArray();
+        await ApplyCompleteSnapshotAsync(cache, conversation);
+        foreach (var attachment in attachments)
+        {
+            await cache.StoreUnboundAttachmentReservationAsync(attachment);
+        }
+        var pending = CreatePendingMessage(conversation.Id) with
+        {
+            Type = MessageType.Image,
+            Content = null,
+            AttachmentIds = attachments.Select(attachment => attachment.Id).ToArray(),
+        };
+
+        await Assert.ThrowsAsync<IOException>(() => cache.CreatePendingMessageAsync(pending));
+
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessageMentions;"));
+        Assert.Equal(2, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments WHERE LocalMessageId IS NULL;"));
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments WHERE LocalMessageId IS NOT NULL;"));
+    }
+
+    [Fact]
+    public async Task PendingAttachmentMessage_WhenResponseMetadataDiffers_ConflictsWithoutPromotion()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        var attachment = CreateAttachment(Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"));
+        await ApplyCompleteSnapshotAsync(cache, conversation);
+        await cache.StoreUnboundAttachmentReservationAsync(attachment);
+        var pending = CreatePendingMessage(conversation.Id) with
+        {
+            Type = MessageType.Image,
+            Content = null,
+            AttachmentIds = [attachment.Id],
+        };
+        Assert.Equal(
+            LocalPendingMessageMutationResult.Created,
+            (await cache.CreatePendingMessageAsync(pending)).Result);
+        var response = new MessageDto(
+            102,
+            pending.ClientMessageId,
+            pending.ConversationId,
+            pending.SenderId,
+            pending.SenderDisplayName,
+            pending.Type,
+            pending.Content,
+            pending.ReplyToMessageId,
+            [attachment],
+            pending.MentionUserIds,
+            DateTimeOffset.Parse("2026-08-04T00:00:00Z"));
+
+        var conflict = await cache.MergeIncomingMessageAsync(
+            response with { Attachments = [attachment with { Size = attachment.Size + 1 }] });
+        var promoted = await cache.MergeIncomingMessageAsync(response);
+
+        Assert.Equal(IncomingMessageMergeResult.Conflict, conflict.Result);
+        Assert.Equal(IncomingMessageMergeResult.PendingPromoted, promoted.Result);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WhenUnboundReservationRecoveryFails_ResetsProcessGate()
+    {
+        var identity = CreateIdentity(UserId);
+        var attachment = CreateAttachment(Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"));
+        await using (var initial = await CreateCacheAsync(identity))
+        {
+            await initial.StoreUnboundAttachmentReservationAsync(attachment);
+        }
+
+        AccountScopedLocalCache.ResetProcessStateForTest(identity);
+        await Assert.ThrowsAsync<IOException>(() => AccountScopedLocalCache.CreateAsync(
+            identity,
+            NullLogger<AccountScopedLocalCache>.Instance,
+            new UnboundRecoveryThrowingFaultInjector()));
+        Assert.Equal(1, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments WHERE LocalMessageId IS NULL;"));
+
+        await using var recovered = await CreateCacheAsync(identity);
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments WHERE LocalMessageId IS NULL;"));
+    }
+
+    [Fact]
+    public async Task UnboundAttachmentReservation_WhenAccountsDiffer_RemainsScopeIsolated()
+    {
+        var firstIdentity = CreateIdentity(UserId);
+        var secondIdentity = CreateIdentity(Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"));
+        var attachment = CreateAttachment(Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"));
+        await using var first = await CreateCacheAsync(firstIdentity);
+        await using var second = await CreateCacheAsync(secondIdentity);
+
+        Assert.Equal(
+            LocalAttachmentReservationResult.Stored,
+            (await first.StoreUnboundAttachmentReservationAsync(attachment)).Result);
+        Assert.Equal(
+            LocalAttachmentReservationResult.Stored,
+            (await second.StoreUnboundAttachmentReservationAsync(attachment)).Result);
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await first.RemoveUnboundAttachmentReservationsAsync([attachment.Id]));
+
+        Assert.Equal(0, Scalar(firstIdentity, "SELECT COUNT(*) FROM LocalAttachments;"));
+        Assert.Equal(1, Scalar(secondIdentity, "SELECT COUNT(*) FROM LocalAttachments WHERE LocalMessageId IS NULL;"));
+    }
+
+    [Fact]
     public async Task PendingMessage_WhenOutstandingLimitIsReached_RejectsBeforeInsert()
     {
         var identity = CreateIdentity(UserId);
@@ -1602,6 +1810,31 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
 
         public void BeforeSchemaCommit() =>
             throw new IOException("Injected schema migration failure.");
+    }
+
+    private sealed class PendingAttachmentBindingThrowingFaultInjector : ILocalCacheFaultInjector
+    {
+        public void BeforeRevocationTombstone(Guid conversationId)
+        {
+        }
+
+        public void AfterPendingAttachmentBound(int boundAttachmentCount)
+        {
+            if (boundAttachmentCount == 1)
+            {
+                throw new IOException("Injected pending attachment bind failure.");
+            }
+        }
+    }
+
+    private sealed class UnboundRecoveryThrowingFaultInjector : ILocalCacheFaultInjector
+    {
+        public void BeforeRevocationTombstone(Guid conversationId)
+        {
+        }
+
+        public void BeforeUnboundReservationRecovery() =>
+            throw new IOException("Injected unbound reservation recovery failure.");
     }
 
     private sealed class BlockingFaultInjector : ILocalCacheFaultInjector

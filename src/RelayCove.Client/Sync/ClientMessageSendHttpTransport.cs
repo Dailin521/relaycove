@@ -205,10 +205,17 @@ internal sealed class ClientMessageSendHttpTransport
         string.Equals(value.Content, request.Content, StringComparison.Ordinal) &&
         value.ReplyToMessageId == request.ReplyToMessageId &&
         value.Attachments is not null &&
-        value.Attachments.Count == 0 &&
+        AreValidResponseAttachments(value.Attachments, request) &&
         value.MentionUserIds is not null &&
         value.MentionUserIds.SequenceEqual(request.MentionUserIds) &&
         value.CreatedAt != default;
+
+    private static bool AreValidResponseAttachments(
+        IReadOnlyList<AttachmentDto> attachments,
+        SendMessageRequest request) =>
+        ClientAttachmentMetadataPolicy.IsValidCollection(request.Type, attachments) &&
+        attachments.Select(static attachment => attachment.Id)
+            .SequenceEqual(request.AttachmentIds);
 
     private static async Task<string?> ReadErrorCodeAsync(
         HttpResponseMessage response,
@@ -240,11 +247,8 @@ internal sealed class ClientMessageSendHttpTransport
         ArgumentNullException.ThrowIfNull(request);
         if (request.ClientMessageId == Guid.Empty ||
             request.ConversationId == Guid.Empty ||
-            request.Type != MessageType.Text ||
-            !ClientTextMessageContentValidator.IsValid(request.Content) ||
             request.ReplyToMessageId is <= 0 ||
             request.AttachmentIds is null ||
-            request.AttachmentIds.Count != 0 ||
             request.MentionUserIds is null ||
             !ClientMentionPolicy.TryCanonicalizeUserIds(
                 request.MentionUserIds,
@@ -252,8 +256,37 @@ internal sealed class ClientMessageSendHttpTransport
             !canonicalMentionUserIds.SequenceEqual(request.MentionUserIds))
         {
             throw new ArgumentException(
-                "The Text message request is invalid or unsupported.",
+                "The message request has invalid common fields.",
                 nameof(request));
+        }
+
+        if (request.Type == MessageType.Text &&
+            ClientTextMessageContentValidator.IsValid(request.Content) &&
+            request.AttachmentIds.Count == 0)
+        {
+            return;
+        }
+
+        if (request.Type is not MessageType.Image and not MessageType.File ||
+            request.Content is not null ||
+            request.AttachmentIds.Count is < 1 or
+                > ClientAttachmentMetadataPolicy.MaximumAttachmentsPerMessage)
+        {
+            throw new ArgumentException("The message request is invalid or unsupported.", nameof(request));
+        }
+
+        Guid? previous = null;
+        foreach (var attachmentId in request.AttachmentIds)
+        {
+            if (attachmentId == Guid.Empty ||
+                (previous.HasValue && previous.Value.CompareTo(attachmentId) >= 0))
+            {
+                throw new ArgumentException(
+                    "Attachment identifiers must be unique and canonically ordered.",
+                    nameof(request));
+            }
+
+            previous = attachmentId;
         }
     }
 }

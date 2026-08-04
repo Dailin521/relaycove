@@ -14,6 +14,7 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
     private readonly string senderDisplayName;
     private readonly AccountScopedLocalCache localCache;
     private readonly ClientMessageSendHttpTransport transport;
+    private readonly ClientAttachmentUploadHttpTransport attachmentUploadTransport;
     private readonly Func<Guid, CancellationToken, Task> conversationRevokedAsync;
     private readonly ILogger<ClientMessageSendCoordinator> logger;
     private readonly CancellationTokenSource lifetimeCancellation = new();
@@ -26,6 +27,27 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
         AccountScopeIdentity identity,
         string senderDisplayName,
         HttpClient httpClient,
+        IClientAuthenticationSession authenticationSession,
+        AccountScopedLocalCache localCache,
+        ILogger<ClientMessageSendCoordinator> logger,
+        Func<Guid, CancellationToken, Task>? conversationRevokedAsync = null)
+        : this(
+            identity,
+            senderDisplayName,
+            httpClient,
+            httpClient,
+            authenticationSession,
+            localCache,
+            logger,
+            conversationRevokedAsync)
+    {
+    }
+
+    public ClientMessageSendCoordinator(
+        AccountScopeIdentity identity,
+        string senderDisplayName,
+        HttpClient httpClient,
+        HttpClient attachmentUploadHttpClient,
         IClientAuthenticationSession authenticationSession,
         AccountScopedLocalCache localCache,
         ILogger<ClientMessageSendCoordinator> logger,
@@ -48,6 +70,11 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
         transport = new ClientMessageSendHttpTransport(
             identity,
             httpClient,
+            authenticationSession,
+            logger);
+        attachmentUploadTransport = new ClientAttachmentUploadHttpTransport(
+            identity,
+            attachmentUploadHttpClient ?? throw new ArgumentNullException(nameof(attachmentUploadHttpClient)),
             authenticationSession,
             logger);
     }
@@ -106,6 +133,64 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
                 cancellationToken));
     }
 
+    public Task<ClientMessageSendOutcome> SendAttachmentsAsync(
+        Guid conversationId,
+        MessageType type,
+        IReadOnlyList<ClientAttachmentUploadSource>? sources,
+        long? replyToMessageId = null,
+        IReadOnlyList<Guid>? mentionUserIds = null,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (sources is null)
+        {
+            return Task.FromResult(ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.ValidationFailed));
+        }
+
+        ClientAttachmentUploadSource[] sourceSnapshot;
+        try
+        {
+            sourceSnapshot = sources.ToArray();
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Snapshotting attachment send sources failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return Task.FromResult(ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.ValidationFailed));
+        }
+
+        if (conversationId == Guid.Empty ||
+            type is not MessageType.Image and not MessageType.File ||
+            sourceSnapshot.Length is < 1 or
+                > ClientAttachmentMetadataPolicy.MaximumAttachmentsPerMessage ||
+            sourceSnapshot.Any(static source => source is null) ||
+            (type == MessageType.Image && sourceSnapshot.Any(source =>
+                !source.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))) ||
+            replyToMessageId is <= 0 ||
+            !ClientMentionPolicy.TryCanonicalizeUserIds(
+                mentionUserIds ?? NoIds,
+                out var canonicalMentionUserIds))
+        {
+            return Task.FromResult(ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.ValidationFailed));
+        }
+
+        var clientMessageId = Guid.NewGuid();
+        return StartFlight(
+            clientMessageId,
+            () => UploadCreateAndSendAsync(
+                clientMessageId,
+                conversationId,
+                type,
+                sourceSnapshot,
+                replyToMessageId,
+                canonicalMentionUserIds,
+                cancellationToken));
+    }
+
     public ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0)
@@ -151,6 +236,7 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             lifetimeCancellation.Token,
             callerCancellation);
+        var pendingCommitted = false;
         try
         {
             var created = await localCache
@@ -162,8 +248,106 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
                 return ClientMessageSendOutcome.Failure(MapCreateFailure(created));
             }
 
+            pendingCommitted = true;
             return await SendPersistedAsync(created.Message!, linkedCancellation.Token)
                 .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (linkedCancellation.IsCancellationRequested)
+        {
+            return ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.Canceled,
+                pendingCommitted);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                "Creating a pending message failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.LocalCacheFailure,
+                pendingCommitted);
+        }
+    }
+
+    private async Task<ClientMessageSendOutcome> UploadCreateAndSendAsync(
+        Guid clientMessageId,
+        Guid conversationId,
+        MessageType type,
+        IReadOnlyList<ClientAttachmentUploadSource> sources,
+        long? replyToMessageId,
+        IReadOnlyList<Guid> mentionUserIds,
+        CancellationToken callerCancellation)
+    {
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            lifetimeCancellation.Token,
+            callerCancellation);
+        var storedAttachmentIds = new List<Guid>(sources.Count);
+        try
+        {
+            var accessStatus = localCache.GetConversationAccessStatus(conversationId);
+            if (accessStatus != LocalCacheOperationStatus.Ready)
+            {
+                return ClientMessageSendOutcome.Failure(
+                    MapLocalFailure(accessStatus));
+            }
+
+            foreach (var source in sources)
+            {
+                var upload = await attachmentUploadTransport
+                    .UploadAsync(source, linkedCancellation.Token)
+                    .ConfigureAwait(false);
+                if (upload.Status != ClientAttachmentUploadHttpStatus.Success)
+                {
+                    return ClientMessageSendOutcome.Failure(MapUploadFailure(upload.Status));
+                }
+
+                var reservation = await localCache
+                    .StoreUnboundAttachmentReservationAsync(
+                        upload.Attachment!,
+                        linkedCancellation.Token)
+                    .ConfigureAwait(false);
+                if (reservation.Status != LocalCacheOperationStatus.Ready ||
+                    reservation.Result != LocalAttachmentReservationResult.Stored)
+                {
+                    return ClientMessageSendOutcome.Failure(
+                        reservation.Result is LocalAttachmentReservationResult.Conflict or
+                            LocalAttachmentReservationResult.AlreadyExists
+                            ? ClientMessageSendStatus.ProtocolError
+                            : MapLocalFailure(reservation.Status));
+                }
+
+                storedAttachmentIds.Add(upload.Attachment!.Id);
+            }
+
+            var canonicalAttachmentIds = storedAttachmentIds
+                .OrderBy(static id => id)
+                .ToArray();
+            if (canonicalAttachmentIds.Distinct().Count() != canonicalAttachmentIds.Length)
+            {
+                return ClientMessageSendOutcome.Failure(ClientMessageSendStatus.ProtocolError);
+            }
+
+            var pending = new PendingMessage(
+                clientMessageId,
+                conversationId,
+                identity.UserId,
+                senderDisplayName,
+                type,
+                Content: null,
+                replyToMessageId,
+                mentionUserIds,
+                DateTimeOffset.UtcNow)
+            {
+                AttachmentIds = canonicalAttachmentIds,
+            };
+            var outcome = await CreateAndSendAsync(pending, linkedCancellation.Token)
+                .ConfigureAwait(false);
+            if (outcome.PendingCommitted)
+            {
+                storedAttachmentIds.Clear();
+            }
+
+            return outcome;
         }
         catch (OperationCanceledException) when (linkedCancellation.IsCancellationRequested)
         {
@@ -172,9 +356,16 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
         catch (Exception exception)
         {
             logger.LogError(
-                "Creating a pending Text message failed; errorType={ErrorType}.",
+                "Uploading attachment message inputs failed; errorType={ErrorType}.",
                 exception.GetType().Name);
             return ClientMessageSendOutcome.Failure(ClientMessageSendStatus.LocalCacheFailure);
+        }
+        finally
+        {
+            if (storedAttachmentIds.Count != 0)
+            {
+                await CleanupUnboundReservationsAsync(storedAttachmentIds).ConfigureAwait(false);
+            }
         }
     }
 
@@ -210,7 +401,7 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
         catch (Exception exception)
         {
             logger.LogError(
-                "Preparing a pending Text message retry failed; errorType={ErrorType}.",
+                "Preparing a pending message retry failed; errorType={ErrorType}.",
                 exception.GetType().Name);
             return ClientMessageSendOutcome.Failure(ClientMessageSendStatus.LocalCacheFailure);
         }
@@ -226,7 +417,7 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
             pending.Type,
             pending.Content,
             pending.ReplyToMessageId,
-            AttachmentIds: NoIds,
+            pending.AttachmentIds,
             pending.MentionUserIds);
         ClientMessageSendHttpResult httpResult;
         try
@@ -237,7 +428,7 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
         catch (Exception exception)
         {
             logger.LogError(
-                "Sending a pending Text message failed unexpectedly; errorType={ErrorType}.",
+                "Sending a pending message failed unexpectedly; errorType={ErrorType}.",
                 exception.GetType().Name);
             await MarkFailedAsync(pending).ConfigureAwait(false);
             return ClientMessageSendOutcome.Failure(
@@ -247,13 +438,27 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
 
         if (httpResult.Status == ClientMessageSendHttpStatus.Success)
         {
-            var merge = await localCache
-                .MergeIncomingMessageAsync(
-                    httpResult.Message!,
-                    LocalMessageIngestionContext.Background(
-                        IncomingMessageSource.SendResponse),
-                    CancellationToken.None)
-                .ConfigureAwait(false);
+            LocalCacheMergeOutcome merge;
+            try
+            {
+                merge = await localCache
+                    .MergeIncomingMessageAsync(
+                        httpResult.Message!,
+                        LocalMessageIngestionContext.Background(
+                            IncomingMessageSource.SendResponse),
+                        CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(
+                    "Merging a message send response failed; errorType={ErrorType}.",
+                    exception.GetType().Name);
+                await MarkFailedAsync(pending).ConfigureAwait(false);
+                return ClientMessageSendOutcome.Failure(
+                    ClientMessageSendStatus.LocalCacheFailure,
+                    pendingCommitted: true);
+            }
             if (merge.Status == LocalCacheOperationStatus.Ready &&
                 merge.Result is IncomingMessageMergeResult.PendingPromoted or
                     IncomingMessageMergeResult.Duplicate)
@@ -297,7 +502,7 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
         catch (Exception exception)
         {
             logger.LogWarning(
-                "Marking a pending Text message failed; errorType={ErrorType}.",
+                "Marking a pending message failed; errorType={ErrorType}.",
                 exception.GetType().Name);
         }
     }
@@ -380,6 +585,50 @@ internal sealed class ClientMessageSendCoordinator : IAsyncDisposable
             ClientMessageSendHttpStatus.Canceled => ClientMessageSendStatus.Canceled,
             _ => ClientMessageSendStatus.LocalCacheFailure,
         };
+
+    private static ClientMessageSendStatus MapUploadFailure(
+        ClientAttachmentUploadHttpStatus status) =>
+        status switch
+        {
+            ClientAttachmentUploadHttpStatus.AuthenticationRequired =>
+                ClientMessageSendStatus.AuthenticationRequired,
+            ClientAttachmentUploadHttpStatus.ValidationFailed =>
+                ClientMessageSendStatus.ValidationFailed,
+            ClientAttachmentUploadHttpStatus.AttachmentTooLarge =>
+                ClientMessageSendStatus.AttachmentTooLarge,
+            ClientAttachmentUploadHttpStatus.SourceUnavailable =>
+                ClientMessageSendStatus.SourceUnavailable,
+            ClientAttachmentUploadHttpStatus.TransientFailure =>
+                ClientMessageSendStatus.TransientFailure,
+            ClientAttachmentUploadHttpStatus.ProtocolError =>
+                ClientMessageSendStatus.ProtocolError,
+            ClientAttachmentUploadHttpStatus.RemoteFailure =>
+                ClientMessageSendStatus.RemoteFailure,
+            ClientAttachmentUploadHttpStatus.Canceled => ClientMessageSendStatus.Canceled,
+            _ => ClientMessageSendStatus.LocalCacheFailure,
+        };
+
+    private async Task CleanupUnboundReservationsAsync(IReadOnlyCollection<Guid> attachmentIds)
+    {
+        try
+        {
+            var status = await localCache
+                .RemoveUnboundAttachmentReservationsAsync(attachmentIds, CancellationToken.None)
+                .ConfigureAwait(false);
+            if (status != LocalCacheOperationStatus.Ready)
+            {
+                logger.LogWarning(
+                    "Cleaning unbound attachment reservations failed; status={Status}.",
+                    status);
+            }
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Cleaning unbound attachment reservations failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
+    }
 
     private void RemoveFlight(Guid clientMessageId)
     {

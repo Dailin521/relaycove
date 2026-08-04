@@ -1983,6 +1983,59 @@ public sealed class ClientAccountShellCoordinatorTests
         await composition.DisposeAsync();
     }
 
+    [Fact]
+    public async Task Composition_DisposeAsync_WithSeparateUploadClient_DisposesEachHandlerExactlyOnce()
+    {
+        using var router = CreateRouter();
+        var coordinator = CreateCoordinator(
+            new FakeAuthentication(),
+            new FakeRuntimeFactory(),
+            router);
+        var standardHandler = new CountingHttpHandler();
+        var uploadHandler = new CountingHttpHandler();
+        var standardClient = new HttpClient(standardHandler);
+        var uploadClient = new HttpClient(uploadHandler);
+        var composition = new ClientAccountComposition(standardClient, uploadClient, coordinator);
+
+        await Task.WhenAll(composition.DisposeAsync().AsTask(), composition.DisposeAsync().AsTask());
+
+        Assert.Equal(1, standardHandler.DisposeCount);
+        Assert.Equal(1, uploadHandler.DisposeCount);
+    }
+
+    [Fact]
+    public async Task Composition_DetachForProcessExit_WithSeparateUploadClient_LeavesBothUsable()
+    {
+        using var router = CreateRouter();
+        var coordinator = CreateCoordinator(
+            new FakeAuthentication(),
+            new FakeRuntimeFactory(),
+            router);
+        using var standardClient = new HttpClient(new CountingHttpHandler());
+        using var uploadClient = new HttpClient(new CountingHttpHandler());
+        var composition = new ClientAccountComposition(standardClient, uploadClient, coordinator);
+
+        composition.DetachForProcessExit();
+
+        using var standardResponse = await standardClient.GetAsync("https://example.com/health");
+        using var uploadResponse = await uploadClient.GetAsync("https://example.com/api/attachments");
+        Assert.Equal(HttpStatusCode.NoContent, standardResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, uploadResponse.StatusCode);
+        await composition.DisposeAsync();
+    }
+
+    [Fact]
+    public void Composition_HttpClientProfiles_KeepNormalTimeoutAndDisableUploadRedirects()
+    {
+        using var standardClient = ClientAccountComposition.CreateDefaultHttpClient();
+        using var uploadClient = ClientAccountComposition.CreateAttachmentUploadHttpClient();
+        using var uploadHandler = ClientAccountComposition.CreateAttachmentUploadHttpHandler();
+
+        Assert.Equal(TimeSpan.FromSeconds(30), standardClient.Timeout);
+        Assert.Equal(TimeSpan.FromMinutes(10), uploadClient.Timeout);
+        Assert.False(uploadHandler.AllowAutoRedirect);
+    }
+
     private static ClientAccountShellCoordinator CreateCoordinator(
         IClientPersistentAuthentication authentication,
         IClientAccountRuntimeFactory factory,
@@ -2382,6 +2435,16 @@ public sealed class ClientAccountShellCoordinatorTests
             Task.FromResult(ClientMessageSendOutcome.Failure(
                 ClientMessageSendStatus.RemoteFailure));
 
+        public Task<ClientMessageSendOutcome> SendAttachmentsAsync(
+            Guid conversationId,
+            MessageType type,
+            IReadOnlyList<ClientAttachmentUploadSource>? sources,
+            long? replyToMessageId = null,
+            IReadOnlyList<Guid>? mentionUserIds = null,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(ClientMessageSendOutcome.Failure(
+                ClientMessageSendStatus.RemoteFailure));
+
         public Task<ClientMessageSendOutcome> RetryPendingMessageAsync(
             Guid conversationId,
             Guid clientMessageId,
@@ -2450,6 +2513,28 @@ public sealed class ClientAccountShellCoordinatorTests
             HttpRequestMessage request,
             CancellationToken cancellationToken) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+    }
+
+    private sealed class CountingHttpHandler : HttpMessageHandler
+    {
+        private int disposeCount;
+
+        public int DisposeCount => Volatile.Read(ref disposeCount);
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                Interlocked.Increment(ref disposeCount);
+            }
+
+            base.Dispose(disposing);
+        }
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider

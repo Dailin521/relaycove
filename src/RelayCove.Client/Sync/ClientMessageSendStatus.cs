@@ -4,6 +4,8 @@ internal enum ClientMessageSendStatus
 {
     Completed,
     ValidationFailed,
+    AttachmentTooLarge,
+    SourceUnavailable,
     AuthenticationRequired,
     AccessRevoked,
     AccessDenied,

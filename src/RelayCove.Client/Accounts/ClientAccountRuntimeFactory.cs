@@ -12,6 +12,7 @@ namespace RelayCove.Client.Accounts;
 internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
 {
     private readonly HttpClient httpClient;
+    private readonly HttpClient attachmentUploadHttpClient;
     private readonly string accountDataRootDirectory;
     private readonly ILoggerFactory loggerFactory;
     private readonly Func<
@@ -40,6 +41,24 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
     {
     }
 
+    public ClientAccountRuntimeFactory(
+        HttpClient httpClient,
+        HttpClient attachmentUploadHttpClient,
+        string accountDataRootDirectory,
+        ILoggerFactory loggerFactory,
+        IClientNotificationAttention? notificationAttention = null)
+        : this(
+            httpClient,
+            accountDataRootDirectory,
+            loggerFactory,
+            createRealtimeConnection: null,
+            notificationPlatform: null,
+            notificationSettingsProvider: null,
+            notificationAttention: notificationAttention,
+            attachmentUploadHttpClient: attachmentUploadHttpClient)
+    {
+    }
+
     internal ClientAccountRuntimeFactory(
         HttpClient httpClient,
         string accountDataRootDirectory,
@@ -52,9 +71,11 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
             IClientAccountRealtimeConnection>? createRealtimeConnection,
         IClientNotificationPlatform? notificationPlatform = null,
         Func<ClientNotificationSettingsSnapshot>? notificationSettingsProvider = null,
-        IClientNotificationAttention? notificationAttention = null)
+        IClientNotificationAttention? notificationAttention = null,
+        HttpClient? attachmentUploadHttpClient = null)
     {
         this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        this.attachmentUploadHttpClient = attachmentUploadHttpClient ?? httpClient;
         ArgumentException.ThrowIfNullOrWhiteSpace(accountDataRootDirectory);
         this.accountDataRootDirectory = accountDataRootDirectory;
         this.loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
@@ -163,6 +184,7 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                 identity,
                 authenticationSession.DisplayName ?? string.Empty,
                 httpClient,
+                attachmentUploadHttpClient,
                 authenticationSession,
                 cache,
                 loggerFactory.CreateLogger<ClientMessageSendCoordinator>(),

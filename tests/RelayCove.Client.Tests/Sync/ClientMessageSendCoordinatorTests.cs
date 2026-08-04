@@ -654,6 +654,310 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
         Assert.Equal(1, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
     }
 
+    [Fact]
+    public async Task SendAttachmentsAsync_WhenLaterUploadFails_CleansOnlyFlightReservations()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        var firstAttachment = CreateAttachment(Guid.NewGuid(), "first.txt", "text/plain", 1);
+        var uploadCount = 0;
+        var messageCount = 0;
+        using var httpClient = new HttpClient(new DelegateHttpHandler((request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/api/attachments", StringComparison.Ordinal))
+            {
+                return Task.FromResult(Interlocked.Increment(ref uploadCount) == 1
+                    ? Created(firstAttachment)
+                    : new HttpResponseMessage(HttpStatusCode.InternalServerError));
+            }
+
+            Interlocked.Increment(ref messageCount);
+            throw new InvalidOperationException("Message POST must not run after partial upload failure.");
+        }));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        var outcome = await coordinator.SendAttachmentsAsync(
+            prepared.Conversation.Id,
+            MessageType.File,
+            [CreateSource("first.txt", "text/plain"), CreateSource("second.txt", "text/plain")]);
+
+        Assert.Equal(ClientMessageSendStatus.TransientFailure, outcome.Status);
+        Assert.False(outcome.PendingCommitted);
+        Assert.Equal(2, Volatile.Read(ref uploadCount));
+        Assert.Equal(0, Volatile.Read(ref messageCount));
+        Assert.Equal(0, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalAttachments;"));
+        Assert.Equal(0, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
+    }
+
+    [Fact]
+    public async Task SendAttachmentsAsync_WhenPendingFails_RetryReusesBoundAttachmentWithoutUploading()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        var attachment = CreateAttachment(Guid.NewGuid(), "one.txt", "text/plain", 1);
+        var uploadCount = 0;
+        var messageCount = 0;
+        SendMessageRequest? firstRequest = null;
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/api/attachments", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref uploadCount);
+                return Created(attachment);
+            }
+
+            var sent = (await request.Content!.ReadFromJsonAsync<SendMessageRequest>(
+                JsonOptions,
+                token))!;
+            if (Interlocked.Increment(ref messageCount) == 1)
+            {
+                firstRequest = sent;
+                return new HttpResponseMessage(HttpStatusCode.ServiceUnavailable);
+            }
+
+            return Created(CreateResponse(sent) with { Attachments = [attachment] });
+        }));
+        Guid clientMessageId;
+        await using (var firstCoordinator = CreateCoordinator(prepared, httpClient))
+        {
+            var first = await firstCoordinator.SendAttachmentsAsync(
+                prepared.Conversation.Id,
+                MessageType.File,
+                [CreateSource("one.txt", "text/plain")]);
+            Assert.Equal(ClientMessageSendStatus.TransientFailure, first.Status);
+            Assert.True(first.PendingCommitted);
+            clientMessageId = firstRequest!.ClientMessageId;
+        }
+
+        await using var retryCoordinator = CreateCoordinator(prepared, httpClient);
+        var retry = await retryCoordinator.RetryAsync(prepared.Conversation.Id, clientMessageId);
+
+        Assert.Equal(ClientMessageSendStatus.Completed, retry.Status);
+        Assert.True(retry.PendingCommitted);
+        Assert.Equal(1, Volatile.Read(ref uploadCount));
+        Assert.Equal(2, Volatile.Read(ref messageCount));
+        var page = await prepared.Cache.ReadMessagePageAsync(
+            prepared.Conversation.Id,
+            beforeMessageId: null,
+            limit: 50);
+        Assert.Empty(page.PendingMessages);
+        Assert.Equal(attachment.Id, Assert.Single(page.Messages).Attachments.Single().Id);
+    }
+
+    [Fact]
+    public async Task SendAttachmentsAsync_WhenTenImagesWithReplyAndMentions_SendsEachUploadOnceAndPostsCanonicalWirePayload()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        const long replyToMessageId = 73;
+        await SeedReplyTargetAsync(prepared, replyToMessageId);
+        var firstMention = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var secondMention = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var attachments = Enumerable.Range(1, 10)
+            .Select(index => CreateAttachment(
+                Guid.Parse($"00000000-0000-0000-0000-{index:D12}"),
+                $"图片-{index}.png",
+                "image/png",
+                1))
+            .ToArray();
+        var uploads = 0;
+        SendMessageRequest? messageRequest = null;
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/api/attachments", StringComparison.Ordinal))
+            {
+                var uploadIndex = Interlocked.Increment(ref uploads) - 1;
+                Assert.Equal(HttpMethod.Post, request.Method);
+                var multipart = Assert.IsType<MultipartFormDataContent>(request.Content);
+                var part = Assert.Single(multipart);
+                Assert.Equal("image/png", part.Headers.ContentType!.MediaType);
+                Assert.Equal("file", part.Headers.ContentDisposition!.Name!.Trim('\"'));
+                Assert.Equal($"图片-{uploadIndex + 1}.png", part.Headers.ContentDisposition.FileName!.Trim('\"'));
+                return Created(attachments[uploadIndex]);
+            }
+
+            messageRequest = (await request.Content!.ReadFromJsonAsync<SendMessageRequest>(
+                JsonOptions,
+                token))!;
+            var responseAttachments = messageRequest.AttachmentIds
+                .Select(id => attachments.Single(attachment => attachment.Id == id))
+                .ToArray();
+            return Created(CreateResponse(messageRequest) with { Attachments = responseAttachments });
+        }));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        var outcome = await coordinator.SendAttachmentsAsync(
+            prepared.Conversation.Id,
+            MessageType.Image,
+            attachments.Select(attachment => CreateSource(attachment.OriginalFileName, attachment.ContentType)).ToArray(),
+            replyToMessageId,
+            [secondMention, firstMention]);
+
+        Assert.Equal(ClientMessageSendStatus.Completed, outcome.Status);
+        Assert.True(outcome.PendingCommitted);
+        Assert.Equal(10, Volatile.Read(ref uploads));
+        Assert.NotNull(messageRequest);
+        Assert.Equal(MessageType.Image, messageRequest!.Type);
+        Assert.Null(messageRequest.Content);
+        Assert.Equal(replyToMessageId, messageRequest.ReplyToMessageId);
+        Assert.Equal(attachments.Select(attachment => attachment.Id).Order().ToArray(), messageRequest.AttachmentIds);
+        Assert.Equal([firstMention, secondMention], messageRequest.MentionUserIds);
+        var page = await prepared.Cache.ReadMessagePageAsync(
+            prepared.Conversation.Id,
+            beforeMessageId: null,
+            limit: 50);
+        var message = Assert.Single(page.Messages, message =>
+            message.ClientMessageId == messageRequest.ClientMessageId);
+        Assert.Equal(messageRequest.AttachmentIds, message.Attachments.Select(attachment => attachment.Id));
+    }
+
+    [Fact]
+    public async Task RetryAsync_AfterProcessRestart_ReusesAttachmentPendingIdentityWithoutReupload()
+    {
+        var identity = AccountScopeIdentity.Create(ServerBaseUri, UserId, rootDirectory);
+        var conversation = new ConversationDto(
+            Guid.NewGuid(),
+            ConversationType.PrivateChannel,
+            "Conversation",
+            AvatarUrl: null,
+            DateTimeOffset.Parse("2026-08-03T01:00:00Z"),
+            DateTimeOffset.Parse("2026-08-03T02:00:00Z"),
+            LastMessageId: 0,
+            LastReadMessageId: 0,
+            UnreadCount: 0);
+        var attachment = CreateAttachment(Guid.NewGuid(), "restart.bin", "application/octet-stream", 1);
+        var uploadCount = 0;
+        var messageRequests = new List<SendMessageRequest>();
+        var messageAttempt = 0;
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/api/attachments", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref uploadCount);
+                return Created(attachment);
+            }
+
+            var sent = (await request.Content!.ReadFromJsonAsync<SendMessageRequest>(JsonOptions, token))!;
+            messageRequests.Add(sent);
+            return Interlocked.Increment(ref messageAttempt) == 1
+                ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                : Created(CreateResponse(sent) with { Attachments = [attachment] });
+        }));
+
+        Guid clientMessageId;
+        await using (var firstCache = await AccountScopedLocalCache.CreateAsync(
+            identity,
+            NullLogger<AccountScopedLocalCache>.Instance))
+        {
+            Assert.Equal(LocalCacheOperationStatus.Ready, await firstCache.ApplyAuthoritativeConversationSnapshotAsync(
+                new ConversationListResponse([conversation], Complete: true)));
+            await using var firstCoordinator = CreateCoordinator(
+                new PreparedSend(identity, firstCache, conversation),
+                httpClient);
+            var first = await firstCoordinator.SendAttachmentsAsync(
+                conversation.Id,
+                MessageType.File,
+                [CreateSource(attachment.OriginalFileName, attachment.ContentType)]);
+            Assert.Equal(ClientMessageSendStatus.TransientFailure, first.Status);
+            Assert.True(first.PendingCommitted);
+            clientMessageId = Assert.Single(messageRequests).ClientMessageId;
+        }
+
+        AccountScopedLocalCache.ResetProcessStateForTest(identity);
+        await using var reopenedCache = await AccountScopedLocalCache.CreateAsync(
+            identity,
+            NullLogger<AccountScopedLocalCache>.Instance);
+        Assert.Equal(LocalCacheOperationStatus.Ready, await reopenedCache.ApplyAuthoritativeConversationSnapshotAsync(
+            new ConversationListResponse([conversation], Complete: true)));
+        await using var reopenedCoordinator = CreateCoordinator(
+            new PreparedSend(identity, reopenedCache, conversation),
+            httpClient);
+
+        var retry = await reopenedCoordinator.RetryAsync(conversation.Id, clientMessageId);
+
+        Assert.Equal(ClientMessageSendStatus.Completed, retry.Status);
+        Assert.Equal(1, Volatile.Read(ref uploadCount));
+        Assert.Equal(2, messageRequests.Count);
+        Assert.Equal(messageRequests[0].ClientMessageId, messageRequests[1].ClientMessageId);
+        Assert.Equal(messageRequests[0].AttachmentIds, messageRequests[1].AttachmentIds);
+        Assert.Equal(messageRequests[0].MentionUserIds, messageRequests[1].MentionUserIds);
+    }
+
+    [Fact]
+    public async Task SendAttachmentsAsync_WhenRealtimePromotesBeforeResponse_ResponseIsDuplicate()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        var attachment = CreateAttachment(Guid.NewGuid(), "race.txt", "text/plain", 1);
+        var messageObserved = NewSignal();
+        var releaseResponse = NewSignal();
+        var uploadCount = 0;
+        SendMessageRequest? sentRequest = null;
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/api/attachments", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref uploadCount);
+                return Created(attachment);
+            }
+
+            sentRequest = (await request.Content!.ReadFromJsonAsync<SendMessageRequest>(JsonOptions, token))!;
+            messageObserved.SetResult();
+            await releaseResponse.Task.WaitAsync(token);
+            return Created(CreateResponse(sentRequest) with { Attachments = [attachment] });
+        }));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        var send = coordinator.SendAttachmentsAsync(
+            prepared.Conversation.Id,
+            MessageType.File,
+            [CreateSource(attachment.OriginalFileName, attachment.ContentType)]);
+        await messageObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var realtime = await prepared.Cache.MergeIncomingMessageAsync(
+            CreateResponse(sentRequest!) with { Attachments = [attachment] },
+            LocalMessageIngestionContext.Background(IncomingMessageSource.Realtime));
+        releaseResponse.SetResult();
+        var outcome = await send;
+
+        Assert.Equal(IncomingMessageMergeResult.PendingPromoted, realtime.Result);
+        Assert.Equal(ClientMessageSendStatus.Completed, outcome.Status);
+        Assert.Equal(1, Volatile.Read(ref uploadCount));
+        var page = await prepared.Cache.ReadMessagePageAsync(
+            prepared.Conversation.Id,
+            beforeMessageId: null,
+            limit: 50);
+        Assert.Empty(page.PendingMessages);
+        Assert.Equal(attachment.Id, Assert.Single(page.Messages).Attachments.Single().Id);
+    }
+
+    [Fact]
+    public async Task SendAttachmentsAsync_WhenResponseMergeIsRejected_ReportsCommittedAndKeepsBoundAttachment()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        var attachment = CreateAttachment(Guid.NewGuid(), "bound.txt", "text/plain", 1);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(async (request, token) =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/api/attachments", StringComparison.Ordinal))
+            {
+                return Created(attachment);
+            }
+
+            var sent = (await request.Content!.ReadFromJsonAsync<SendMessageRequest>(JsonOptions, token))!;
+            return Created(CreateResponse(sent) with
+            {
+                SenderId = Guid.NewGuid(),
+                Attachments = [attachment],
+            });
+        }));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        var outcome = await coordinator.SendAttachmentsAsync(
+            prepared.Conversation.Id,
+            MessageType.File,
+            [CreateSource(attachment.OriginalFileName, attachment.ContentType)]);
+
+        Assert.Equal(ClientMessageSendStatus.ProtocolError, outcome.Status);
+        Assert.True(outcome.PendingCommitted);
+        Assert.Equal(1, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalAttachments;"));
+        Assert.Equal(1, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();
@@ -734,6 +1038,28 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
         request.MentionUserIds,
         DateTimeOffset.Parse("2026-08-03T03:00:00Z"));
 
+    private static ClientAttachmentUploadSource CreateSource(
+        string fileName,
+        string contentType) =>
+        new(
+            fileName,
+            contentType,
+            size: 1,
+            _ => ValueTask.FromResult<Stream>(new MemoryStream([0x42], writable: false)));
+
+    private static AttachmentDto CreateAttachment(
+        Guid id,
+        string fileName,
+        string contentType,
+        long size) =>
+        new(
+            id,
+            fileName,
+            contentType,
+            size,
+            $"/api/attachments/{id:D}/download",
+            ThumbnailUrl: null);
+
     private static void AssertRequestEqual(
         SendMessageRequest expected,
         SendMessageRequest actual)
@@ -750,8 +1076,21 @@ public sealed class ClientMessageSendCoordinatorTests : IDisposable
     private static HttpResponseMessage Created(MessageDto value) =>
         new(HttpStatusCode.Created) { Content = JsonContent.Create(value) };
 
+    private static HttpResponseMessage Created(AttachmentDto value)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.Created)
+        {
+            Content = JsonContent.Create(value),
+        };
+        response.Headers.Location = new Uri($"/api/attachments/{value.Id:D}", UriKind.Relative);
+        return response;
+    }
+
     private static HttpResponseMessage Ok(MessageDto value) =>
         new(HttpStatusCode.OK) { Content = JsonContent.Create(value) };
+
+    private static TaskCompletionSource NewSignal() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private static long Scalar(AccountScopeIdentity identity, string sql)
     {

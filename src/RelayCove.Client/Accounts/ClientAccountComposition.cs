@@ -10,17 +10,29 @@ namespace RelayCove.Client.Accounts;
 internal sealed class ClientAccountComposition : IAsyncDisposable
 {
     private static readonly TimeSpan DefaultHttpTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan AttachmentUploadHttpTimeout = TimeSpan.FromMinutes(10);
     private readonly object stateGate = new();
     private readonly HttpClient httpClient;
+    private readonly HttpClient attachmentUploadHttpClient;
     private Task? disposeTask;
     private bool detachedForProcessExit;
 
     internal ClientAccountComposition(
         HttpClient httpClient,
         ClientAccountShellCoordinator coordinator)
+        : this(httpClient, httpClient, coordinator)
     {
-        this.httpClient = httpClient;
-        Coordinator = coordinator;
+    }
+
+    internal ClientAccountComposition(
+        HttpClient httpClient,
+        HttpClient attachmentUploadHttpClient,
+        ClientAccountShellCoordinator coordinator)
+    {
+        this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        this.attachmentUploadHttpClient = attachmentUploadHttpClient ??
+            throw new ArgumentNullException(nameof(attachmentUploadHttpClient));
+        Coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     }
 
     public ClientAccountShellCoordinator Coordinator { get; }
@@ -46,10 +58,8 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
             Path.GetFullPath(localAppDataRoot));
         var credentialRoot = ResolveChildDirectory(normalizedRoot, "Authentication");
         var accountRoot = ResolveChildDirectory(normalizedRoot, "Accounts");
-        var httpClient = new HttpClient
-        {
-            Timeout = DefaultHttpTimeout,
-        };
+        var httpClient = CreateDefaultHttpClient();
+        var attachmentUploadHttpClient = CreateAttachmentUploadHttpClient();
         try
         {
             var credentialStore = new ClientCredentialStore(
@@ -62,6 +72,7 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
                 loggerFactory.CreateLogger<PersistentClientAuthentication>());
             var runtimeFactory = new ClientAccountRuntimeFactory(
                 httpClient,
+                attachmentUploadHttpClient,
                 accountRoot,
                 loggerFactory,
                 notificationAttention);
@@ -70,11 +81,12 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
                 runtimeFactory,
                 activationRouter,
                 loggerFactory.CreateLogger<ClientAccountShellCoordinator>());
-            return new ClientAccountComposition(httpClient, coordinator);
+            return new ClientAccountComposition(httpClient, attachmentUploadHttpClient, coordinator);
         }
         catch
         {
             httpClient.Dispose();
+            attachmentUploadHttpClient.Dispose();
             throw;
         }
     }
@@ -133,11 +145,13 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
         {
             await Coordinator.DisposeAsync().ConfigureAwait(false);
             httpClient.Dispose();
+            DisposeAttachmentUploadHttpClient();
             completion.TrySetResult();
         }
         catch (Exception exception)
         {
             httpClient.Dispose();
+            DisposeAttachmentUploadHttpClient();
             completion.TrySetException(exception);
         }
     }
@@ -145,6 +159,30 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
     public override string ToString() =>
         $"{nameof(ClientAccountComposition)} {{ DataRoot = [REDACTED], " +
         "HttpClient = [REDACTED], Coordinator = [REDACTED] }";
+
+    internal static HttpClient CreateDefaultHttpClient() => new()
+    {
+        Timeout = DefaultHttpTimeout,
+    };
+
+    internal static HttpClient CreateAttachmentUploadHttpClient() =>
+        new(CreateAttachmentUploadHttpHandler())
+        {
+            Timeout = AttachmentUploadHttpTimeout,
+        };
+
+    internal static SocketsHttpHandler CreateAttachmentUploadHttpHandler() => new()
+    {
+        AllowAutoRedirect = false,
+    };
+
+    private void DisposeAttachmentUploadHttpClient()
+    {
+        if (!ReferenceEquals(httpClient, attachmentUploadHttpClient))
+        {
+            attachmentUploadHttpClient.Dispose();
+        }
+    }
 
     private static string ResolveChildDirectory(string root, string directoryName)
     {

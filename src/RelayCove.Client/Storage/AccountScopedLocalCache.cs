@@ -1,9 +1,6 @@
-using System.Buffers;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO;
-using System.Net.Http.Headers;
-using System.Text;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using RelayCove.Shared.Conversations;
@@ -21,10 +18,6 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private const int CurrentNotificationStateVersion = 1;
     private const int MaxNotificationCandidateIds = 1000;
     private const int MaxOutstandingPendingMessages = 50;
-    private const int MaximumAttachmentsPerMessage = 10;
-    private const int MaximumOriginalFileNameScalars = 255;
-    private const int MaximumContentTypeLength = 127;
-    private const long AbsoluteMaximumAttachmentSize = 100L * 1024 * 1024;
     private const int NotDownloadedAttachmentStatus = 0;
     private const int CurrentSchemaVersion = 2;
     private const int WriteRetryCount = 4;
@@ -263,7 +256,9 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     }
 
     internal LocalCacheOperationStatus GetNotificationConversationAccessStatus(
-        Guid conversationId)
+        Guid conversationId) => GetConversationAccessStatus(conversationId);
+
+    internal LocalCacheOperationStatus GetConversationAccessStatus(Guid conversationId)
     {
         ValidateGuid(conversationId, nameof(conversationId));
         ThrowIfDisposed();
@@ -274,6 +269,105 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
 
         return GetAccessStatus(conversationId);
+    }
+
+    internal async Task<LocalAttachmentReservationOutcome>
+        StoreUnboundAttachmentReservationAsync(
+            AttachmentDto attachment,
+            CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(attachment);
+        if (!ClientAttachmentMetadataPolicy.IsValid(attachment))
+        {
+            throw new ArgumentException("Attachment metadata is invalid.", nameof(attachment));
+        }
+
+        ThrowIfDisposed();
+        if (IsFatal)
+        {
+            return LocalAttachmentReservationOutcome.Failure(LocalCacheOperationStatus.FatalScope);
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (IsFatal)
+            {
+                return LocalAttachmentReservationOutcome.Failure(
+                    LocalCacheOperationStatus.FatalScope);
+            }
+
+            return await Task.Run(() => StoreUnboundAttachmentReservation(attachment))
+                .ConfigureAwait(false);
+        }
+        catch (SqliteException exception) when (IsBusy(exception))
+        {
+            logger.LogWarning(
+                "Storing an unbound attachment reservation remained busy; errorType={ExceptionType}.",
+                exception.GetType().Name);
+            return LocalAttachmentReservationOutcome.Failure(
+                LocalCacheOperationStatus.TransientFailure);
+        }
+        catch (Exception exception)
+        {
+            MarkScopeFatal();
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state while storing an unbound attachment reservation; errorType={ExceptionType}.",
+                exception.GetType().Name);
+            return LocalAttachmentReservationOutcome.Failure(LocalCacheOperationStatus.FatalScope);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+    }
+
+    internal async Task<LocalCacheOperationStatus> RemoveUnboundAttachmentReservationsAsync(
+        IReadOnlyCollection<Guid> attachmentIds,
+        CancellationToken cancellationToken = default)
+    {
+        var ids = ValidateAttachmentIdsForCleanup(attachmentIds);
+        ThrowIfDisposed();
+        if (IsFatal)
+        {
+            return LocalCacheOperationStatus.FatalScope;
+        }
+
+        if (ids.Length == 0)
+        {
+            return LocalCacheOperationStatus.Ready;
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (IsFatal)
+            {
+                return LocalCacheOperationStatus.FatalScope;
+            }
+
+            return await Task.Run(() => RemoveUnboundAttachmentReservations(ids))
+                .ConfigureAwait(false);
+        }
+        catch (SqliteException exception) when (IsBusy(exception))
+        {
+            logger.LogWarning(
+                "Removing unbound attachment reservations remained busy; errorType={ExceptionType}.",
+                exception.GetType().Name);
+            return LocalCacheOperationStatus.TransientFailure;
+        }
+        catch (Exception exception)
+        {
+            MarkScopeFatal();
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state while removing unbound attachment reservations; errorType={ExceptionType}.",
+                exception.GetType().Name);
+            return LocalCacheOperationStatus.FatalScope;
+        }
+        finally
+        {
+            operationGate.Release();
+        }
     }
 
     internal LocalCacheOperationStatus GetNotificationOverviewAccessStatus()
@@ -1022,6 +1116,27 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                     catch
                     {
                         Volatile.Write(ref scopeState.PendingRecoveryCompleted, 0);
+                        throw;
+                    }
+                }
+
+                if (Interlocked.CompareExchange(
+                        ref scopeState.UnboundRecoveryCompleted,
+                        1,
+                        0) == 0)
+                {
+                    try
+                    {
+                        faultInjector?.BeforeUnboundReservationRecovery();
+                        using var recoverUnbound = CreateCommand(connection, null, """
+                            DELETE FROM LocalAttachments
+                            WHERE LocalMessageId IS NULL;
+                            """);
+                        recoverUnbound.ExecuteNonQuery();
+                    }
+                    catch
+                    {
+                        Volatile.Write(ref scopeState.UnboundRecoveryCompleted, 0);
                         throw;
                     }
                 }
@@ -1962,6 +2077,19 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
 
             var localId = GetLastInsertRowId(connection, transaction);
             InsertMentions(connection, transaction, localId, message.MentionUserIds);
+            if (!BindUnboundAttachments(
+                    connection,
+                    transaction,
+                    localId,
+                    message.Type,
+                    message.AttachmentIds,
+                    faultInjector))
+            {
+                return TransactionResult<LocalPendingMessageMutationOutcome>.Rollback(
+                    new LocalPendingMessageMutationOutcome(
+                        LocalCacheOperationStatus.Ready,
+                        LocalPendingMessageMutationResult.Conflict));
+            }
             return TransactionResult<LocalPendingMessageMutationOutcome>.Commit(
                 new LocalPendingMessageMutationOutcome(
                     LocalCacheOperationStatus.Ready,
@@ -1977,9 +2105,52 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                         message.ReplyToMessageId,
                         message.MentionUserIds.ToArray(),
                         message.CreatedAt,
-                        MessageSendStatus.Sending)));
+                        MessageSendStatus.Sending)
+                    {
+                        AttachmentIds = message.AttachmentIds.ToArray(),
+                    }));
         });
     }
+
+    private LocalAttachmentReservationOutcome StoreUnboundAttachmentReservation(
+        AttachmentDto attachment) =>
+        ExecuteWriteWithRetry((connection, transaction) =>
+        {
+            var existing = LoadAttachmentById(connection, transaction, attachment.Id);
+            if (existing is not null)
+            {
+                var result = existing.LocalMessageId is null &&
+                    existing.Attachment == attachment
+                    ? LocalAttachmentReservationResult.AlreadyExists
+                    : LocalAttachmentReservationResult.Conflict;
+                return TransactionResult<LocalAttachmentReservationOutcome>.Rollback(
+                    new LocalAttachmentReservationOutcome(LocalCacheOperationStatus.Ready, result));
+            }
+
+            InsertUnboundAttachment(connection, transaction, attachment);
+            return TransactionResult<LocalAttachmentReservationOutcome>.Commit(
+                new LocalAttachmentReservationOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    LocalAttachmentReservationResult.Stored));
+        });
+
+    private LocalCacheOperationStatus RemoveUnboundAttachmentReservations(
+        IReadOnlyList<Guid> attachmentIds) =>
+        ExecuteWriteWithRetry((connection, transaction) =>
+        {
+            foreach (var attachmentId in attachmentIds)
+            {
+                using var command = CreateCommand(connection, transaction, """
+                    DELETE FROM LocalAttachments
+                    WHERE Id = $id AND LocalMessageId IS NULL;
+                    """);
+                AddParameter(command, "$id", FormatGuid(attachmentId));
+                _ = command.ExecuteNonQuery();
+            }
+
+            return TransactionResult<LocalCacheOperationStatus>.Commit(
+                LocalCacheOperationStatus.Ready);
+        });
 
     private LocalPendingMessageMutationOutcome PreparePendingMessageRetry(
         Guid conversationId,
@@ -3892,7 +4063,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         SqliteTransaction? transaction = null)
     {
         var attachments = LoadAttachments(connection, transaction, record.LocalId);
-        if (!IsValidAttachmentCollection(record.Type, attachments))
+        if (!ClientAttachmentMetadataPolicy.IsValidCollection(record.Type, attachments))
         {
             throw new InvalidDataException(
                 "The local cache contains an invalid message attachment collection.");
@@ -3924,6 +4095,13 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 "The local cache contains an invalid pending message row.");
         }
 
+        var attachments = LoadAttachments(connection, transaction, record.LocalId);
+        if (!ClientAttachmentMetadataPolicy.IsValidCollection(record.Type, attachments))
+        {
+            throw new InvalidDataException(
+                "The local cache contains an invalid pending message attachment collection.");
+        }
+
         return new LocalPendingMessage(
             record.LocalId,
             record.ClientMessageId,
@@ -3935,7 +4113,10 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             record.ReplyToMessageId,
             LoadMentions(connection, transaction, record.LocalId),
             record.CreatedAt,
-            record.SendStatus);
+            record.SendStatus)
+        {
+            AttachmentIds = attachments.Select(attachment => attachment.Id).ToArray(),
+        };
     }
 
     private static bool IsPendingRequestCompatible(
@@ -3949,6 +4130,9 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         record.Type == message.Type &&
         string.Equals(record.Content, message.Content, StringComparison.Ordinal) &&
         record.ReplyToMessageId == message.ReplyToMessageId &&
+        AttachmentIdsEqual(
+            LoadAttachments(connection, transaction, record.LocalId),
+            message.AttachmentIds) &&
         MentionSetsEqual(
             LoadMentions(connection, transaction, record.LocalId),
             message.MentionUserIds);
@@ -3995,8 +4179,14 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             record.SenderId != message.SenderId ||
             record.Type != message.Type ||
             !string.Equals(record.Content, message.Content, StringComparison.Ordinal) ||
-            record.ReplyToMessageId != message.ReplyToMessageId ||
-            message.Attachments.Count != 0)
+            record.ReplyToMessageId != message.ReplyToMessageId)
+        {
+            return false;
+        }
+
+        var attachments = LoadAttachments(connection, transaction, record.LocalId);
+        if (!ClientAttachmentMetadataPolicy.IsValidCollection(record.Type, attachments) ||
+            !AttachmentSetsEqual(attachments, message.Attachments))
         {
             return false;
         }
@@ -4018,7 +4208,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
 
         var attachments = LoadAttachments(connection, transaction, record.LocalId);
-        if (!IsValidAttachmentCollection(record.Type, attachments))
+        if (!ClientAttachmentMetadataPolicy.IsValidCollection(record.Type, attachments))
         {
             throw new InvalidDataException(
                 "The local cache contains an invalid message attachment collection.");
@@ -4038,7 +4228,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         using var command = CreateCommand(connection, transaction, """
             SELECT Id, OriginalFileName, ContentType, Size, DownloadUrl
             FROM LocalAttachments
-            WHERE LocalMessageId = $localMessageId;
+            WHERE LocalMessageId = $localMessageId
+            ORDER BY Id;
             """);
         AddParameter(command, "$localMessageId", localMessageId);
         var attachments = new List<AttachmentDto>();
@@ -4059,7 +4250,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 reader.GetInt64(3),
                 reader.GetString(4),
                 ThumbnailUrl: null);
-            if (!IsValidAttachmentMetadata(attachment))
+            if (!ClientAttachmentMetadataPolicy.IsValid(attachment))
             {
                 throw new InvalidDataException(
                     "The local cache contains invalid attachment metadata.");
@@ -4075,6 +4266,11 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         IReadOnlyList<AttachmentDto> first,
         IReadOnlyList<AttachmentDto> second) =>
         first.SequenceEqual(second);
+
+    private static bool AttachmentIdsEqual(
+        IReadOnlyList<AttachmentDto> attachments,
+        IReadOnlyList<Guid> attachmentIds) =>
+        attachments.Select(attachment => attachment.Id).SequenceEqual(attachmentIds);
 
     private static IReadOnlyList<Guid> LoadMentions(
         SqliteConnection connection,
@@ -4142,6 +4338,113 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         }
 
         return false;
+    }
+
+    private static bool BindUnboundAttachments(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long localMessageId,
+        MessageType messageType,
+        IReadOnlyList<Guid> attachmentIds,
+        ILocalCacheFaultInjector? faultInjector)
+    {
+        var reservations = new List<AttachmentDto>(attachmentIds.Count);
+        foreach (var attachmentId in attachmentIds)
+        {
+            var reservation = LoadAttachmentById(connection, transaction, attachmentId);
+            if (reservation is null || reservation.LocalMessageId is not null)
+            {
+                return false;
+            }
+
+            reservations.Add(reservation.Attachment);
+        }
+
+        if (!ClientAttachmentMetadataPolicy.IsValidCollection(messageType, reservations))
+        {
+            return false;
+        }
+
+        var boundCount = 0;
+        foreach (var attachmentId in attachmentIds)
+        {
+            using var command = CreateCommand(connection, transaction, """
+                UPDATE LocalAttachments
+                SET LocalMessageId = $localMessageId
+                WHERE Id = $id AND LocalMessageId IS NULL;
+                """);
+            AddParameter(command, "$localMessageId", localMessageId);
+            AddParameter(command, "$id", FormatGuid(attachmentId));
+            if (command.ExecuteNonQuery() != 1)
+            {
+                return false;
+            }
+
+            faultInjector?.AfterPendingAttachmentBound(++boundCount);
+        }
+
+        return true;
+    }
+
+    private static LocalAttachmentRecord? LoadAttachmentById(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        Guid attachmentId)
+    {
+        using var command = CreateCommand(connection, transaction, """
+            SELECT LocalMessageId, OriginalFileName, ContentType, Size, DownloadUrl
+            FROM LocalAttachments
+            WHERE Id = $id
+            LIMIT 1;
+            """);
+        AddParameter(command, "$id", FormatGuid(attachmentId));
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            return null;
+        }
+
+        var attachment = new AttachmentDto(
+            attachmentId,
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetInt64(3),
+            reader.GetString(4),
+            ThumbnailUrl: null);
+        if (!ClientAttachmentMetadataPolicy.IsValid(attachment))
+        {
+            throw new InvalidDataException("The local cache contains invalid attachment metadata.");
+        }
+
+        return new LocalAttachmentRecord(
+            reader.IsDBNull(0) ? null : reader.GetInt64(0),
+            attachment);
+    }
+
+    private static void InsertUnboundAttachment(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        AttachmentDto attachment)
+    {
+        using var command = CreateCommand(connection, transaction, """
+            INSERT INTO LocalAttachments (
+                Id, LocalMessageId, OriginalFileName, ContentType, Size,
+                DownloadUrl, LocalPath, ThumbnailLocalPath, DownloadStatus)
+            VALUES (
+                $id, NULL, $originalFileName, $contentType, $size,
+                $downloadUrl, NULL, NULL, $downloadStatus);
+            """);
+        AddParameter(command, "$id", FormatGuid(attachment.Id));
+        AddParameter(command, "$originalFileName", attachment.OriginalFileName);
+        AddParameter(command, "$contentType", attachment.ContentType);
+        AddParameter(command, "$size", attachment.Size);
+        AddParameter(command, "$downloadUrl", attachment.DownloadUrl);
+        AddParameter(command, "$downloadStatus", NotDownloadedAttachmentStatus);
+        if (command.ExecuteNonQuery() != 1)
+        {
+            throw new InvalidOperationException(
+                "Saving an unbound attachment reservation did not insert exactly one row.");
+        }
     }
 
     private static void InsertAttachments(
@@ -4378,105 +4681,11 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         if (message.Id <= 0 ||
             !Enum.IsDefined(message.Type) ||
             message.ReplyToMessageId is <= 0 ||
-            !IsValidAttachmentCollection(message.Type, message.Attachments) ||
+            !ClientAttachmentMetadataPolicy.IsValidCollection(message.Type, message.Attachments) ||
             message.MentionUserIds.Any(id => id == Guid.Empty))
         {
             throw new ArgumentException("Message contains unsupported or invalid values.", nameof(message));
         }
-    }
-
-    private static bool IsValidAttachmentCollection(
-        MessageType messageType,
-        IReadOnlyList<AttachmentDto> attachments)
-    {
-        if (messageType is MessageType.Text or MessageType.System)
-        {
-            return attachments.Count == 0;
-        }
-
-        if (messageType is not MessageType.Image and not MessageType.File ||
-            attachments.Count is < 1 or > MaximumAttachmentsPerMessage)
-        {
-            return false;
-        }
-
-        Guid? previousId = null;
-        foreach (var attachment in attachments)
-        {
-            if (attachment is null ||
-                !IsValidAttachmentMetadata(attachment) ||
-                (messageType == MessageType.Image &&
-                 !attachment.ContentType.StartsWith(
-                     "image/",
-                     StringComparison.OrdinalIgnoreCase)) ||
-                (previousId.HasValue && previousId.Value.CompareTo(attachment.Id) >= 0))
-            {
-                return false;
-            }
-
-            previousId = attachment.Id;
-        }
-
-        return true;
-    }
-
-    private static bool IsValidAttachmentMetadata(AttachmentDto attachment)
-    {
-        if (attachment.Id == Guid.Empty ||
-            attachment.Size is < 1 or > AbsoluteMaximumAttachmentSize ||
-            attachment.ThumbnailUrl is not null ||
-            !string.Equals(
-                attachment.DownloadUrl,
-                $"/api/attachments/{attachment.Id:D}/download",
-                StringComparison.Ordinal) ||
-            !IsValidOriginalFileName(attachment.OriginalFileName) ||
-            string.IsNullOrWhiteSpace(attachment.ContentType) ||
-            attachment.ContentType.Length > MaximumContentTypeLength ||
-            attachment.ContentType.Contains('*', StringComparison.Ordinal) ||
-            !MediaTypeHeaderValue.TryParse(attachment.ContentType, out var parsedContentType) ||
-            parsedContentType.MediaType is null)
-        {
-            return false;
-        }
-
-        return string.Equals(
-            attachment.ContentType,
-            parsedContentType.MediaType.ToLowerInvariant(),
-            StringComparison.Ordinal);
-    }
-
-    private static bool IsValidOriginalFileName(string? fileName)
-    {
-        if (string.IsNullOrWhiteSpace(fileName) ||
-            fileName is "." or ".." ||
-            !string.Equals(fileName, fileName.Trim(), StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var scalarCount = 0;
-        var remaining = fileName.AsSpan();
-        while (!remaining.IsEmpty)
-        {
-            var status = Rune.DecodeFromUtf16(remaining, out var rune, out var consumed);
-            if (status != OperationStatus.Done ||
-                rune.Value is '/' or '\\' ||
-                Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control or
-                    UnicodeCategory.Format)
-            {
-                return false;
-            }
-
-            scalarCount++;
-            if (scalarCount > MaximumOriginalFileNameScalars)
-            {
-                return false;
-            }
-
-            remaining = remaining[consumed..];
-        }
-
-        return true;
     }
 
     private static void ValidateIngestionContext(
@@ -4520,16 +4729,42 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         ValidateGuid(message.SenderId, nameof(message));
         ArgumentNullException.ThrowIfNull(message.SenderDisplayName);
         ArgumentNullException.ThrowIfNull(message.MentionUserIds);
-        if (!Enum.IsDefined(message.Type) ||
+        ArgumentNullException.ThrowIfNull(message.AttachmentIds);
+        var isText = message.Type == MessageType.Text;
+        var isAttachmentMessage = message.Type is MessageType.Image or MessageType.File;
+        if ((!isText && !isAttachmentMessage) ||
             message.MentionUserIds.Count > 20 ||
             message.MentionUserIds.Any(id => id == Guid.Empty) ||
             message.MentionUserIds.Distinct().Count() != message.MentionUserIds.Count ||
             message.ReplyToMessageId is <= 0 ||
-            (message.Type == MessageType.Text &&
-             !ClientTextMessageContentValidator.IsValid(message.Content)))
+            (isText &&
+             (!ClientTextMessageContentValidator.IsValid(message.Content) ||
+              message.AttachmentIds.Count != 0)) ||
+            (isAttachmentMessage &&
+             (message.Content is not null ||
+              !AreCanonicalAttachmentIds(message.AttachmentIds))))
         {
             throw new ArgumentException("Pending message contains invalid values.", nameof(message));
         }
+    }
+
+    private static bool AreCanonicalAttachmentIds(IReadOnlyList<Guid> attachmentIds) =>
+        attachmentIds.Count is >= 1 and <= ClientAttachmentMetadataPolicy.MaximumAttachmentsPerMessage &&
+        attachmentIds.All(id => id != Guid.Empty) &&
+        attachmentIds.SequenceEqual(attachmentIds.Distinct().Order());
+
+    private static Guid[] ValidateAttachmentIdsForCleanup(IReadOnlyCollection<Guid> attachmentIds)
+    {
+        ArgumentNullException.ThrowIfNull(attachmentIds);
+        var ids = attachmentIds.ToArray();
+        if (ids.Any(id => id == Guid.Empty) || ids.Distinct().Count() != ids.Length)
+        {
+            throw new ArgumentException(
+                "Attachment cleanup IDs must be unique and non-empty.",
+                nameof(attachmentIds));
+        }
+
+        return ids;
     }
 
     private static void ValidateGuid(Guid value, string parameterName)
@@ -4605,6 +4840,10 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         DateTimeOffset CreatedAt,
         MessageSendStatus SendStatus);
 
+    private sealed record LocalAttachmentRecord(
+        long? LocalMessageId,
+        AttachmentDto Attachment);
+
     private sealed class ScopeAccessState
     {
         public SemaphoreSlim OperationGate { get; } = new(1, 1);
@@ -4614,6 +4853,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         public int FatalScope;
 
         public int PendingRecoveryCompleted;
+
+        public int UnboundRecoveryCompleted;
     }
 
     private readonly record struct TransactionResult<T>(T Value, bool ShouldCommit)

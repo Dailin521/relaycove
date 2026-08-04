@@ -13,10 +13,12 @@ public sealed record PendingMessage(
     IReadOnlyList<Guid> MentionUserIds,
     DateTimeOffset CreatedAt)
 {
+    public IReadOnlyList<Guid> AttachmentIds { get; init; } = Array.Empty<Guid>();
+
     public override string ToString() =>
         $"{nameof(PendingMessage)} {{ ClientMessageId = [REDACTED], " +
         "ConversationId = [REDACTED], SenderId = [REDACTED], " +
         $"Type = {Type}, " +
         "SenderDisplayName = [REDACTED], Content = [REDACTED], " +
-        "ReplyToMessageId = [REDACTED], MentionUserIds = [REDACTED] }";
+        "ReplyToMessageId = [REDACTED], AttachmentIds = [REDACTED], MentionUserIds = [REDACTED] }";
 }

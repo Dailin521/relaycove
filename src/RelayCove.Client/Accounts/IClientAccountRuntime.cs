@@ -2,6 +2,7 @@ using RelayCove.Client.Auth;
 using RelayCove.Client.Notifications;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
+using RelayCove.Shared.Messages;
 using RelayCove.Shared.Realtime;
 
 namespace RelayCove.Client.Accounts;
@@ -51,6 +52,14 @@ internal interface IClientAccountRuntime : IAsyncDisposable
     Task<ClientMessageSendOutcome> SendTextMessageAsync(
         Guid conversationId,
         string? content,
+        long? replyToMessageId = null,
+        IReadOnlyList<Guid>? mentionUserIds = null,
+        CancellationToken cancellationToken = default);
+
+    Task<ClientMessageSendOutcome> SendAttachmentsAsync(
+        Guid conversationId,
+        MessageType type,
+        IReadOnlyList<ClientAttachmentUploadSource>? sources,
         long? replyToMessageId = null,
         IReadOnlyList<Guid>? mentionUserIds = null,
         CancellationToken cancellationToken = default);

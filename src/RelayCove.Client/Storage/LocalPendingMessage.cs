@@ -15,10 +15,12 @@ public sealed record LocalPendingMessage(
     DateTimeOffset CreatedAt,
     MessageSendStatus SendStatus)
 {
+    public IReadOnlyList<Guid> AttachmentIds { get; init; } = Array.Empty<Guid>();
+
     public override string ToString() =>
         $"{nameof(LocalPendingMessage)} {{ LocalId = [REDACTED], " +
         "ClientMessageId = [REDACTED], ConversationId = [REDACTED], " +
         "SenderId = [REDACTED], SenderDisplayName = [REDACTED], " +
         $"Type = {Type}, Content = [REDACTED], ReplyToMessageId = [REDACTED], " +
-        $"MentionUserIds = [REDACTED], CreatedAt = [REDACTED], SendStatus = {SendStatus} }}";
+        $"AttachmentIds = [REDACTED], MentionUserIds = [REDACTED], CreatedAt = [REDACTED], SendStatus = {SendStatus} }}";
 }

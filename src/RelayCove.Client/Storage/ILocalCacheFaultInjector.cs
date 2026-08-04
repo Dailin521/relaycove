@@ -23,4 +23,12 @@ internal interface ILocalCacheFaultInjector
     void BeforeNotificationHandledCommit()
     {
     }
+
+    void AfterPendingAttachmentBound(int boundAttachmentCount)
+    {
+    }
+
+    void BeforeUnboundReservationRecovery()
+    {
+    }
 }
