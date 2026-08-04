@@ -567,3 +567,16 @@
 - **理由：** exact context/draft 门把异步桌面交互绑定到用户仍可见的输入所有权；分开 content-copy、server acceptance 和 durable pending 三个状态，可在不改变上传协议的前提下提供真实进度与可预测恢复。
 - **影响：** Client 增加无依赖的本地 source 工厂、progress stream、runtime/shell surface、纯 composer context policy 和 WPF 附件组合器；不改 Shared/Server、SQLite schema/migration、上传重放规则或依赖。拖拽、粘贴截图、caption、下载/缓存/缩略图/打开、真实账户视觉/Narrator 与 VPS/双客户端仍属后续切片或 M5 Gate。
 - **来源：** 工程方案第 2.1、9.2–9.4、12.1–12.3、14.1–14.2、阶段 9、21.3；`DEC-017/025/035/041/042/043/044/045`；`docs/ai/tasks/2026-08-04-stage-9-wpf-attachment-compose.md`；production `4c8a032`; 最终 Fast/Full 1045 项、附件/发送/shell 定向 176/176、稳定 401/部分批次/取消/context/draft 回归、真实 Release WPF 窗口/单实例/精确清理、日志脱敏与空白检查。普通 UI/reliability 复核按用户要求由 Codex reviewer 完成；首轮两项 P2 修正后二轮无 P0/P1/P2，未调用 Claude。
+
+### DEC-047：拖拽与剪贴板图片共享 source-neutral 草稿和双内存预算
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-046` 已冻结本地文件草稿、exact composer 门和 content-copy 进度，但 FileDrop 与剪贴板位图都是会在 WPF STA 上触发外部读取、随后跨 await 的新输入源。若直接把剪贴板 `BitmapSource` 交给后台、用公开或容量大于有效内容的 buffer、只在读取后捕获会话，分别会引入线程/延迟渲染依赖、内存与隐私边界不精确，以及把 A 会话粘贴绑定到重入后的 B 会话。
+- **决策：** FileDrop 只接受 `DataFormats.FileDrop` 的 exact 非转换格式，且源 `AllowedEffects` 必须包含 Copy；Drag/Drop 都由当前 composer 状态裁决。Drop 在读取外部路径前捕获 conversation/context/draft，读取后立即复验，再把克隆快照交给既有原子文件 factory；虚拟文件、目录、文本、URL、自动转换、非 Copy、无效或超限批次一律 fail-closed 且不显示路径。
+- **决策：** 图片粘贴只接受 exact Ctrl+V。若 Clipboard 同时声明文本和图片，文本优先并保留 TextBox 默认行为；键盘 repeat 截获但不再次读取图片。位图必须在 UI STA 转成 BGRA32，以 `CachedBitmap` 的 `OnLoad` 语义物化并冻结，随后才可在线程池用 WIC 编码 PNG；剪贴板占用、无效图、非关键异常、取消与 WIC 包装异常稳定分类，关键进程异常继续传播。
+- **决策：** 原始 BGRA32 快照上限 100 MiB；单个 PNG 与所有在 composer 中 retained 的截图 buffer 合计各受 25 MiB 上限，匹配服务端默认上传限制。编码写入观察取消和超限状态的有界 stream，完成后复制为精确长度 snapshot，并只以 `publiclyVisible=false` 的只读 `MemoryStream` 重开。工作集仍可能短时同时包含 Clipboard provider、冻结像素、WIC 和有界输出；每个窗口只允许一个 attachment input owner，context/shutdown 只取消而不提前释放 busy 所有权，直到原操作 finally 收敛，防止取消中的大图编码与新输入重叠。
+- **决策：** 文件与截图统一为内部 source-neutral draft；只有文件草稿携带规范路径 identity 并参与跨批路径去重。截图使用不含时间戳/GUID 的固定展示名 `clipboard-image.png`，相同内容的每次非 repeat 显式粘贴仍创建独立 draft。任何外部读取前捕获 exact context，返回后复验；上下文变化会截获迟到粘贴并取消当前输入。成功后继续复用 `DEC-045/046` 的 source、progress、pending/no-replay 与原键 retry，不新增持久草稿或协议字段。
+- **理由：** UI STA 物化与后台有界编码把线程亲和、像素预算和可重开上传源分开；25/100 MiB 双预算同时对齐服务端默认传输边界并限制未压缩图像，single-flight 则约束无法由 PNG 长度代表的短时峰值。读取前后 exact 门覆盖 OLE delayed rendering 可能泵消息的重入窗口，避免错会话/错收件人附件。
+- **影响：** Client 增加无依赖、无 schema 的 FileDrop/Clipboard adapter、有界内存流、source-neutral draft 与 WPF 接线；不改 Shared/Server、SQLite migration、上传/pending 协议或依赖。粘贴文件、shell 虚拟文件、caption、下载/cache/缩略图/打开、真实登录视觉/键盘/Narrator 与 VPS/双客户端仍属后续切片或 M5 Gate。
+- **来源：** 工程方案第 2.1、9.2–9.4、14.1–14.2、阶段 9、21.3；`DEC-042/045/046`；`docs/ai/tasks/2026-08-04-stage-9-wpf-attachment-inputs.md`；production `c3a0187`；最终 Fast/Full 1088 项、附件/Clipboard 定向 132/132、真实 Release WPF 窗口/单实例/精确清理、两路 Codex 最终复核与日志/format/空白检查。Claude #74 实际 `claude-opus-5` 关键 challenge 的内存、物化、文本优先、取消、WIC 分类与 buffer 发现均经 Codex 复算、修正并本机验证；合并切片由共享 draft/context/pending 边界支撑，未改变公共协议。

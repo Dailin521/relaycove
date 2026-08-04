@@ -9,13 +9,13 @@ ExecutionStatus: running
 CurrentMilestone: M2
 CurrentStage: 阶段 9
 ActiveTask: docs/ai/tasks/2026-08-04-stage-9-wpf-attachment-inputs.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 4c8a032e46e36a9c0bb0e3cc2d9d2d21c020c037
+LatestGreenCodeCommit: c3a018704c62294a5bd7268656981c073e25cebe
 LatestGreenIntegrationCommit: 8ac80fb9b70953f6ff2e56d38b6278f2f765e2b7
-NextAction: 实现 FileDrop 文件与有界内存 PNG 截图粘贴入口
-ClaudeCalls: 73（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败；仅关键用途调用）
-ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有四十次失败/中断调用费用 unavailable
+NextAction: 仅快进集成后进入附件下载/cache 与下载进度纵向链
+ClaudeCalls: 74（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败；仅关键用途调用）
+ClaudeCostUsd: 80.07301150 exact confirmed + 51.43 local CLI displayed（#44–#50/#74）；按显示值合计约 131.50301150；另有四十次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -33,7 +33,7 @@ RequiredUserGate: none
 | --- | --- | --- | --- |
 | M0 | `completed` | 同步契约、`DEC-003`、解决方案和真实 Fast/Full 验证均通过 | 已进入 M1 |
 | M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
-| M2 | `running` | 阶段 9 服务端附件上传/下载/授权、客户端元数据缓存、durable Image/File 上传发送及 WPF 原生文件选择/进度已完成 | Internal Alpha 附件交互与验收证据完整 |
+| M2 | `running` | 阶段 9 服务端附件上传/下载/授权、客户端元数据缓存、durable Image/File 上传发送、WPF 原生文件选择/进度及 FileDrop/PNG Ctrl+V 已完成 | Internal Alpha 附件下载/cache 交互与验收证据完整 |
 | M3 | `pending` | 尚未开始 | Beta 验收证据完整 |
 | M4 | `pending` | 尚未开始 | RC 自动化、包与发布材料完整 |
 | M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
@@ -80,6 +80,7 @@ RequiredUserGate: none
 - 当前服务端附件消息/下载代码检查点 `41f7d11e207fd984bbc3e2a8c003f9bf2ed6a2e9` 已通过最终 Fast/两次 Full 924 项（Shared 39、Server 255、Client 630、Updater 1）、Attachment/Message Release 定向集 960/960、真实 Kestrel 的发送 201/重放 200/载荷冲突 409/未绑定 403/完整下载 200/Range 206/匿名 401、lease DB/file/cancel 故障、model drift、八项目漏洞审计、敏感日志检索和空白检查。INSERT 后 owner/null 条件 attach-once、当前会话授权下载和 DB-first 未绑定 lease 已收敛为 `DEC-043`；客户端与 VPS 保持后续边界。
 - 当前客户端附件元数据入库代码检查点 `53a5b630140517aca6be4bc0a4f43397857a0154` 与最终测试头 `722ad495fc216e3a5ddb88779045274bb7bbf898` 已通过最终 Fast/两次 Full 932 项（Shared 39、Server 255、Client 641、Updater 1）、Client 附件 Release 定向集 990/990、真实 SQLite v1→v2/提交回滚/v3 拒绝/消息整笔回滚/并发重复/撤权级联/账户隔离、全部协议入口、model drift、八项目漏洞审计、敏感日志与空白检查。严格附件 DTO 与相对路由、消息同事务持久化、完整回读和 fail-closed 已收敛为 `DEC-044`；上传/发送、内容下载、UI 与 VPS 保持后续边界。Claude #72 实际 Opus 只读取证但无正式结论，已如实降级为 Codex 固定差异复核。
 - 当前 WPF 附件组合代码检查点 `4c8a032e46e36a9c0bb0e3cc2d9d2d21c020c037` 已通过最终 Fast/Full 1045 项（Shared 39、Server 255、Client 750、Updater 1）、附件/发送/shell 定向 176/176、原子文件 source/分类/变化/脱敏、部分批次/稳定 401/取消/pending/context-draft 回归、真实 Release WPF 响应窗口/单实例/精确清理和空白检查。路径内存边界、exact composer 草稿门、真实 content-copy 进度与 pending 恢复语义已收敛为 `DEC-046`；Codex reviewer 首轮两项 P2 修正后二轮无 P0/P1/P2。拖拽/截图、下载内容 UI、真实账户视觉/Narrator 与 VPS/双客户端保持后续或 M5 Gate。
+- 当前 WPF 附件拖拽/截图输入生产代码检查点 `c3a018704c62294a5bd7268656981c073e25cebe` 已通过最终 Fast/Full 1088 项（Shared 39、Server 255、Client 793、Updater 1）、附件/Clipboard 定向 132/132、exact FileDrop/Copy、exact Ctrl+V 文本优先/repeat、STA 像素快照、25/100 MiB 双预算、取消/WIC 分类、精确私有 buffer、source-neutral draft、真实 Release WPF 响应窗口/单实例/精确清理、format 与空白检查。两路 Codex 最终复核无剩余 P0/P1/P2；Claude #74 的成立问题经 Codex 复算修正并本机复验，输入边界已收敛为 `DEC-047`。真实登录下 Drop/Ctrl+V 视觉/键盘/Narrator、下载/cache UI 与 VPS/双客户端保持后续或 M5 Gate。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 
@@ -160,9 +161,10 @@ RequiredUserGate: none
 | 71 | 2026-08-04 | 客户端附件元数据原子入库 | MCP 只读架构/安全/可靠性 challenge | Opus / XHigh | 当前 Desktop 仍只暴露兼容 `consult_claude`；调用启动前因 `ANTHROPIC_API_KEY`/其他认证源优于 claude.ai 登录失败；无 job、模型、workspace 回执、费用或结论 | `unavailable` |
 | 72 | 2026-08-04 | 客户端附件元数据原子入库固定差异 | 本机 Claude Code 2.1.220 后台只读 review | Opus / XHigh | session `eeabe5b9-7c05-48d2-aa7e-b65fb65192ef`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；实际 `claude-opus-5`，约六分钟内读取 DEC/schema/merge/tests，但宿主自动续跑中断后无正式答案；两次恢复均在模型调用前 `ConnectionRefused`、零 token。无 verdict、findings 或可靠费用，不得冒充通过 | `unavailable` |
 | 73 | 2026-08-04 | 客户端非幂等上传与 durable 附件发送边界 | MCP 只读协议/数据库/可靠性 challenge | Opus / XHigh | 当前 Desktop 仍只暴露兼容 `consult_claude`；CLI 启动阶段失败，未返回 job、实际模型、workspace、费用、findings 或 verdict，不得冒充通过 | `unavailable` |
+| 74 | 2026-08-04 | WPF FileDrop 与剪贴板 PNG 内存/隐私边界 | 本机 Claude Code 2.1.221 后台只读 challenge | Opus / XHigh | background job `c3e1ce54`、session `c3e1ce54-4569-4199-a6b0-05230901d53b`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；实际 `claude-opus-5`、请求模型无偏差，约 16 分钟后返回。100 MiB retained、非脱离像素源、混合文本吞没、缺取消、WIC 包装分类与 buffer/命名问题经 Codex 复算，成立项全部修正；单一切片由共享 draft/context/pending 边界支撑 | `$5.46`（CLI 状态显示值） |
 
-- 调用计数：`73`（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）；用户已取消固定次数上限，Claude 只用于关键架构/安全/协议/数据库/可靠性内容，普通审查由 Codex reviewer 子代理承担，且不因第二意见停止本地验证。
-- 已确认精确费用合计：`$80.07301150`；另有 #44–#50 本机 Claude Code 状态显示值合计 `$45.97`（界面两位小数，未伪造更高精度），按显示值总计约 `$126.04301150`。其余四十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`74`（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）；用户已取消固定次数上限，Claude 只用于关键架构/安全/协议/数据库/可靠性内容，普通审查由 Codex reviewer 子代理承担，且不因第二意见停止本地验证。
+- 已确认精确费用合计：`$80.07301150`；另有 #44–#50/#74 本机 Claude Code 状态显示值合计 `$51.43`（界面两位小数，未伪造更高精度），按显示值总计约 `$131.50301150`。其余四十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate

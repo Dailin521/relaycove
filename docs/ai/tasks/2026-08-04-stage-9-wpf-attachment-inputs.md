@@ -3,10 +3,10 @@
 ## 任务定义
 
 - **任务名称：** 阶段 9 WPF 文件拖拽与有界内存截图粘贴入口
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `8ac80fb9b70953f6ff2e56d38b6278f2f765e2b7`
 - **工作分支：** `agent/stage-9-wpf-attachment-inputs`
-- **相关方案章节：** 2.1、14.1–14.2、阶段 9、21.3；`DEC-045/046`
+- **相关方案章节：** 2.1、14.1–14.2、阶段 9、21.3；`DEC-042/045/046/047`
 
 ### 目标
 
@@ -18,14 +18,14 @@
 - `已验证`：现有文件 factory 已提供原子 1–10 项、路径去重、名称/大小/可读性、可重开 stream 与路径脱敏；composer 已提供 exact conversation/context/draft 门、PendingCommitted 清理和上传进度。
 - `已验证`：`ClientAttachmentUploadSource` 只要求每次返回可读、seekable、精确剩余长度的 stream，不要求磁盘路径；冻结的 PNG 字节可以通过每次新建只读 `MemoryStream` 满足 401 reopen，无需临时文件或 schema。
 - `已验证`：Client 是 Windows WPF TFM 且无新依赖即可使用 `FileDrop`、`Clipboard.GetImage`、`BitmapSource` 和 `PngBitmapEncoder`；当前仓库没有拖拽或位图剪贴板读取实现。
-- `已验证`：Claude Code 2.1.221 关键只读 challenge 已以后台任务 `c3e1ce54` 启动，只允许 Read/Glob/Grep；Codex 不等待其串行推进，结论只作独立反证。
+- `已验证`：Claude Code 2.1.221 关键只读 challenge 已以后台任务 `c3e1ce54` 完成；实际 `claude-opus-5`、工作区 `E:\WorkSpace\RelayCove`、工具限于 Read/Glob/Grep。成立的内存、物化、文本优先、取消、WIC 分类与 buffer 边界均由 Codex 复算、修正并本机复验。
 
-### 假设
+### 冻结口径
 
-- `假设`：拖拽只接受真实 `DataFormats.FileDrop`，不接受 shell 虚拟文件、URL、文本、目录或自动转换；Drop 前复制路径快照，之后完全复用文件 factory，全批成功或全批失败。
-- `假设`：截图入口只在 composer 输入区收到 Ctrl+V 且剪贴板明确含位图时截获；无位图时保留 TextBox 默认文本粘贴。读取必须在 UI STA 完成，转为冻结 BGRA32 后在后台编码 PNG。
-- `假设`：编码输出写入硬上限 stream，单个截图 PNG 不超过既有 100 MiB；所有内存截图草稿的 retained buffer 合计也不超过 100 MiB，原始 BGRA32 像素字节不超过同一上限，避免 10 个草稿放大到无界进程内存。该限制只约束截图内存草稿，不降低普通文件的现有协议上限。
-- `假设`：同一截图重复粘贴视为用户显式创建多个独立草稿，不按内容 hash 去重；截图内容、尺寸、hash、编码字节和 synthetic identity 都不进入日志、错误、SQLite、网络额外字段或 `ToString()`。
+- `已验证`：拖拽只接受真实 `DataFormats.FileDrop` 且源允许 Copy，不接受 shell 虚拟文件、URL、文本、目录或自动转换；外部读取前后执行 exact context 门，路径快照之后完全复用文件 factory，全批成功或全批失败。
+- `已验证`：截图入口只接受 composer 输入区的 exact Ctrl+V；若剪贴板同时声明文本与位图，优先保留 TextBox 默认文本粘贴，键盘 repeat 不重复读取图片。读取和 `CachedBitmap(OnLoad)` BGRA32 快照在 UI STA 完成，冻结后才在后台编码 PNG。
+- `已验证`：单个 PNG 与全部内存截图草稿 retained buffer 合计均不超过 25 MiB，与服务端默认上传限制一致；原始 BGRA32 快照不超过 100 MiB。最终 source 使用精确长度、只读且不可公开底层数组的 buffer；单飞 owner 与上下文取消阻止多个大图编码并发放大。
+- `已验证`：同一截图重复粘贴是独立显式草稿，不按内容 hash 去重；固定展示名 `clipboard-image.png` 不携带时间戳或 GUID。截图内容、尺寸、hash、编码字节和内存 identity 不进入日志、错误、SQLite、网络额外字段或 `ToString()`。
 
 ### 范围
 
@@ -42,11 +42,11 @@
 
 ### 验收标准
 
-- [ ] FileDrop 只在当前可接受 composer 状态显示 Copy；有效文件与按钮选择行为一致，目录/虚拟/无效/超限/重复批次原子拒绝且不显示路径。
-- [ ] Ctrl+V 图片在 UI STA 取得快照后后台编码为规范 PNG，source 可至少重开两次且内容一致；无图不截获文本粘贴，占用/无效/取消/像素或编码上限均 fail-closed。
-- [ ] 普通文件与截图合计最多 10 项；全部图片仍为 Image，混合文件为 File；重复截图是独立显式草稿，路径文件仍跨批去重。
-- [ ] 拖拽/截图 await 期间的会话切换、A→B→A、草稿变化或账户结束不会添加旧结果；pending 前失败保留 exact 草稿，pending 后沿用 `DEC-045/046` 原键 retry 且不重编码/重传。
-- [ ] 定向、Fast、最终一次 Full、真实 Release WPF lifecycle/可行的 Drop+clipboard smoke、Codex reviewer、关键 Claude challenge 记录、日志脱敏和空白检查完成。
+- [x] FileDrop 只在当前可接受 composer 状态显示 Copy；有效文件与按钮选择行为一致，目录/虚拟/无效/超限/重复批次原子拒绝且不显示路径。
+- [x] Ctrl+V 图片在 UI STA 取得快照后后台编码为规范 PNG，source 可至少重开两次且内容一致；无图不截获文本粘贴，占用/无效/取消/像素或编码上限均 fail-closed。
+- [x] 普通文件与截图合计最多 10 项；全部图片仍为 Image，混合文件为 File；重复截图是独立显式草稿，路径文件仍跨批去重。
+- [x] 拖拽/截图 await 期间的会话切换、A→B→A、草稿变化或账户结束不会添加旧结果；pending 前失败保留 exact 草稿，pending 后沿用 `DEC-045/046` 原键 retry 且不重编码/重传。
+- [x] 定向、Fast、最终一次 Full、真实 Release WPF lifecycle/可行的 Drop+clipboard smoke、Codex reviewer、关键 Claude challenge 记录、日志脱敏和空白检查完成。
 
 ### 验证命令
 
@@ -76,27 +76,35 @@ git diff --check
 
 ### 修改摘要
 
-- 待完成。
+- 以 source-neutral `ClientAttachmentDraft` 统一磁盘文件与纯内存 PNG 草稿；文件仍保留路径 identity 去重，截图只保留精确 retained byte 预算和可重开 source。
+- 新增 exact `FileDrop` Copy/None 策略、路径快照及 WPF drop target；外部数据读取前后校验 conversation/context/draft，继续复用既有原子文件工厂与 durable send 链。
+- 新增文本优先的 exact Ctrl+V 读取、STA `CachedBitmap(OnLoad)` 物化、后台有界 PNG 编码、25/100 MiB 双预算、精确私有 buffer、WIC 取消/超限分类和单飞生命周期取消。
+- 真正退出、账户/会话/草稿变化都会取消当前输入，但 owner 保持 busy 到原操作 finally，避免取消中的 WIC 与新大图编码重叠。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 新分支 Fast 基线 | 1045/1045；Shared 39、Server 255、Client 750、Updater 1；0 警告、0 错误。 |
-| `进行中` | Claude 关键 challenge | 后台任务 `c3e1ce54`，只读 Opus/XHigh；等待终态。 |
-| `未验证` | 本任务最终门禁 | 实现完成后填写。 |
+| `已验证` | 附件/Clipboard Debug 定向 | 132/132；覆盖 exact Ctrl+V、文本优先/repeat、FileDrop exact format/Copy、双预算、PNG 重开、源变更物化、取消、WIC 包装、私有精确 buffer、路径/结果脱敏与 source-neutral draft。 |
+| `已验证` | 最终 Fast | 1088/1088；Shared 39、Server 255、Client 793、Updater 1；Debug 构建 0 警告、0 错误。 |
+| `已验证` | 最终一次 Full | 1088/1088；Release 构建 0 警告、0 错误；format verify 与 `git diff --check` 通过。 |
+| `已验证` | 两路 Codex reviewer 最终复核 | 一路无 P0/P1/P2/P3；安全复核无 P0/P1/P2，仅保留 UI glue 未直接自动化的分层 P3 测试说明，不阻断本切片。 |
+| `已验证` | Claude 关键 challenge | 后台任务 `c3e1ce54`、实际 `claude-opus-5`、只读 Opus/XHigh；八项关键问题经 Codex 复算，成立项全部修正，合并切片与 `DEC-047` 记录方式获认可。 |
+| `已验证` | 真实 Release WPF lifecycle smoke | 主实例 PID 26200、HWND 7667926、标题 `RelayCove`、`Responding=True`；次实例 PID 42492 退出码 0、同路径仅一个进程；精确清理后残留 0。 |
+| `已验证` | Drop/Clipboard 实机自动化边界 | 当前无登录 composer，且自动化按任务约束不读取或覆盖用户真实 Clipboard；因此以 STA PNG factory、Clipboard reader、FileDrop policy/snapshot 与 exact context 分层回归覆盖，未冒充真实输入事件或视觉通过。 |
 
 ### 文件范围
 
-- 新增：待完成。
-- 修改：待完成。
-- 删除：待完成。
+- 新增：Client `Attachments/` 的有界内存 stream、截图 factory/read outcome、FileDrop policy/snapshot、source-neutral draft 及对应 Client 测试。
+- 修改：`App.xaml.cs`、`MainWindow.xaml(.cs)`、文件 source/outcome、upload source 注释、文件工厂测试，以及本任务、状态、执行与决策记录。
+- 删除：原 `ClientAttachmentFileSelection.cs` 类型文件；其职责由重命名后的 source-neutral `ClientAttachmentDraft.cs` 承接。
 
 ### 决策与限制
 
-- 决策：待 Claude challenge、实现与 Codex reviewer 收敛后记录为 `DEC-047`。
-- 已知限制：下载/缓存/缩略图/查看原图/打开和 VPS 留在后续切片。
+- 决策：`DEC-047` 冻结 exact FileDrop、文本优先 Ctrl+V、STA 像素快照、25 MiB retained/100 MiB raw 双预算、精确私有 buffer、外部读取前后 context 门与 owner-safe 单飞取消。
+- 已知限制：当前无真实登录账户，自动化不读取或覆盖用户真实 Clipboard，也不冒充 Drop/Ctrl+V 视觉、键盘或 Narrator 端到端通过；这些与下载/缓存/缩略图/查看原图/打开、VPS/双客户端一起保留到后续切片或 M5 Gate。单次工作集仍包含剪贴板 provider、冻结 BGRA32、WIC 与有界输出的短时峰值；单飞和硬上限约束并发，但不把进程级 OOM 冒充可恢复异常。
 
 ### 下一步
 
-- 完成本切片后进入附件下载/cache 与下载进度纵向链。
+- 仅快进集成后进入附件下载/cache 与下载进度纵向链。
