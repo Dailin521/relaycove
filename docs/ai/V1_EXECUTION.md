@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M2
 CurrentStage: 阶段 9
 ActiveTask: docs/ai/tasks/2026-08-04-stage-9-wpf-attachment-compose.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 44e5010787d1b9fa540f730fa52bef22f25cad02
+LatestGreenCodeCommit: 4c8a032e46e36a9c0bb0e3cc2d9d2d21c020c037
 LatestGreenIntegrationCommit: f8e058e9e89d80686a9b15cd955e02f900bfa703
-NextAction: 实现 WPF 本地文件多选、Image/File 发送状态与客户端 content-copy 上传进度
+NextAction: 仅快进集成后，复用 source/context/progress 链实现附件拖拽与粘贴截图入口
 ClaudeCalls: 73（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败；仅关键用途调用）
 ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有四十次失败/中断调用费用 unavailable
 Blocker: none
@@ -33,7 +33,7 @@ RequiredUserGate: none
 | --- | --- | --- | --- |
 | M0 | `completed` | 同步契约、`DEC-003`、解决方案和真实 Fast/Full 验证均通过 | 已进入 M1 |
 | M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
-| M2 | `running` | 阶段 9 服务端附件上传/下载/授权、客户端元数据缓存与 headless durable Image/File 上传发送已完成 | Internal Alpha 附件交互与验收证据完整 |
+| M2 | `running` | 阶段 9 服务端附件上传/下载/授权、客户端元数据缓存、durable Image/File 上传发送及 WPF 原生文件选择/进度已完成 | Internal Alpha 附件交互与验收证据完整 |
 | M3 | `pending` | 尚未开始 | Beta 验收证据完整 |
 | M4 | `pending` | 尚未开始 | RC 自动化、包与发布材料完整 |
 | M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
@@ -79,6 +79,7 @@ RequiredUserGate: none
 - 当前服务端安全附件上传代码检查点 `a2ef8a72f24829e61f5ae8e34aa3b661ce90fd0d` 已通过最终 Fast/两次 Full 911 项（Shared 39、Server 241、Client 630、Updater 1）、Attachment Release 定向集 390/390、真实 Kestrel exact-limit 201/宿主级稳定 413/不透明字节一致落盘、migration up/down、冲突回滚与启动恢复、model drift、八项目漏洞审计、敏感日志检索和空白检查。多层有界 streaming、非公开随机文件、commit 前发布与严格崩溃恢复已收敛为 `DEC-042`；消息绑定、下载授权、客户端、长期未绑定回收和 VPS 保持后续边界。
 - 当前服务端附件消息/下载代码检查点 `41f7d11e207fd984bbc3e2a8c003f9bf2ed6a2e9` 已通过最终 Fast/两次 Full 924 项（Shared 39、Server 255、Client 630、Updater 1）、Attachment/Message Release 定向集 960/960、真实 Kestrel 的发送 201/重放 200/载荷冲突 409/未绑定 403/完整下载 200/Range 206/匿名 401、lease DB/file/cancel 故障、model drift、八项目漏洞审计、敏感日志检索和空白检查。INSERT 后 owner/null 条件 attach-once、当前会话授权下载和 DB-first 未绑定 lease 已收敛为 `DEC-043`；客户端与 VPS 保持后续边界。
 - 当前客户端附件元数据入库代码检查点 `53a5b630140517aca6be4bc0a4f43397857a0154` 与最终测试头 `722ad495fc216e3a5ddb88779045274bb7bbf898` 已通过最终 Fast/两次 Full 932 项（Shared 39、Server 255、Client 641、Updater 1）、Client 附件 Release 定向集 990/990、真实 SQLite v1→v2/提交回滚/v3 拒绝/消息整笔回滚/并发重复/撤权级联/账户隔离、全部协议入口、model drift、八项目漏洞审计、敏感日志与空白检查。严格附件 DTO 与相对路由、消息同事务持久化、完整回读和 fail-closed 已收敛为 `DEC-044`；上传/发送、内容下载、UI 与 VPS 保持后续边界。Claude #72 实际 Opus 只读取证但无正式结论，已如实降级为 Codex 固定差异复核。
+- 当前 WPF 附件组合代码检查点 `4c8a032e46e36a9c0bb0e3cc2d9d2d21c020c037` 已通过最终 Fast/Full 1045 项（Shared 39、Server 255、Client 750、Updater 1）、附件/发送/shell 定向 176/176、原子文件 source/分类/变化/脱敏、部分批次/稳定 401/取消/pending/context-draft 回归、真实 Release WPF 响应窗口/单实例/精确清理和空白检查。路径内存边界、exact composer 草稿门、真实 content-copy 进度与 pending 恢复语义已收敛为 `DEC-046`；Codex reviewer 首轮两项 P2 修正后二轮无 P0/P1/P2。拖拽/截图、下载内容 UI、真实账户视觉/Narrator 与 VPS/双客户端保持后续或 M5 Gate。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 

@@ -554,3 +554,16 @@
 - **理由：** 该边界既不伪造 upload 幂等，也把真正可重试的消息载荷放入现有账户隔离 SQLite 事务和统一 merge 裁决；不需要改变 server API、schema v2、消息 ID、attach-once 或同步协议。
 - **影响：** `DEC-044` 的 nullable 外键从“预留”进入受控使用；Client 增加 upload transport、reservation 写入/清理、附件 pending 与 runtime surface。普通 API 30 秒 client 不变，上传使用独立 10 分钟上界。WPF、进度、跨崩溃草稿恢复、下载和 VPS 仍未开放。
 - **来源：** 工程方案第 7.4–7.5、8.2、10.2、12.1–12.3、12.7、14.1–14.2、阶段 9、21.2–21.3；`DEC-017/025/035/041/042/043/044`；`docs/ai/tasks/2026-08-04-stage-9-client-attachment-upload-send.md`；固定代码与测试头 `44e5010787d1b9fa540f730fa52bef22f25cad02`；最终 Fast/两次 Full 980 项、Client 核心定向 1470/1470、Server 上传认证/提交前失败 19/19、真实 SQLite reservation/gate/逐项绑定回滚/重启 retry/Realtime race、双 client timeout/redirect/lifecycle、八项目漏洞审计、日志脱敏与空白检查。Claude #73 启动阶段失败，无 job、模型、workspace、费用或结论；Codex 设计 P1 与固定差异 P2 均修正，最终 reviewer `PASS`、无剩余 P0/P1/P2。
+
+### DEC-046：WPF 附件草稿以精确上下文绑定客户端 content-copy 进度
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-045` 已冻结非幂等上传、reservation 与 durable pending 边界，但 production WPF 尚无本地文件入口或可辨认的上传状态。原生文件对话框、异步文件检查和上传均可能跨过会话/账户切换；若只比较 conversation ID，A→B→A 会让迟到选择、进度或结果污染新的同 ID 输入。若把 multipart 读取进度称为服务端完成，或 pending 前后使用相同草稿清理规则，又会制造错误恢复预期。
+- **决策：** 原生多选每批全有或全无，并与现有草稿合计限制为 1–10 个规范绝对路径；规范路径不重复，文件名遵守既有安全展示规则，长度为 1–100 MiB，选择和每次 reopen 都验证可读/seekable/精确长度。绝对路径只存在于进程内 identity 与 reopen closure，不进入 SQLite、网络元数据、日志、错误文案或 `ToString()`。扩展名只生成不可信声明 MIME；全部受控位图扩展才发送 Image，混合、视频、SVG 与未知扩展发送 File，不嗅探或解码内容。
+- **决策：** 当前协议的附件正文保持 null，因此正文或 mention 非空时不得进入附件模式；合法 reply 可以随附件发送。选择、发送结果、pending 清理与 progress 应用统一比较 conversation ID、单调 context version 和有序 draft ID 集；submission progress 还比较独立 submission version。任何会话/账户切换，包括 A→B→A，都令旧回调失效。
+- **决策：** 进度只表示 source 文件字节已被 `HttpContent` 读取并复制进当前请求，不包含 multipart header，也不证明 socket 送达或服务端提交。批次按声明长度聚合且单调；稳定 401 reopen 的新 attempt 不得令聚合倒退。只有每个上传都收到并校验 201 且本地 reservation 成功后才发布 finalizing。同步 progress receiver 和 WPF Dispatcher 实际执行点都隔离非关键异常，关键进程异常继续传播。
+- **决策：** pending 前的取消、文件变化、网络未知或远端失败保留当前 exact 草稿，用户再次发送意味着新的显式非幂等上传；只有 `PendingCommitted=true` 且 exact composer 上下文仍匹配时才清除本次附件/reply。pending 后失败继续由既有失败行以原 `ClientMessageId + AttachmentIds` 重试，绝不重新打开或重传本地文件。
+- **理由：** exact context/draft 门把异步桌面交互绑定到用户仍可见的输入所有权；分开 content-copy、server acceptance 和 durable pending 三个状态，可在不改变上传协议的前提下提供真实进度与可预测恢复。
+- **影响：** Client 增加无依赖的本地 source 工厂、progress stream、runtime/shell surface、纯 composer context policy 和 WPF 附件组合器；不改 Shared/Server、SQLite schema/migration、上传重放规则或依赖。拖拽、粘贴截图、caption、下载/缓存/缩略图/打开、真实账户视觉/Narrator 与 VPS/双客户端仍属后续切片或 M5 Gate。
+- **来源：** 工程方案第 2.1、9.2–9.4、12.1–12.3、14.1–14.2、阶段 9、21.3；`DEC-017/025/035/041/042/043/044/045`；`docs/ai/tasks/2026-08-04-stage-9-wpf-attachment-compose.md`；production `4c8a032`; 最终 Fast/Full 1045 项、附件/发送/shell 定向 176/176、稳定 401/部分批次/取消/context/draft 回归、真实 Release WPF 窗口/单实例/精确清理、日志脱敏与空白检查。普通 UI/reliability 复核按用户要求由 Codex reviewer 完成；首轮两项 P2 修正后二轮无 P0/P1/P2，未调用 Claude。

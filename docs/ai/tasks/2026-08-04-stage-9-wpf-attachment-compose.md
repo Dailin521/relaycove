@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 9 WPF 本地文件选择、Image/File 发送状态与上传进度
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `f8e058e9e89d80686a9b15cd955e02f900bfa703`
 - **工作分支：** `agent/stage-9-wpf-attachment-compose`
 - **相关方案章节：** 2.1、9.2–9.4、12.1–12.3、14.1–14.2、阶段 9、21.3；`DEC-017/025/035/041/042/043/044/045`
@@ -45,11 +45,11 @@
 
 ### 验收标准
 
-- [ ] 原生多选能生成 1–10 个可重新打开的受控 source；全部受控图片为 Image，混合/视频/未知扩展为 File；无效、重复、空、超限或已变化文件 fail-closed，路径和文件元数据不进入日志/`ToString()`。
-- [ ] 当前 Ready 会话可以发送附件并保留合法 reply；正文/mention 非空时不会静默丢弃。会话/账户切换清除旧草稿且旧 progress/result 不污染新上下文，账户结束会取消实际 flight。
-- [ ] 批次进度只按真实 source 读取字节推进，0–100 单调且不越界；401 重开不倒退，取消/失败不伪造完成，全部上传经 201 校验并 reservation 成功后才显示 finalizing。
-- [ ] 上传前失败保留当前选择供用户显式重新上传；`PendingCommitted=true` 后清除精确选择并只通过既有消息失败行原键 retry，不重传文件。
-- [ ] Client 定向测试、Fast、最终一次 Full、WPF Release 启动/响应/精确清理 smoke、Codex reviewer 固定差异、日志脱敏和空白检查通过。
+- [x] 原生多选能生成 1–10 个可重新打开的受控 source；全部受控图片为 Image，混合/视频/未知扩展为 File；无效、重复、空、超限或已变化文件 fail-closed，路径和文件元数据不进入日志/`ToString()`。
+- [x] 当前 Ready 会话可以发送附件并保留合法 reply；正文/mention 非空时不会静默丢弃。会话/账户切换清除旧草稿且旧 progress/result 不污染新上下文，账户结束会取消实际 flight。
+- [x] 批次进度只按真实 source 读取字节推进，0–100 单调且不越界；401 重开不倒退，取消/失败不伪造完成，全部上传经 201 校验并 reservation 成功后才显示 finalizing。
+- [x] 上传前失败保留当前选择供用户显式重新上传；`PendingCommitted=true` 后清除精确选择并只通过既有消息失败行原键 retry，不重传文件。
+- [x] Client 定向测试、Fast、最终一次 Full、WPF Release 启动/响应/精确清理 smoke、Codex reviewer 固定差异、日志脱敏和空白检查通过。
 
 ### 验证命令
 
@@ -79,26 +79,33 @@ git diff --check
 
 ### 修改摘要
 
-- 待完成。
+- 新增无依赖的本地附件 source 工厂：原子 1–10 项选择、跨批路径去重、名称/大小/可读性校验、确定 MIME 分类、异步可重开只读流和路径脱敏。
+- 将真实文件字节读取进度从上传 stream 贯穿 send coordinator、账户 runtime/shell 到 WPF；401 reopen 保持批次单调，只有全部 201 与本地 reservation 完成后进入 finalizing。
+- WPF 新增附件选择、展示、移除、Image/File 模式、进度与失败恢复文案；exact conversation/context/draft 门禁阻止 A→B→A 的迟到选择、进度或结果污染。
+- pending 前失败保留选择；pending 提交后只清除精确本次草稿，既有失败消息行继续原 `ClientMessageId + AttachmentIds` retry，不重新上传。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 新分支 Fast 基线 | 980/980；Shared 39、Server 255、Client 685、Updater 1；0 警告、0 错误。 |
-| `未验证` | 本任务最终门禁 | 实现完成后填写。 |
+| `已验证` | 合并后附件/发送/shell Debug 定向 | 176/176；覆盖 1/10 项、Unicode、分类、文件变化/取消/脱敏、部分批次、稳定 401 reopen、取消、回调异常、pending 与认证边界。 |
+| `已验证` | 最终 Fast | 1045/1045；Shared 39、Server 255、Client 750、Updater 1；Debug 构建 0 警告、0 错误。 |
+| `已验证` | 最终一次 Full | 1045/1045；Release 构建 0 警告、0 错误；format verify 与 `git diff --check` 通过。 |
+| `已验证` | Codex reviewer 两轮只读复核 | 首轮无 P0/P1、两项 P2；修正 UI 投递点异常隔离与 composer/401 回归后，二轮无 P0/P1/P2。 |
+| `已验证` | 真实 Release WPF lifecycle smoke | 主实例 PID 40236、HWND 8458108、标题 `RelayCove`、`Responding=True`；次实例 PID 44292 退出码 0、同路径仅一个进程；精确清理后残留 0。 |
 
 ### 文件范围
 
-- 新增：待完成。
-- 修改：待完成。
-- 删除：待完成。
+- 新增：Client `Attachments/` 的 source/selection/context policy、Sync progress 值及对应 Client 测试。
+- 修改：Client upload/send runtime/shell、`MainWindow.xaml(.cs)` 与对应 transport/coordinator/shell 测试；本任务及状态/执行/决策记录。
+- 删除：无。
 
 ### 决策与限制
 
-- 决策：待实现与独立复核后记录。
-- 已知限制：拖拽、截图、caption、下载/缩略图/打开和 VPS 留在后续切片。
+- 决策：`DEC-046` 冻结本地路径只驻留内存、content-copy 进度口径、exact composer 上下文门与 pending 恢复边界；本普通 UI 切片按用户要求由 Codex reviewer 审查，未调用 Claude。
+- 已知限制：拖拽、截图、caption、下载/缩略图/打开和 VPS 留在后续切片；当前真实 WPF smoke 无登录账户，不冒充附件端到端或视觉/Narrator 验收。
 
 ### 下一步
 
-- 完成本切片后接拖拽与粘贴截图 source 入口，复用本任务的选择和进度链。
+- 接拖拽与粘贴截图 source 入口，复用本任务的选择、context policy 和进度链；真实账户/VPS/双客户端留在 M5 Gate。

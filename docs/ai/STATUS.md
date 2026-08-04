@@ -5,10 +5,10 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 9 — 附件
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 认证单附件流式上传、attach-once 消息事务、完整附件投影、会话授权下载与未绑定 lease、客户端 v2 附件元数据原子入库/回读，以及 headless 流式上传 reservation 与 durable Image/File send/retry 已完成
-- **最近验证通过的状态：** 客户端附件上传与 durable send 已仅快进集成到 `f8e058e9e89d80686a9b15cd955e02f900bfa703`；WPF 附件选择/进度新分支 Fast 基线 980/980
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 认证单附件流式上传、attach-once 消息事务、完整附件投影、会话授权下载与未绑定 lease、客户端 v2 附件元数据原子入库/回读、headless 流式上传 reservation 与 durable Image/File send/retry，以及 WPF 原生文件多选、exact 草稿门和客户端 content-copy 进度已完成
+- **最近验证通过的状态：** WPF 附件组合 production 检查点 `4c8a032` 已通过最终 Fast/Full 1045 项、Codex 二轮 reviewer 与真实 Release WPF lifecycle smoke；待仅快进集成
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — 客户端附件上传/durable send 最终 Fast 与两次 Full、format、980 项测试（Shared 39、Server 255、Client 685、Updater 1）；新分支 Fast 基线同为 980/980；Client 核心 Release 定向每轮 147 项、连续 10 轮 1470/1470，Server 上传认证/提交前失败 19/19；流式 multipart、稳定/畸形/空/超限 401、非幂等 no-replay、stream 释放、真实 SQLite reservation/gate/原子 bind/故障回滚/账户隔离/重启 retry、完整 metadata、Realtime race、双 client timeout/redirect/lifecycle、八项目漏洞审计、日志脱敏与空白检查通过；当前 WPF 文件选择/进度实现与后续下载内容/UI、VPS 保持未验证
+- **自动化验证：** `已验证` — 当前最终 Fast/Full、format 与 1045 项测试（Shared 39、Server 255、Client 750、Updater 1）通过；附件/发送/shell 定向 176/176，覆盖原子 1–10 项选择、MIME 分类、文件变化/取消/脱敏、部分批次、稳定 401 reopen 聚合单调、取消、回调异常、exact context/draft、pending 与认证边界；真实 Release WPF 响应窗口、单实例和精确进程清理通过。拖拽/截图、下载内容/UI、真实账户视觉/Narrator 与 VPS 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
 - **最近 Claude 调用：** `已验证` — 客户端附件上传/durable 发送 #73 Opus XHigh 关键 challenge 仍在兼容 RPC 的 CLI 启动阶段失败，无 job、模型、workspace、费用或结论；失败不冒充通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 阶段 9 WPF 本地文件多选、Image/File 发送状态与客户端 content-copy 上传进度正在 `agent/stage-9-wpf-attachment-compose` 实现；普通审查由 Codex reviewer 完成，仍不读取 VPS 配置。
+- 阶段 9 WPF 文件选择/进度切片已完成最终门禁，正在仅快进集成；下一切片复用 source/context/progress 链接拖拽与粘贴截图，仍不读取 VPS 配置。
 
 ## 已完成
 
@@ -66,10 +66,11 @@
 - 附件集合幂等 payload、INSERT 后 attach-once、完整消息投影、当前会话授权下载与 DB-first 未绑定 lease（`DEC-043`）
 - 客户端 v2 `LocalAttachments` 原子迁移、严格远端元数据验证、消息同事务入库/完整回读、冲突与撤权级联（`DEC-044`）
 - 客户端非幂等流式上传、unbound reservation、pending 原子绑定、durable Image/File retry 与独立上传 client（`DEC-045`）
+- WPF 原生附件多选、路径内存边界、exact composer 草稿门与真实 content-copy 进度（`DEC-046`）
 
 ## 下一任务
 
-实现并验证 WPF 文件选择、发送状态与客户端上传进度；随后复用同一 source/进度链接拖拽与粘贴截图。真实 VPS Gate 保留到 M5。
+复用现有 source/context/progress 链实现并验证附件拖拽与粘贴截图入口；真实 VPS Gate 保留到 M5。
 
 ## 阻塞项
 
