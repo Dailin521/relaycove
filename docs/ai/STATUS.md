@@ -6,7 +6,7 @@
 
 - **当前阶段：** 阶段 9 — 附件
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 认证单附件流式上传、attach-once 消息事务、完整附件投影、会话授权下载与未绑定 lease、客户端 v2 附件元数据原子入库/回读、headless 流式上传 reservation 与 durable Image/File send/retry、WPF 原生文件多选/exact 草稿门/content-copy 进度、exact FileDrop/有界内存 PNG Ctrl+V、强 ETag 全量可信下载/账户隔离受控缓存、confirmed WPF 附件行、下载/取消/重试与受控目录定位，以及已下载 PNG/JPEG 的本地内存缩略图和有界应用内查看已完成
-- **最近验证通过的状态：** 本地图片预览 production 检查点 `fabe16c28476237a1ed9d91f26a6738d09057c0f` 已通过最终 Full 1,267/1,267、相关定向 218/218、两路独立复审、model drift、依赖漏洞、format 与空白检查；绿色任务分支待仅快进合入本地/远端 `agent/v1-integration`
+- **最近验证通过的状态：** 本地图片预览 production 检查点 `fabe16c28476237a1ed9d91f26a6738d09057c0f` 与交接头 `a5a41a41e6622cfc9c35c42d06b0c6090e2a792c` 已通过最终 Full 1,267/1,267、相关定向 218/218、两路独立复审、model drift、依赖漏洞、format 与空白检查，并已仅快进合入本地/远端 `agent/v1-integration`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — 当前最终 Full、format 与 1,267 项测试（Shared 39、Server 255、Client 972、Updater 1）通过；图片/附件/MessageListPresenter/AccountShell 定向 218/218。覆盖 PNG/JPEG 白名单、源/压缩/输出预算、跨 runtime 解码并发与 single-flight、超时脱离/critical cleanup、cache 物理复验、最终授权、exact UI identity、A→B→A、recycling/viewer/焦点与脱敏；真实 Explorer 受控选中仍由上一检查点验证。真实登录图片视觉/Narrator、恶意样本与 VPS 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 阶段 9 已下载图片的本地内存缩略图与有界应用内查看已在 `agent/stage-9-attachment-thumbnails` 完成并通过最终门禁，正待仅快进合入 `agent/v1-integration`。下一切片处理直接打开的文件关联/MOTW/扩展名与临时副本生命周期；仍不读取 VPS 配置。
+- 阶段 9 图片预览已合入 `agent/v1-integration`；当前 `agent/stage-9-safe-attachment-open` 正在实现直接打开文件的受控临时副本、Restricted Zone MOTW、Windows Attachment Manager 和撤权/退出/启动恢复生命周期。仍不读取 VPS 配置。
 
 ## 已完成
 
@@ -74,7 +74,7 @@
 
 ## 下一任务
 
-单独裁定并实现直接打开文件的可信 handler/MOTW/扩展名/临时副本边界并关闭 M2；真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
+完成当前安全关联应用打开切片并关闭 M2；随后进入 M3 搜索。真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
 
 ## 阻塞项
 

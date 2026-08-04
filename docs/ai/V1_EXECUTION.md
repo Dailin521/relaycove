@@ -8,13 +8,13 @@
 ExecutionStatus: running
 CurrentMilestone: M2
 CurrentStage: 阶段 9
-ActiveTask: docs/ai/tasks/2026-08-04-stage-9-attachment-thumbnails.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-04-stage-9-safe-attachment-open.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: fabe16c28476237a1ed9d91f26a6738d09057c0f
-LatestGreenIntegrationCommit: acc9929831bfd6d3d0f3a39e5a7cc911b90d1958
-NextAction: 仅快进合入图片预览切片，然后启动直接打开文件的独立安全切片
-ClaudeCalls: 77（全部终态；#77 答案已读取并由主代理本地裁定）
+LatestGreenIntegrationCommit: a5a41a41e6622cfc9c35c42d06b0c6090e2a792c
+NextAction: 实现受控 open copy、Restricted Zone MOTW、IAttachmentExecute 与撤权/退出/启动恢复清理
+ClaudeCalls: 78（全部终态；#78 在答案前因旧兼容入口强加预算失败，不重试）
 ClaudeCostUsd: 83.12343525 exact confirmed + 76.68 local CLI displayed（#44–#50/#74–#76）；按显示值合计约 159.80343525；另有四十次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
@@ -168,14 +168,15 @@ RequiredUserGate: none
 | 75 | 2026-08-04 | 附件可信下载、账户隔离 cache 与撤权/崩溃边界 | 本机 Claude Code 2.1.221 后台只读 challenge | Opus / XHigh | background job `a4e60acf`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；实际 `claude-opus-5`、请求模型无偏差，约 14 分钟后返回。locked `.part` 阻断 purge、redirect/decompression、同进程恢复、publish 取消清理与 Content-Encoding 发现经 Codex 复算成立并修正；disabled actor、ETag fallback 与 hash 截断等建议按现有 server 401、强验证器任务边界和完整 SHA-256 证据裁定不采纳 | `$5.18`（CLI 状态显示值） |
 | 76 | 2026-08-04 | WPF 附件下载状态与受控本地访问 | 本机持久只读安全/可靠性 challenge | Opus / XHigh | job `a28c24d7`、session `a28c24d7-b75f-4a45-8d9c-69ddc40d82a6`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；实际 `claude-opus-5`、请求模型无偏差，约 26 分钟后审查答案已返回；detached session 保持 idle，按策略未因耗时、费用或空闲取消。exact download membership 与当前 Ready 状态门经 Codex 复算成立并修正；专用 STA 与 cidl=0 不受支持两项 P0 由 Microsoft 官方 API/COM 契约、Codex 独立 Windows interop 复核和真实 Explorer 精确选中反证后未采纳 | `$20.07`（CLI 状态显示值） |
 | 77 | 2026-08-04 | 已下载图片的进程内有界解码、缩略图与查看生命周期 | 全局 MCP 0.5.0 持久只读安全/可靠性 challenge | Opus / XHigh | job `abb22632-84bd-4a97-bc74-468cb3751b61`，`workspace=E:\WorkSpace\RelayCove`，仓库只读；调用前仍存在恶意图片 decoder allocation/hang/cancellation 高风险争议，故本决策唯一一次调用直接选择 Opus/XHigh。实际 `claude-opus-5`、mismatch=`false`，795,273 ms 后答案返回并已读取；格式/预算、私有内存、slot/超时脱离及 helper 触发意见经 Codex 复算后采纳，WIC/额外依赖建议由当前 WinRT 编译与真实解码证据裁定不采纳 | `$3.05042375` |
+| 78 | 2026-08-04 | 已下载附件的受控临时副本、MOTW 与关联应用打开 | 当前会话旧兼容 MCP 只读安全 challenge | Sonnet / High | 唯一一次调用在答案前失败：Desktop 任务只暴露旧 `consult_claude`，其内部命令强加 `$0.5` budget 后退出；无持久 job、正式答案、可靠实际模型、duration 或费用。按策略不重试，由 Microsoft 官方契约、本机探针与 Codex 独立复核替代 | `unavailable` |
 
-- 调用计数：`77`（全部终态；#77 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构/安全/数据库/协议/可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
+- 调用计数：`78`（全部终态；#78 在答案前失败且按单次策略不重试；#77 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构/安全/数据库/协议/可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
 - 已确认精确费用合计：`$83.12343525`；另有 #44–#50/#74–#76 本机 Claude Code 状态显示值合计 `$76.68`（界面两位小数，未伪造更高精度），按显示值总计约 `$159.80343525`。其余四十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate
 
-- 当前阻塞：无。
+- 当前阻塞：无；Claude #78 无答案不阻塞仓库证据、官方契约、本机探针与 Codex 复核。
 - 当前所需用户 Gate：无。
 - `未验证`：用户已提供仓库外的香港 Light-A2 协作应用主机配置汇总，保留到 M5 真实 VPS/双客户端 Gate；当前不读取，届时仅最小读取所需配置且不把地址、密钥或凭据提交到仓库或测试日志。
 - 只有 `AGENTS.md`、`WORKFLOW.md` 和 v1 执行目标列出的重大产品、不可逆、安全、凭据、真实体验或发布事项才请求用户裁决；普通工程实现由当前任务自行收敛。
