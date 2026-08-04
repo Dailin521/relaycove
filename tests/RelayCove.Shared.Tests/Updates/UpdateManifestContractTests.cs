@@ -78,6 +78,19 @@ public sealed class UpdateManifestContractTests
         Assert.NotEmpty(error);
     }
 
+    [Fact]
+    public void TryValidate_WhenArtifactUrlExceedsLimit_RejectsManifest()
+    {
+        var oversizedUrl = "https://updates.example.test/" +
+            new string('a', UpdateConstants.MaximumArtifactUrlLength) + ".zip";
+        var manifest = CreateManifest() with { Artifact = CreateManifest().Artifact with { Url = oversizedUrl } };
+
+        var valid = UpdateManifestValidator.TryValidate(manifest, out var error);
+
+        Assert.False(valid);
+        Assert.NotEmpty(error);
+    }
+
     [Theory]
     [InlineData("1.0.0", "1.0.0", false, UpdateDecisionKind.None)]
     [InlineData("1.0.0", "1.0.1", false, UpdateDecisionKind.Optional)]

@@ -17,6 +17,8 @@ param(
 
     [string] $OutputRoot = (Join-Path (Split-Path -Parent $PSScriptRoot) "artifacts"),
 
+    [string] $ExpectedCommit,
+
     [switch] $AllowDirtySource
 )
 
@@ -29,6 +31,7 @@ $verifyScript = Join-Path $PSScriptRoot "verify-client-release.ps1"
 $archivePrefix = "RelayCove.Client"
 $runtimeIdentifier = "win-x64"
 $maximumArtifactBytes = 2L * 1024 * 1024 * 1024
+$maximumArtifactUrlLength = 2048
 $maximumReleaseNotesLength = 8192
 
 function Assert-StrictSemanticVersion {
@@ -149,33 +152,14 @@ function Assert-NoReparsePointAncestors {
     }
 }
 
-function Get-ReleaseCommit {
-    param([Parameter(Mandatory)][string] $ArchivePath, [Parameter(Mandatory)][string] $PackageName)
-
-    $archive = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
-    try {
-        $entry = $archive.GetEntry("$PackageName/manifest.json")
-        if ($null -eq $entry -or $entry.Length -gt 1MB) {
-            throw "Client archive does not contain a bounded package manifest."
-        }
-
-        $reader = [System.IO.StreamReader]::new($entry.Open(), [System.Text.UTF8Encoding]::new($false), $true)
-        try {
-            $manifest = $reader.ReadToEnd() | ConvertFrom-Json -AsHashtable
-        }
-        finally {
-            $reader.Dispose()
-        }
-    }
-    finally {
-        $archive.Dispose()
+function Get-CurrentGitCommit {
+    $commit = & git -C $repositoryRoot rev-parse --verify HEAD
+    $gitExitCode = $LASTEXITCODE
+    if ($gitExitCode -ne 0) {
+        throw "Unable to determine the expected Git commit; git exited with code $gitExitCode."
     }
 
-    if ($manifest.commit -isnot [string] -or $manifest.commit -notmatch '\A[0-9a-f]{40}\z') {
-        throw "Client archive package manifest has no valid commit."
-    }
-
-    return $manifest.commit
+    return ($commit | Out-String).Trim()
 }
 
 function Write-Atomically {
@@ -203,6 +187,15 @@ if ((Compare-SemanticVersion $Version $MinimumSupportedVersion) -lt 0) {
 if ($ReleaseNotes.Length -gt $maximumReleaseNotesLength) {
     throw "ReleaseNotes exceeds the $maximumReleaseNotesLength character limit."
 }
+if ([string]::IsNullOrWhiteSpace($ExpectedCommit)) {
+    $ExpectedCommit = Get-CurrentGitCommit
+}
+if ($ExpectedCommit -cnotmatch '\A[0-9a-f]{40}\z') {
+    throw "ExpectedCommit must be exactly 40 lowercase hexadecimal characters."
+}
+if ($DownloadUrl.Length -gt $maximumArtifactUrlLength) {
+    throw "DownloadUrl exceeds the $maximumArtifactUrlLength character limit."
+}
 $downloadUri = $null
 if (-not [Uri]::TryCreate($DownloadUrl, [UriKind]::Absolute, [ref] $downloadUri) -or
     -not $downloadUri.Scheme.Equals("https", [System.StringComparison]::OrdinalIgnoreCase) -or
@@ -225,25 +218,25 @@ Assert-NoReparsePointAncestors $archivePath $resolvedArtifactsRoot
 if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
     throw "Client release archive was not found: $archivePath"
 }
+$archiveInfo = Get-Item -LiteralPath $archivePath -Force
+if ($archiveInfo.Length -lt 1 -or $archiveInfo.Length -gt $maximumArtifactBytes) {
+    throw "Client release archive size is outside the supported range."
+}
 
-$releaseCommit = Get-ReleaseCommit $archivePath $packageName
 $verifyArguments = @(
     "-Version", $Version,
     "-OutputRoot", $resolvedClientReleaseRoot,
-    "-ExpectedCommit", $releaseCommit
+    "-ExpectedCommit", $ExpectedCommit
 )
 if ($AllowDirtySource) {
     $verifyArguments += "-AllowDirtySource"
 }
 & $verifyScript @verifyArguments
-if ($LASTEXITCODE -ne 0) {
-    throw "Client release verification failed with exit code $LASTEXITCODE."
+$verifySucceeded = $?
+if (-not $verifySucceeded) {
+    throw "Client release verification failed."
 }
 
-$archiveInfo = Get-Item -LiteralPath $archivePath -Force
-if ($archiveInfo.Length -lt 1 -or $archiveInfo.Length -gt $maximumArtifactBytes) {
-    throw "Client release archive size is outside the supported range."
-}
 $archiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $manifest = [ordered]@{
     schemaVersion = 1

@@ -42,7 +42,8 @@ public static class UpdateManifestValidator
             return false;
         }
 
-        if (!Uri.TryCreate(manifest.Artifact.Url, UriKind.Absolute, out var artifactUri) ||
+        if (manifest.Artifact.Url is null || manifest.Artifact.Url.Length > UpdateConstants.MaximumArtifactUrlLength ||
+            !Uri.TryCreate(manifest.Artifact.Url, UriKind.Absolute, out var artifactUri) ||
             !string.Equals(artifactUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
             string.IsNullOrEmpty(artifactUri.Host) ||
             !string.IsNullOrEmpty(artifactUri.UserInfo) ||
