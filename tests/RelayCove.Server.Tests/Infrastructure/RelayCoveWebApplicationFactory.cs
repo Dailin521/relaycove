@@ -50,6 +50,8 @@ public sealed class RelayCoveWebApplicationFactory : WebApplicationFactory<Progr
 
     public string DatabasePath => Path.Combine(databaseDirectory, "relaycove-auth-tests.db");
 
+    public string UploadsPath => Path.Combine(databaseDirectory, "uploads");
+
     internal string SigningKey { get; }
 
     internal MutableTimeProvider Clock { get; }
@@ -133,6 +135,7 @@ public sealed class RelayCoveWebApplicationFactory : WebApplicationFactory<Progr
             ["Authentication:SigningKey"] = SigningKey,
             ["Authentication:LoginPermitLimit"] = loginPermitLimit.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["Authentication:RefreshPermitLimit"] = refreshPermitLimit.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["Storage:UploadsPath"] = UploadsPath,
         };
         foreach (var pair in configurationOverrides)
         {

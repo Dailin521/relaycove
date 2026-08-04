@@ -39,6 +39,14 @@ builder.Services.AddOptions<BootstrapAdminOptions>()
     .Bind(builder.Configuration.GetSection(BootstrapAdminOptions.SectionName))
     .ValidateOnStart();
 builder.Services.AddSingleton<IValidateOptions<BootstrapAdminOptions>, BootstrapAdminOptionsValidator>();
+builder.Services.AddOptions<StorageOptions>()
+    .Bind(builder.Configuration.GetSection(StorageOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<StorageOptions>, StorageOptionsValidator>();
+builder.Services.AddOptions<UploadOptions>()
+    .Bind(builder.Configuration.GetSection(UploadOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<UploadOptions>, UploadOptionsValidator>();
 builder.Services.Configure<PasswordHasherOptions>(options =>
 {
     options.CompatibilityMode = PasswordHasherCompatibilityMode.IdentityV3;
@@ -66,6 +74,9 @@ builder.Services.AddScoped<MessageCommandService>();
 builder.Services.AddScoped<MessageQueryService>();
 builder.Services.AddScoped<MessageReadService>();
 builder.Services.AddScoped<MessageSyncService>();
+builder.Services.AddSingleton<AttachmentStoragePaths>();
+builder.Services.AddScoped<AttachmentMultipartReader>();
+builder.Services.AddScoped<AttachmentCommandService>();
 builder.Services.AddScoped<NewMessagePublisher>();
 builder.Services.AddScoped<ConversationAccessRevokedPublisher>();
 builder.Services.AddSingleton<INewMessageTransport, SignalRNewMessageTransport>();
@@ -87,9 +98,11 @@ builder.Services.AddScoped<IAuthorizationHandler, AdministratorAuthorizationHand
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<IUserIdProvider, SubjectUserIdProvider>();
 builder.Services.AddHostedService<BootstrapAdminHostedService>();
+builder.Services.AddHostedService<AttachmentStorageRecoveryHostedService>();
 builder.Services.AddSingleton<IConfigureOptions<Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerOptions>, ConfigureJwtBearerOptions>();
 builder.Services.AddRateLimiter(_ => { });
 builder.Services.AddSingleton<IConfigureOptions<RateLimiterOptions>, ConfigureAuthenticationRateLimitingOptions>();
+builder.Services.AddSingleton<IConfigureOptions<RateLimiterOptions>, ConfigureAttachmentRateLimitingOptions>();
 builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
 
 var app = builder.Build();
@@ -97,14 +110,15 @@ var app = builder.Build();
 app.Logger.LogInformation("RelayCove Server is starting.");
 app.UseMiddleware<ErrorHandlingMiddleware>();
 app.UseRouting();
-app.UseRateLimiter();
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 app.MapAuthenticationEndpoints();
 app.MapAdminUserEndpoints();
 app.MapConversationEndpoints();
 app.MapMessageEndpoints();
 app.MapSyncEndpoints();
+app.MapAttachmentEndpoints();
 app.MapHub<ChatHub>(ChatHub.Route, options => options.CloseOnAuthenticationExpiration = true)
     .RequireAuthorization();
 

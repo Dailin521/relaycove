@@ -67,6 +67,8 @@ public sealed class User
 
     public ICollection<MessageMention> MessageMentions { get; } = new List<MessageMention>();
 
+    public ICollection<Attachment> UploadedAttachments { get; } = new List<Attachment>();
+
     public void SetUserName(string userName, UserNameNormalizer userNameNormalizer)
     {
         ArgumentNullException.ThrowIfNull(userNameNormalizer);

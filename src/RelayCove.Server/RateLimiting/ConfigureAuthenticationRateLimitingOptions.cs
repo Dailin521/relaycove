@@ -28,7 +28,7 @@ public sealed class ConfigureAuthenticationRateLimitingOptions(
                 context.HttpContext,
                 StatusCodes.Status429TooManyRequests,
                 ApiErrorCodes.RateLimitExceeded,
-                "Too many authentication requests.",
+                "Too many requests.",
                 cancellationToken: cancellationToken);
         };
 

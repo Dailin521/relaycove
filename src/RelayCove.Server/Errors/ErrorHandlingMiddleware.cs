@@ -15,6 +15,22 @@ public sealed class ErrorHandlingMiddleware(
         {
             await next(context);
         }
+        catch (BadHttpRequestException exception) when (
+            exception.StatusCode == StatusCodes.Status413PayloadTooLarge &&
+            context.Request.Path.Equals("/api/attachments", StringComparison.Ordinal))
+        {
+            logger.LogInformation(
+                "Attachment request body rejected for {Method} {Path}: {ExceptionType}.",
+                context.Request.Method,
+                context.Request.Path,
+                exception.GetType().Name);
+            await ApiErrorWriter.WriteAsync(
+                context,
+                StatusCodes.Status413PayloadTooLarge,
+                ApiErrorCodes.AttachmentTooLarge,
+                "The attachment exceeds the configured size limit.",
+                cancellationToken: context.RequestAborted);
+        }
         catch (BadHttpRequestException exception)
         {
             logger.LogInformation("Request body rejected for {Method} {Path}: {ExceptionType}.",

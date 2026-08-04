@@ -6,4 +6,10 @@ public sealed record AttachmentDto(
     string ContentType,
     long Size,
     string DownloadUrl,
-    string? ThumbnailUrl);
+    string? ThumbnailUrl)
+{
+    public override string ToString() =>
+        $"{nameof(AttachmentDto)} {{ Id = [REDACTED], OriginalFileName = [REDACTED], " +
+        "ContentType = [REDACTED], Size = [REDACTED], DownloadUrl = [REDACTED], " +
+        "ThumbnailUrl = [REDACTED] }";
+}

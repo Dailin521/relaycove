@@ -16,4 +16,5 @@ public static class ApiErrorCodes
     public const string SyncCursorInvalid = "SyncCursorInvalid";
     public const string IdempotencyKeyReuse = "IdempotencyKeyReuse";
     public const string ConversationAccessRevoked = "ConversationAccessRevoked";
+    public const string AttachmentTooLarge = "AttachmentTooLarge";
 }

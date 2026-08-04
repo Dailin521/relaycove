@@ -23,6 +23,7 @@ public sealed class ApiErrorContractTests
         "IdempotencyKeyReuse",
         "ConversationAccessRevoked",
         "MessageTypeUnsupported",
+        "AttachmentTooLarge",
     ];
 
     [Fact]

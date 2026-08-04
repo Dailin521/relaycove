@@ -84,6 +84,8 @@ public sealed class Message
 
     public ICollection<MessageMention> Mentions { get; } = new List<MessageMention>();
 
+    public ICollection<Attachment> Attachments { get; } = new List<Attachment>();
+
     public void AddMention(Guid mentionedUserId)
     {
         if (Id != 0)

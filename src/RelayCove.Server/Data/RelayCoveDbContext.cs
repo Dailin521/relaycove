@@ -22,6 +22,8 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
 
     public DbSet<MessageMention> MessageMentions => Set<MessageMention>();
 
+    public DbSet<Attachment> Attachments => Set<Attachment>();
+
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
         ValidateUtcDateTimes();
@@ -44,6 +46,7 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
         ConfigureConversationMember(modelBuilder.Entity<ConversationMember>());
         ConfigureMessage(modelBuilder.Entity<Message>());
         ConfigureMessageMention(modelBuilder.Entity<MessageMention>());
+        ConfigureAttachment(modelBuilder.Entity<Attachment>());
     }
 
     private static void ConfigureUser(EntityTypeBuilder<User> entity)
@@ -251,6 +254,69 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
         entity.HasOne(mention => mention.MentionedUser)
             .WithMany(user => user.MessageMentions)
             .HasForeignKey(mention => mention.MentionedUserId)
+            .OnDelete(DeleteBehavior.Restrict);
+    }
+
+    private static void ConfigureAttachment(EntityTypeBuilder<Attachment> entity)
+    {
+        entity.ToTable("Attachments", table =>
+        {
+            table.HasCheckConstraint("CK_Attachments_Id_Format", GuidTextCheck("Id"));
+            table.HasCheckConstraint(
+                "CK_Attachments_MessageId_Positive",
+                "\"MessageId\" IS NULL OR \"MessageId\" > 0");
+            table.HasCheckConstraint("CK_Attachments_UploaderUserId_Format", GuidTextCheck("UploaderUserId"));
+            table.HasCheckConstraint(
+                "CK_Attachments_OriginalFileName_Length",
+                $"length(\"OriginalFileName\") BETWEEN 1 AND {Attachment.MaximumOriginalFileNameLength}");
+            table.HasCheckConstraint(
+                "CK_Attachments_StoredFileName_Format",
+                $"length(\"StoredFileName\") = {Attachment.StoredFileNameLength} AND " +
+                "substr(\"StoredFileName\", 1, 32) = replace(\"Id\", '-', '') AND " +
+                "substr(\"StoredFileName\", 33, 1) = '_' AND " +
+                "substr(\"StoredFileName\", 34) NOT GLOB '*[^0-9a-f]*'");
+            table.HasCheckConstraint(
+                "CK_Attachments_ContentType_Length",
+                $"length(\"ContentType\") BETWEEN 1 AND {Attachment.MaximumContentTypeLength}");
+            table.HasCheckConstraint(
+                "CK_Attachments_Size_Range",
+                $"\"Size\" BETWEEN 1 AND {Options.UploadOptions.AbsoluteMaximumFileBytes}");
+            table.HasCheckConstraint(
+                "CK_Attachments_Sha256_Format",
+                $"length(\"Sha256\") = {Attachment.Sha256Length} AND \"Sha256\" NOT GLOB '*[^0-9a-f]*'");
+            table.HasCheckConstraint("CK_Attachments_CreatedAt_Format", UtcTextCheck("CreatedAt"));
+        });
+
+        entity.HasKey(attachment => attachment.Id);
+        entity.Property(attachment => attachment.Id)
+            .HasConversion(SqliteValueConverters.GuidToString)
+            .ValueGeneratedNever();
+        entity.Property(attachment => attachment.UploaderUserId)
+            .HasConversion(SqliteValueConverters.GuidToString);
+        entity.Property(attachment => attachment.OriginalFileName)
+            .HasMaxLength(Attachment.MaximumOriginalFileNameLength)
+            .IsRequired();
+        entity.Property(attachment => attachment.StoredFileName)
+            .HasMaxLength(Attachment.StoredFileNameLength)
+            .IsRequired();
+        entity.Property(attachment => attachment.ContentType)
+            .HasMaxLength(Attachment.MaximumContentTypeLength)
+            .IsRequired();
+        entity.Property(attachment => attachment.Sha256)
+            .HasMaxLength(Attachment.Sha256Length)
+            .IsRequired();
+        entity.Property(attachment => attachment.CreatedAt)
+            .HasConversion(SqliteValueConverters.UtcDateTimeToString);
+        entity.HasIndex(attachment => attachment.MessageId);
+        entity.HasIndex(attachment => attachment.OriginalFileName);
+        entity.HasIndex(attachment => attachment.StoredFileName).IsUnique();
+        entity.HasOne(attachment => attachment.Message)
+            .WithMany(message => message.Attachments)
+            .HasForeignKey(attachment => attachment.MessageId)
+            .OnDelete(DeleteBehavior.Cascade);
+        entity.HasOne(attachment => attachment.UploaderUser)
+            .WithMany(user => user.UploadedAttachments)
+            .HasForeignKey(attachment => attachment.UploaderUserId)
             .OnDelete(DeleteBehavior.Restrict);
     }
 

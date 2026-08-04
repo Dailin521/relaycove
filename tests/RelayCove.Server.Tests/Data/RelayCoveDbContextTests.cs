@@ -57,8 +57,8 @@ public sealed class RelayCoveDbContextTests
             Assert.Equal(1, await context.Conversations.CountAsync());
             Assert.Equal(1, await context.ConversationMembers.CountAsync());
             Assert.Equal(
-                ["ConversationMembers", "Conversations", "MessageMentions", "Messages", "RefreshTokens", "Users"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions') ORDER BY name;"));
+                ["Attachments", "ConversationMembers", "Conversations", "MessageMentions", "Messages", "RefreshTokens", "Users"],
+                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions', 'Attachments') ORDER BY name;"));
             Assert.Equal(
                 ["Id", "UserName", "NormalizedUserName", "DisplayName", "AvatarAttachmentId", "PasswordHash", "IsAdmin", "IsDisabled", "CreatedAt", "UpdatedAt", "LastLoginAt", "LastOnlineAt"],
                 await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('Users') ORDER BY cid;"));
@@ -78,8 +78,24 @@ public sealed class RelayCoveDbContextTests
                 ["MessageId", "MentionedUserId"],
                 await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('MessageMentions') ORDER BY cid;"));
             Assert.Equal(
+                ["Id", "MessageId", "UploaderUserId", "OriginalFileName", "StoredFileName", "ContentType", "Size", "Sha256", "CreatedAt"],
+                await ReadStringsAsync(databasePath, "SELECT name FROM pragma_table_info('Attachments') ORDER BY cid;"));
+            Assert.Equal(
+                ["IX_Attachments_MessageId", "IX_Attachments_OriginalFileName", "IX_Attachments_StoredFileName", "IX_Attachments_UploaderUserId"],
+                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'IX_Attachments_%' ORDER BY name;"));
+            Assert.Equal(
                 ["IX_ConversationMembers_UserId", "IX_Conversations_CreatedByUserId", "IX_Conversations_DirectParticipantKey", "IX_Conversations_Type"],
                 await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'IX_Conversation%' ORDER BY name;"));
+
+            await migrator.MigrateAsync("20260803064621_AddMessageStorage");
+
+            Assert.Equal(1, await context.Users.CountAsync());
+            Assert.Equal(1, await context.RefreshTokens.CountAsync());
+            Assert.Equal(1, await context.Conversations.CountAsync());
+            Assert.Equal(1, await context.ConversationMembers.CountAsync());
+            Assert.Equal(
+                ["ConversationMembers", "Conversations", "MessageMentions", "Messages", "RefreshTokens", "Users"],
+                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions', 'Attachments') ORDER BY name;"));
 
             await migrator.MigrateAsync("20260803055556_AddConversationStorage");
 
@@ -89,7 +105,7 @@ public sealed class RelayCoveDbContextTests
             Assert.Equal(1, await context.ConversationMembers.CountAsync());
             Assert.Equal(
                 ["ConversationMembers", "Conversations", "RefreshTokens", "Users"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions') ORDER BY name;"));
+                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions', 'Attachments') ORDER BY name;"));
 
             await migrator.MigrateAsync("20260803042614_InitialAuthenticationStorage");
 
@@ -97,13 +113,13 @@ public sealed class RelayCoveDbContextTests
             Assert.Equal(1, await context.RefreshTokens.CountAsync());
             Assert.Equal(
                 ["RefreshTokens", "Users"],
-                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions') ORDER BY name;"));
+                await ReadStringsAsync(databasePath, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions', 'Attachments') ORDER BY name;"));
 
             await migrator.MigrateAsync(Migration.InitialDatabase);
 
             Assert.Empty(await ReadStringsAsync(
                 databasePath,
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions') ORDER BY name;"));
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('Users', 'RefreshTokens', 'Conversations', 'ConversationMembers', 'Messages', 'MessageMentions', 'Attachments') ORDER BY name;"));
         }
         finally
         {
