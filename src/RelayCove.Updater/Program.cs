@@ -2,8 +2,8 @@ namespace RelayCove.Updater;
 
 public static class Program
 {
-    public static int Main()
+    public static int Main(string[] args)
     {
-        return 0;
+        return UpdaterApplication.Run(args, new SystemUpdaterPlatform());
     }
 }

@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\RelayCove.Updater\RelayCove.Updater.csproj" />
+    <ProjectReference Include="..\..\src\RelayCove.Shared\RelayCove.Shared.csproj" />
   </ItemGroup>
 
 </Project>
