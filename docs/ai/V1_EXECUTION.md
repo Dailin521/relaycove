@@ -8,12 +8,12 @@
 ExecutionStatus: running
 CurrentMilestone: M2
 CurrentStage: 阶段 9
-ActiveTask: docs/ai/tasks/2026-08-04-stage-9-wpf-attachment-compose.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-04-stage-9-wpf-attachment-inputs.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 4c8a032e46e36a9c0bb0e3cc2d9d2d21c020c037
-LatestGreenIntegrationCommit: f8e058e9e89d80686a9b15cd955e02f900bfa703
-NextAction: 仅快进集成后，复用 source/context/progress 链实现附件拖拽与粘贴截图入口
+LatestGreenIntegrationCommit: 8ac80fb9b70953f6ff2e56d38b6278f2f765e2b7
+NextAction: 实现 FileDrop 文件与有界内存 PNG 截图粘贴入口
 ClaudeCalls: 73（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败；仅关键用途调用）
 ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有四十次失败/中断调用费用 unavailable
 Blocker: none

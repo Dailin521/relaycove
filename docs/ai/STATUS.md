@@ -6,7 +6,7 @@
 
 - **当前阶段：** 阶段 9 — 附件
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 认证单附件流式上传、attach-once 消息事务、完整附件投影、会话授权下载与未绑定 lease、客户端 v2 附件元数据原子入库/回读、headless 流式上传 reservation 与 durable Image/File send/retry，以及 WPF 原生文件多选、exact 草稿门和客户端 content-copy 进度已完成
-- **最近验证通过的状态：** WPF 附件组合 production 检查点 `4c8a032` 已通过最终 Fast/Full 1045 项、Codex 二轮 reviewer 与真实 Release WPF lifecycle smoke；待仅快进集成
+- **最近验证通过的状态：** WPF 附件组合已仅快进集成到 `8ac80fb9b70953f6ff2e56d38b6278f2f765e2b7`；拖拽/截图输入新分支 Fast 基线 1045/1045
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — 当前最终 Fast/Full、format 与 1045 项测试（Shared 39、Server 255、Client 750、Updater 1）通过；附件/发送/shell 定向 176/176，覆盖原子 1–10 项选择、MIME 分类、文件变化/取消/脱敏、部分批次、稳定 401 reopen 聚合单调、取消、回调异常、exact context/draft、pending 与认证边界；真实 Release WPF 响应窗口、单实例和精确进程清理通过。拖拽/截图、下载内容/UI、真实账户视觉/Narrator 与 VPS 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 阶段 9 WPF 文件选择/进度切片已完成最终门禁，正在仅快进集成；下一切片复用 source/context/progress 链接拖拽与粘贴截图，仍不读取 VPS 配置。
+- 阶段 9 文件拖拽与有界内存 PNG 截图粘贴正在 `agent/stage-9-wpf-attachment-inputs` 实现；Claude 后台任务 `c3e1ce54` 只挑战关键剪贴板隐私/内存边界，Codex 继续主导且仍不读取 VPS 配置。
 
 ## 已完成
 
