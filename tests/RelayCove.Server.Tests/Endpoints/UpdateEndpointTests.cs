@@ -47,6 +47,25 @@ public sealed class UpdateEndpointTests : IAsyncLifetime, IDisposable
     }
 
     [Fact]
+    public async Task GetManifest_WhenArtifactUrlUsesReverseProxyPathBase_ReturnsIt()
+    {
+        var artifact = new byte[] { 1, 2, 3, 5, 8, 13 };
+        Directory.CreateDirectory(updatesDirectory);
+        await File.WriteAllBytesAsync(Path.Combine(updatesDirectory, ArtifactFileName), artifact);
+        var expected = CreateManifest(
+            $"https://updates.example.test/relaycove/api/updates/artifacts/{ArtifactFileName}",
+            artifact.LongLength,
+            Convert.ToHexString(SHA256.HashData(artifact)).ToLowerInvariant());
+        await WriteManifestAsync(expected);
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/api/updates/manifest");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(expected, await response.Content.ReadFromJsonAsync<UpdateManifestDto>());
+    }
+
+    [Fact]
     public async Task DownloadArtifact_WhenRequestMatchesCurrentManifest_StreamsExactVerifiedZip()
     {
         var artifact = Enumerable.Range(0, 512 * 1024).Select(index => (byte)(index % 251)).ToArray();
@@ -247,6 +266,10 @@ public sealed class UpdateEndpointTests : IAsyncLifetime, IDisposable
     [Theory]
     [InlineData("https://updates.example.test/downloads/RelayCove.Client-1.0.1-rc.1-win-x64.zip")]
     [InlineData("https://updates.example.test/api/updates/artifacts/%2Fsecret.zip")]
+    [InlineData("https://updates.example.test/api/updates/artifacts/%5Csecret.zip")]
+    [InlineData("https://updates.example.test/api/updates/artifacts/")]
+    [InlineData("https://updates.example.test/api/updates/artifacts/safe.zip/extra.zip")]
+    [InlineData("https://updates.example.test/downloads/file.zip?next=/api/updates/artifacts/safe.zip")]
     public async Task GetManifest_WhenArtifactUrlCannotMapToOneSafeHostedLeaf_FailsClosed(string artifactUrl)
     {
         await WriteManifestAsync(CreateManifest(artifactUrl, 3, new string('a', 64)));

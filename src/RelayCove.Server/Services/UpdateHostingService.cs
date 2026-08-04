@@ -294,13 +294,16 @@ public sealed class UpdateHostingService
         }
 
         var path = Uri.UnescapeDataString(artifactUri.AbsolutePath);
-        if (!path.StartsWith(ArtifactRoutePrefix, StringComparison.Ordinal) ||
-            path.Length == ArtifactRoutePrefix.Length)
+        var fileNameStart = path.LastIndexOf('/') + 1;
+        var routeStart = fileNameStart - ArtifactRoutePrefix.Length;
+        if (routeStart < 0 ||
+            !path.AsSpan(routeStart, ArtifactRoutePrefix.Length)
+                .Equals(ArtifactRoutePrefix, StringComparison.Ordinal))
         {
             return false;
         }
 
-        var candidate = path[ArtifactRoutePrefix.Length..];
+        var candidate = path[fileNameStart..];
         if (!IsSafeFileName(candidate))
         {
             return false;
