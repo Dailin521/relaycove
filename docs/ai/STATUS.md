@@ -4,19 +4,19 @@
 
 ## 当前状态
 
-- **当前阶段：** 阶段 9 — 附件
+- **当前阶段：** 阶段 10 — 搜索
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 认证单附件流式上传、attach-once 消息事务、完整附件投影、会话授权下载与未绑定 lease、客户端 v2 附件元数据原子入库/回读、headless 流式上传 reservation 与 durable Image/File send/retry、WPF 原生文件多选/exact 草稿门/content-copy 进度、exact FileDrop/有界内存 PNG Ctrl+V、强 ETag 全量可信下载/账户隔离受控缓存、confirmed WPF 附件行、下载/取消/重试与受控目录定位、已下载 PNG/JPEG 的本地内存缩略图和有界应用内查看，以及 Restricted Zone 临时副本与 Windows 关联应用安全打开已完成
-- **最近验证通过的状态：** 安全关联应用打开 production 检查点 `f8c3dcd22c40ec511665314b5daf07a58a798a9d` 已通过最终 Full 1,348/1,348、相关定向 271/271、两路独立复审、真实 Windows 无害文本 MOTW/Attachment Manager 探针、Release WPF 窗口、model drift、依赖漏洞、format 与空白检查；绿色任务分支待仅快进合入本地/远端 `agent/v1-integration`
+- **最近验证通过的状态：** 安全关联应用打开 production 检查点 `f8c3dcd22c40ec511665314b5daf07a58a798a9d` 与交接头 `8ff8c15691e51bd5d33602fd16e5ef1227f6e9da` 已通过最终 Full 1,348/1,348、相关定向 271/271、两路独立复审、真实 Windows 无害文本 MOTW/Attachment Manager 探针、Release WPF 窗口、model drift、依赖漏洞、format 与空白检查，并已仅快进合入本地/远端 `agent/v1-integration`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — 当前最终 Full、format 与 1,348 项测试（Shared 39、Server 255、Client 1,053、Updater 1）通过；附件/MessageListPresenter/AccountShell 定向 271/271。覆盖受控 open-copy、MOTW、三阶段 commit/foreground acknowledgement/`ExecuteRelease`、COM 前四类 gate 释放、post-authorize tail、exactly-once、cleanup/恢复、A→B→A、WPF 14 状态与脱敏；真实无害文本探针 1/1、Release `RelayCove` 窗口响应。真实登录视觉/Narrator、恶意样本与 VPS 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
-- **最近 Claude 调用：** `已记录` — 本决策唯一一次只读 #78 按 Sonnet/High 发起，但旧兼容入口强加 `$0.5` 预算并在答案前失败；无 job、正式答案、可靠实际模型、duration 或费用，按单次策略未重试。Microsoft 官方契约、本机探针与两路 Codex 独立复核已形成最终证据，Claude 不替代本地验证
+- **最近 Claude 调用：** `已记录` — 搜索协议/权限/SQLite 决策唯一一次只读 #79 按 Sonnet/XHigh 发起，但当前任务暴露的旧兼容入口再次强加 `$0.5` 预算并在答案前失败；无 job、正式答案、可靠实际模型、duration 或费用，按单次策略未重试。仓库证据、SQLite/EF 官方契约与三路 Codex 只读调查继续作为裁定依据，Claude 不替代本地验证
 - **Codex 项目配置：** `已验证` — 已移除仓库中遮蔽全局配置的旧 Claude MCP v0.3 `consult_claude` override；`codex mcp get claude_second_brain` 现解析到全局 0.5.0 的 start/list/check/read 持久工具，Fast/Explorer/Reviewer 项目设置保留
 
 ## 进行中
 
-- `agent/stage-9-safe-attachment-open` 已完成并通过最终门禁，正待仅快进合入 `agent/v1-integration`。最终边界为系统 temp 的账户隔离 open-copy、`ZoneId=4` MOTW、原始 ASCII 后缀、单一串行 STA `IAttachmentExecute`（无 `SetSource`/`Save`）与 Prepare → commit/foreground acknowledgement → gate 全部退出后的 `ExecuteRelease` 三阶段协议。STA 从 acknowledgement 起以前台状态覆盖等待 release、一次 `Execute`、handle/COM release、completion 与 retire；`DisposeAsync` 只等 Execute-entry-or-terminal。每账户预算是 1 GiB 主数据流逻辑字节和 64 文件，不声称涵盖 ADS/实际物理分配；cleanup 失败只在后续 revoke/logout/dispose/recovery cleanup 重试。仍不读取 VPS 配置。
+- M2 已由 `8ff8c15` 关闭；当前 `agent/stage-10-search-api` 正在实现 M3 首个纵向切片：受 JWT 保护的全局/会话内消息正文与附件原名搜索。结果 SQL 内嵌 `ConversationAccessQuery.VisibleTo`，使用字面量转义的有界 SQLite `LIKE`、消息驱动的附件 `EXISTS`、稳定 Message ID 降序与脱敏 snippet；不新增 migration、FTS/ICU、依赖或客户端 UI。仍不读取 VPS 配置。
 
 ## 已完成
 
@@ -75,7 +75,7 @@
 
 ## 下一任务
 
-仅快进合入当前安全关联应用打开切片并关闭 M2，随后进入 M3 搜索。真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
+完成当前 Shared/Server 搜索 API 的真实 SQLite/HTTP 验证与独立复核，随后直接接入客户端 current/global 搜索、Around 跳转和短暂高亮。真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
 
 ## 阻塞项
 

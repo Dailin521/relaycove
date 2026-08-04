@@ -6,16 +6,16 @@
 
 ```text
 ExecutionStatus: running
-CurrentMilestone: M2
-CurrentStage: 阶段 9
-ActiveTask: docs/ai/tasks/2026-08-04-stage-9-safe-attachment-open.md
-TaskStatus: completed
+CurrentMilestone: M3
+CurrentStage: 阶段 10
+ActiveTask: docs/ai/tasks/2026-08-04-stage-10-search-api.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: f8c3dcd22c40ec511665314b5daf07a58a798a9d
-LatestGreenIntegrationCommit: a5a41a41e6622cfc9c35c42d06b0c6090e2a792c
-NextAction: 仅快进合入已通过最终门禁的安全关联应用打开切片，关闭 M2，并启动 M3 搜索的独立纵向任务
-ClaudeCalls: 78（全部终态；#78 在答案前因旧兼容入口强加预算失败，不重试）
-ClaudeCostUsd: 83.12343525 exact confirmed + 76.68 local CLI displayed（#44–#50/#74–#76）；按显示值合计约 159.80343525；另有四十次失败/中断调用费用 unavailable
+LatestGreenIntegrationCommit: 8ff8c15691e51bd5d33602fd16e5ef1227f6e9da
+NextAction: 实现并独立验收权限化中文/附件名搜索 Shared+Server API，随后接客户端 current/global 搜索与 Around 跳转高亮
+ClaudeCalls: 79（全部终态；#79 在答案前因旧兼容入口强加预算失败，不重试）
+ClaudeCostUsd: 83.12343525 exact confirmed + 76.68 local CLI displayed（#44–#50/#74–#76）；按显示值合计约 159.80343525；另有四十一次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
 ```
@@ -33,8 +33,8 @@ RequiredUserGate: none
 | --- | --- | --- | --- |
 | M0 | `completed` | 同步契约、`DEC-003`、解决方案和真实 Fast/Full 验证均通过 | 已进入 M1 |
 | M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
-| M2 | `running` | 阶段 9 附件纵向闭环已在绿色任务分支完成；安全打开代码 `f8c3dcd` 及 Internal Alpha 证据包通过 | 仅快进合入安全打开交接提交，随后进入 M3 |
-| M3 | `pending` | 尚未开始 | Beta 验收证据完整 |
+| M2 | `completed` | 阶段 9 附件纵向闭环与 Internal Alpha 证据包已由 `8ff8c15` 合入绿色集成分支 | 已进入 M3 |
+| M3 | `running` | 阶段 10 搜索协议/API 纵向切片已启动 | 完成 current/global 搜索、权限、附件名匹配与结果跳转的 Beta 证据 |
 | M4 | `pending` | 尚未开始 | RC 自动化、包与发布材料完整 |
 | M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
 
@@ -170,14 +170,15 @@ RequiredUserGate: none
 | 76 | 2026-08-04 | WPF 附件下载状态与受控本地访问 | 本机持久只读安全/可靠性 challenge | Opus / XHigh | job `a28c24d7`、session `a28c24d7-b75f-4a45-8d9c-69ddc40d82a6`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；实际 `claude-opus-5`、请求模型无偏差，约 26 分钟后审查答案已返回；detached session 保持 idle，按策略未因耗时、费用或空闲取消。exact download membership 与当前 Ready 状态门经 Codex 复算成立并修正；专用 STA 与 cidl=0 不受支持两项 P0 由 Microsoft 官方 API/COM 契约、Codex 独立 Windows interop 复核和真实 Explorer 精确选中反证后未采纳 | `$20.07`（CLI 状态显示值） |
 | 77 | 2026-08-04 | 已下载图片的进程内有界解码、缩略图与查看生命周期 | 全局 MCP 0.5.0 持久只读安全/可靠性 challenge | Opus / XHigh | job `abb22632-84bd-4a97-bc74-468cb3751b61`，`workspace=E:\WorkSpace\RelayCove`，仓库只读；调用前仍存在恶意图片 decoder allocation/hang/cancellation 高风险争议，故本决策唯一一次调用直接选择 Opus/XHigh。实际 `claude-opus-5`、mismatch=`false`，795,273 ms 后答案返回并已读取；格式/预算、私有内存、slot/超时脱离及 helper 触发意见经 Codex 复算后采纳，WIC/额外依赖建议由当前 WinRT 编译与真实解码证据裁定不采纳 | `$3.05042375` |
 | 78 | 2026-08-04 | 已下载附件的受控临时副本、MOTW 与关联应用打开 | 当前会话旧兼容 MCP 只读安全 challenge | Sonnet / High | 唯一一次调用在答案前失败：Desktop 任务只暴露旧 `consult_claude`，其内部命令强加 `$0.5` budget 后退出；无持久 job、正式答案、可靠实际模型、duration 或费用。按策略不重试，由 Microsoft 官方契约、本机探针与 Codex 独立复核替代 | `unavailable` |
+| 79 | 2026-08-04 | 搜索公共协议、权限过滤、SQLite LIKE 与结果边界 | 当前会话旧兼容 MCP 只读协议/安全 challenge | Sonnet / XHigh | 唯一一次调用在答案前失败：本机 MCP 配置已指向 0.5.0 持久工具，但当前 Desktop 任务仍只暴露旧 `consult_claude`，其内部命令再次强加 `$0.5` budget 后退出；无持久 job、正式答案、可靠实际模型、duration 或费用。按策略不重试，由仓库证据、SQLite/EF 官方契约与三路 Codex 只读调查替代 | `unavailable` |
 
-- 调用计数：`78`（全部终态；#78 在答案前失败且按单次策略不重试；#77 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构/安全/数据库/协议/可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
-- 已确认精确费用合计：`$83.12343525`；另有 #44–#50/#74–#76 本机 Claude Code 状态显示值合计 `$76.68`（界面两位小数，未伪造更高精度），按显示值总计约 `$159.80343525`。其余四十次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`79`（全部终态；#78/#79 在答案前失败且分别按单次策略不重试；#77 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构/安全/数据库/协议/可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
+- 已确认精确费用合计：`$83.12343525`；另有 #44–#50/#74–#76 本机 Claude Code 状态显示值合计 `$76.68`（界面两位小数，未伪造更高精度），按显示值总计约 `$159.80343525`。其余四十一次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate
 
-- 当前阻塞：无；Claude #78 无答案不阻塞仓库证据、官方契约、本机探针与 Codex 复核。
+- 当前阻塞：无；Claude #79 无答案不阻塞仓库证据、SQLite/EF 官方契约、本机真实数据库与 Codex 复核。
 - 当前所需用户 Gate：无。
 - `未验证`：用户已提供仓库外的香港 Light-A2 协作应用主机配置汇总，保留到 M5 真实 VPS/双客户端 Gate；当前不读取，届时仅最小读取所需配置且不把地址、密钥或凭据提交到仓库或测试日志。
 - 只有 `AGENTS.md`、`WORKFLOW.md` 和 v1 执行目标列出的重大产品、不可逆、安全、凭据、真实体验或发布事项才请求用户裁决；普通工程实现由当前任务自行收敛。
