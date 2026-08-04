@@ -40,7 +40,7 @@ internal static class ClientAttachmentFileSourceFactory
 
     public static async Task<ClientAttachmentFileSelectionOutcome> CreateAsync(
         IReadOnlyList<string>? paths,
-        IReadOnlyList<ClientAttachmentFileSelection>? existingSelections = null,
+        IReadOnlyList<ClientAttachmentDraft>? existingSelections = null,
         CancellationToken cancellationToken = default)
     {
         if (paths is null)
@@ -50,7 +50,7 @@ internal static class ClientAttachmentFileSourceFactory
         }
 
         string[] pathSnapshot;
-        ClientAttachmentFileSelection[] existingSnapshot;
+        ClientAttachmentDraft[] existingSnapshot;
         try
         {
             pathSnapshot = paths.ToArray();
@@ -92,7 +92,7 @@ internal static class ClientAttachmentFileSourceFactory
     }
 
     public static MessageType ResolveMessageType(
-        IReadOnlyList<ClientAttachmentFileSelection> selections)
+        IReadOnlyList<ClientAttachmentDraft> selections)
     {
         ArgumentNullException.ThrowIfNull(selections);
         if (selections.Count is < 1 or > ClientAttachmentMetadataPolicy.MaximumAttachmentsPerMessage ||
@@ -110,7 +110,7 @@ internal static class ClientAttachmentFileSourceFactory
 
     private static ClientAttachmentFileSelectionOutcome CreateCore(
         IReadOnlyList<string> paths,
-        IReadOnlyList<ClientAttachmentFileSelection> existingSelections,
+        IReadOnlyList<ClientAttachmentDraft> existingSelections,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -118,14 +118,15 @@ internal static class ClientAttachmentFileSourceFactory
         foreach (var existingSelection in existingSelections)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!knownPaths.Add(existingSelection.PathIdentity))
+            if (existingSelection.FilePathIdentity is { } existingPath &&
+                !knownPaths.Add(existingPath))
             {
                 return ClientAttachmentFileSelectionOutcome.Failure(
                     ClientAttachmentFileSelectionStatus.DuplicateFile);
             }
         }
 
-        var selections = new List<ClientAttachmentFileSelection>(paths.Count);
+        var selections = new List<ClientAttachmentDraft>(paths.Count);
         foreach (var path in paths)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -146,7 +147,7 @@ internal static class ClientAttachmentFileSourceFactory
     private static ClientAttachmentFileSelectionStatus TryCreateSelection(
         string? path,
         ISet<string> knownPaths,
-        out ClientAttachmentFileSelection? selection)
+        out ClientAttachmentDraft? selection)
     {
         selection = null;
         string normalizedPath;
@@ -211,13 +212,14 @@ internal static class ClientAttachmentFileSourceFactory
                 classification.ContentType,
                 size,
                 token => OpenReadAsync(normalizedPath, size, token));
-            selection = new ClientAttachmentFileSelection(
+            selection = new ClientAttachmentDraft(
                 Guid.NewGuid(),
                 source,
                 originalFileName,
                 FormatDisplaySize(size),
                 classification.IsImage,
-                normalizedPath);
+                normalizedPath,
+                retainedMemoryBytes: 0);
             return ClientAttachmentFileSelectionStatus.Success;
         }
         catch (FileNotFoundException)

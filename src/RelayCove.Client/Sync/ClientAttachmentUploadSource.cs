@@ -4,7 +4,7 @@ using RelayCove.Client.Storage;
 namespace RelayCove.Client.Sync;
 
 /// <summary>
-/// Describes one locally reopenable attachment upload without retaining its content in memory.
+/// Describes one locally reopenable attachment upload backed by a caller-owned source.
 /// </summary>
 public sealed class ClientAttachmentUploadSource
 {

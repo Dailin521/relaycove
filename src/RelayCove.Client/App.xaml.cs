@@ -410,6 +410,7 @@ public partial class App : System.Windows.Application
 
         if (sender is MainWindow window)
         {
+            window.CancelAttachmentInputForShutdown();
             window.SourceInitialized -= OnMainWindowStateChanged;
             window.Activated -= OnMainWindowStateChanged;
             window.Deactivated -= OnMainWindowStateChanged;

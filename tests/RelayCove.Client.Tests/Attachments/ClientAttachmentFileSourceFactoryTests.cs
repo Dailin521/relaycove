@@ -1,5 +1,6 @@
 using System.IO;
 using RelayCove.Client.Attachments;
+using RelayCove.Client.Sync;
 using RelayCove.Shared.Messages;
 
 namespace RelayCove.Client.Tests.Attachments;
@@ -98,6 +99,34 @@ public sealed class ClientAttachmentFileSourceFactoryTests : IDisposable
 
         Assert.Equal(ClientAttachmentFileSelectionStatus.DuplicateFile, outcome.Status);
         Assert.Empty(outcome.Selections);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WhenExistingMemoryDraftHasNoPathIdentity_AllowsMatchingDisplayName()
+    {
+        var memorySource = new ClientAttachmentUploadSource(
+            "clipboard-image.png",
+            "image/png",
+            size: 1,
+            _ => ValueTask.FromResult<Stream>(new MemoryStream([1], writable: false)));
+        var memoryDraft = new ClientAttachmentDraft(
+            Guid.NewGuid(),
+            memorySource,
+            memorySource.OriginalFileName,
+            "1 B",
+            isImage: true,
+            filePathIdentity: null,
+            retainedMemoryBytes: 1);
+        var path = CreateFile("clipboard-image.png", 1);
+
+        var outcome = await ClientAttachmentFileSourceFactory.CreateAsync([path], [memoryDraft]);
+
+        var fileDraft = Assert.Single(outcome.Selections);
+        Assert.Equal(ClientAttachmentFileSelectionStatus.Success, outcome.Status);
+        Assert.NotNull(fileDraft.FilePathIdentity);
+        Assert.Equal(
+            MessageType.Image,
+            ClientAttachmentFileSourceFactory.ResolveMessageType([memoryDraft, fileDraft]));
     }
 
     [Fact]

@@ -1,10 +1,12 @@
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using RelayCove.Client.Accounts;
 using RelayCove.Client.Attachments;
 using RelayCove.Client.Mentions;
@@ -29,7 +31,7 @@ public partial class MainWindow : Window
     private Guid? composerContextConversationId;
     private long composerContextVersion;
     private readonly Dictionary<Guid, MentionCandidateDto> composerMentions = [];
-    private readonly List<ClientAttachmentFileSelection> composerAttachments = [];
+    private readonly List<ClientAttachmentDraft> composerAttachments = [];
     private long mentionSearchVersion;
     private long attachmentSubmissionVersion;
     private bool composerContextReady;
@@ -38,7 +40,8 @@ public partial class MainWindow : Window
     private bool composerAvailable;
     private bool composerSubmissionRunning;
     private bool mentionSearchRunning;
-    private bool attachmentSelectionRunning;
+    private bool attachmentInputRunning;
+    private CancellationTokenSource? attachmentInputCancellationSource;
     private int lastAnnouncedAttachmentIndex;
     private int lastAnnouncedAttachmentProgressBucket = -1;
 
@@ -57,6 +60,14 @@ public partial class MainWindow : Window
 
     internal Guid? SelectedConversationId =>
         (ConversationList.SelectedItem as ClientConversationListItemPresentation)?.Id;
+
+    internal void CancelAttachmentInputForShutdown()
+    {
+        if (attachmentInputCancellationSource is { IsCancellationRequested: false } cancellationSource)
+        {
+            cancellationSource.Cancel();
+        }
+    }
 
     internal void ApplyAccountShellSnapshot(ClientAccountShellSnapshot snapshot)
     {
@@ -496,7 +507,7 @@ public partial class MainWindow : Window
     {
         _ = sender;
         _ = e;
-        composerContextVersion++;
+        AdvanceComposerContextVersion();
         ReconcileComposerMentions();
         UpdateComposerState();
     }
@@ -545,28 +556,238 @@ public partial class MainWindow : Window
             return;
         }
 
+        await AddAttachmentFilesAsync(
+            selectedPaths,
+            selectionConversationId,
+            selectionContextVersion,
+            selectionDraftIds);
+    }
+
+    private void OnAttachmentInputPreviewDragEnter(object sender, System.Windows.DragEventArgs e)
+    {
+        _ = sender;
+        var canAccept = UpdateAttachmentFileDropEffect(e);
+        UpdateAttachmentDropVisual(canAccept);
+        SetLiveText(
+            MessageComposerStatusText,
+            canAccept
+                ? "松开鼠标即可检查并添加本地文件；不会记录本地路径。"
+                : "这里只接受当前可用会话中的真实本地文件拖放。");
+    }
+
+    private void OnAttachmentInputPreviewDragOver(object sender, System.Windows.DragEventArgs e)
+    {
+        _ = sender;
+        UpdateAttachmentDropVisual(UpdateAttachmentFileDropEffect(e));
+    }
+
+    private void OnAttachmentInputPreviewDragLeave(object sender, System.Windows.DragEventArgs e)
+    {
+        _ = sender;
+        e.Handled = true;
+        UpdateAttachmentDropVisual(active: false);
+    }
+
+    private async void OnAttachmentInputPreviewDrop(object sender, System.Windows.DragEventArgs e)
+    {
+        _ = sender;
+        e.Handled = true;
+        UpdateAttachmentDropVisual(active: false);
+        if (!CanSelectAttachments() || !SourceAllowsCopy(e))
+        {
+            SetLiveText(
+                MessageComposerStatusText,
+                "当前输入状态或拖拽来源不允许复制附件，本次未读取拖入路径。");
+            return;
+        }
+
+        var expectedConversationId = displayedMessageSnapshot?.ConversationId;
+        var expectedContextVersion = composerContextVersion;
+        var expectedDraftIds = GetComposerAttachmentDraftIds();
+        var hasExactFileDrop = HasExactFileDrop(e.Data);
+        object? fileDropData = null;
+        if (hasExactFileDrop)
+        {
+            try
+            {
+                fileDropData = e.Data.GetData(
+                    System.Windows.DataFormats.FileDrop,
+                    autoConvert: false);
+            }
+            catch (Exception exception) when (!IsCriticalException(exception))
+            {
+                SetLiveText(
+                    MessageComposerStatusText,
+                    "无法读取拖入的数据，请改用附件按钮选择文件。");
+                return;
+            }
+        }
+
+        var snapshot = ClientAttachmentFileDropPolicy.Capture(
+            hasExactFileDrop,
+            fileDropData,
+            composerAttachments.Count);
         if (!CanSelectAttachments() ||
             !IsAttachmentComposerContextCurrent(
-                selectionConversationId,
-                selectionContextVersion,
-                selectionDraftIds))
+                expectedConversationId,
+                expectedContextVersion,
+                expectedDraftIds))
+        {
+            SetLiveText(
+                MessageComposerStatusText,
+                "附件输入上下文已变化，本次拖入未添加任何文件。");
+            return;
+        }
+
+        if (!snapshot.IsSuccess)
+        {
+            SetLiveText(
+                MessageComposerStatusText,
+                snapshot.Status == ClientAttachmentFileDropSnapshotStatus.TooManyFiles
+                    ? "一条消息最多选择 10 个附件，本次拖入未添加任何文件。"
+                    : "拖入内容不是可接受的本地文件批次，本次未添加任何附件。");
+            return;
+        }
+
+        await AddAttachmentFilesAsync(
+            snapshot.Paths,
+            expectedConversationId,
+            expectedContextVersion,
+            expectedDraftIds);
+    }
+
+    private async void OnAttachmentInputPreviewKeyDown(
+        object sender,
+        System.Windows.Input.KeyEventArgs e)
+    {
+        _ = sender;
+        if (!ClientClipboardImageReader.IsExactImagePasteGesture(
+                e.Key,
+                Keyboard.Modifiers) ||
+            !CanSelectAttachments())
         {
             return;
         }
 
-        attachmentSelectionRunning = true;
+        var expectedConversationId = displayedMessageSnapshot?.ConversationId;
+        var expectedContextVersion = composerContextVersion;
+        var expectedDraftIds = GetComposerAttachmentDraftIds();
+        var clipboard = ClientClipboardImageReader.TryRead(
+            suppressRepeatedImageRead: e.IsRepeat,
+            System.Windows.Clipboard.ContainsText,
+            System.Windows.Clipboard.ContainsImage,
+            System.Windows.Clipboard.GetImage);
+        if (!IsAttachmentComposerContextCurrent(
+                expectedConversationId,
+                expectedContextVersion,
+                expectedDraftIds))
+        {
+            e.Handled = true;
+            SetLiveText(
+                MessageComposerStatusText,
+                "剪贴板读取期间输入上下文已变化，本次粘贴未添加任何内容。");
+            return;
+        }
+
+        if (clipboard.Status is ClientClipboardImageReadStatus.NoImage or
+            ClientClipboardImageReadStatus.TextPreferred)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        if (clipboard.Status == ClientClipboardImageReadStatus.RepeatedImagePaste)
+        {
+            return;
+        }
+
+        if (clipboard.Status != ClientClipboardImageReadStatus.Success)
+        {
+            SetLiveText(
+                MessageComposerStatusText,
+                clipboard.Status == ClientClipboardImageReadStatus.ClipboardUnavailable
+                    ? "剪贴板暂时不可用，请稍后重试。"
+                    : "剪贴板图片无效，未添加附件。");
+            return;
+        }
+
+        await AddClipboardImageAsync(
+            clipboard.Image!,
+            expectedConversationId,
+            expectedContextVersion,
+            expectedDraftIds);
+    }
+
+    private bool UpdateAttachmentFileDropEffect(System.Windows.DragEventArgs e)
+    {
+        var hasExactFileDrop = HasExactFileDrop(e.Data);
+        var canAccept = ClientAttachmentFileDropPolicy.CanShowCopyEffect(
+            CanSelectAttachments(),
+            hasExactFileDrop,
+            SourceAllowsCopy(e));
+        e.Effects = canAccept
+            ? System.Windows.DragDropEffects.Copy
+            : System.Windows.DragDropEffects.None;
+        e.Handled = true;
+        return canAccept;
+    }
+
+    private static bool HasExactFileDrop(System.Windows.IDataObject data)
+    {
+        try
+        {
+            return data.GetDataPresent(
+                System.Windows.DataFormats.FileDrop,
+                autoConvert: false);
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            return false;
+        }
+    }
+
+    private static bool SourceAllowsCopy(System.Windows.DragEventArgs e) =>
+        (e.AllowedEffects & System.Windows.DragDropEffects.Copy) != 0;
+
+    private void UpdateAttachmentDropVisual(bool active)
+    {
+        AttachmentInputDropTarget.Background = active
+            ? System.Windows.Media.Brushes.AliceBlue
+            : System.Windows.Media.Brushes.Transparent;
+        AttachmentInputDropTarget.BorderBrush = active
+            ? System.Windows.Media.Brushes.SteelBlue
+            : System.Windows.Media.Brushes.Transparent;
+    }
+
+    private async Task AddAttachmentFilesAsync(
+        IReadOnlyList<string> selectedPaths,
+        Guid? expectedConversationId,
+        long expectedContextVersion,
+        IReadOnlyList<Guid> expectedDraftIds)
+    {
+        if (!CanSelectAttachments() ||
+            !IsAttachmentComposerContextCurrent(
+                expectedConversationId,
+                expectedContextVersion,
+                expectedDraftIds))
+        {
+            return;
+        }
+
+        var cancellationSource = BeginAttachmentInput();
         UpdateComposerState();
         SetLiveText(MessageComposerStatusText, "正在检查所选文件，不会把本地路径上传或记录到日志…");
         try
         {
             var outcome = await ClientAttachmentFileSourceFactory.CreateAsync(
                 selectedPaths,
-                composerAttachments);
+                composerAttachments,
+                cancellationSource.Token);
             if (!composerAvailable ||
                 !IsAttachmentComposerContextCurrent(
-                    selectionConversationId,
-                    selectionContextVersion,
-                    selectionDraftIds))
+                    expectedConversationId,
+                    expectedContextVersion,
+                    expectedDraftIds))
             {
                 return;
             }
@@ -579,15 +800,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            composerAttachments.AddRange(outcome.Selections);
-            composerContextVersion++;
-            MentionPickerPanel.Visibility = Visibility.Collapsed;
-            RefreshSelectedAttachmentPresentation();
-            SetLiveText(
-                MessageComposerStatusText,
-                composerAttachments.All(static attachment => attachment.IsImage)
-                    ? $"已选择 {composerAttachments.Count} 个附件，将作为图片消息发送。"
-                    : $"已选择 {composerAttachments.Count} 个附件，将作为文件消息发送。");
+            AddAttachmentDrafts(outcome.Selections);
         }
         catch (OperationCanceledException)
         {
@@ -600,19 +813,88 @@ public partial class MainWindow : Window
         }
         finally
         {
-            attachmentSelectionRunning = false;
-            UpdateComposerState();
+            EndAttachmentInput(cancellationSource);
         }
+    }
+
+    private async Task AddClipboardImageAsync(
+        BitmapSource image,
+        Guid? expectedConversationId,
+        long expectedContextVersion,
+        IReadOnlyList<Guid> expectedDraftIds)
+    {
+        if (!CanSelectAttachments() ||
+            !IsAttachmentComposerContextCurrent(
+                expectedConversationId,
+                expectedContextVersion,
+                expectedDraftIds))
+        {
+            return;
+        }
+
+        var imageAdded = false;
+        var cancellationSource = BeginAttachmentInput();
+        UpdateComposerState();
+        SetLiveText(
+            MessageComposerStatusText,
+            "正在安全编码剪贴板图片，不会记录图片内容或写入临时文件…");
+        try
+        {
+            var outcome = await ClientAttachmentClipboardImageFactory.CreateAsync(
+                image,
+                composerAttachments,
+                cancellationSource.Token);
+            if (!composerAvailable ||
+                !IsAttachmentComposerContextCurrent(
+                    expectedConversationId,
+                    expectedContextVersion,
+                    expectedDraftIds))
+            {
+                return;
+            }
+
+            if (outcome.Status != ClientAttachmentClipboardImageSelectionStatus.Success)
+            {
+                SetLiveText(
+                    MessageComposerStatusText,
+                    DescribeClipboardImageSelectionOutcome(outcome.Status));
+                return;
+            }
+
+            AddAttachmentDrafts([outcome.Selection!]);
+            imageAdded = true;
+        }
+        finally
+        {
+            EndAttachmentInput(cancellationSource);
+            if (imageAdded)
+            {
+                SelectAttachmentsButton.Focus();
+            }
+        }
+    }
+
+    private void AddAttachmentDrafts(IReadOnlyList<ClientAttachmentDraft> drafts)
+    {
+        composerAttachments.AddRange(drafts);
+        AdvanceComposerContextVersion(cancelAttachmentInput: false);
+        MentionPickerPanel.Visibility = Visibility.Collapsed;
+        RefreshSelectedAttachmentPresentation();
+        SetLiveText(
+            MessageComposerStatusText,
+            composerAttachments.All(static attachment => attachment.IsImage)
+                ? $"已选择 {composerAttachments.Count} 个附件，将作为图片消息发送。"
+                : $"已选择 {composerAttachments.Count} 个附件，将作为文件消息发送。");
     }
 
     private void OnRemoveAttachmentClicked(object sender, RoutedEventArgs e)
     {
         _ = e;
         if (composerSubmissionRunning ||
-            attachmentSelectionRunning ||
+            attachmentInputRunning ||
             sender is not System.Windows.Controls.Button
             {
-                DataContext: ClientAttachmentFileSelection selection,
+                DataContext: ClientAttachmentDraft selection,
             })
         {
             return;
@@ -625,7 +907,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        composerContextVersion++;
+        AdvanceComposerContextVersion();
         RefreshSelectedAttachmentPresentation();
         SetLiveText(
             MessageComposerStatusText,
@@ -786,7 +1068,7 @@ public partial class MainWindow : Window
             if (!composerMentions.ContainsKey(candidate.UserId))
             {
                 composerMentions[candidate.UserId] = candidate;
-                composerContextVersion++;
+                AdvanceComposerContextVersion();
                 RefreshSelectedMentionPresentation();
             }
 
@@ -811,7 +1093,7 @@ public partial class MainWindow : Window
         MessageComposerTextBox.SelectionStart = edit.CaretIndex;
         MessageComposerTextBox.SelectionLength = 0;
         composerMentions[candidate.UserId] = candidate;
-        composerContextVersion++;
+        AdvanceComposerContextVersion();
         RefreshSelectedMentionPresentation();
         SetLiveText(MentionSearchStatusText, "已插入提及；编辑或删除 token 会同步更新发送集合。");
         MessageComposerTextBox.Focus();
@@ -830,7 +1112,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        composerContextVersion++;
+        AdvanceComposerContextVersion();
         RefreshSelectedMentionPresentation();
         SetLiveText(
             MentionSearchStatusText,
@@ -891,7 +1173,7 @@ public partial class MainWindow : Window
 
         composerReplyConversationId = conversationId;
         composerReplyToMessageId = messageId;
-        composerContextVersion++;
+        AdvanceComposerContextVersion();
         SetLiveText(ReplyComposerSenderText, $"正在回复 {item.SenderLabel}");
         SetLiveText(ReplyComposerContentText, item.Content);
         ReplyComposerPanel.Visibility = Visibility.Visible;
@@ -1086,7 +1368,7 @@ public partial class MainWindow : Window
     {
         if (accountShell is null ||
             composerSubmissionRunning ||
-            attachmentSelectionRunning ||
+            attachmentInputRunning ||
             !composerAvailable ||
             composerAttachments.Count == 0 ||
             MessageComposerTextBox.Text.Length != 0 ||
@@ -1208,40 +1490,86 @@ public partial class MainWindow : Window
     private Guid[] GetComposerAttachmentDraftIds() =>
         composerAttachments.Select(static attachment => attachment.DraftId).ToArray();
 
+    private CancellationTokenSource BeginAttachmentInput()
+    {
+        if (attachmentInputCancellationSource is not null || attachmentInputRunning)
+        {
+            throw new InvalidOperationException("An attachment input operation is already active.");
+        }
+
+        var cancellationSource = new CancellationTokenSource();
+        attachmentInputCancellationSource = cancellationSource;
+        attachmentInputRunning = true;
+        return cancellationSource;
+    }
+
+    private void EndAttachmentInput(CancellationTokenSource cancellationSource)
+    {
+        if (ReferenceEquals(attachmentInputCancellationSource, cancellationSource))
+        {
+            attachmentInputCancellationSource = null;
+            attachmentInputRunning = false;
+        }
+
+        cancellationSource.Dispose();
+        UpdateComposerState();
+    }
+
+    private void AdvanceComposerContextVersion(bool cancelAttachmentInput = true)
+    {
+        composerContextVersion++;
+        if (!cancelAttachmentInput || attachmentInputCancellationSource is not { } cancellationSource)
+        {
+            return;
+        }
+
+        if (!cancellationSource.IsCancellationRequested)
+        {
+            SetLiveText(
+                MessageComposerStatusText,
+                "附件输入上下文已变化，旧的文件检查或截图编码已取消。");
+            cancellationSource.Cancel();
+        }
+    }
+
     private void UpdateComposerState()
     {
         var hasAttachments = composerAttachments.Count != 0;
         SendMessageButton.IsEnabled = composerAvailable &&
             !composerSubmissionRunning &&
-            !attachmentSelectionRunning &&
+            !attachmentInputRunning &&
             (hasAttachments ||
              ClientTextMessageContentValidator.IsValid(MessageComposerTextBox.Text));
         MessageComposerTextBox.IsEnabled = composerAvailable &&
-            !attachmentSelectionRunning &&
+            !attachmentInputRunning &&
             !hasAttachments;
         SelectAttachmentsButton.IsEnabled = CanSelectAttachments();
         MentionPickerButton.IsEnabled = composerAvailable &&
             !composerSubmissionRunning &&
-            !attachmentSelectionRunning &&
+            !attachmentInputRunning &&
             !hasAttachments;
         MentionSearchTextBox.IsEnabled = composerAvailable &&
             !mentionSearchRunning &&
-            !attachmentSelectionRunning &&
+            !attachmentInputRunning &&
             !hasAttachments;
         MentionSearchButton.IsEnabled = composerAvailable &&
             !mentionSearchRunning &&
-            !attachmentSelectionRunning &&
+            !attachmentInputRunning &&
             !hasAttachments &&
             ClientMentionPolicy.IsValidQuery(MentionSearchTextBox.Text);
         SelectedAttachmentPanel.IsEnabled = !composerSubmissionRunning &&
-            !attachmentSelectionRunning;
+            !attachmentInputRunning;
         ReplyComposerPanel.IsEnabled = !hasAttachments || !composerSubmissionRunning;
+        if (!CanSelectAttachments())
+        {
+            UpdateAttachmentDropVisual(active: false);
+        }
     }
 
     private bool CanSelectAttachments() =>
         composerAvailable &&
         !composerSubmissionRunning &&
-        !attachmentSelectionRunning &&
+        !attachmentInputRunning &&
         MessageComposerTextBox.Text.Length == 0 &&
         composerMentions.Count == 0 &&
         composerAttachments.Count < ClientAttachmentMetadataPolicy.MaximumAttachmentsPerMessage;
@@ -1344,7 +1672,7 @@ public partial class MainWindow : Window
     {
         if (composerAttachments.Count != 0)
         {
-            composerContextVersion++;
+            AdvanceComposerContextVersion();
         }
 
         composerAttachments.Clear();
@@ -1381,6 +1709,26 @@ public partial class MainWindow : Window
             ClientAttachmentFileSelectionStatus.FileTooLarge => "单个附件不能超过 100 MiB。",
             ClientAttachmentFileSelectionStatus.Canceled => "文件检查已取消。",
             _ => "无法使用所选文件，请重新选择。",
+        };
+
+    private static string DescribeClipboardImageSelectionOutcome(
+        ClientAttachmentClipboardImageSelectionStatus status) =>
+        status switch
+        {
+            ClientAttachmentClipboardImageSelectionStatus.TooManyFiles =>
+                "一条消息最多选择 10 个附件。",
+            ClientAttachmentClipboardImageSelectionStatus.AggregateMemoryTooLarge =>
+                "剪贴板 PNG 的内存总量超过 25 MiB，请先移除其他截图。",
+            ClientAttachmentClipboardImageSelectionStatus.RawPixelsTooLarge =>
+                "剪贴板图片的像素数据超过 100 MiB，未添加附件。",
+            ClientAttachmentClipboardImageSelectionStatus.OutputTooLarge =>
+                "剪贴板图片编码后超过 25 MiB，未添加附件。",
+            ClientAttachmentClipboardImageSelectionStatus.Canceled =>
+                "剪贴板图片编码已取消。",
+            ClientAttachmentClipboardImageSelectionStatus.NoImage or
+                ClientAttachmentClipboardImageSelectionStatus.InvalidImage =>
+                "剪贴板图片无效，未添加附件。",
+            _ => "无法编码剪贴板图片，请稍后重试。",
         };
 
     private static string DescribeAttachmentSendOutcome(ClientMessageSendOutcome outcome) =>
@@ -1562,7 +1910,7 @@ public partial class MainWindow : Window
     {
         if (composerReplyConversationId.HasValue || composerReplyToMessageId.HasValue)
         {
-            composerContextVersion++;
+            AdvanceComposerContextVersion();
         }
 
         composerReplyConversationId = null;
@@ -1624,7 +1972,7 @@ public partial class MainWindow : Window
 
         if (hadSelectedMentions)
         {
-            composerContextVersion++;
+            AdvanceComposerContextVersion();
         }
     }
 
@@ -1638,7 +1986,7 @@ public partial class MainWindow : Window
 
         composerContextConversationId = conversationId;
         composerContextReady = isReady;
-        composerContextVersion++;
+        AdvanceComposerContextVersion();
         ClearComposerMentions(closePicker: true);
         ClearComposerAttachments();
     }

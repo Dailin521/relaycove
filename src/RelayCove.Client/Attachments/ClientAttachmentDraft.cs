@@ -1,16 +1,18 @@
+using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
 
 namespace RelayCove.Client.Attachments;
 
-internal sealed class ClientAttachmentFileSelection
+internal sealed class ClientAttachmentDraft
 {
-    internal ClientAttachmentFileSelection(
+    internal ClientAttachmentDraft(
         Guid draftId,
         ClientAttachmentUploadSource source,
         string displayName,
         string displaySize,
         bool isImage,
-        string pathIdentity)
+        string? filePathIdentity,
+        long retainedMemoryBytes)
     {
         DraftId = draftId != Guid.Empty
             ? draftId
@@ -22,10 +24,22 @@ internal sealed class ClientAttachmentFileSelection
         DisplaySize = !string.IsNullOrWhiteSpace(displaySize)
             ? displaySize
             : throw new ArgumentException("The attachment display size is required.", nameof(displaySize));
+        if (filePathIdentity is not null && string.IsNullOrWhiteSpace(filePathIdentity))
+        {
+            throw new ArgumentException(
+                "The file path identity cannot be empty.",
+                nameof(filePathIdentity));
+        }
+
+        if (retainedMemoryBytes is < 0 or
+            > ClientAttachmentMetadataPolicy.AbsoluteMaximumAttachmentSize)
+        {
+            throw new ArgumentOutOfRangeException(nameof(retainedMemoryBytes));
+        }
+
         IsImage = isImage;
-        PathIdentity = !string.IsNullOrWhiteSpace(pathIdentity)
-            ? pathIdentity
-            : throw new ArgumentException("The attachment path identity is required.", nameof(pathIdentity));
+        FilePathIdentity = filePathIdentity;
+        RetainedMemoryBytes = retainedMemoryBytes;
     }
 
     public Guid DraftId { get; }
@@ -38,10 +52,13 @@ internal sealed class ClientAttachmentFileSelection
 
     public bool IsImage { get; }
 
-    internal string PathIdentity { get; }
+    internal string? FilePathIdentity { get; }
+
+    internal long RetainedMemoryBytes { get; }
 
     public override string ToString() =>
-        $"{nameof(ClientAttachmentFileSelection)} {{ DraftId = [REDACTED], " +
+        $"{nameof(ClientAttachmentDraft)} {{ DraftId = [REDACTED], " +
         "Source = [REDACTED], DisplayName = [REDACTED], DisplaySize = [REDACTED], " +
-        "IsImage = [REDACTED], PathIdentity = [REDACTED] }";
+        "IsImage = [REDACTED], FilePathIdentity = [REDACTED], " +
+        "RetainedMemoryBytes = [REDACTED] }";
 }

@@ -2,13 +2,13 @@ namespace RelayCove.Client.Attachments;
 
 internal sealed record ClientAttachmentFileSelectionOutcome(
     ClientAttachmentFileSelectionStatus Status,
-    IReadOnlyList<ClientAttachmentFileSelection> Selections)
+    IReadOnlyList<ClientAttachmentDraft> Selections)
 {
-    private static readonly IReadOnlyList<ClientAttachmentFileSelection> NoSelections =
-        Array.Empty<ClientAttachmentFileSelection>();
+    private static readonly IReadOnlyList<ClientAttachmentDraft> NoSelections =
+        Array.Empty<ClientAttachmentDraft>();
 
     public static ClientAttachmentFileSelectionOutcome Success(
-        IReadOnlyList<ClientAttachmentFileSelection> selections) =>
+        IReadOnlyList<ClientAttachmentDraft> selections) =>
         new(ClientAttachmentFileSelectionStatus.Success, selections);
 
     public static ClientAttachmentFileSelectionOutcome Failure(
