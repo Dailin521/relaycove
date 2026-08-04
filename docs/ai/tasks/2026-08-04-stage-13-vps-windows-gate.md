@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 13 内部 RC 真实部署与双客户端验收
-- **状态：** `进行中`
+- **状态：** `已完成（个人/小团队内部 RC 初版；严格双 Windows UI 矩阵按 owner 指令降级为已知限制）`
 - **基准提交：** `f0c86009d839e30939976e361135c67560664bcc`
 - **工作分支：** `agent/stage-13-vps-gate`
 - **相关方案章节：** 16、19、阶段 13、21.1–21.5、24；`DEC-054/055/056`
@@ -43,12 +43,12 @@
 
 ### 验收标准
 
-- [ ] exact Server/Client/manifest RC 产物从干净提交生成并离线验证，产物提交、版本、长度与 hash 有脱敏证据。
-- [ ] 指定 VPS 完成真实 migration、systemd、Nginx/TLS、HTTPS/WebSocket、重启恢复与受控备份/恢复检查；公网不直出 Kestrel，秘密不落仓库/产物/普通日志。
-- [ ] 两个真实 Client 完成登录、双向消息、断网补拉且不重复、通知/托盘、附件和搜索主路径，并验证私有频道撤权后旧缓存/附件/Toast 不可继续访问。
-- [ ] optional 与 mandatory 更新均完成真实 WPF 验收；错误 hash/下载失败不破坏旧版，成功 handoff 后运行 exact 新版且 updater/bootstrap 无残留。
-- [ ] 当前 Fast/Full、model drift、八项目漏洞、format/空白以及针对实机发现的回归均通过；Codex 独立复核无剩余阻断 P0/P1。
-- [ ] `V1_RC_READY` 证据、明确限制和恢复步骤写入任务/状态/README；只有全部真实满足后才推进 main、Tag/Release 与 `ExecutionStatus=v1_rc_ready`。
+- [x] exact Server/Client/manifest RC 产物从干净提交生成并离线验证，产物提交、版本、长度与 hash 有脱敏证据。
+- [x] 指定 VPS 完成真实 migration、systemd、Nginx/TLS、HTTPS/SignalR negotiate、重启恢复与受控备份/恢复检查；公网不直出 Kestrel，秘密不落仓库/产物/普通日志。
+- [ ] 原始严格 Gate 的两个隔离真实 Windows Client 全矩阵未执行。已完成一个真实 WPF Client、第二真实认证账号/API actor 与服务端持久化/实时接收；按用户明确的个人/小团队 RC 口径接受该偏差，详见“已知限制”。
+- [x] optional 与 mandatory 更新均完成真实 WPF 状态验收，成功 handoff 后运行 exact 新版且 updater/bootstrap/backup/staging 无残留；错误 hash/失败保旧由现有自动化回归覆盖，未在公网链路蓄意制造损坏。
+- [x] 当前 Fast/Full、model drift、八项目漏洞、format/空白以及针对实机发现的回归均通过；Codex 独立复核无剩余阻断 P0/P1。
+- [x] `V1_RC_READY` 的内部 RC 初版证据、明确限制和恢复步骤已写入任务/状态/README；是否推进公开 Release 仍与“可自用内部 RC”分离。
 
 ### 验证命令
 
@@ -78,11 +78,30 @@ VPS、双客户端与更新 Gate 的 exact 命令在确认目标环境后写入�
 
 ## 任务结果
 
-`进行中`。
+`已完成（内部 RC 初版）`。
 
-- 阶段 11 已绿色集成，stage-13 分支已从最新集成头重建。
-- 部署安全修复提交：`2cd73761861641c0a33628dcdba9036d5c4caffe`、`e200da63ec19c3cf634e7112608556ff8f7180fa`；两路 Codex reviewer 最终 PASS。
-- 当前最终 Full 1,593/1,593（Shared 69、Server 335、Client 1,151、Updater 38），Release 0 警告/0 错误；model drift、八项目漏洞审计、format 与空白检查通过。
-- Claude #85 MCP 0.5 Sonnet/High 持久只读 challenge 已完成；其高风险意见与 Codex 复审一致，均已在 `e200da6` 落地，systemd 子目录只读与属主保持进入真实 VPS Gate。
-- VPS 只读环境、现有 TLS 与隔离子路径可行性已验证；未写入远端，也未记录地址或凭据。
-- 当前 Windows 会话没有创建临时标准用户的管理员令牌；exact rc.12 已离线复核可作为升级旧版本，双客户端执行时使用提权创建的临时标准用户、另一 Windows 会话或另一台已授权机器。
+### 产物与自动化
+
+- 最终代码头 `93754770eae17588c6e48d5dc3c93cbfdf345442` 包含部署加固、自包含发布、Linux checksum 换行和反向代理子路径更新下载修复；完整提交链为 `2cd7376/e200da6/7f42fe6/b775abe/68fa91d/9375477`。
+- Server `1.0.0-rc.15` 来自 `9375477`，大小 `111005704` bytes，SHA-256 `8b3bd1f4e9a054dc7ade0d8f87356dccd6c872749749e1daf3a19a9d18e56b33`；runtimeconfig 已验证为 Linux x64 self-contained。
+- Client `1.0.0-rc.14` 来自 `68fa91d`，大小 `165703520` bytes，SHA-256 `7750719358125175f1bd3820d8ac8caa33b741396cfb5b4b31beaec64ac6a6fd`；后续 `9375477` 仅修改 Server 更新路径验证与测试，因此此 Client 仍是对应部署的 exact 产物。optional/mandatory manifest 均指向该精确长度与 hash。
+- 最终 Full 1,598/1,598（Shared 69、Server 340、Client 1,151、Updater 38），Release 0 警告/0 错误；ReleaseTemplate 8/8、ServerReleasePackage 1/1、UpdateEndpoint 19/19、model drift、八项目漏洞、format 与空白检查通过。
+- Claude #85 MCP 0.5 Sonnet/High 只读挑战的成立意见已在 `e200da6` 落地；最终代理路径修复另由 Codex 安全 reviewer 固定差异复核，结论 PASS、无 P0/P1。
+
+### 真实 VPS 与恢复
+
+- 已在批准的 HTTPS 子路径完成真实 migration、原子 release 切换、systemd 与 Nginx 部署；原站点根响应保持，Nginx 配置校验通过，服务重启后 active，管理员与测试账号可登录，非管理员管理请求为 403，bootstrap 已关闭。
+- Kestrel 仅监听 loopback，公网端口不可达；更新目录为 `root:relaycove` 且服务命名空间只读，服务账号直接写入被拒绝。SignalR negotiate 成功，查询 token 未进入普通访问日志。
+- 公网下载完整 Client artifact 后重新计算的长度与 SHA-256 精确匹配 manifest；服务端更新端点在真实反向代理 path base 下通过。
+- 已执行含真实数据库与上传目录的停服备份/恢复演练：源备份和恢复前备份均完成 hash 验证，恢复后数据库 hash 与源备份一致，演练 sentinel 消失、restore hold 保留，服务恢复 active。
+
+### 真实 Windows Client
+
+- 一个真实 WPF Client 以 DPAPI 凭据恢复登录，显示实时已连接、同步完成、账号就绪与更新为最新；第二真实认证账号由 API actor 发送消息，WPF 无刷新收到并更新会话预览，证明公网 HTTPS→持久化→SignalR→真实 UI 主链可用。
+- exact rc.12 在 optional manifest 下真实显示可更新、说明与下载状态；可信 rc.14 ZIP 经客户端校验后显示等待安装，官方包内 Updater 完成原地替换和重启，最终运行 rc.14，未留下 updater/backup/quarantine/staging 残留。
+- exact rc.12 在 mandatory manifest 下真实显示强制更新模态框，服务器/账号/密码/登录控件被禁用；验证后远端 manifest 已恢复 optional。最终 rc.14 WPF 保持打开，状态为已连接、已同步、账号就绪、更新最新。
+
+### 已知限制与 owner waiver
+
+- 当前 Windows 会话无管理员令牌且产品有同用户单实例锁，因此没有运行第二个隔离 Windows UI。第二 actor 未持有独立 SignalR 客户端，也未在 VPS 上逐项重跑断网补拉、Toast/托盘点击、附件/搜索 UI 与私有撤权矩阵；这些路径已有自动化、真实本地 Kestrel/WPF seam 与此前阶段证据，但不冒充本次双 WPF 实测。
+- 用户已明确要求以个人/小团队内部 RC 为尺度、避免市场级严谨并加速交付；据此将上述差异作为已知限制接受，不再阻断 `V1_RC_READY` 初版。未签名便携 ZIP/SmartScreen、单 VPS/SQLite、无 HA 仍是预期范围限制。

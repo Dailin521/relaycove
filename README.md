@@ -4,7 +4,7 @@
 
 ### 面向小团队的轻量级、自托管 Windows 私域聊天工具
 
-[![Status](https://img.shields.io/badge/status-internal_RC_gate-orange.svg)](#项目状态)
+[![Status](https://img.shields.io/badge/status-internal_RC_ready-green.svg)](#项目状态)
 [![.NET](https://img.shields.io/badge/.NET-10-512BD4.svg)](https://dotnet.microsoft.com/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -27,7 +27,7 @@ RelayCove 为拥有自有 VPS 的小团队提供一套简单、可维护的私�
 ## 项目状态
 
 > [!IMPORTANT]
-> RelayCove 已进入内部 RC 实机门禁。登录、频道/私聊、可靠消息、附件、搜索、Windows 通知/托盘、管理员控制面和便携 ZIP 自动更新均已有可运行实现；真实 VPS/TLS 与双 Windows 客户端验收仍在 M5 进行中，尚不代表公开发布版本。
+> RelayCove 的个人/小团队内部 RC 初版已就绪。登录、频道/私聊、可靠消息、附件、搜索、Windows 通知/托盘、管理员控制面和便携 ZIP 自动更新均已有可运行实现；真实 VPS/TLS、备份恢复、一个真实 WPF Client 与更新升级主链已通过。第二个隔离 Windows UI 全矩阵未执行，属于明确接受的内部 RC 限制，不代表公开发布版本。
 
 当前代码通过统一 Fast/Full 门禁和完整自动化测试。详细范围请阅读 [RelayCove 工程落地方案](./RelayCove_工程落地方案.md)；实时执行状态、已验证证据和仍未完成的实机 Gate 见 [v1 外层执行状态](./docs/ai/V1_EXECUTION.md)。
 
@@ -118,7 +118,7 @@ relaycove/
 - [x] 完成 Windows 通知、托盘和任务栏闪烁闭环
 - [x] 完成聊天 UI、附件与搜索
 - [x] 完成管理员功能与便携 ZIP 自动更新
-- [ ] 完成真实 VPS/TLS 部署与双 Windows 客户端 M5 Gate
+- [x] 完成真实 VPS/TLS 部署与内部 RC M5 Gate（严格双 Windows UI 矩阵作为已知限制保留）
 
 开发顺序以“消息不丢、通知可靠”为第一优先级，界面与体验优化将在可靠闭环稳定后推进。
 

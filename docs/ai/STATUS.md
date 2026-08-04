@@ -4,11 +4,11 @@
 
 ## 当前状态
 
-- **当前阶段：** M5-02 — 从最新绿色集成头生成 exact rc.13，并执行香港 VPS 与双 Windows Client 实机 Gate
+- **当前阶段：** M5-02 已完成 — 个人/小团队内部 RC 初版可运行；严格双 Windows UI 全矩阵作为 owner 接受的已知限制
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮；M4-01 可复现 Linux x64 Server RC、M4-02 可复现 Windows Client 自包含 ZIP、M4-03 共享更新协议、确定性清单、外部自举 Updater 与真实 rc.6→rc.11 替换恢复，以及 M4-04 Server exact 托管、Client 检查/下载、optional/mandatory UI 和显式 Exit→Updater 交接均已完成
-- **最近验证通过的状态：** stage-13 deployment production `e200da6` 已完成 Nginx token 日志、只读更新供应链与可恢复备份边界；最终 Full 1,593 项、模板定向 8/8、model drift、八项目漏洞、format 与空白检查通过，两路 Codex 复审无剩余 P0–P2
+- **最近验证通过的状态：** stage-13 production `9375477` 已完成部署加固、自包含 Linux Server、Linux checksum 与反向代理 path-base 更新下载；最终 Full 1,598 项、发布/更新定向 28 项及独立安全复核通过。Server rc.15 与 Client rc.14 已在批准的 HTTPS 子路径完成真实部署、恢复演练、登录/实时 UI 与更新 Gate
 - **可构建状态：** `已验证` — Fast、Full 与 Release 构建均为 0 警告、0 错误
-- **自动化验证：** `已验证` — 最终 Full、format 与 1,593 项测试（Shared 69、Server 335、Client 1,151、Updater 38）通过；model drift 与八项目漏洞审计通过。覆盖管理授权/迁移/token 与 SignalR 代际、可复现 Server USTAR 与 Client ZIP、双层 manifest/SHA-256、Linux/Windows 发布、Updater、部署模板和更新交付闭环；香港 VPS 写入部署、真实账号、真实登录视觉/Narrator 与双客户端仍未验证
+- **自动化验证：** `已验证` — 最终 Full、format 与 1,598 项测试（Shared 69、Server 340、Client 1,151、Updater 38）通过；Release 0 警告/0 错误、model drift 与八项目漏洞审计通过。覆盖管理授权/迁移/token 与 SignalR 代际、可复现 Server USTAR 与 Client ZIP、双层 manifest/SHA-256、Linux/Windows 发布、Updater、部署模板和更新交付闭环
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
 - **最近 Claude 调用：** #85 已通过 MCP 0.5 持久任务完成 M5 更新供应链与备份恢复边界的唯一一次 Sonnet/High 只读挑战；其高风险意见均已由 `e200da6` 修正，两路 Codex 与本机验证复核通过，剩余要求进入 VPS 实测
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 阶段 11 已由 `f0c8600` 绿色集成并推送。stage-13 已从该头重建；`2cd7376/e200da6` 关闭 SignalR 查询令牌进入 Nginx 日志、服务写更新目录、半成品备份与不可恢复恢复等上线风险，两路 Codex 最终 PASS，模板定向 8/8 与 WSL 空状态备份恢复通过。VPS 复核确认 Ubuntu 22.04、Nginx 1.18、既有 TLS 与未占用 `/relaycove/` 前缀可用于受控子路径部署；下一步完成 Full、exact rc.13 产物与真实部署。
+- 无功能阻断。正在把 stage-13 最终证据仅快进合入 `agent/v1-integration`；是否再推进公开 main/Tag/Release 与严格第二 Windows UI 矩阵相互独立。
 
 ## 已完成
 
@@ -82,10 +82,11 @@
 - Server exact manifest/artifact 只读托管、Client 更新检查/受控下载/optional 与 mandatory 门禁、显式 Exit→Updater 交接和安全 smoke（`DEC-056`）
 - Windows 内最小管理面、账号逻辑退役与 HTTP/SignalR token 代际、频道软删除、状态和持久上传上限（`DEC-057`）
 - Nginx token 日志隔离、root-only 更新发布、完整可恢复备份和受控 HTTPS 子路径部署边界（`DEC-058`）
+- Server rc.15 / Client rc.14 exact 产物、真实 VPS/TLS/systemd、受控备份恢复、公网更新完整性、真实 WPF 登录/实时接收与 optional/mandatory→Updater 升级 Gate；内部 RC 初版按 owner 指令接受未执行严格双 Windows UI 全矩阵的限制
 
 ## 下一任务
 
-继续 M5 Gate：完成只读环境盘点，生成并验证 exact RC，在香港 VPS/TLS 部署后以两个隔离的真实 Windows Client 验收登录、消息、同步、通知、附件、搜索和更新；阻断项只做最小修复。
+仅快进 stage-13 证据到 `agent/v1-integration` 并推送；内部 RC 初版已可运行。公开 main/Tag/Release 或补第二 Windows UI 严格矩阵均为后续可选动作，不回退当前内部 RC 结论。
 
 ## 阻塞项
 

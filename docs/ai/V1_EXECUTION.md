@@ -5,15 +5,15 @@
 ## 当前快照
 
 ```text
-ExecutionStatus: running
+ExecutionStatus: v1_rc_ready
 CurrentMilestone: M5
-CurrentStage: M5-02 exact rc.13 与真实 VPS/双客户端 Gate
+CurrentStage: M5-02 complete — internal RC initial deployment and Windows gate
 ActiveTask: docs/ai/tasks/2026-08-04-stage-13-vps-windows-gate.md
-TaskStatus: in_progress
+TaskStatus: completed_with_owner_waiver
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: e200da63ec19c3cf634e7112608556ff8f7180fa
+LatestGreenCodeCommit: 93754770eae17588c6e48d5dc3c93cbfdf345442
 LatestGreenIntegrationCommit: f0c86009d839e30939976e361135c67560664bcc
-NextAction: 验证 stage-13 部署修复，生成并离线验证 exact rc.13，随后在批准 HTTPS 子路径部署并执行双客户端与更新 Gate
+NextAction: 将 stage-13 最终证据仅快进合入 agent/v1-integration；公开 main/Tag/Release 与严格第二 Windows UI 矩阵均为可选后续
 ClaudeCalls: 85（#1–#85 全部终态；#85 MCP 0.5 持久 Sonnet/High challenge 已读取并本地裁定）
 ClaudeCostUsd: 85.04138415 exact confirmed + 94.83 local CLI displayed（#44–#50/#74–#76/#81–#82）；按显示值合计约 179.87138415；其余未返回费用保持 unavailable
 Blocker: none
@@ -36,7 +36,7 @@ RequiredUserGate: none
 | M2 | `completed` | 阶段 9 附件纵向闭环与 Internal Alpha 证据包已由 `8ff8c15` 合入绿色集成分支 | 已进入 M3 |
 | M3 | `completed` | 权限化搜索 API、客户端 Global/Current 搜索、Around-first 跳转和一次性高亮已由 `8d8d5d2` 完成绿色集成，最终 Fast/Full 1,426/1,426 | 已进入 M4 |
 | M4 | `completed` | M4-01–M4-04 已由 `c69b983` 完成绿色集成，最终 Fast/Full 1,566/1,566 与更新交付 smoke 通过 | 已进入 M5 |
-| M5 | `running` | 阶段 11 已由 `f0c8600` 绿色集成；stage-13 `e200da6` 通过 Full 1,593 项与两路 PASS，VPS 的 Ubuntu/Nginx/TLS/资源与未占用 HTTPS 子路径已只读验证 | 生成 exact rc.13，完成真实 VPS/双 Windows Client/更新 Gate |
+| M5 | `completed` | stage-13 `9375477` 通过 Full 1,598 项与安全复核；Server rc.15 / Client rc.14 已完成真实 VPS/TLS/systemd、恢复演练、公网 artifact 完整性、真实 WPF 登录/实时接收、optional/mandatory 与 rc.12→rc.14 更新。严格双 Windows UI 全矩阵按 owner 的个人/小团队 RC 指令记录为已知限制 | 内部 RC 初版已就绪；公开发布与严格矩阵可选 |
 
 里程碑顺序来自当前 v1 执行目标；每个里程碑的功能口径和最终交付标准仍由工程方案、决策记录和对应最小纵向任务冻结，本文件不预写实现细节。
 
@@ -47,6 +47,7 @@ RequiredUserGate: none
 - 当前 M4-03 production `84b3b955afde3bda2a3830e2e2a8be3aacbea88b` 已通过干净 `1.0.0-rc.11` 双 ZIP 字节一致（`165651787` bytes，SHA-256 `b2ccbf1a6df10dc6f413cfd391f7c88ff9f7767944823a012c4ba19959e6cb17`）、真实外层 manifest generator/verifier、rc.6→rc.11 自举等待/替换/启动 smoke、Shared Updates 24/24、Updater 33/33、Packaging 13/13、Fast/Full 1,514/1,514（Shared 65、Server 302、Client 1,114、Updater 33）、Release 0 警告/0 错误、model drift、八项目漏洞审计、format/空白和多路 Codex 最终 `PASS`。启动前 `launching` 状态封闭执行后回滚窗口；Server 托管、Client 下载/UI/Exit 交接、自举目录精确清理和签名/VPS 保留到 M4-04/M5。
 - 当前 M4-04 绿色代码提交 `08417dafc3c88213712a71ed07940c00ea8a1543` 已完成 Server exact manifest/artifact 只读托管、Client 启动/手动检查、optional/mandatory 状态、受控下载与显式 Exit→Updater 交接。Shared/Server/Client/Updater 共 1,566 项测试通过（65/321/1,142/38），Fast 与 Full 通过；干净 `1.0.0-rc.12` exact ZIP（`165675267` bytes，SHA-256 `e623f38cd3df9c71a62d0eb7f4e86f5a6d69457f2fd0b9d044e6c19b80f057e0`）和安全的真实 Kestrel/发布目录 smoke 通过，并已由 `c69b983` 绿色集成；签名、真实 VPS/域名 TLS、真实登录视觉与双客户端 Gate 仍留在 M5。
 - 当前阶段 11 production `019b3a053a5d2e16cd60984c47d0fcecf72bb6bb` 已完成 Windows 管理 overlay、账号逻辑退役与 token 代际、频道/私有成员管理、服务器状态及持久上传上限。最终 Fast/Full 1,591 项（Shared 69、Server 333、Client 1,151、Updater 38）、Server 定向 147 项、Client 管理定向 6 项、model drift、八项目漏洞审计、format/空白检查通过；三路 Codex 复审无 P0/P1。瞬时 `/me` 失败需重新登录、频道切换瞬间成员名册可能需重选刷新，以及最后管理员并发矩阵未完整参数化，按内部 RC 接受为非阻断 P2。
+- 当前 M5 production `93754770eae17588c6e48d5dc3c93cbfdf345442` 已通过最终 Full 1,598 项（Shared 69、Server 340、Client 1,151、Updater 38）、Release 0 警告/0 错误、发布/更新定向 28 项、model drift、八项目漏洞、format/空白与 Codex 安全复核。Server `1.0.0-rc.15`（`111005704` bytes，SHA-256 `8b3bd1f4e9a054dc7ade0d8f87356dccd6c872749749e1daf3a19a9d18e56b33`）和 Client `1.0.0-rc.14`（`165703520` bytes，SHA-256 `7750719358125175f1bd3820d8ac8caa33b741396cfb5b4b31beaec64ac6a6fd`）已完成真实 VPS/TLS/systemd、备份恢复、公网完整性与 WPF 更新主链。一个真实 WPF + 第二认证 API actor 已证明登录、持久化与实时接收；严格第二 Windows UI、真实 Toast/附件/搜索/撤权公网矩阵未重跑，按 owner 的内部 RC 口径接受为已知限制。
 - 当前管理员引导代码检查点 `419ef00069c86c85b097a7961cebe95a16730cc5` 已通过 Fast、Full、100 项测试、真实 bootstrap/动态管理员授权/同名并发、密码与日志边界及依赖漏洞审计；Claude 无候选结论，已如实降级记录 Codex 固定差异自审。
 - 当前会话存储代码检查点 `1a3c49289940d625182237fddcd1954fc40983e9` 已通过 Fast、Full、116 项测试、真实 migration up/down/旧认证数据保留、约束/唯一/外键、model drift 与漏洞审计；Claude #20 无结论，已如实降级记录 Codex 固定差异复核。
 - 当前会话访问与成员 API 代码检查点 `b9b004109183e0157bca5c16f0acdaf7a39c8940` 已通过 Full、134 项测试、真实 HTTP/SQLite Direct 与成员并发、动态授权/撤权、共享访问查询、单查询、busy 503、model drift 与漏洞审计；Claude #21 无结论，已如实降级记录 Codex 固定差异复核。
@@ -191,9 +192,9 @@ RequiredUserGate: none
 
 ## 阻塞与用户 Gate
 
-- 当前阻塞：无；正生成 M5 exact rc.13 并部署到已批准 HTTPS 子路径。当前 Windows 会话无创建临时本地用户的管理员令牌，双客户端 Gate 若无法提权则切换另一真实 Windows 会话/机器，不削弱单实例约束。
+- 当前阻塞：无。批准的 HTTPS 子路径已完成真实部署与恢复演练；当前 Windows 会话无管理员令牌且产品保持同用户单实例约束，因此严格第二 Windows UI 矩阵未执行，已由 owner 按个人/小团队内部 RC 口径接受为已知限制。
 - 当前所需用户 Gate：无。
-- `进行中`：用户已提供仓库外的香港 Light-A2 协作应用主机配置汇总；M5 只最小读取所需配置，地址、密钥、凭据和 token 不提交到仓库或测试日志。
+- `已验证`：用户提供的仓库外香港协作应用主机已用于 M5；地址、密钥、凭据和 token 未提交到仓库或任务证据。
 - 只有 `AGENTS.md`、`WORKFLOW.md` 和 v1 执行目标列出的重大产品、不可逆、安全、凭据、真实体验或发布事项才请求用户裁决；普通工程实现由当前任务自行收敛。
 
 ## 恢复与更新规则
