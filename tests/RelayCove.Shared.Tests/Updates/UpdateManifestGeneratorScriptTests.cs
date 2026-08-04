@@ -19,6 +19,11 @@ public sealed class UpdateManifestGeneratorScriptTests
         Assert.DoesNotContain("ZipFile", script, StringComparison.Ordinal);
         Assert.DoesNotContain(".GetEntry(", script, StringComparison.Ordinal);
         Assert.Single(Regex.Matches(script, "\\$LASTEXITCODE", RegexOptions.CultureInvariant));
+        Assert.Contains("$verifyParameters = @{", script, StringComparison.Ordinal);
+        Assert.Contains("ExpectedCommit = $ExpectedCommit", script, StringComparison.Ordinal);
+        Assert.Contains("$verifyParameters.AllowDirtySource = $true", script, StringComparison.Ordinal);
+        Assert.Contains("& $verifyScript @verifyParameters", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("@verifyArguments", script, StringComparison.Ordinal);
         Assert.Contains("$verifySucceeded = $?", script, StringComparison.Ordinal);
     }
 
@@ -27,12 +32,15 @@ public sealed class UpdateManifestGeneratorScriptTests
     {
         var script = File.ReadAllText(GetScriptPath());
         var sizeLookup = script.IndexOf("$archiveInfo = Get-Item -LiteralPath $archivePath", StringComparison.Ordinal);
-        var verifierCall = script.IndexOf("& $verifyScript @verifyArguments", StringComparison.Ordinal);
+        var verifierParameters = script.IndexOf("$verifyParameters = @{", StringComparison.Ordinal);
+        var verifierCall = script.IndexOf("& $verifyScript @verifyParameters", StringComparison.Ordinal);
         var hashCall = script.IndexOf("Get-FileHash -LiteralPath $archivePath", StringComparison.Ordinal);
 
         Assert.True(sizeLookup >= 0);
+        Assert.True(verifierParameters > sizeLookup);
+        Assert.True(verifierCall > verifierParameters);
         Assert.True(verifierCall > sizeLookup);
-        Assert.True(hashCall > sizeLookup);
+        Assert.True(hashCall > verifierCall);
     }
 
     [Fact]
