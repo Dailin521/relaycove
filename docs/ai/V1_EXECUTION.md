@@ -12,8 +12,8 @@ ActiveTask: docs/ai/tasks/2026-08-04-stage-13-vps-windows-gate.md
 TaskStatus: completed_with_owner_waiver
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 93754770eae17588c6e48d5dc3c93cbfdf345442
-LatestGreenIntegrationCommit: f0c86009d839e30939976e361135c67560664bcc
-NextAction: 将 stage-13 最终证据仅快进合入 agent/v1-integration；公开 main/Tag/Release 与严格第二 Windows UI 矩阵均为可选后续
+LatestGreenIntegrationCommit: 97e6db2b7c057c78e9397b13e819726d5492cf16
+NextAction: 内部 RC 初版已就绪；公开 main/Tag/Release 与严格第二 Windows UI 矩阵均为可选后续
 ClaudeCalls: 85（#1–#85 全部终态；#85 MCP 0.5 持久 Sonnet/High challenge 已读取并本地裁定）
 ClaudeCostUsd: 85.04138415 exact confirmed + 94.83 local CLI displayed（#44–#50/#74–#76/#81–#82）；按显示值合计约 179.87138415；其余未返回费用保持 unavailable
 Blocker: none

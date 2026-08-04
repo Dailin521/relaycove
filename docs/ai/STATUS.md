@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 无功能阻断。正在把 stage-13 最终证据仅快进合入 `agent/v1-integration`；是否再推进公开 main/Tag/Release 与严格第二 Windows UI 矩阵相互独立。
+- 无。stage-13 最终证据已仅快进合入并推送 `agent/v1-integration`；公开 main/Tag/Release 与严格第二 Windows UI 矩阵均为独立的可选后续。
 
 ## 已完成
 
@@ -86,7 +86,7 @@
 
 ## 下一任务
 
-仅快进 stage-13 证据到 `agent/v1-integration` 并推送；内部 RC 初版已可运行。公开 main/Tag/Release 或补第二 Windows UI 严格矩阵均为后续可选动作，不回退当前内部 RC 结论。
+内部 RC 初版已可运行。下一步可按需要选择公开 main/Tag/Release，或补第二 Windows UI 严格矩阵；两者都不回退当前内部 RC 结论。
 
 ## 阻塞项
 
