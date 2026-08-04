@@ -99,6 +99,65 @@ public sealed class ClientUpdateHandoffTests
     }
 
     [Fact]
+    public void TryDeleteOwnedBootstrap_WhenExactMarkerMatches_DeletesOnlyExactDirectory()
+    {
+        var root = CreateTemporaryRoot();
+        var appDirectory = Path.Combine(root, "RelayCove");
+        Directory.CreateDirectory(appDirectory);
+        const string ownedToken = "0123456789abcdef0123456789abcdef";
+        const string unrelatedToken = "fedcba9876543210fedcba9876543210";
+        var ownedDirectory = CreateOwnedBootstrap(root, ownedToken);
+        var unrelatedDirectory = CreateOwnedBootstrap(root, unrelatedToken);
+        var unrelatedFile = Path.Combine(root, ".relaycove-updater-not-owned.txt");
+        File.WriteAllText(unrelatedFile, "keep", new UTF8Encoding(false));
+        try
+        {
+            Assert.True(App.TryDeleteOwnedBootstrap(ownedToken, appDirectory, root));
+
+            Assert.False(Directory.Exists(ownedDirectory));
+            Assert.True(Directory.Exists(unrelatedDirectory));
+            Assert.True(File.Exists(unrelatedFile));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TryDeleteOwnedBootstrap_WhenUpdaterIsLocked_PreservesMarkerAndRetries()
+    {
+        Assert.True(OperatingSystem.IsWindows());
+        var root = CreateTemporaryRoot();
+        var appDirectory = Path.Combine(root, "RelayCove");
+        Directory.CreateDirectory(appDirectory);
+        const string token = "0123456789abcdef0123456789abcdef";
+        var ownedDirectory = CreateOwnedBootstrap(root, token);
+        var updaterPath = Path.Combine(ownedDirectory, "RelayCove.Updater.exe");
+        var markerPath = Path.Combine(ownedDirectory, ".relaycove-bootstrap-owner");
+        try
+        {
+            using (new FileStream(
+                updaterPath,
+                FileMode.Open,
+                FileAccess.ReadWrite,
+                FileShare.None))
+            {
+                Assert.False(App.TryDeleteOwnedBootstrap(token, appDirectory, root));
+                Assert.True(File.Exists(updaterPath));
+                Assert.True(File.Exists(markerPath));
+            }
+
+            Assert.True(App.TryDeleteOwnedBootstrap(token, appDirectory, root));
+            Assert.False(Directory.Exists(ownedDirectory));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void AddUpdaterArguments_WhenArchiveIsVerified_UsesExactBootstrapContract()
     {
         var startInfo = new ProcessStartInfo();
@@ -160,6 +219,28 @@ public sealed class ClientUpdateHandoffTests
         window.Show();
         window.Dispatcher.Invoke(static () => { }, DispatcherPriority.Loaded);
         return window;
+    }
+
+    private static string CreateTemporaryRoot()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "RelayCove.UpdateHandoff.Tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        return root;
+    }
+
+    private static string CreateOwnedBootstrap(string packageParent, string token)
+    {
+        var directory = Path.Combine(packageParent, ".relaycove-updater-" + token);
+        Directory.CreateDirectory(directory);
+        File.WriteAllBytes(Path.Combine(directory, "RelayCove.Updater.exe"), [1, 2, 3]);
+        File.WriteAllText(
+            Path.Combine(directory, ".relaycove-bootstrap-owner"),
+            "relaycove-bootstrap-owner:" + token,
+            new UTF8Encoding(false));
+        return directory;
     }
 
     private static ClientUpdateState CreateMandatoryState()

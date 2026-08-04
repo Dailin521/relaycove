@@ -980,11 +980,37 @@ public partial class App : System.Windows.Application
 
     private bool TryDeleteOwnedBootstrap(string token)
     {
+        var appDirectory = Path.TrimEndingDirectorySeparator(
+            Path.GetFullPath(AppContext.BaseDirectory));
+        var packageParent = Directory.GetParent(appDirectory)?.FullName;
+        return packageParent is not null && TryDeleteOwnedBootstrap(
+            token,
+            appDirectory,
+            packageParent);
+    }
+
+    internal static bool TryDeleteOwnedBootstrap(
+        string token,
+        string appDirectory,
+        string packageParent)
+    {
         try
         {
-            var appDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(AppContext.BaseDirectory));
-            var packageParent = Directory.GetParent(appDirectory)?.FullName;
-            if (string.IsNullOrWhiteSpace(packageParent) || IsReparsePoint(packageParent))
+            ArgumentException.ThrowIfNullOrWhiteSpace(appDirectory);
+            ArgumentException.ThrowIfNullOrWhiteSpace(packageParent);
+            if (!IsBootstrapToken(token))
+            {
+                return false;
+            }
+
+            appDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(appDirectory));
+            packageParent = Path.TrimEndingDirectorySeparator(Path.GetFullPath(packageParent));
+            if (!string.Equals(
+                    Directory.GetParent(appDirectory)?.FullName,
+                    packageParent,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !Directory.Exists(packageParent) ||
+                IsReparsePoint(packageParent))
             {
                 return false;
             }
