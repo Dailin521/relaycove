@@ -703,7 +703,7 @@ try {
     $archiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
     [System.IO.File]::WriteAllText(
         "$archivePath.sha256",
-        "$archiveHash  $archiveFileName$([System.Environment]::NewLine)",
+        "$archiveHash  $archiveFileName`n",
         [System.Text.UTF8Encoding]::new($false))
 
     New-Item -ItemType Directory -Path (Split-Path -Parent $finalContainer) -Force | Out-Null

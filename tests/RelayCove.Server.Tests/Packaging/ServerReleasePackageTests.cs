@@ -85,7 +85,10 @@ public sealed partial class ServerReleasePackageTests
         AssertArchiveDoesNotContainDynamicPaxHeaders(archivePath);
         using var archiveForHash = File.OpenRead(archivePath);
         var archiveHash = Convert.ToHexString(SHA256.HashData(archiveForHash)).ToLowerInvariant();
-        var sidecarText = File.ReadAllText(sidecarPath).Trim();
+        var sidecarBytes = File.ReadAllBytes(sidecarPath);
+        Assert.DoesNotContain((byte)'\r', sidecarBytes);
+        Assert.Equal((byte)'\n', sidecarBytes[^1]);
+        var sidecarText = System.Text.Encoding.UTF8.GetString(sidecarBytes).TrimEnd('\n');
         Assert.Matches($"^{archiveHash}  {Regex.Escape(System.IO.Path.GetFileName(archivePath))}$", sidecarText);
 
         var fileRecords = ReadArchive(archivePath, packageName, out var manifestText);
