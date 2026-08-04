@@ -9,11 +9,11 @@ ExecutionStatus: running
 CurrentMilestone: M3
 CurrentStage: 阶段 10
 ActiveTask: docs/ai/tasks/2026-08-04-stage-10-search-ui.md
-TaskStatus: in_progress
+TaskStatus: completed
 IntegrationBranch: agent/v1-integration
-LatestGreenCodeCommit: 4c4edbab9fd8a3178d39cd7fbddd49c36c16c82c
+LatestGreenCodeCommit: f85c5442cdaa42d690eead32dffda5b20006f4df
 LatestGreenIntegrationCommit: 883e55afb8bf150b03f2d20719a215632693b09f
-NextAction: 实现客户端 current/global 显式搜索、Around-first 重新授权跳转与一次性高亮
+NextAction: 提交 M3 证据交接并仅快进 agent/v1-integration，随后启动 M4 RC 发布自动化切片
 ClaudeCalls: 80（#1–#79 全部终态；#80 本机后台持久 Sonnet/High 只读任务运行中）
 ClaudeCostUsd: 83.12343525 exact confirmed + 76.68 local CLI displayed（#44–#50/#74–#76）；按显示值合计约 159.80343525；另有四十一次失败/中断调用费用 unavailable
 Blocker: none
@@ -34,7 +34,7 @@ RequiredUserGate: none
 | M0 | `completed` | 同步契约、`DEC-003`、解决方案和真实 Fast/Full 验证均通过 | 已进入 M1 |
 | M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
 | M2 | `completed` | 阶段 9 附件纵向闭环与 Internal Alpha 证据包已由 `8ff8c15` 合入绿色集成分支 | 已进入 M3 |
-| M3 | `running` | 权限化中文/附件名搜索 Shared+Server API 已由 `883e55a` 合入绿色集成分支；客户端搜索闭环已启动 | 完成客户端 current/global 搜索、Around-first 跳转与高亮的 Beta 证据 |
+| M3 | `running` | 权限化搜索 API 已合入；客户端 Global/Current 搜索、Around-first 跳转和一次性高亮在 `f85c544` 完成最终验证，待交接提交仅快进集成 | 完成绿色集成并进入 M4 |
 | M4 | `pending` | 尚未开始 | RC 自动化、包与发布材料完整 |
 | M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
 
@@ -86,6 +86,7 @@ RequiredUserGate: none
 - 当前本地图片预览 production 检查点 `fabe16c28476237a1ed9d91f26a6738d09057c0f` 已通过最终 Full 1,267 项（Shared 39、Server 255、Client 972、Updater 1）、图片/附件/MessageListPresenter/AccountShell 定向 218/218、真实 PNG/JPEG 与预算/超时/撤权/ABA/recycling/viewer/focus 回归、model drift、八项目漏洞审计、format 与空白检查。两路 Codex 独立复审的 owner cleanup、critical cleanup、snapshot materialize 与自动焦点问题均已修复并补回归；Claude #77 的成立意见经 Codex 复算收敛为 `DEC-050`。直接打开文件与真实登录/VPS/双客户端保持后续或 M5 Gate。
 - 当前安全关联应用打开 production 检查点 `f8c3dcd22c40ec511665314b5daf07a58a798a9d` 已通过最终 Fast/Full 1,348 项（Shared 39、Server 255、Client 1,053、Updater 1）、附件/MessageListPresenter/AccountShell 定向 271/271、真实无害文本 MOTW/Attachment Manager 探针 1/1、Release WPF 响应窗口、model drift、八项目漏洞审计、format 与空白检查。两路 Codex 独立复审均无 P0–P2；三阶段 Prepare→commit/foreground acknowledgement→`ExecuteRelease` 已证明 COM 前 SQLite/cache/coordinator/shell gate 全部退出，边界收敛为 `DEC-051`。Claude #78 在答案前失败且无可用结果，按单次策略未重试；真实登录视觉/Narrator、恶意样本与 VPS/双客户端保持 M5 Gate。
 - 当前权限化搜索 production 检查点 `4c4edbab9fd8a3178d39cd7fbddd49c36c16c82c` 已通过最终 Fast/Full 1,378 项（Shared 41、Server 283、Client 1,053、Updater 1）、Search 定向 30/30、真实 HTTP/SQLite 的权限/Unicode/附件/LIKE/snippet/限流回归、model drift、八项目漏洞审计、format 与空白检查。安全与协议两路 Codex reviewer 首轮各发现一个 P2，限流和真实 SQLite 大小写等价用例修正后二轮均 `PASS`、无剩余 P0–P2；边界收敛为 `DEC-052`。Claude #79 在答案前失败且无可用结果，按单次策略未重试；客户端搜索 UI 与 VPS/双客户端保持后续/M5 Gate。
+- 当前客户端搜索 production `87b4af63a9ee5d3ae1c3df3c2f416f51fa30e929` 与认证失效修正 `f85c5442cdaa42d690eead32dffda5b20006f4df` 已通过 Search 107/107、WPF 搜索展示 10/10、账户壳 85/85、最终 Fast/Full 1,426/1,426（Shared 41、Server 283、Client 1,101、Updater 1）、Release 0 警告/0 错误、真实 WPF lifecycle、model drift、八项目漏洞审计、format 与空白检查。两路 Codex reviewer 的后台失效、虚拟化测试和慢 logout 残留发现均已修正并复审关闭，无剩余 P0–P2；边界收敛为 `DEC-053`。Claude #80 仍在后台持久只读运行，完成后读取并由 Codex 本地裁定，不阻塞绿色集成。
 - `LatestGreenCodeCommit` 只记录已经通过任务要求的真实源代码提交；后续若验证失败，不得推进该值或集成分支。
 - 用户已明确预授权绿色任务 push、仅快进合入集成分支、任务分支清理，以及在对应 Gate 条件真实满足后的 `main` 合并、Tag/Release、真实发布和生产部署，均无需二次确认；未满足 Gate 时不得提前执行。
 

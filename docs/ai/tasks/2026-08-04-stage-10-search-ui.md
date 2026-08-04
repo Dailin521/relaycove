@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 10 current/global 搜索客户端闭环
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `883e55afb8bf150b03f2d20719a215632693b09f`
 - **工作分支：** `agent/stage-10-search-ui`
 - **相关方案章节：** 9.2–9.4、12.8、15、阶段 10、21.4；`DEC-012/017/018/025/032/033/034/052`
@@ -18,7 +18,7 @@
 - `已验证`：服务端协议是 `GET /api/search?keyword=...&conversationId=optional&limit=50`；省略 conversation 表示全局，指定不可见会话稳定 403，结果按 Message ID 降序且最多 50 项。
 - `已验证`：Client 已有 Bearer + 一次 refresh + 有界 JSON transport 范式；runtime/factory 已组合 history、mention、send 等 coordinator；shell 的 `RuntimeSubscription` 对象身份和 `MessageSelection` token 是现有 A→B→A 与迟到结果提交门。
 - `已验证`：`SelectConversation(conversationId, targetMessageId)` 会先发布本地消息，只有本地缺目标才调用 Around。旧搜索结果在服务端已撤权而本地事件未到的窗口内不能直接复用该同步入口，否则可能短暂显示旧缓存。
-- `已验证`：Around 已执行当前服务端授权、稳定 403 durable revoke、协议校验和原子缓存合并；WPF 已依据 `TargetMessageId` 做一次滚动，但当前没有搜索 UI 或视觉高亮。
+- `已验证`：Around 已执行当前服务端授权、稳定 403 durable revoke、协议校验和原子缓存合并；本任务基线的 WPF 仅依据 `TargetMessageId` 做一次滚动，当时尚无搜索 UI 或视觉高亮。
 - `已验证`：三路 Codex 只读调查/挑战已完成。可靠性挑战要求 runtime subscription + request serial、结果对象 identity lease、点击前无条件 Around、撤权即时清结果和 recycling-safe 高亮。
 - `已记录`：本决策唯一一次 Claude #80 已以本机 Claude Code 2.1.221 后台持久 Sonnet/High 只读任务 `213daa77` 启动，工具限于 Read/Glob/Grep；主线不等待其阻塞，完成后读取并由 Codex 本地裁定。
 
@@ -50,13 +50,13 @@
 
 ### 验收标准
 
-- [ ] Global/Current 显式搜索使用准确 scope；中文完整/部分词、附件名和结果字段可展示，附件-only 行可理解，空/HasMore/429/错误状态明确。
-- [ ] 401 refresh 恰好一次；稳定/普通 403、429、timeout、取消、协议错误分离；payload/字段/顺序/唯一性严格验证且所有日志/`ToString()` 脱敏。
-- [ ] query1/query2 乱序、current A→B→A、同 AccountScopeId 的 runtime A→B→A、忽略取消 handler 均不能提交旧结果。
-- [ ] 结果显示后任一 ConversationStateChanged、撤权、注销或 runtime 替换立即清空；Current 选择变化 stale，Global 不依赖当前选择。
-- [ ] 目标已在本地也先 Around；Around 成功前零选择/缓存展示，稳定 403 durable revoke，其他失败零导航；成功后只请求一次 Around 并精确定位。
-- [ ] recycling 容器真实生成后只高亮一次，约 2 秒后恢复；刷新/回收/新导航/撤权/A→B→A 不复用旧高亮，生成失败不声明成功或推进目标已读。
-- [ ] Client 定向、Fast、最终 Full、model drift、依赖漏洞、空白检查、两路独立 Codex 复核和真实 Release WPF lifecycle/搜索控件 smoke 通过；没有 schema、依赖或无关改动。
+- [x] Global/Current 显式搜索使用准确 scope；中文完整/部分词、附件名和结果字段可展示，附件-only 行可理解，空/HasMore/429/错误状态明确。
+- [x] 401 refresh 恰好一次；稳定/普通 403、429、timeout、取消、协议错误分离；payload/字段/顺序/唯一性严格验证且所有日志/`ToString()` 脱敏。
+- [x] query1/query2 乱序、current A→B→A、同 AccountScopeId 的 runtime A→B→A、忽略取消 handler 均不能提交旧结果。
+- [x] 结果显示后任一 ConversationStateChanged、撤权、注销或 runtime 替换立即清空；Current 选择变化 stale，Global 不依赖当前选择。
+- [x] 目标已在本地也先 Around；Around 成功前零选择/缓存展示，稳定 403 durable revoke，其他失败零导航；成功后只请求一次 Around 并精确定位。
+- [x] recycling 容器真实生成后只高亮一次，约 2 秒后恢复；刷新/回收/新导航/撤权/A→B→A 不复用旧高亮，生成失败不声明成功或推进目标已读。
+- [x] Client 定向、Fast、最终 Full、model drift、依赖漏洞、空白检查、两路独立 Codex 复核和真实 Release WPF lifecycle/搜索控件 smoke 通过；没有 schema、依赖或无关改动。
 
 ### 验证命令
 
@@ -89,4 +89,12 @@ Claude #80 只读后台运行；普通实现/审查使用 Codex，任何意见�
 
 ## 任务结果
 
-`进行中`。实现、独立复核与最终验证完成后填写生产提交、证据、限制和下一步。
+`已完成`。
+
+- 生产提交：`87b4af63a9ee5d3ae1c3df3c2f416f51fa30e929`（客户端显式搜索、transport/coordinator、runtime/shell、WPF 与回归）；`f85c5442cdaa42d690eead32dffda5b20006f4df`（认证失效进入慢 logout 前同步清除搜索结果）。
+- 功能结果：Windows 客户端可显式选择 Global 或 Current 搜索正文/附件原名，展示有界结果；点击结果始终先经 Around 重新授权，成功后精确打开消息并在真实虚拟化容器上高亮约两秒。搜索结果绑定 exact runtime/subscription/request/selection/result identity，撤权、会话变化、注销和 runtime 替换同步清空。
+- 自动化：Search 定向 Debug 107/107（Shared 2、Server 28、Client 77），WPF 搜索展示 Release 10/10，账户壳定向 85/85；Fast 与最终 Full 均为 1,426/1,426（Shared 41、Server 283、Client 1,101、Updater 1），Release 构建 0 警告/0 错误，format 与 `git diff --check` 通过。
+- 发布前检查：EF model drift 无变化；8 个项目 direct/transitive 漏洞审计无已知漏洞。真实 Release WPF lifecycle 已验证主窗口 `RelayCove` 可响应、第二实例正常退出且测试后无残留进程；登录态搜索视觉与 Narrator、VPS 和双客户端仍按计划保留到 M5 Gate。
+- 复核：transport/runtime 交叉复核最终 `PASS`、无 P0–P2；可靠性挑战发现的后台失效窗口和认证失效慢 logout 残留均已修正、补回归并由原 reviewer 复审关闭，无剩余 P0–P2。
+- Claude #80：本机 Claude Code 2.1.221 后台持久 Sonnet/High 只读任务 `213daa77` 仍在运行；按既定非阻塞策略，完成后读取并由 Codex 复算，若有成立问题在后续绿色分支修正。
+- 边界：未改 Shared/Server/API/schema/migration 或生产依赖；不提供 typeahead、本地搜索、持久搜索结果或相关性排序。

@@ -644,3 +644,15 @@
 - **理由：** 以唯一 Message 为查询根并把可见性嵌入结果 SQL，使动态撤权和附件匹配都不能在限额前扩大或泄漏结果；字面转义与明确大小写契约让 SQL 命中和 snippet 可由真实 SQLite 回归固定。响应上限约束输出，subject 限流约束重复扫描，在约 20 人首版规模下避免过早引入 FTS/migration。
 - **影响：** Shared 增加脱敏 search response/result，Server 增加 validator、权限化 query、endpoint 与限流，无 schema、migration、生产依赖或客户端变化。客户端 current/global 搜索、迟到撤权门、Around 跳转和一次性高亮进入下一切片；本地缓存搜索、自动 typeahead、完整 Unicode case-fold 和 VPS Gate 不在本决策范围。
 - **来源：** 工程方案第 1.5、4.1、11.2、12.8、15、阶段 10、21.4；`DEC-003/009/010/012/040/043`；SQLite 与 EF Core SQLite 官方 `LIKE`/`ESCAPE` 契约；`docs/ai/tasks/2026-08-04-stage-10-search-api.md`；production `4c4edbab9fd8a3178d39cd7fbddd49c36c16c82c`；最终 Search 30/30、Fast/Full 1,378/1,378（Shared 41、Server 283、Client 1,053、Updater 1）、真实 HTTP/SQLite 权限/大小写/snippet/限流回归、model drift、八项目漏洞审计、format 与空白检查。安全与协议两路 Codex reviewer 的 P2 均已修正并复审 `PASS`；Claude #79 在正式答案前失败且无可用结论，按单次策略未重试。
+
+### DEC-053：客户端搜索结果以 identity lease、Around-first 重授权与 UI-only 高亮交付
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** 服务端搜索只保证响应产生时的可见性；客户端若以 conversation/message 值、旧缓存或延迟 dispatcher 回调复用结果，撤权、A→B→A、忽略取消的 HTTP handler 和 WPF recycling 都可能把旧内容提交到新上下文。目标消息即使已在本地，也不能把搜索时授权当作点击时授权。
+- **决策：** 搜索仅由按钮或 Enter 显式触发并只查询服务端。Current scope 必须绑定当前 Ready `MessageSelection`，Global 始终发送空 conversation 且不绑定 selection。每次请求和提交同时绑定 exact runtime `RuntimeSubscription`、单调 serial、scope、当前权威会话集合；已提交结果再以 DTO 对象身份作为 navigation lease。新搜索、输入/scope 改变、`ConversationStateChanged`、撤权、注销或 runtime 替换都先同步取消 flight、递增 serial 并清空结果，旧响应和迟到 UI 回调不得复活。
+- **决策：** 点击任一结果都对 exact conversation/message 无条件调用一次 Around；只有 Around `Completed`、目标一致、缓存提交成功且 post-await 仍满足同一 runtime/subscription/request/result identity 和权威会话门时，才发布 selection。401 结束认证会话并在慢 logout 前同步清搜索；稳定 scoped 403 复用 durable revoke；普通 403、429、取消、timeout、I/O、协议错误和过期结果均零导航。成功 Around 作为一次性预加载交给新 selection，避免为了同一目标重复请求。
+- **决策：** 高亮只存在于 WPF 内存展示层，绑定 exact conversation/message/navigation generation 和真实已 materialize、DataContext 仍匹配的虚拟化容器；约两秒后恢复，回收、新导航、会话/runtime 变化、撤权、窗口关闭或 materialize 失败立即清除。只有真实目标容器可见后才确认导航应用和 read-through；高亮不进入 SQLite、snapshot、服务端或持久状态。
+- **理由：** 对象身份与单调 generation 封闭表面值相同的 ABA，Around-first 把点击线性化到当前服务端授权，同步失效消除 dispatcher 排队期间的敏感可见窗口；UI-only 容器租约避免虚拟化把视觉与已读回执施加到错误消息。
+- **影响：** Client 新增搜索 policy、HTTP transport/coordinator、runtime/shell/WPF surface 与测试；不改 Shared/Server/API/schema/migration，不新增生产依赖，也不提供 typeahead、本地搜索、持久结果、相关性或 cursor。真实登录视觉/Narrator、VPS 与双客户端留到 M5 Gate。
+- **来源：** 工程方案第 9.2–9.4、12.8、15、阶段 10、21.4；`DEC-012/017/018/025/032/033/034/052`；`docs/ai/tasks/2026-08-04-stage-10-search-ui.md`；production `87b4af63a9ee5d3ae1c3df3c2f416f51fa30e929` 与 `f85c5442cdaa42d690eead32dffda5b20006f4df`；最终 Search 107/107、WPF 搜索展示 10/10、账户壳 85/85、Fast/Full 1,426/1,426（Shared 41、Server 283、Client 1,101、Updater 1）、真实 Release WPF lifecycle、model drift、八项目漏洞审计、format 与空白检查。两路 Codex reviewer 的发现均已修正并复审关闭、无剩余 P0–P2；Claude #80 仍在后台运行，完成后读取并本地裁定。

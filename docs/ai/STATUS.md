@@ -5,10 +5,10 @@
 ## 当前状态
 
 - **当前阶段：** 阶段 10 — 搜索
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 受权限约束的中文/Unicode 消息正文与附件原名搜索 Shared/Server API 已完成
-- **最近验证通过的状态：** 搜索 production 检查点 `4c4edbab9fd8a3178d39cd7fbddd49c36c16c82c` 与交接头 `883e55afb8bf150b03f2d20719a215632693b09f` 已通过最终 Fast/Full 1,378/1,378、Search 定向 30/30、两路独立复审、真实 HTTP/SQLite 权限/LIKE/snippet/限流回归、model drift、依赖漏洞、format 与空白检查，并已仅快进合入本地/远端 `agent/v1-integration`
+- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮已完成
+- **最近验证通过的状态：** 客户端搜索 production `87b4af63a9ee5d3ae1c3df3c2f416f51fa30e929` 与认证失效修正 `f85c5442cdaa42d690eead32dffda5b20006f4df` 已通过 Search 107/107、WPF 搜索展示 10/10、账户壳 85/85、Fast/Full 1,426/1,426、两路独立复审、真实 Release WPF lifecycle、model drift、依赖漏洞、format 与空白检查；待本次交接提交后仅快进合入 `agent/v1-integration`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
-- **自动化验证：** `已验证` — 当前最终 Fast/Full、format 与 1,378 项测试（Shared 41、Server 283、Client 1,053、Updater 1）通过；Search 定向 30/30。覆盖中文/Unicode、正文/附件原名、权限内嵌、撤权、LIKE 字面转义、ASCII/非 ASCII 大小写语义、唯一消息限额、snippet、日志脱敏和每 subject 稳定 429；客户端搜索 UI、真实登录视觉/Narrator 与 VPS 保持未验证
+- **自动化验证：** `已验证` — 当前最终 Fast/Full、format 与 1,426 项测试（Shared 41、Server 283、Client 1,101、Updater 1）通过；Search 定向 107/107、WPF 搜索展示 10/10、账户壳 85/85。覆盖服务端权限/Unicode/附件/LIKE/snippet/限流，以及客户端 scope、refresh/错误分类、迟到结果、撤权/注销同步清理、Around-first、虚拟化高亮与 UIA 脱敏；真实登录视觉/Narrator、VPS 与双客户端保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
 - **最近 Claude 调用：** `运行中` — 客户端搜索撤权/迟到结果/Around-first 决策唯一一次 #80 已通过本机 Claude Code 2.1.221 后台持久任务 `213daa77` 以 Sonnet/High 发起，仓库只读且工具限于 Read/Glob/Grep；主线继续并行，完成后读取并由 Codex 本地裁定
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- M3 的 Shared/Server 搜索 API 已由 `883e55a` 合入绿色集成分支；当前 `agent/stage-10-search-ui` 正在实现客户端 current/global 显式搜索、runtime/request lease、Around-first 重新授权跳转与一次性高亮。仍不读取 VPS 配置。
+- M3 客户端搜索代码、复核和自动化已完成；当前 `agent/stage-10-search-ui` 正在完成证据交接并仅快进绿色集成分支。Claude #80 按非阻塞策略后台运行，完成后读取；仍不读取 VPS 配置。
 
 ## 已完成
 
@@ -73,10 +73,11 @@
 - 内置 PNG/JPEG 有界解码、账户 scope 并发/超时所有权、最终授权提交与 WPF 缩略图/单查看器生命周期（`DEC-050`）
 - Restricted Zone 临时副本、三阶段 STA job、Windows Attachment Manager 关联应用打开与受控 cleanup（`DEC-051`）
 - 权限内嵌的消息/附件字面搜索、唯一消息限额、Unicode-safe snippet 与按 subject 零排队限流（`DEC-052`）
+- 客户端搜索 runtime/request/result identity lease、Around-first 重新授权与 recycling-safe UI-only 高亮（`DEC-053`）
 
 ## 下一任务
 
-完成客户端 current/global 搜索、Around-first 跳转和短暂高亮的自动化与真实 WPF smoke，形成 M3 Beta 证据。真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
+完成 M3 绿色集成后进入 M4，先冻结并交付可复现的 RC 发布自动化与发布材料；真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
 
 ## 阻塞项
 
