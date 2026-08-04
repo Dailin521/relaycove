@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 9 客户端附件消息接收与账户隔离本地元数据
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `2fd2f418103fa550275fab9fc039017ee9557b9b`
 - **工作分支：** `agent/stage-9-client-attachment-ingestion`
 - **相关方案章节：** 3.4、12.3、12.6–12.8、13.1、14、阶段 9、21.2–21.3；`DEC-017/018/026/034/043`
@@ -19,6 +19,7 @@
 - `已验证`：客户端 HTTP/SignalR JSON transport 已使用共享 `MessageDto`，但 `AccountScopedLocalCache.ValidateIncomingMessage` 明确拒绝任何非空附件，`ToMessageDto` 固定回填空集合，不可变重复比较也未包含附件。
 - `已验证`：当前本地 schema 为 v1；`LocalMessages` 与 mentions 已按消息事务写入，撤权删除 `LocalConversations` 后由外键级联删除消息和 mentions；每个 `AccountScopeId` 使用独立数据库路径。
 - `已验证`：Claude #71 Opus XHigh 只读 challenge 通过当前兼容 RPC 启动前因本机认证源优先级失败，无 job、模型、workspace、费用或结论；Codex 继续负责设计、实现与验证。
+- `已验证`：Claude #72 通过本机 Claude Code 2.1.220 以实际 `claude-opus-5`、只读 Read/Glob/Grep 检查固定工作区，完成约六分钟代码与测试取证后被宿主续跑中断，未形成正式结论；两次 session 恢复均在模型调用前连接被拒且为零 token，不能冒充通过或发现。
 
 ### 假设
 
@@ -41,12 +42,12 @@
 
 ### 验收标准
 
-- [ ] v1 数据库原子升级为 v2 且保留消息/会话/状态；注入提交前失败后版本、旧数据和表集合保持 v1；v3 继续拒绝且不降级。
-- [ ] 合法 Image/File 消息经 Realtime、Sync、History/Around 任一路径可持久化并完整回读；同载荷重复为 Duplicate，任一附件远端字段不同为 Conflict。
-- [ ] 非法数量、重复/乱序 ID、危险文件名、非规范 MIME、越界大小、外部/错 ID 下载 URL 或非空 ThumbnailUrl 在写前稳定拒绝。
-- [ ] 本地路径/下载状态不参与远端不可变比较；损坏附件元数据不展示并使当前账户 scope fail-closed。
-- [ ] 会话撤权后 `LocalAttachments` 随消息级联归零；另一账户相同会话 ID 和附件 ID 的数据不受影响。
-- [ ] Fast、两次 Full、客户端附件定向重复、八项目漏洞审计、日志脱敏、空白和固定差异审查通过。
+- [x] v1 数据库原子升级为 v2 且保留消息/会话/状态；注入提交前失败后版本、旧数据和表集合保持 v1；v3 继续拒绝且不降级。
+- [x] 合法 Image/File 消息经 Realtime、Sync、History/Around 任一路径可持久化并完整回读；同载荷重复为 Duplicate，任一附件远端字段不同为 Conflict。
+- [x] 非法数量、重复/乱序 ID、危险文件名、非规范 MIME、越界大小、外部/错 ID 下载 URL 或非空 ThumbnailUrl 在写前稳定拒绝。
+- [x] 本地路径/下载状态不参与远端不可变比较；损坏附件元数据不展示并使当前账户 scope fail-closed。
+- [x] 会话撤权后 `LocalAttachments` 随消息级联归零；另一账户相同会话 ID 和附件 ID 的数据不受影响。
+- [x] Fast、两次 Full、客户端附件定向重复、八项目漏洞审计、日志脱敏、空白和固定差异审查通过。
 
 ### 验证命令
 
@@ -77,26 +78,34 @@ git diff --check
 
 ### 修改摘要
 
-- `待完成`
+- `AccountScopedLocalCache` 以单个 immediate SQLite 事务把 schema 0/1 原位升级到 v2，原子创建 `LocalAttachments`/索引并同步两个版本标记；未来版本、迁移提交前故障和损坏本地附件都 fail-closed。
+- Image/File 的完整附件 DTO 经过数量、规范 Guid 顺序、Unicode 文件名、规范 MIME、大小、精确相对下载路由和空缩略图校验后，与消息/mentions 同事务写入；回读、重复/冲突、pending 提升和撤权级联遵守冻结边界。
+- Realtime、Sync、History/Around、账户隔离、并发重复、第二条附件故障回滚和 v1→v2 数据保留均由真实 SQLite/transport 回归覆盖；本切片不访问附件内容。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
 | `已验证` | 绿色集成头 Fast 基线 | 924/924；Shared 39、Server 255、Client 630、Updater 1。 |
-| `未验证` | 实现与最终门禁 | 任务进行中。 |
+| `已验证` | 固定代码与边界测试提交 | production `53a5b63`；最终测试头 `722ad49`；`git show --check` 与 `git diff --check` 通过。 |
+| `已验证` | 最终 Fast 与两次 Full | 最终 932/932；Shared 39、Server 255、Client 641、Updater 1；Release 构建 0 警告、0 错误，format 通过。受限环境中一次 Fast 仅在 NuGet TLS/凭据恢复处失败；获准网络环境中原命令随后 932/932，通过结果未掩盖该基础设施失败。 |
+| `已验证` | Client 附件定向 Release 重复 | 每轮 99 项，连续 10 轮 990/990。 |
+| `已验证` | SQLite/协议边界 | v1→v2 保留、提交故障完整回滚、v3 拒绝、消息/mentions/attachments 整体回滚、12 路并发重复、撤权级联与双账户同 ID 隔离、损坏行 fatal 均通过。 |
+| `已验证` | 所有协议入口与精确边界 | Realtime、Sync、History/Around 接收通过；10 个附件、255 Unicode scalar 文件名、100 MiB 接受，越界/危险/错路由/冲突在写前拒绝。 |
+| `已验证` | 补充门禁 | 八项目依赖漏洞审计、EF model drift、敏感日志/源码检索和空白检查通过。 |
+| `已验证` | 独立第二意见 | Claude #71 启动前认证失败；#72 实际 Opus 只读取证但被宿主中断、两次恢复连接拒绝，均无正式结论。Codex 固定差异复核和上述本机门禁为最终依据。 |
 
 ### 文件范围
 
 - 新增：本任务记录。
-- 修改：`待完成`
+- 修改：`src/RelayCove.Client/Storage/AccountScopedLocalCache.cs`、`src/RelayCove.Client/Storage/ILocalCacheFaultInjector.cs`、Client Realtime/Storage/Sync 测试及 `docs/ai/` 状态、执行和决策记录。
 - 删除：无。
 
 ### 决策与限制
 
-- 决策：`DEC-044` 初稿 — 本地附件元数据与消息同事务保存，v1→v2 原子升级，严格相对下载路由且当前不触碰内容。
+- 决策：`DEC-044` 已接受 — 本地附件元数据与消息同事务保存，v1→v2 原子升级，严格相对下载路由且当前不触碰内容。
 - 已知限制：本切片不提供客户端附件发送、下载、物理缓存或 UI。
 
 ### 下一步
 
-- 完成实现、固定提交审查和最终门禁后，仅快进集成；再进入客户端附件上传与发送切片。
+- 仅快进集成并清理当前任务分支；随后进入客户端附件上传与 durable Image/File 发送切片。
