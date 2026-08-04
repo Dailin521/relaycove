@@ -199,6 +199,7 @@ function Start-SmokeServer {
 
 function New-SmokeHttpClient {
     $handler = [System.Net.Http.HttpClientHandler]::new()
+    $handler.UseProxy = $false
     # The Kestrel instance has an ephemeral test-only self-signed certificate.
     # Production Client TLS validation is deliberately not relaxed.
     $handler.ServerCertificateCustomValidationCallback = { $true }
@@ -212,6 +213,7 @@ function Wait-ForServer {
     param([Parameter(Mandatory)][System.Net.Http.HttpClient] $Client, [Parameter(Mandatory)][uri] $BaseUri, [Parameter(Mandatory)][System.Diagnostics.Process] $Process)
 
     $uri = [uri]::new($BaseUri, "api/updates/manifest")
+    $lastStatus = "no HTTP response"
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
         if ($Process.HasExited) {
             throw "Server exited before becoming ready (exit code $($Process.ExitCode))."
@@ -220,6 +222,7 @@ function Wait-ForServer {
             $response = $Client.GetAsync($uri).GetAwaiter().GetResult()
             try {
                 if ($response.StatusCode -eq [System.Net.HttpStatusCode]::OK) { return }
+                $lastStatus = "HTTP $([int]$response.StatusCode) $($response.ReasonPhrase)"
             }
             finally { $response.Dispose() }
         }
@@ -227,7 +230,7 @@ function Wait-ForServer {
         }
         Start-Sleep -Milliseconds 250
     }
-    throw "Timed out waiting for Kestrel HTTPS update endpoint."
+    throw "Timed out waiting for Kestrel HTTPS update endpoint; last result: $lastStatus."
 }
 
 function Get-HostedManifest {
