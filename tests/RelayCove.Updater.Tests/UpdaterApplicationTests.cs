@@ -78,6 +78,9 @@ public sealed class UpdaterApplicationTests
         Assert.Equal((int)UpdaterExitCode.ApplyFailed, result);
         Assert.True(File.Exists(Path.Combine(target, "old.txt")));
         Assert.Equal("old-client", File.ReadAllText(Path.Combine(target, "RelayCove.Client.exe")));
+        Assert.False(Directory.Exists(Path.Combine(temporary.Path, ".RelayCove.relaycove-backup")));
+        Assert.False(Directory.Exists(Path.Combine(temporary.Path, ".RelayCove.relaycove-quarantine")));
+        Assert.False(File.Exists(Path.Combine(temporary.Path, ".RelayCove.relaycove-update.json")));
     }
 
     [Fact]
@@ -161,6 +164,48 @@ public sealed class UpdaterApplicationTests
         Assert.Equal(Path.Combine(target, "RelayCove.Client.exe"), fake.StartedExecutablePath);
     }
 
+    [Fact]
+    public void Run_WhenStartSucceedsButCommitJournalFails_RecoveryDoesNotRollbackExecutedVersion()
+    {
+        using var temporary = new TemporaryDirectory();
+        var target = Path.Combine(temporary.Path, "RelayCove");
+        var backup = Path.Combine(temporary.Path, ".RelayCove.relaycove-backup");
+        var journal = Path.Combine(temporary.Path, ".RelayCove.relaycove-update.json");
+        Directory.CreateDirectory(target);
+        WriteInstalledClient(target);
+        var archive = PackageFixture.Create(temporary.Path);
+        FileStream? journalLease = null;
+        var fake = new FakePlatform(Path.Combine(temporary.Path, "external", "RelayCove.Updater.exe"))
+        {
+            OnStart = () => journalLease = new FileStream(journal, FileMode.Open, FileAccess.Read, FileShare.None),
+        };
+        File.WriteAllText(fake.ExecutablePath, "fake");
+        var arguments = TestArguments.Create();
+        Replace(arguments, "--archive", archive.Path);
+        Replace(arguments, "--expected-sha256", archive.Hash);
+        Replace(arguments, "--expected-size", archive.Size.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Replace(arguments, "--target", target);
+        arguments = [.. arguments, "--bootstrapped"];
+
+        var result = UpdaterApplication.Run(arguments, fake);
+        journalLease?.Dispose();
+
+        Assert.Equal((int)UpdaterExitCode.ApplyFailed, result);
+        Assert.Equal("client", File.ReadAllText(Path.Combine(target, "RelayCove.Client.exe")));
+        Assert.True(Directory.Exists(backup));
+        Assert.Contains("launching", File.ReadAllText(journal), StringComparison.Ordinal);
+        Assert.True(UpdaterArgumentParser.TryParse(arguments, out var options));
+        var layout = UpdateLayout.Create(options!, fake.ExecutablePath);
+        using (layout.AcquireLock())
+        {
+            layout.RecoverIfNecessary();
+        }
+
+        Assert.Equal("client", File.ReadAllText(Path.Combine(target, "RelayCove.Client.exe")));
+        Assert.False(Directory.Exists(backup));
+        Assert.False(File.Exists(journal));
+    }
+
     private static void WriteInstalledClient(string target, string version = "1.0.0", string content = "old-client")
     {
         File.WriteAllText(Path.Combine(target, "RelayCove.Client.exe"), content);
@@ -184,6 +229,8 @@ internal sealed class FakePlatform : IUpdaterPlatform
 
     internal bool ThrowOnStart { get; set; }
 
+    internal Action? OnStart { get; set; }
+
     internal string? StartedExecutablePath { get; private set; }
 
     internal IReadOnlyList<string> StartedArguments { get; private set; } = [];
@@ -196,6 +243,7 @@ internal sealed class FakePlatform : IUpdaterPlatform
     {
         StartedExecutablePath = executablePath;
         StartedArguments = arguments.ToArray();
+        OnStart?.Invoke();
         if (ThrowOnStart)
         {
             throw new InvalidOperationException("start failure");

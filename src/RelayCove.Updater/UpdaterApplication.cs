@@ -73,6 +73,7 @@ internal static class UpdaterApplication
             {
                 new PortablePackageValidator().ValidateAndExtract(options, staging);
                 layout.Activate(staging);
+                layout.MarkLaunchIntent();
                 try
                 {
                     platform.Start(Path.Combine(options.TargetPath, "RelayCove.Client.exe"), Array.Empty<string>(), options.TargetPath);

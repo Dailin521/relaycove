@@ -88,6 +88,21 @@ public sealed class UpdateLayoutRecoveryTests
     }
 
     [Fact]
+    public void RecoverIfNecessary_WhenLaunchIntentWasDurable_KeepsNewTarget()
+    {
+        using var fixture = new LayoutFixture();
+        fixture.CreateTarget("new");
+        fixture.CreateBackup("old");
+        fixture.WriteJournal("launching");
+
+        fixture.Layout.RecoverIfNecessary();
+
+        Assert.Equal("new", fixture.ReadTargetMarker());
+        Assert.False(Directory.Exists(fixture.BackupPath));
+        Assert.False(File.Exists(fixture.JournalPath));
+    }
+
+    [Fact]
     public void RecoverIfNecessary_WhenPreparedActivationReachedBothDirectories_RestoresBackup()
     {
         using var fixture = new LayoutFixture();

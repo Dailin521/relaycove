@@ -7,6 +7,7 @@ internal sealed class UpdateLayout
 {
     private const string PreparedState = "prepared";
     private const string ActivatedState = "activated";
+    private const string LaunchingState = "launching";
     private const string CommittingState = "committing";
     private const string RestoringState = "restoring";
     private readonly string executablePath;
@@ -127,7 +128,7 @@ internal sealed class UpdateLayout
             return;
         }
 
-        if (state == CommittingState)
+        if (state is LaunchingState or CommittingState)
         {
             RecoverCommit();
             return;
@@ -181,15 +182,38 @@ internal sealed class UpdateLayout
             throw new InvalidDataException("Update recovery state is invalid.");
         }
 
-        WriteJournal(RestoringState);
+        try
+        {
+            WriteJournal(RestoringState);
+        }
+        catch (IOException)
+        {
+            // The fixed quarantine topology still records rollback ownership if the launch journal cannot be replaced.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Continue the explicit launch-failure rollback; recovery treats a launch state plus quarantine as restoring.
+        }
         Directory.Move(targetPath, quarantinePath);
         Directory.Move(backupPath, targetPath);
         FinishRestoration();
     }
 
+    internal void MarkLaunchIntent()
+    {
+        if (!Directory.Exists(targetPath) || !Directory.Exists(backupPath) || Directory.Exists(quarantinePath) ||
+            !File.Exists(journalPath) || ReadJournalState() != ActivatedState)
+        {
+            throw new InvalidDataException("Update launch state is invalid.");
+        }
+
+        WriteJournal(LaunchingState);
+    }
+
     internal void Complete()
     {
-        if (!Directory.Exists(targetPath) || !Directory.Exists(backupPath) || Directory.Exists(quarantinePath))
+        if (!Directory.Exists(targetPath) || !Directory.Exists(backupPath) || Directory.Exists(quarantinePath) ||
+            !File.Exists(journalPath) || ReadJournalState() != LaunchingState)
         {
             throw new InvalidDataException("Update commit state is invalid.");
         }
@@ -205,7 +229,8 @@ internal sealed class UpdateLayout
         var backupExists = Directory.Exists(backupPath);
         if (Directory.Exists(quarantinePath))
         {
-            throw new InvalidDataException("Update recovery state is invalid.");
+            RecoverRestoration();
+            return;
         }
 
         if (targetExists && backupExists)
@@ -342,7 +367,7 @@ internal sealed class UpdateLayout
             }
 
             var value = state.GetString();
-            if (value is not PreparedState and not ActivatedState and not CommittingState and not RestoringState)
+            if (value is not PreparedState and not ActivatedState and not LaunchingState and not CommittingState and not RestoringState)
             {
                 throw new InvalidDataException("Update recovery state is invalid.");
             }
