@@ -106,13 +106,14 @@ public sealed class ClientUpdateCoreTests
     [Fact]
     public async Task RunAsync_WhenAddressChangesDuringPreflight_UsesCapturedNormalizedAddressForLogin()
     {
+        var preflight = new ClientUpdateLoginPreflight();
         var preflightStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releasePreflight = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         string? preflightAddress = null;
         string? loginAddress = null;
         var typedAddress = " https://first.relay.example/base ";
 
-        var attempt = ClientUpdateLoginPreflight.RunAsync(
+        var attempt = preflight.RunAsync(
             typedAddress,
             address =>
             {
@@ -133,6 +134,80 @@ public sealed class ClientUpdateCoreTests
         Assert.True(await attempt);
         Assert.Equal("https://first.relay.example/base", preflightAddress);
         Assert.Equal(preflightAddress, loginAddress);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenNewerServerPreflightSucceeds_OnlyLogsInTheNewerAttempt()
+    {
+        var preflight = new ClientUpdateLoginPreflight();
+        var firstPreflightStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstPreflight = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loggedInAddresses = new List<string>();
+
+        var first = preflight.RunAsync(
+            "https://first.relay.example",
+            _ =>
+            {
+                firstPreflightStarted.TrySetResult();
+                return releaseFirstPreflight.Task;
+            },
+            address =>
+            {
+                loggedInAddresses.Add(address);
+                return Task.CompletedTask;
+            });
+
+        await firstPreflightStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = await preflight.RunAsync(
+            "https://second.relay.example",
+            _ => Task.FromResult(true),
+            address =>
+            {
+                loggedInAddresses.Add(address);
+                return Task.CompletedTask;
+            });
+        releaseFirstPreflight.TrySetResult(true);
+
+        Assert.True(second);
+        Assert.False(await first);
+        Assert.Equal(["https://second.relay.example"], loggedInAddresses);
+    }
+
+    [Fact]
+    public async Task RunAsync_WhenNewerServerPreflightFails_DoesNotAllowTheOlderAttemptToLogIn()
+    {
+        var preflight = new ClientUpdateLoginPreflight();
+        var firstPreflightStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstPreflight = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loggedInAddresses = new List<string>();
+
+        var first = preflight.RunAsync(
+            "https://first.relay.example",
+            _ =>
+            {
+                firstPreflightStarted.TrySetResult();
+                return releaseFirstPreflight.Task;
+            },
+            address =>
+            {
+                loggedInAddresses.Add(address);
+                return Task.CompletedTask;
+            });
+
+        await firstPreflightStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = await preflight.RunAsync(
+            "https://second.relay.example",
+            _ => Task.FromResult(false),
+            address =>
+            {
+                loggedInAddresses.Add(address);
+                return Task.CompletedTask;
+            });
+        releaseFirstPreflight.TrySetResult(true);
+
+        Assert.False(second);
+        Assert.False(await first);
+        Assert.Empty(loggedInAddresses);
     }
 
     [Fact]

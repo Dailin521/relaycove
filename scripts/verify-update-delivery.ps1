@@ -178,7 +178,7 @@ File.WriteAllText(markerPath, $"{process.Id}|{process.StartTime.ToUniversalTime(
 Thread.Sleep(TimeSpan.FromSeconds(5));
 '@ | Set-Content -LiteralPath $sourcePath -Encoding utf8NoBOM
     $publishRoot = Join-Path $probeRoot "publish"
-    Invoke-Checked dotnet publish $projectPath --configuration Release --self-contained true -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false --output $publishRoot | Out-Host
+    Invoke-Checked dotnet publish $projectPath --configuration Release --self-contained true /p:PublishSingleFile=true /p:DebugType=None /p:DebugSymbols=false --output $publishRoot | Out-Host
     $probePath = Join-Path $publishRoot "RelayCove.Client.exe"
     Assert-Condition (Test-Path -LiteralPath $probePath -PathType Leaf) "Self-contained smoke probe executable is missing."
     Assert-Condition ((Get-Item -LiteralPath $probePath -Force).Length -gt 1MB) "Smoke probe executable is unexpectedly small."
@@ -270,12 +270,17 @@ function Start-SmokeServer {
     Assert-Condition (Test-Path -LiteralPath $serverDll -PathType Leaf) "Server build output is missing: $serverDll"
     $serverDataRoot = Join-Path $RunRoot "server-data"
     New-Item -ItemType Directory -Path $serverDataRoot | Out-Null
+    $serverProfileRoot = Join-Path $serverDataRoot "profile"
+    New-Item -ItemType Directory -Path $serverProfileRoot | Out-Null
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = "dotnet"
     $startInfo.WorkingDirectory = $serverDataRoot
     $startInfo.UseShellExecute = $false
     $startInfo.ArgumentList.Add($serverDll)
     $startInfo.Environment["ASPNETCORE_URLS"] = "https://localhost:$HttpsPort"
+    # ASP.NET Core's default data-protection provider uses the Windows user
+    # profile. Keep even that framework-owned state inside this artifacts run.
+    $startInfo.Environment["USERPROFILE"] = $serverProfileRoot
     $startInfo.Environment["ConnectionStrings__Default"] = "Data Source=$(Join-Path $serverDataRoot 'relaycove-smoke.db');Foreign Keys=True;Default Timeout=5"
     $startInfo.Environment["Update__ManifestPath"] = $ManifestPath
     $startInfo.Environment["ASPNETCORE_Kestrel__Certificates__Default__Path"] = $PfxPath

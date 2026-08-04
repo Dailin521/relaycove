@@ -44,6 +44,7 @@ public partial class MainWindow : Window
         new(ClientSearchScope.Global, "全部会话"),
         new(ClientSearchScope.CurrentConversation, "当前会话"),
     ];
+    private readonly ClientUpdateLoginPreflight loginPreflightAttemptGate = new();
     private ClientAccountShellCoordinator? accountShell;
     private Func<string, Task<bool>>? loginUpdatePreflight;
     private Func<Task>? checkForUpdates;
@@ -1410,16 +1411,17 @@ public partial class MainWindow : Window
 
         var password = PasswordInput.Password;
         var serverAddress = ServerAddressTextBox.Text;
+        var userName = UserNameTextBox.Text;
         PasswordInput.Clear();
         try
         {
             if (mandatoryUpdateGate ||
-                !await ClientUpdateLoginPreflight.RunAsync(
+                !await loginPreflightAttemptGate.RunAsync(
                     serverAddress,
                     loginUpdatePreflight,
                     address => coordinator.LoginAsync(
                         address,
-                        UserNameTextBox.Text,
+                        userName,
                         password)))
             {
                 return;

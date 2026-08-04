@@ -1,8 +1,10 @@
 namespace RelayCove.Client.Updates;
 
-internal static class ClientUpdateLoginPreflight
+internal sealed class ClientUpdateLoginPreflight
 {
-    public static async Task<bool> RunAsync(
+    private long latestAttempt;
+
+    public async Task<bool> RunAsync(
         string serverAddress,
         Func<string, Task<bool>>? preflightAsync,
         Func<string, Task> loginAsync)
@@ -11,7 +13,13 @@ internal static class ClientUpdateLoginPreflight
         ArgumentNullException.ThrowIfNull(loginAsync);
 
         var normalizedServerAddress = serverAddress.Trim();
+        var attempt = Interlocked.Increment(ref latestAttempt);
         if (preflightAsync is not null && !await preflightAsync(normalizedServerAddress))
+        {
+            return false;
+        }
+
+        if (Volatile.Read(ref latestAttempt) != attempt)
         {
             return false;
         }
