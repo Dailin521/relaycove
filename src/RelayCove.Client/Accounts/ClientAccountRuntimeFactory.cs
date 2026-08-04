@@ -26,6 +26,7 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
     private readonly IClientNotificationPlatform notificationPlatform;
     private readonly Func<ClientNotificationSettingsSnapshot> notificationSettingsProvider;
     private readonly IClientNotificationAttention notificationAttention;
+    private readonly IWindowsAttachmentShell attachmentShell;
 
     public ClientAccountRuntimeFactory(
         HttpClient httpClient,
@@ -95,7 +96,8 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
         Func<ClientNotificationSettingsSnapshot>? notificationSettingsProvider = null,
         IClientNotificationAttention? notificationAttention = null,
         HttpClient? attachmentUploadHttpClient = null,
-        string? attachmentCacheRootDirectory = null)
+        string? attachmentCacheRootDirectory = null,
+        IWindowsAttachmentShell? attachmentShell = null)
     {
         this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         this.attachmentUploadHttpClient = attachmentUploadHttpClient ?? httpClient;
@@ -109,6 +111,7 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
             CreateDefaultRealtimeConnection;
         this.notificationAttention = notificationAttention ??
             NoOpClientNotificationAttention.Instance;
+        this.attachmentShell = attachmentShell ?? new WindowsAttachmentShell();
         if (notificationPlatform is null)
         {
             var windowsPlatform = new WindowsClientNotificationPlatform(
@@ -196,7 +199,8 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                 attachmentCacheStore,
                 attachmentDownloadTransport,
                 loggerFactory.CreateLogger<ClientAttachmentDownloadCoordinator>(),
-                notificationRoundCoordinator.ConversationRevokedAsync);
+                notificationRoundCoordinator.ConversationRevokedAsync,
+                attachmentShell);
             var attachmentRecovery = await attachmentDownloadCoordinator
                 .RecoverAsync(cancellationToken)
                 .ConfigureAwait(false);

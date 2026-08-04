@@ -40,6 +40,64 @@ public sealed class ClientAttachmentCacheStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task ValidateAndResolveAsync_WhenContentMatches_ReturnsRedactedCapability()
+    {
+        var store = CreateStore();
+        var bytes = "trusted capability"u8.ToArray();
+        var key = CreateKey(bytes);
+        var published = await WriteAndPublishAsync(store, key, bytes);
+
+        var resolved = await store.ValidateAndResolveAsync(
+            published.RelativePath!,
+            key,
+            bytes.LongLength);
+
+        Assert.Equal(ClientAttachmentCacheStoreStatus.Ready, resolved.Status);
+        using var file = Assert.IsType<ClientAttachmentCacheStore.ValidatedFile>(resolved.File);
+        Assert.Equal(
+            Path.Combine(store.ScopeDirectory, published.RelativePath!),
+            file.FullPath);
+        Assert.DoesNotContain(file.FullPath, file.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("[REDACTED]", resolved.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ValidateAndResolveAsync_WhileCapabilityIsAlive_BlocksReplacement()
+    {
+        var store = CreateStore();
+        var bytes = "pinned capability"u8.ToArray();
+        var replacement = "other capability!"u8.ToArray();
+        Assert.Equal(bytes.Length, replacement.Length);
+        var key = CreateKey(bytes);
+        var published = await WriteAndPublishAsync(store, key, bytes);
+        var fullPath = Path.Combine(store.ScopeDirectory, published.RelativePath!);
+        var resolved = await store.ValidateAndResolveAsync(
+            published.RelativePath!,
+            key,
+            bytes.LongLength);
+        var file = Assert.IsType<ClientAttachmentCacheStore.ValidatedFile>(resolved.File);
+
+        await Assert.ThrowsAsync<IOException>(() =>
+            File.WriteAllBytesAsync(fullPath, replacement));
+        Assert.Throws<IOException>(() => File.Delete(fullPath));
+
+        file.Dispose();
+        await File.WriteAllBytesAsync(fullPath, replacement);
+        Assert.Equal(replacement, await File.ReadAllBytesAsync(fullPath));
+        Assert.Throws<ObjectDisposedException>(() => _ = file.FullPath);
+    }
+
+    [Fact]
+    public void ValidatedFile_WhenTokenIsNotStoreOwned_CannotBeForged()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+            new ClientAttachmentCacheStore.ValidatedFile(
+                Path.Combine(rootDirectory, "untrusted.cache"),
+                stream: null!,
+                validationToken: new object()));
+    }
+
+    [Fact]
     public async Task PublishAsync_WhenHashOrSizeDoesNotMatch_DeletesStagingWithoutPublishing()
     {
         var store = CreateStore();
@@ -309,6 +367,11 @@ public sealed class ClientAttachmentCacheStoreTests : IDisposable
         var key = CreateKey(bytes);
         var published = await WriteAndPublishAsync(store, key, bytes);
         var entry = (await store.EnumerateAsync()).Entries.Single();
+        var resolution = await store.ValidateAndResolveAsync(
+            published.RelativePath!,
+            key,
+            bytes.LongLength);
+        using var resolvedFile = resolution.File;
 
         var formatted = string.Join(
             "\n",
@@ -316,6 +379,7 @@ public sealed class ClientAttachmentCacheStoreTests : IDisposable
             key,
             published,
             entry,
+            resolution,
             new ClientAttachmentCacheStoreQuotaOutcome(
                 ClientAttachmentCacheStoreStatus.Ready,
                 1,

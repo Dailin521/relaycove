@@ -589,7 +589,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             selection = messageSelection;
             if (selection is null ||
                 !IsCurrentMessageSelectionLocked(selection) ||
-                messageList.Status != ClientMessageListStatus.Ready)
+                messageList.Status != ClientMessageListStatus.Ready ||
+                !SelectionContainsAttachment(selection, attachmentId))
             {
                 return ClientAttachmentDownloadOutcome.Failure(
                     ClientAttachmentDownloadStatus.AttachmentUnavailable);
@@ -626,7 +627,9 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             lock (stateGate)
             {
                 if (!ReferenceEquals(runtime, activeRuntime) ||
-                    !IsCurrentMessageSelectionLocked(selection))
+                    !IsCurrentMessageSelectionLocked(selection) ||
+                    messageList.Status != ClientMessageListStatus.Ready ||
+                    !SelectionContainsAttachment(selection, attachmentId))
                 {
                     return ClientAttachmentDownloadOutcome.Failure(
                         ClientAttachmentDownloadStatus.Canceled);
@@ -653,6 +656,111 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                 exception.GetType().Name);
             return ClientAttachmentDownloadOutcome.Failure(
                 ClientAttachmentDownloadStatus.LocalCacheFailure);
+        }
+    }
+
+    public async Task<ClientAttachmentRevealOutcome> RevealAttachmentInFolderAsync(
+        Guid attachmentId,
+        CancellationToken cancellationToken = default)
+    {
+        if (attachmentId == Guid.Empty)
+        {
+            return ClientAttachmentRevealOutcome.FromStatus(
+                ClientAttachmentRevealStatus.AttachmentUnavailable);
+        }
+
+        IClientAccountRuntime? activeRuntime;
+        MessageSelection? selection;
+        lock (stateGate)
+        {
+            selection = messageSelection;
+            if (selection is null ||
+                !IsCurrentMessageSelectionLocked(selection) ||
+                messageList.Status != ClientMessageListStatus.Ready ||
+                !SelectionContainsAttachment(selection, attachmentId))
+            {
+                return ClientAttachmentRevealOutcome.FromStatus(
+                    ClientAttachmentRevealStatus.AttachmentUnavailable);
+            }
+
+            activeRuntime = runtime;
+        }
+
+        if (activeRuntime is null)
+        {
+            return ClientAttachmentRevealOutcome.FromStatus(
+                ClientAttachmentRevealStatus.AttachmentUnavailable);
+        }
+
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            selection.Token,
+            lifetimeCancellation.Token);
+        ClientAttachmentRevealStatus CommitReveal()
+        {
+            lock (stateGate)
+            {
+                if (!ReferenceEquals(runtime, activeRuntime) ||
+                    !IsCurrentMessageSelectionLocked(selection) ||
+                    messageList.Status != ClientMessageListStatus.Ready ||
+                    !SelectionContainsAttachment(selection, attachmentId))
+                {
+                    return ClientAttachmentRevealStatus.Stale;
+                }
+
+                if (linkedCancellation.IsCancellationRequested)
+                {
+                    return ClientAttachmentRevealStatus.Canceled;
+                }
+
+                // This one-way transition only authorizes Shell start. The runtime
+                // releases this gate and its cache transaction before invoking the
+                // potentially blocking native Shell operation.
+                return ClientAttachmentRevealStatus.Revealed;
+            }
+        }
+
+        try
+        {
+            var outcome = await activeRuntime
+                .RevealAttachmentInFolderAsync(
+                    selection.ConversationId,
+                    attachmentId,
+                    CommitReveal,
+                    linkedCancellation.Token)
+                .ConfigureAwait(false);
+            lock (stateGate)
+            {
+                if (!ReferenceEquals(runtime, activeRuntime) ||
+                    !IsCurrentMessageSelectionLocked(selection) ||
+                    messageList.Status != ClientMessageListStatus.Ready ||
+                    !SelectionContainsAttachment(selection, attachmentId))
+                {
+                    return ClientAttachmentRevealOutcome.FromStatus(
+                        ClientAttachmentRevealStatus.Stale);
+                }
+            }
+
+            return outcome;
+        }
+        catch (OperationCanceledException)
+        {
+            return ClientAttachmentRevealOutcome.FromStatus(
+                ClientAttachmentRevealStatus.Canceled);
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientAttachmentRevealOutcome.FromStatus(
+                ClientAttachmentRevealStatus.Canceled);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Revealing an attachment through the active account failed; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientAttachmentRevealOutcome.FromStatus(
+                ClientAttachmentRevealStatus.LocalCacheFailure);
         }
     }
 
@@ -1637,6 +1745,19 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 
             if (outcome.Status == LocalCacheOperationStatus.Ready)
             {
+                var pageAttachmentIds = outcome.Messages
+                    .SelectMany(static message => message.Attachments)
+                    .Select(static attachment => attachment.Id)
+                    .ToHashSet();
+                if (outcome.DownloadedAttachmentIds.Any(
+                        attachmentId => !pageAttachmentIds.Contains(attachmentId)))
+                {
+                    return false;
+                }
+
+                selection.DownloadedAttachmentIds.ExceptWith(pageAttachmentIds);
+                selection.DownloadedAttachmentIds.UnionWith(
+                    outcome.DownloadedAttachmentIds);
                 if (replacePendingMessages && !selection.InitialUnreadStateCaptured)
                 {
                     if (outcome.LastReadMessageId < 0 || outcome.UnreadCount < 0)
@@ -1733,6 +1854,12 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             }
         }
     }
+
+    private static bool SelectionContainsAttachment(
+        MessageSelection selection,
+        Guid attachmentId) =>
+        selection.Messages.Values.Any(message =>
+            message.Attachments.Any(attachment => attachment.Id == attachmentId));
 
     private static void TryResolveNewMessageBoundaryFromHistoryLocked(
         MessageSelection selection,
@@ -2092,7 +2219,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                     selection.Subscription.Runtime.Identity.UserId,
                     selection.NewMessageBoundaryResolved
                         ? selection.NewMessageSeparatorBeforeMessageId
-                        : null)
+                        : null,
+                    selection.DownloadedAttachmentIds)
                 : Array.Empty<ClientMessageListItemPresentation>(),
             isLoading,
             isReady && selection.HasMoreBefore,
@@ -2455,6 +2583,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         public SortedDictionary<long, MessageDto> Messages { get; } = [];
 
         public Dictionary<Guid, LocalPendingMessage> PendingMessages { get; } = [];
+
+        public HashSet<Guid> DownloadedAttachmentIds { get; } = [];
 
         public long? NextBeforeMessageId { get; set; }
 

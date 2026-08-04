@@ -295,6 +295,43 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
                     progress),
             cancellationToken);
 
+    public Task<ClientAttachmentRevealOutcome> RevealAttachmentInFolderAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        ClientAttachmentRevealCommit commit,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(commit);
+        var revealStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<ClientAttachmentRevealOutcome> flight;
+        lock (stateGate)
+        {
+            ThrowIfTerminating();
+            flight = RunRevealOperationAsync(
+                (token, revealCommit) => attachmentDownloadCoordinator is null
+                    ? Task.FromResult(ClientAttachmentRevealOutcome.FromStatus(
+                        ClientAttachmentRevealStatus.LocalCacheFailure))
+                    : attachmentDownloadCoordinator.RevealInFolderAsync(
+                        conversationId,
+                        attachmentId,
+                        revealCommit,
+                        token),
+                cancellationToken,
+                lifetimeCancellation.Token,
+                commit,
+                revealStarted);
+            // A reveal remains a regular cancellable runtime flight until its
+            // commit callback marks native Shell start. From that point a pinned
+            // file capability may keep the Shell call alive, but termination must
+            // not wait for the unbounded external operation.
+            TrackExplicitFlight(revealStarted.Task);
+        }
+
+        return flight;
+    }
+
     public Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(
         Guid conversationId,
         long messageId,
@@ -816,6 +853,47 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
             callerCancellation,
             lifetimeToken);
         return await operation(linkedCancellation.Token).ConfigureAwait(false);
+    }
+
+    private static async Task<ClientAttachmentRevealOutcome> RunRevealOperationAsync(
+        Func<CancellationToken, ClientAttachmentRevealCommit,
+            Task<ClientAttachmentRevealOutcome>> operation,
+        CancellationToken callerCancellation,
+        CancellationToken lifetimeToken,
+        ClientAttachmentRevealCommit commit,
+        TaskCompletionSource revealStarted)
+    {
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            callerCancellation,
+            lifetimeToken);
+        var committed = false;
+        ClientAttachmentRevealStatus Commit()
+        {
+            try
+            {
+                return commit();
+            }
+            finally
+            {
+                committed = true;
+                revealStarted.TrySetResult();
+            }
+        }
+
+        try
+        {
+            return await operation(linkedCancellation.Token, Commit).ConfigureAwait(false);
+        }
+        finally
+        {
+            // A validation failure or cancellation before commit must still let
+            // runtime termination make progress. A post-commit native call has
+            // already completed this signal in Commit().
+            if (!committed)
+            {
+                revealStarted.TrySetResult();
+            }
+        }
     }
 
     private void RequestReadThroughUpload()

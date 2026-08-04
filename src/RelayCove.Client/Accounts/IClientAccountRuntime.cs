@@ -76,6 +76,12 @@ internal interface IClientAccountRuntime : IAsyncDisposable
         CancellationToken cancellationToken = default,
         IProgress<ClientAttachmentDownloadProgress>? progress = null);
 
+    Task<ClientAttachmentRevealOutcome> RevealAttachmentInFolderAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        ClientAttachmentRevealCommit commit,
+        CancellationToken cancellationToken = default);
+
     Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(
         Guid conversationId,
         long messageId,

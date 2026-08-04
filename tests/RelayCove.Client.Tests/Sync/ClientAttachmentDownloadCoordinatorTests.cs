@@ -459,6 +459,262 @@ public sealed class ClientAttachmentDownloadCoordinatorTests : IDisposable
         Assert.DoesNotContain(new string('a', 64), rendered, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task RevealInFolderAsync_WhenDownloadedFileIsVerified_RevealsValidatedCapability()
+    {
+        var payload = "verified reveal"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var shell = new FakeWindowsAttachmentShell(WindowsAttachmentShellStatus.Revealed);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Reveal must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentShell: shell);
+
+        var outcome = await coordinator.RevealInFolderAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            CommitReveal);
+
+        Assert.Equal(ClientAttachmentRevealStatus.Revealed, outcome.Status);
+        Assert.Equal(1, shell.RevealCount);
+        Assert.NotNull(shell.LastFile);
+        Assert.DoesNotContain(
+            prepared.Store.ScopeDirectory,
+            shell.LastFile!.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RevealInFolderAsync_WhenNotDownloaded_DoesNotCallShell()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        var shell = new FakeWindowsAttachmentShell(WindowsAttachmentShellStatus.Revealed);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Reveal must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentShell: shell);
+
+        var outcome = await coordinator.RevealInFolderAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            CommitReveal);
+
+        Assert.Equal(ClientAttachmentRevealStatus.NotDownloaded, outcome.Status);
+        Assert.Equal(0, shell.RevealCount);
+    }
+
+    [Fact]
+    public async Task RevealInFolderAsync_WhenFileIsCorrupt_DoesNotCallShell()
+    {
+        var payload = "trusted bytes"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        var relativePath = await MarkDownloadedAsync(prepared, payload);
+        await File.WriteAllBytesAsync(
+            Path.Combine(prepared.Store.ScopeDirectory, relativePath),
+            new byte[payload.Length]);
+        var shell = new FakeWindowsAttachmentShell(WindowsAttachmentShellStatus.Revealed);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Reveal must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentShell: shell);
+
+        var outcome = await coordinator.RevealInFolderAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            CommitReveal);
+
+        Assert.Equal(ClientAttachmentRevealStatus.ValidationFailed, outcome.Status);
+        Assert.Equal(0, shell.RevealCount);
+    }
+
+    [Fact]
+    public async Task RevealInFolderAsync_WhenDbPathChangesAfterValidation_DoesNotCallShell()
+    {
+        var payload = "path race"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var blockingStore = new BlockingCacheStore(prepared.Store);
+        blockingStore.BlockNextValidation();
+        var shell = new FakeWindowsAttachmentShell(WindowsAttachmentShellStatus.Revealed);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Reveal must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            cacheStore: blockingStore,
+            attachmentShell: shell);
+
+        var reveal = coordinator.RevealInFolderAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            CommitReveal);
+        await blockingStore.ValidationCompleted.WaitAsync(TimeSpan.FromSeconds(5));
+        using (var connection = OpenConnection(prepared.Identity))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "UPDATE LocalAttachments SET LocalPath = $path;";
+            command.Parameters.AddWithValue(
+                "$path",
+                ManagedPath(
+                    prepared.Conversation.Id,
+                    prepared.Attachment.Id,
+                    new string('f', 64)));
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
+
+        blockingStore.ReleaseValidation();
+        var outcome = await reveal;
+
+        Assert.Equal(ClientAttachmentRevealStatus.Stale, outcome.Status);
+        Assert.Equal(0, shell.RevealCount);
+    }
+
+    [Fact]
+    public async Task RevealInFolderAsync_WhenRevokedAfterValidation_DoesNotCallShell()
+    {
+        var payload = "revocation race"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var blockingStore = new BlockingCacheStore(prepared.Store);
+        blockingStore.BlockNextValidation();
+        var shell = new FakeWindowsAttachmentShell(WindowsAttachmentShellStatus.Revealed);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Reveal must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            cacheStore: blockingStore,
+            attachmentShell: shell);
+
+        var reveal = coordinator.RevealInFolderAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            CommitReveal);
+        await blockingStore.ValidationCompleted.WaitAsync(TimeSpan.FromSeconds(5));
+        await using var revokingCache = await AccountScopedLocalCache.CreateAsync(
+            prepared.Identity,
+            NullLogger<AccountScopedLocalCache>.Instance);
+        Assert.Equal(
+            LocalCacheOperationStatus.RevokedConversation,
+            await revokingCache.RevokeConversationAccessAsync(prepared.Conversation.Id));
+        blockingStore.ReleaseValidation();
+        var outcome = await reveal;
+
+        Assert.Equal(ClientAttachmentRevealStatus.AccessRevoked, outcome.Status);
+        Assert.Equal(0, shell.RevealCount);
+    }
+
+    [Fact]
+    public async Task RevealInFolderAsync_WhenMetadataChangesAfterValidation_DoesNotCallShell()
+    {
+        var payload = "metadata race"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var blockingStore = new BlockingCacheStore(prepared.Store);
+        blockingStore.BlockNextValidation();
+        var shell = new FakeWindowsAttachmentShell(WindowsAttachmentShellStatus.Revealed);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Reveal must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            cacheStore: blockingStore,
+            attachmentShell: shell);
+
+        var reveal = coordinator.RevealInFolderAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            CommitReveal);
+        await blockingStore.ValidationCompleted.WaitAsync(TimeSpan.FromSeconds(5));
+        using (var connection = OpenConnection(prepared.Identity))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "UPDATE LocalAttachments SET Size = Size + 1;";
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
+
+        blockingStore.ReleaseValidation();
+        var outcome = await reveal;
+
+        Assert.Equal(ClientAttachmentRevealStatus.Stale, outcome.Status);
+        Assert.Equal(0, shell.RevealCount);
+    }
+
+    [Fact]
+    public async Task RevealInFolderAsync_WhenShellBlocks_ReleasesCacheGateBeforeNativeCall()
+    {
+        var payload = "blocked shell"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var shell = new BlockingWindowsAttachmentShell();
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Reveal must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentShell: shell);
+
+        var revealTask = coordinator.RevealInFolderAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            CommitReveal);
+        await shell.Started.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // The shell can be arbitrarily slow. A separate cache mutation must not
+        // wait on the reveal's SQLite transaction or operation gate.
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await prepared.Cache.MarkConversationRenderedThroughAsync(
+                prepared.Conversation.Id,
+                messageId: 1).WaitAsync(TimeSpan.FromSeconds(5)));
+
+        shell.Release();
+        var outcome = await revealTask;
+
+        Assert.Equal(ClientAttachmentRevealStatus.Revealed, outcome.Status);
+        Assert.Equal(1, shell.RevealCount);
+    }
+
+    [Fact]
+    public async Task RevealInFolderAsync_WhenShellBlocks_RevocationAndDisposeDoNotWaitForShell()
+    {
+        var payload = "blocked shell revocation"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var shell = new BlockingWindowsAttachmentShell();
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Reveal must not issue HTTP.")));
+        var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentShell: shell);
+
+        var revealTask = coordinator.RevealInFolderAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            CommitReveal);
+        await shell.Started.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(
+            LocalCacheOperationStatus.RevokedConversation,
+            await prepared.Cache.RevokeConversationAccessAsync(prepared.Conversation.Id)
+                .WaitAsync(TimeSpan.FromSeconds(5)));
+        await coordinator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        shell.Release();
+        var outcome = await revealTask;
+
+        Assert.Equal(ClientAttachmentRevealStatus.Revealed, outcome.Status);
+        Assert.Equal(1, shell.RevealCount);
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();
@@ -467,6 +723,9 @@ public sealed class ClientAttachmentDownloadCoordinatorTests : IDisposable
             Directory.Delete(rootDirectory, recursive: true);
         }
     }
+
+    private static ClientAttachmentRevealStatus CommitReveal() =>
+        ClientAttachmentRevealStatus.Revealed;
 
     private async Task<Prepared> CreatePreparedAsync(
         byte[]? payload = null,
@@ -505,7 +764,8 @@ public sealed class ClientAttachmentDownloadCoordinatorTests : IDisposable
         Prepared prepared,
         HttpClient httpClient,
         Func<Guid, CancellationToken, Task>? conversationRevokedAsync = null,
-        IClientAttachmentCacheStore? cacheStore = null) =>
+        IClientAttachmentCacheStore? cacheStore = null,
+        IWindowsAttachmentShell? attachmentShell = null) =>
         new(
             prepared.Cache,
             cacheStore ?? prepared.Store,
@@ -515,7 +775,31 @@ public sealed class ClientAttachmentDownloadCoordinatorTests : IDisposable
                 new FakeAuthenticationSession(),
                 NullLogger.Instance),
             NullLogger<ClientAttachmentDownloadCoordinator>.Instance,
-            conversationRevokedAsync);
+            conversationRevokedAsync,
+            attachmentShell);
+
+    private static async Task<string> MarkDownloadedAsync(
+        Prepared prepared,
+        byte[] payload)
+    {
+        var relativePath = await PublishAsync(
+            prepared.Store,
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            payload);
+        Assert.Equal(
+            LocalAttachmentDownloadClaimResult.Claimed,
+            (await prepared.Cache.ClaimAttachmentDownloadAsync(
+                prepared.Conversation.Id,
+                prepared.Attachment.Id)).Result);
+        Assert.Equal(
+            LocalCacheOperationStatus.Ready,
+            await prepared.Cache.CompleteAttachmentDownloadAsync(
+                prepared.Conversation.Id,
+                prepared.Attachment.Id,
+                relativePath));
+        return relativePath;
+    }
 
     private static async Task<string> PublishAsync(
         ClientAttachmentCacheStore store,
@@ -597,6 +881,46 @@ public sealed class ClientAttachmentDownloadCoordinatorTests : IDisposable
         public Task<bool> TryRefreshAccessTokenAsync(
             string rejectedAccessToken,
             CancellationToken cancellationToken = default) => Task.FromResult(false);
+    }
+
+    private sealed class FakeWindowsAttachmentShell(WindowsAttachmentShellStatus status) :
+        IWindowsAttachmentShell
+    {
+        public int RevealCount { get; private set; }
+
+        public ClientAttachmentCacheStore.ValidatedFile? LastFile { get; private set; }
+
+        public WindowsAttachmentShellStatus Reveal(
+            ClientAttachmentCacheStore.ValidatedFile file)
+        {
+            RevealCount++;
+            LastFile = file;
+            return status;
+        }
+    }
+
+    private sealed class BlockingWindowsAttachmentShell : IWindowsAttachmentShell
+    {
+        private readonly TaskCompletionSource started = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource release = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private int revealCount;
+
+        public Task Started => started.Task;
+
+        public int RevealCount => Volatile.Read(ref revealCount);
+
+        public WindowsAttachmentShellStatus Reveal(
+            ClientAttachmentCacheStore.ValidatedFile file)
+        {
+            Interlocked.Increment(ref revealCount);
+            started.TrySetResult();
+            release.Task.GetAwaiter().GetResult();
+            return WindowsAttachmentShellStatus.Revealed;
+        }
+
+        public void Release() => release.TrySetResult();
     }
 
     private sealed class AttachmentDownloadCommitThrowingFaultInjector : ILocalCacheFaultInjector
@@ -681,6 +1005,26 @@ public sealed class ClientAttachmentDownloadCoordinatorTests : IDisposable
             CancellationToken cancellationToken = default)
         {
             var outcome = await inner.ValidateAsync(
+                relativePath,
+                expectedKey,
+                expectedSize,
+                cancellationToken);
+            if (Interlocked.Exchange(ref blockValidation, 0) != 0)
+            {
+                validationCompleted.TrySetResult();
+                await validationRelease.Task.ConfigureAwait(false);
+            }
+
+            return outcome;
+        }
+
+        public async Task<ClientAttachmentCacheStoreResolutionOutcome> ValidateAndResolveAsync(
+            string relativePath,
+            ClientAttachmentCacheStoreKey expectedKey,
+            long expectedSize,
+            CancellationToken cancellationToken = default)
+        {
+            var outcome = await inner.ValidateAndResolveAsync(
                 relativePath,
                 expectedKey,
                 expectedSize,

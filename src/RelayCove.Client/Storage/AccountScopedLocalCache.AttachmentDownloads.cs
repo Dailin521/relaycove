@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.ExceptionServices;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using RelayCove.Shared.Messages;
@@ -96,6 +97,81 @@ public sealed partial class AccountScopedLocalCache
         }
 
         return outcome;
+    }
+
+    internal async Task<LocalDownloadedAttachmentReadOutcome> ReadDownloadedAttachmentAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateGuid(conversationId, nameof(conversationId));
+        ValidateGuid(attachmentId, nameof(attachmentId));
+        ThrowIfDisposed();
+        var initialStatus = GetConversationAccessStatus(conversationId);
+        if (initialStatus != LocalCacheOperationStatus.Ready)
+        {
+            return LocalDownloadedAttachmentReadOutcome.Failure(initialStatus);
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(
+                    () => ReadDownloadedAttachment(conversationId, attachmentId),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
+    }
+
+    internal async Task<LocalDownloadedAttachmentConfirmationOutcome>
+        ConfirmDownloadedAttachmentAsync(
+            LocalAttachmentDownloadRecord expectedRecord,
+            Action authorizeAction,
+            CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedRecord);
+        ArgumentNullException.ThrowIfNull(authorizeAction);
+        ValidateGuid(expectedRecord.ConversationId, nameof(expectedRecord));
+        ValidateGuid(expectedRecord.Attachment.Id, nameof(expectedRecord));
+        if (expectedRecord.State != LocalAttachmentDownloadState.Downloaded ||
+            expectedRecord.LocalPath is null ||
+            !ClientAttachmentMetadataPolicy.IsValid(expectedRecord.Attachment))
+        {
+            throw new ArgumentException(
+                "A valid downloaded attachment record is required.",
+                nameof(expectedRecord));
+        }
+
+        ValidateManagedAttachmentPath(
+            expectedRecord.LocalPath,
+            expectedRecord.ConversationId,
+            expectedRecord.Attachment.Id);
+        ThrowIfDisposed();
+        var initialStatus = GetConversationAccessStatus(expectedRecord.ConversationId);
+        if (initialStatus != LocalCacheOperationStatus.Ready)
+        {
+            return LocalDownloadedAttachmentConfirmationOutcome.Failure(initialStatus);
+        }
+
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run(
+                    () => ConfirmDownloadedAttachment(
+                        expectedRecord,
+                        authorizeAction,
+                        cancellationToken),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            operationGate.Release();
+        }
     }
 
     internal async Task<LocalCacheOperationStatus> CompleteAttachmentDownloadAsync(
@@ -346,6 +422,154 @@ public sealed partial class AccountScopedLocalCache
                 "attachment download after an error of type {ExceptionType}.",
                 exception.GetType().Name);
             return LocalAttachmentDownloadClaimOutcome.Failure(
+                LocalCacheOperationStatus.FatalScope);
+        }
+    }
+
+    private LocalDownloadedAttachmentReadOutcome ReadDownloadedAttachment(
+        Guid conversationId,
+        Guid attachmentId)
+    {
+        try
+        {
+            using var connection = OpenConnection();
+            using var transaction = connection.BeginTransaction(deferred: true);
+            var databaseStatus = GetDatabaseAccessStatus(
+                connection,
+                transaction,
+                conversationId);
+            if (databaseStatus != LocalCacheOperationStatus.Ready)
+            {
+                transaction.Rollback();
+                return LocalDownloadedAttachmentReadOutcome.Failure(databaseStatus);
+            }
+
+            var record = ReadAttachmentDownloadRecord(
+                connection,
+                transaction,
+                conversationId,
+                attachmentId);
+            transaction.Rollback();
+            if (record is null)
+            {
+                return new LocalDownloadedAttachmentReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    LocalDownloadedAttachmentReadResult.AttachmentUnavailable,
+                    Record: null);
+            }
+
+            return record.State == LocalAttachmentDownloadState.Downloaded
+                ? new LocalDownloadedAttachmentReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    LocalDownloadedAttachmentReadResult.Downloaded,
+                    record)
+                : new LocalDownloadedAttachmentReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    LocalDownloadedAttachmentReadResult.NotDownloaded,
+                    Record: null);
+        }
+        catch (SqliteException exception) when (IsBusy(exception))
+        {
+            logger.LogWarning(
+                "Reading a downloaded attachment remained busy; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return LocalDownloadedAttachmentReadOutcome.Failure(
+                LocalCacheOperationStatus.TransientFailure);
+        }
+        catch (Exception exception)
+        {
+            MarkScopeFatal();
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state while reading a " +
+                "downloaded attachment after an error of type {ExceptionType}.",
+                exception.GetType().Name);
+            return LocalDownloadedAttachmentReadOutcome.Failure(
+                LocalCacheOperationStatus.FatalScope);
+        }
+    }
+
+    private LocalDownloadedAttachmentConfirmationOutcome ConfirmDownloadedAttachment(
+        LocalAttachmentDownloadRecord expectedRecord,
+        Action authorizeAction,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var connection = OpenConnection();
+            // The authorization action is the local-reveal linearization point. An
+            // immediate transaction prevents a concurrent metadata/revocation writer
+            // from committing between the final record comparison and that short
+            // authorization transition. It must never invoke external code such as
+            // the Windows Shell while this transaction is open.
+            using var transaction = connection.BeginTransaction(deferred: false);
+            var databaseStatus = GetDatabaseAccessStatus(
+                connection,
+                transaction,
+                expectedRecord.ConversationId);
+            if (databaseStatus != LocalCacheOperationStatus.Ready)
+            {
+                transaction.Rollback();
+                return LocalDownloadedAttachmentConfirmationOutcome.Failure(databaseStatus);
+            }
+
+            var record = ReadAttachmentDownloadRecord(
+                connection,
+                transaction,
+                expectedRecord.ConversationId,
+                expectedRecord.Attachment.Id);
+            var result = record switch
+            {
+                null => LocalDownloadedAttachmentConfirmationResult.AttachmentUnavailable,
+                { State: not LocalAttachmentDownloadState.Downloaded } =>
+                    LocalDownloadedAttachmentConfirmationResult.NotDownloaded,
+                _ when record != expectedRecord =>
+                    LocalDownloadedAttachmentConfirmationResult.Changed,
+                _ => LocalDownloadedAttachmentConfirmationResult.Confirmed,
+            };
+            if (result == LocalDownloadedAttachmentConfirmationResult.Confirmed)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    authorizeAction();
+                }
+                catch (Exception exception)
+                {
+                    throw new LocalDownloadedAttachmentAccessActionException(exception);
+                }
+            }
+
+            transaction.Rollback();
+            return new LocalDownloadedAttachmentConfirmationOutcome(
+                LocalCacheOperationStatus.Ready,
+                result);
+        }
+        catch (LocalDownloadedAttachmentAccessActionException exception)
+        {
+            ExceptionDispatchInfo.Capture(exception.InnerException!).Throw();
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (SqliteException exception) when (IsBusy(exception))
+        {
+            logger.LogWarning(
+                "Confirming downloaded attachment access remained busy; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+            return LocalDownloadedAttachmentConfirmationOutcome.Failure(
+                LocalCacheOperationStatus.TransientFailure);
+        }
+        catch (Exception exception)
+        {
+            MarkScopeFatal();
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state while confirming " +
+                "downloaded attachment access after an error of type {ExceptionType}.",
+                exception.GetType().Name);
+            return LocalDownloadedAttachmentConfirmationOutcome.Failure(
                 LocalCacheOperationStatus.FatalScope);
         }
     }
@@ -890,4 +1114,8 @@ public sealed partial class AccountScopedLocalCache
             }
         }
     }
+
+    private sealed class LocalDownloadedAttachmentAccessActionException(
+        Exception innerException)
+        : Exception("Downloaded attachment access failed.", innerException);
 }

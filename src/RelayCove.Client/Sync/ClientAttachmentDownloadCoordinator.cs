@@ -11,12 +11,16 @@ internal sealed class ClientAttachmentDownloadCoordinator :
     private readonly AccountScopedLocalCache localCache;
     private readonly IClientAttachmentCacheStore cacheStore;
     private readonly ClientAttachmentDownloadHttpTransport transport;
+    private readonly IWindowsAttachmentShell attachmentShell;
     private readonly Func<Guid, CancellationToken, Task> conversationRevokedAsync;
     private readonly ILogger<ClientAttachmentDownloadCoordinator> logger;
     private readonly CancellationTokenSource lifetimeCancellation = new();
     private readonly ConcurrentDictionary<
         AttachmentFlightKey,
         CancellationTokenSource> activeFlights = new();
+    private readonly ConcurrentDictionary<
+        AttachmentFlightKey,
+        AttachmentRevealFlight> activeReveals = new();
     private readonly ConcurrentDictionary<Guid, byte> pendingConversationPurges = new();
     private readonly SemaphoreSlim recoveryGate = new(1, 1);
     private int recoveryCompleted;
@@ -27,16 +31,185 @@ internal sealed class ClientAttachmentDownloadCoordinator :
         IClientAttachmentCacheStore cacheStore,
         ClientAttachmentDownloadHttpTransport transport,
         ILogger<ClientAttachmentDownloadCoordinator> logger,
-        Func<Guid, CancellationToken, Task>? conversationRevokedAsync = null)
+        Func<Guid, CancellationToken, Task>? conversationRevokedAsync = null,
+        IWindowsAttachmentShell? attachmentShell = null)
     {
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
         this.cacheStore = cacheStore ?? throw new ArgumentNullException(nameof(cacheStore));
         this.transport = transport ?? throw new ArgumentNullException(nameof(transport));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        this.attachmentShell = attachmentShell ?? new WindowsAttachmentShell();
         this.conversationRevokedAsync = conversationRevokedAsync ??
             (static (_, _) => Task.CompletedTask);
         localCache.AttachmentDownloadCancellationRequested += CancelConversationDownloads;
         localCache.AttachmentCachePurged += PurgeConversationCacheAsync;
+    }
+
+    public async Task<ClientAttachmentRevealOutcome> RevealInFolderAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        ClientAttachmentRevealCommit commit,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ValidateGuid(conversationId, nameof(conversationId));
+        ValidateGuid(attachmentId, nameof(attachmentId));
+        ArgumentNullException.ThrowIfNull(commit);
+        var flightKey = new AttachmentFlightKey(conversationId, attachmentId);
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            lifetimeCancellation.Token);
+        var flight = new AttachmentRevealFlight(linkedCancellation);
+        if (!activeReveals.TryAdd(flightKey, flight))
+        {
+            linkedCancellation.Dispose();
+            return ClientAttachmentRevealOutcome.FromStatus(
+                ClientAttachmentRevealStatus.Stale);
+        }
+
+        var token = linkedCancellation.Token;
+        using var cancellationBarrier = token.UnsafeRegister(
+            static state =>
+            {
+                var activeReveal = (AttachmentRevealFlight)state!;
+                lock (activeReveal.CommitGate)
+                {
+                }
+            },
+            flight);
+        try
+        {
+            var read = await localCache
+                .ReadDownloadedAttachmentAsync(conversationId, attachmentId, token)
+                .ConfigureAwait(false);
+            if (read.Status != LocalCacheOperationStatus.Ready)
+            {
+                return ClientAttachmentRevealOutcome.FromStatus(
+                    MapLocalRevealStatus(read.Status));
+            }
+
+            if (read.Result != LocalDownloadedAttachmentReadResult.Downloaded ||
+                read.Record is null)
+            {
+                return ClientAttachmentRevealOutcome.FromStatus(
+                    read.Result == LocalDownloadedAttachmentReadResult.AttachmentUnavailable
+                        ? ClientAttachmentRevealStatus.AttachmentUnavailable
+                        : ClientAttachmentRevealStatus.NotDownloaded);
+            }
+
+            var record = read.Record;
+            var resolution = await cacheStore
+                .ValidateAndResolveAsync(
+                    record.LocalPath!,
+                    CreateKeyFromRecord(record),
+                    record.Attachment.Size,
+                    token)
+                .ConfigureAwait(false);
+            using var file = resolution.File;
+            if (resolution.Status != ClientAttachmentCacheStoreStatus.Ready || file is null)
+            {
+                return ClientAttachmentRevealOutcome.FromStatus(
+                    resolution.Status is ClientAttachmentCacheStoreStatus.NotFound or
+                        ClientAttachmentCacheStoreStatus.InvalidRelativePath or
+                        ClientAttachmentCacheStoreStatus.ValidationFailed
+                        ? ClientAttachmentRevealStatus.ValidationFailed
+                        : ClientAttachmentRevealStatus.LocalCacheFailure);
+            }
+
+            var committedStatus = ClientAttachmentRevealStatus.LocalCacheFailure;
+            var confirmation = await localCache
+                .ConfirmDownloadedAttachmentAsync(
+                    record,
+                    () =>
+                    {
+                        lock (flight.CommitGate)
+                        {
+                            if (token.IsCancellationRequested)
+                            {
+                                committedStatus = MapCancellationRevealStatus(conversationId);
+                                return;
+                            }
+
+                            var accessStatus = localCache.GetConversationAccessStatus(
+                                conversationId);
+                            if (accessStatus != LocalCacheOperationStatus.Ready)
+                            {
+                                committedStatus = MapLocalRevealStatus(accessStatus);
+                                return;
+                            }
+
+                            // This is the final, one-way reveal-start transition.
+                            // It runs under the account and cache linearization
+                            // locks, but it does not call the native Shell. Explorer
+                            // is allowed to block indefinitely, so it must run only
+                            // after this callback, the SQLite transaction, and all
+                            // coordinator gates have been released.
+                            committedStatus = commit();
+                        }
+                    },
+                    token)
+                .ConfigureAwait(false);
+            if (confirmation.Status != LocalCacheOperationStatus.Ready)
+            {
+                return ClientAttachmentRevealOutcome.FromStatus(
+                    MapLocalRevealStatus(confirmation.Status));
+            }
+
+            if (confirmation.Result != LocalDownloadedAttachmentConfirmationResult.Confirmed)
+            {
+                return ClientAttachmentRevealOutcome.FromStatus(
+                    confirmation.Result switch
+                    {
+                        LocalDownloadedAttachmentConfirmationResult.AttachmentUnavailable =>
+                            ClientAttachmentRevealStatus.AttachmentUnavailable,
+                        LocalDownloadedAttachmentConfirmationResult.NotDownloaded =>
+                            ClientAttachmentRevealStatus.NotDownloaded,
+                        _ => ClientAttachmentRevealStatus.Stale,
+                    });
+            }
+
+            if (committedStatus != ClientAttachmentRevealStatus.Revealed)
+            {
+                return ClientAttachmentRevealOutcome.FromStatus(committedStatus);
+            }
+
+            // A successful commit is the reveal's linearization point. Later
+            // cancellation, selection changes, or revocation are deliberately
+            // ordered after Shell start and cannot suppress this already-authorized
+            // native call. The validated capability remains pinned until it returns.
+            return ClientAttachmentRevealOutcome.FromStatus(
+                attachmentShell.Reveal(file) == WindowsAttachmentShellStatus.Revealed
+                    ? ClientAttachmentRevealStatus.Revealed
+                    : ClientAttachmentRevealStatus.ShellUnavailable);
+        }
+        catch (OperationCanceledException)
+        {
+            return ClientAttachmentRevealOutcome.FromStatus(
+                MapCancellationRevealStatus(conversationId));
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientAttachmentRevealOutcome.FromStatus(
+                ClientAttachmentRevealStatus.Canceled);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Revealing a downloaded attachment failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientAttachmentRevealOutcome.FromStatus(
+                ClientAttachmentRevealStatus.LocalCacheFailure);
+        }
+        finally
+        {
+            if (activeReveals.TryGetValue(flightKey, out var activeReveal) &&
+                ReferenceEquals(activeReveal, flight))
+            {
+                activeReveals.TryRemove(flightKey, out _);
+            }
+
+            await RetryPendingPurgeIfQuiescentAsync(conversationId).ConfigureAwait(false);
+        }
     }
 
     public async Task<ClientAttachmentCacheRecoveryStatus> RecoverAsync(
@@ -225,6 +398,18 @@ internal sealed class ClientAttachmentDownloadCoordinator :
                 catch (ObjectDisposedException)
                 {
                     // A completed flight may dispose concurrently with runtime shutdown.
+                }
+            }
+
+            foreach (var reveal in activeReveals.Values)
+            {
+                try
+                {
+                    reveal.Cancellation.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // A completed reveal may dispose concurrently with runtime shutdown.
                 }
             }
 
@@ -562,6 +747,24 @@ internal sealed class ClientAttachmentDownloadCoordinator :
                 // Completion may race a durable revocation notification.
             }
         }
+
+
+        foreach (var reveal in activeReveals)
+        {
+            if (reveal.Key.ConversationId != conversationId)
+            {
+                continue;
+            }
+
+            try
+            {
+                reveal.Value.Cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Completion may race a durable revocation notification.
+            }
+        }
     }
 
     private async Task PurgeConversationCacheAsync(Guid conversationId)
@@ -582,7 +785,8 @@ internal sealed class ClientAttachmentDownloadCoordinator :
     private async Task RetryPendingPurgeIfQuiescentAsync(Guid conversationId)
     {
         if (!pendingConversationPurges.ContainsKey(conversationId) ||
-            activeFlights.Keys.Any(key => key.ConversationId == conversationId))
+            activeFlights.Keys.Any(key => key.ConversationId == conversationId) ||
+            activeReveals.Keys.Any(key => key.ConversationId == conversationId))
         {
             return;
         }
@@ -627,6 +831,36 @@ internal sealed class ClientAttachmentDownloadCoordinator :
             return ClientAttachmentDownloadStatus.Canceled;
         }
     }
+
+    private ClientAttachmentRevealStatus MapCancellationRevealStatus(Guid conversationId)
+    {
+        try
+        {
+            return localCache.GetConversationAccessStatus(conversationId) ==
+                LocalCacheOperationStatus.RevokedConversation
+                    ? ClientAttachmentRevealStatus.AccessRevoked
+                    : ClientAttachmentRevealStatus.Canceled;
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientAttachmentRevealStatus.Canceled;
+        }
+    }
+
+    private static ClientAttachmentRevealStatus MapLocalRevealStatus(
+        LocalCacheOperationStatus status) =>
+        status switch
+        {
+            LocalCacheOperationStatus.RevokedConversation =>
+                ClientAttachmentRevealStatus.AccessRevoked,
+            LocalCacheOperationStatus.UnknownConversation =>
+                ClientAttachmentRevealStatus.AttachmentUnavailable,
+            LocalCacheOperationStatus.TransientFailure =>
+                ClientAttachmentRevealStatus.TransientFailure,
+            LocalCacheOperationStatus.Conflict =>
+                ClientAttachmentRevealStatus.Stale,
+            _ => ClientAttachmentRevealStatus.LocalCacheFailure,
+        };
 
     private static ClientAttachmentDownloadStatus MapLocalStatus(
         LocalCacheOperationStatus status) =>
@@ -694,4 +928,12 @@ internal sealed class ClientAttachmentDownloadCoordinator :
     private readonly record struct AttachmentFlightKey(
         Guid ConversationId,
         Guid AttachmentId);
+
+    private sealed class AttachmentRevealFlight(
+        CancellationTokenSource cancellation)
+    {
+        public object CommitGate { get; } = new();
+
+        public CancellationTokenSource Cancellation { get; } = cancellation;
+    }
 }

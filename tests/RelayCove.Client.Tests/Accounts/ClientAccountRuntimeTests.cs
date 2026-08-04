@@ -285,21 +285,29 @@ public sealed class ClientAccountRuntimeTests
             response.Headers.ETag = new EntityTagHeaderValue($"\"{hash}\"");
             return Task.FromResult(response);
         }));
+        var attachmentShell = new FakeWindowsAttachmentShell();
         var factory = new ClientAccountRuntimeFactory(
             normalClient,
             accountRoot,
             NullLoggerFactory.Instance,
             (_, _, _, _) => new FakeRealtimeConnection(),
             attachmentUploadHttpClient: transferClient,
-            attachmentCacheRootDirectory: cacheRoot);
+            attachmentCacheRootDirectory: cacheRoot,
+            attachmentShell: attachmentShell);
         var runtime = await factory.CreateAsync(CreateSession());
         Assert.True((await runtime.StartAsync()).IsAuthoritativeCacheReady);
 
         var outcome = await runtime.DownloadAttachmentAsync(
             conversation.Id,
             attachment.Id);
+        var reveal = await runtime.RevealAttachmentInFolderAsync(
+            conversation.Id,
+            attachment.Id,
+            () => ClientAttachmentRevealStatus.Revealed);
 
         Assert.Equal(ClientAttachmentDownloadStatus.Completed, outcome.Status);
+        Assert.Equal(ClientAttachmentRevealStatus.Revealed, reveal.Status);
+        Assert.Equal(1, attachmentShell.RevealCount);
         Assert.Equal(2, Volatile.Read(ref normalRequests));
         Assert.Equal(1, Volatile.Read(ref transferRequests));
         Assert.True(File.Exists(Path.Combine(
@@ -307,6 +315,55 @@ public sealed class ClientAccountRuntimeTests
             runtime.Identity.Id,
             outcome.LocalPath!)));
         await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task DisposeAsync_WhenRevealShellStarted_DoesNotWaitForNativeShellReturn()
+    {
+        using var directory = new TemporaryDirectory();
+        var shellStarted = NewSignal();
+        var shellRelease = NewSignal();
+        var attachmentCoordinator = new FakeAttachmentDownloadCoordinator
+        {
+            RevealAction = async (_, _, commit, _) =>
+            {
+                var status = commit();
+                if (status != ClientAttachmentRevealStatus.Revealed)
+                {
+                    return ClientAttachmentRevealOutcome.FromStatus(status);
+                }
+
+                shellStarted.TrySetResult();
+                await shellRelease.Task;
+                return ClientAttachmentRevealOutcome.FromStatus(
+                    ClientAttachmentRevealStatus.Revealed);
+            },
+        };
+        var cacheDisposed = false;
+        var runtime = CreateRuntime(
+            directory.Path,
+            CreateSession(),
+            new FakeRealtimeConnection(),
+            new FakeSyncCoordinator(),
+            cache: new RecordingAsyncDisposable(() =>
+            {
+                cacheDisposed = true;
+                return ValueTask.CompletedTask;
+            }),
+            attachmentDownloadCoordinator: attachmentCoordinator);
+
+        var reveal = runtime.RevealAttachmentInFolderAsync(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            () => ClientAttachmentRevealStatus.Revealed);
+        await shellStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await runtime.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(cacheDisposed);
+        Assert.True(attachmentCoordinator.IsDisposeCompleted);
+
+        shellRelease.TrySetResult();
+        Assert.Equal(ClientAttachmentRevealStatus.Revealed, (await reveal).Status);
     }
 
     [Fact]
@@ -1506,7 +1563,8 @@ public sealed class ClientAccountRuntimeTests
         ILogger<ClientAccountRuntime>? logger = null,
         IAsyncDisposable? notificationCoordinator = null,
         Func<ClientNotificationActivationTarget, bool>? notificationTargetAuthorizer = null,
-        ClientAutomaticSyncScheduler? automaticSyncScheduler = null) =>
+        ClientAutomaticSyncScheduler? automaticSyncScheduler = null,
+        FakeAttachmentDownloadCoordinator? attachmentDownloadCoordinator = null) =>
         new(
             AccountScopeIdentity.Create(ServerBaseUri, UserId, rootDirectory),
             session,
@@ -1521,7 +1579,8 @@ public sealed class ClientAccountRuntimeTests
                 new ClientAutomaticSyncScheduler(
                     sync,
                     NullLogger<ClientAutomaticSyncScheduler>.Instance),
-            notificationTargetAuthorizer);
+            notificationTargetAuthorizer,
+            attachmentDownloadCoordinator: attachmentDownloadCoordinator);
 
     private static ClientAuthenticationSession CreateSession(
         HttpMessageHandler? handler = null) =>
@@ -1713,6 +1772,46 @@ public sealed class ClientAccountRuntimeTests
             DisposeAction?.Invoke() ?? ValueTask.CompletedTask;
     }
 
+    private sealed class FakeAttachmentDownloadCoordinator : IClientAttachmentDownloadCoordinator
+    {
+        public Func<Guid, Guid, ClientAttachmentRevealCommit, CancellationToken,
+            Task<ClientAttachmentRevealOutcome>>?
+            RevealAction
+        {
+            get;
+            init;
+        }
+
+        public bool IsDisposeCompleted { get; private set; }
+
+        public Task<ClientAttachmentCacheRecoveryStatus> RecoverAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(ClientAttachmentCacheRecoveryStatus.Ready);
+
+        public Task<ClientAttachmentDownloadOutcome> DownloadAsync(
+            Guid conversationId,
+            Guid attachmentId,
+            CancellationToken cancellationToken = default,
+            IProgress<ClientAttachmentDownloadProgress>? progress = null) =>
+            Task.FromResult(ClientAttachmentDownloadOutcome.Failure(
+                ClientAttachmentDownloadStatus.LocalCacheFailure));
+
+        public Task<ClientAttachmentRevealOutcome> RevealInFolderAsync(
+            Guid conversationId,
+            Guid attachmentId,
+            ClientAttachmentRevealCommit commit,
+            CancellationToken cancellationToken = default) =>
+            RevealAction?.Invoke(conversationId, attachmentId, commit, cancellationToken) ??
+            Task.FromResult(ClientAttachmentRevealOutcome.FromStatus(
+                ClientAttachmentRevealStatus.LocalCacheFailure));
+
+        public ValueTask DisposeAsync()
+        {
+            IsDisposeCompleted = true;
+            return ValueTask.CompletedTask;
+        }
+    }
+
     private sealed class RecordingAsyncDisposable(Func<ValueTask> disposeAsync) : IAsyncDisposable
     {
         public ValueTask DisposeAsync() => disposeAsync();
@@ -1739,6 +1838,19 @@ public sealed class ClientAccountRuntimeTests
         public Task OnConversationAccessRevokedAsync(
             Guid conversationId,
             CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class FakeWindowsAttachmentShell : IWindowsAttachmentShell
+    {
+        public int RevealCount { get; private set; }
+
+        public WindowsAttachmentShellStatus Reveal(
+            ClientAttachmentCacheStore.ValidatedFile file)
+        {
+            ArgumentNullException.ThrowIfNull(file);
+            RevealCount++;
+            return WindowsAttachmentShellStatus.Revealed;
+        }
     }
 
     private sealed class DelegateHttpHandler(

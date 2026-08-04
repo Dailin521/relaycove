@@ -90,6 +90,15 @@ internal sealed record ClientAttachmentCacheStoreValidationOutcome(
         "IsValid = [REDACTED] }";
 }
 
+internal sealed record ClientAttachmentCacheStoreResolutionOutcome(
+    ClientAttachmentCacheStoreStatus Status,
+    ClientAttachmentCacheStore.ValidatedFile? File)
+{
+    public override string ToString() =>
+        $"{nameof(ClientAttachmentCacheStoreResolutionOutcome)} {{ Status = {Status}, " +
+        "File = [REDACTED] }";
+}
+
 internal sealed record ClientAttachmentCacheStoreDeleteOutcome(
     ClientAttachmentCacheStoreStatus Status,
     int DeletedCount)
@@ -143,6 +152,12 @@ internal interface IClientAttachmentCacheStore
         CancellationToken cancellationToken = default);
 
     Task<ClientAttachmentCacheStoreValidationOutcome> ValidateAsync(
+        string relativePath,
+        ClientAttachmentCacheStoreKey expectedKey,
+        long expectedSize,
+        CancellationToken cancellationToken = default);
+
+    Task<ClientAttachmentCacheStoreResolutionOutcome> ValidateAndResolveAsync(
         string relativePath,
         ClientAttachmentCacheStoreKey expectedKey,
         long expectedSize,

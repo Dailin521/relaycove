@@ -10,4 +10,10 @@ internal interface IClientAttachmentDownloadCoordinator : IAsyncDisposable
         Guid attachmentId,
         CancellationToken cancellationToken = default,
         IProgress<ClientAttachmentDownloadProgress>? progress = null);
+
+    Task<ClientAttachmentRevealOutcome> RevealInFolderAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        ClientAttachmentRevealCommit commit,
+        CancellationToken cancellationToken = default);
 }

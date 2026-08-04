@@ -20,6 +20,7 @@ internal sealed class ClientAttachmentCacheStore : IClientAttachmentCacheStore
     private readonly ScopeStoreState scopeState;
     private readonly SemaphoreSlim operationGate;
     private readonly long quotaBytes;
+    private static readonly object ValidatedFileToken = new();
 
     internal ClientAttachmentCacheStore(
         AccountScopeIdentity identity,
@@ -59,6 +60,50 @@ internal sealed class ClientAttachmentCacheStore : IClientAttachmentCacheStore
     internal string CacheRoot { get; }
 
     internal string ScopeDirectory { get; }
+
+    internal sealed class ValidatedFile : IDisposable
+    {
+        private readonly FileStream stream;
+        private readonly string fullPath;
+        private int disposed;
+
+        internal ValidatedFile(
+            string fullPath,
+            FileStream stream,
+            object validationToken)
+        {
+            if (!ReferenceEquals(validationToken, ValidatedFileToken))
+            {
+                throw new InvalidOperationException(
+                    "Validated cache files can only be created by their owning store.");
+            }
+
+            this.fullPath = fullPath;
+            this.stream = stream ?? throw new ArgumentNullException(nameof(stream));
+        }
+
+        internal string FullPath
+        {
+            get
+            {
+                ObjectDisposedException.ThrowIf(
+                    Volatile.Read(ref disposed) != 0,
+                    this);
+                return fullPath;
+            }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                stream.Dispose();
+            }
+        }
+
+        public override string ToString() =>
+            $"{nameof(ValidatedFile)} {{ FullPath = [REDACTED] }}";
+    }
 
     public async Task<ClientAttachmentCacheStoreStagingOutcome> CreateStagingAsync(
         Guid conversationId,
@@ -269,36 +314,83 @@ internal sealed class ClientAttachmentCacheStore : IClientAttachmentCacheStore
         long expectedSize,
         CancellationToken cancellationToken = default)
     {
+        var outcome = await ValidateAndResolveAsync(
+                relativePath,
+                expectedKey,
+                expectedSize,
+                cancellationToken)
+            .ConfigureAwait(false);
+        using var file = outcome.File;
+        return new ClientAttachmentCacheStoreValidationOutcome(
+            outcome.Status,
+            outcome.Status == ClientAttachmentCacheStoreStatus.Ready && file is not null);
+    }
+
+    public async Task<ClientAttachmentCacheStoreResolutionOutcome> ValidateAndResolveAsync(
+        string relativePath,
+        ClientAttachmentCacheStoreKey expectedKey,
+        long expectedSize,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(expectedKey);
         ValidateExpectedSize(expectedSize);
         if (!TryParseFinalRelativePath(relativePath, out var actualKey) ||
             !KeysEqual(actualKey!, expectedKey))
         {
-            return new ClientAttachmentCacheStoreValidationOutcome(
+            return new ClientAttachmentCacheStoreResolutionOutcome(
                 ClientAttachmentCacheStoreStatus.InvalidRelativePath,
-                IsValid: false);
+                File: null);
         }
 
+        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             EnsureScopeDirectory();
             var path = ResolveFinalPath(relativePath, expectedKey);
             if (!File.Exists(path))
             {
-                return new ClientAttachmentCacheStoreValidationOutcome(
+                return new ClientAttachmentCacheStoreResolutionOutcome(
                     ClientAttachmentCacheStoreStatus.NotFound,
-                    IsValid: false);
+                    File: null);
             }
 
-            RejectReparsePoint(path);
-            var isValid = await IsMatchingFileAsync(
-                path,
-                expectedKey.Sha256,
-                expectedSize,
-                cancellationToken).ConfigureAwait(false);
-            return new ClientAttachmentCacheStoreValidationOutcome(
-                isValid ? ClientAttachmentCacheStoreStatus.Ready : ClientAttachmentCacheStoreStatus.ValidationFailed,
-                isValid);
+            var file = await OpenValidatedFileAsync(
+                    path,
+                    expectedKey.Sha256,
+                    expectedSize,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (file is null)
+            {
+                return new ClientAttachmentCacheStoreResolutionOutcome(
+                    ClientAttachmentCacheStoreStatus.ValidationFailed,
+                    File: null);
+            }
+
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                EnsureScopeDirectory();
+                var finalPath = ResolveFinalPath(relativePath, expectedKey);
+                if (!string.Equals(path, finalPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    file.Dispose();
+                    return new ClientAttachmentCacheStoreResolutionOutcome(
+                        ClientAttachmentCacheStoreStatus.ValidationFailed,
+                        File: null);
+                }
+
+                RejectReparsePoint(finalPath);
+                return new ClientAttachmentCacheStoreResolutionOutcome(
+                    ClientAttachmentCacheStoreStatus.Ready,
+                    file);
+            }
+            catch
+            {
+                file.Dispose();
+                throw;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -306,9 +398,13 @@ internal sealed class ClientAttachmentCacheStore : IClientAttachmentCacheStore
         }
         catch (Exception exception) when (IsStorageException(exception))
         {
-            return new ClientAttachmentCacheStoreValidationOutcome(
+            return new ClientAttachmentCacheStoreResolutionOutcome(
                 ClientAttachmentCacheStoreStatus.StorageFailure,
-                IsValid: false);
+                File: null);
+        }
+        finally
+        {
+            operationGate.Release();
         }
     }
 
@@ -690,6 +786,63 @@ internal sealed class ClientAttachmentCacheStore : IClientAttachmentCacheStore
             Convert.ToHexString(hash).ToLowerInvariant(),
             expectedSha256,
             StringComparison.Ordinal);
+    }
+
+    private static async Task<ValidatedFile?> OpenValidatedFileAsync(
+        string path,
+        string expectedSha256,
+        long expectedSize,
+        CancellationToken cancellationToken)
+    {
+        RejectReparsePoint(path);
+        FileStream? stream = null;
+        try
+        {
+            stream = new FileStream(
+                path,
+                new FileStreamOptions
+                {
+                    Mode = FileMode.Open,
+                    Access = FileAccess.Read,
+                    Share = FileShare.Read,
+                    BufferSize = 81920,
+                    Options = FileOptions.Asynchronous | FileOptions.SequentialScan,
+                });
+            if (stream.Length != expectedSize)
+            {
+                return null;
+            }
+
+            var hash = await SHA256
+                .HashDataAsync(stream, cancellationToken)
+                .ConfigureAwait(false);
+            if (!string.Equals(
+                    Convert.ToHexString(hash).ToLowerInvariant(),
+                    expectedSha256,
+                    StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            RejectReparsePoint(path);
+            var finalInfo = new FileInfo(path);
+            if (!finalInfo.Exists || finalInfo.Length != expectedSize)
+            {
+                return null;
+            }
+
+            var validated = new ValidatedFile(path, stream, ValidatedFileToken);
+            stream = null;
+            return validated;
+        }
+        finally
+        {
+            if (stream is not null)
+            {
+                await stream.DisposeAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     private async Task DiscardCompletedAsync(
