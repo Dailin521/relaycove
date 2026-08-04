@@ -14,7 +14,9 @@ param(
 
     [int] $Port = 0,
 
-    [switch] $KeepServerLog
+    [switch] $KeepServerLog,
+
+    [switch] $AllowRealClientLaunch
 )
 
 Set-StrictMode -Version Latest
@@ -23,12 +25,12 @@ $ErrorActionPreference = "Stop"
 # This is an internal-RC delivery smoke, not a replacement for the Client's
 # coordinator/UI tests. It starts the real Server, streams a real HTTPS
 # artifact to a client-equivalent .part file, and drives the published updater
-# executable. The Updater never kills the Client: after evidence is captured,
-# this harness terminates only the exact Client PID it observed from its unique
-# smoke package path, so it does not leave an RC Client process behind. Windows
-# SpecialFolder.LocalApplicationData cannot be isolated with a process variable,
-# so production Client ownership-record cleanup remains unit-tested rather than
-# touching a real user's local application data from this smoke.
+# executable. It deliberately stops before the successful updater handoff by
+# default: a real WPF Client reads SpecialFolder.LocalApplicationData, which
+# cannot be isolated with a process environment variable. Pass
+# -AllowRealClientLaunch only after an explicit review of the current user's
+# RelayCove profile; the one-time 2026-08-04 evidence was recorded before this
+# safety default existed. Production ownership-record cleanup stays unit-tested.
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $artifactsRoot = Join-Path $repositoryRoot "artifacts"
@@ -571,6 +573,9 @@ try {
     Set-Content -LiteralPath (Join-Path $unrelatedSibling "unrelated.txt") -Value "must remain" -NoNewline
     $clientExecutablePath = Join-Path $target "RelayCove.Client.exe"
     $existingClientIds = @(Get-ClientProcessIdsAtPath $clientExecutablePath)
+    if (-not $AllowRealClientLaunch) {
+        throw "Safety stop: this smoke does not launch the real WPF Client by default because it can access the current user's LocalAppData profile. Pass -AllowRealClientLaunch only after explicit profile-isolation review."
+    }
     $successWait = Start-ControlledExitProcess
     Invoke-PackageLocalUpdater $target $downloadedArchive $manifest.artifact.sha256 ([int64]$manifest.artifact.sizeBytes) $NewVersion $OldVersion $successWait $token
     Wait-ForBootstrapDirectory $bootstrapDirectory
