@@ -426,6 +426,85 @@ function Start-ControlledExitProcess {
     return [pscustomobject]@{ Process = $process; StartTicks = $process.StartTime.ToUniversalTime().Ticks }
 }
 
+function Add-ExpectedSmokeUpdaterPath {
+    param([Parameter(Mandatory)][string] $Path, [Parameter(Mandatory)][System.Collections.Generic.List[string]] $ExpectedPaths)
+
+    $resolved = Assert-PathInsideArtifacts $Path "Smoke updater path"
+    if (@($ExpectedPaths | Where-Object { [string]::Equals($_, $resolved, [System.StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) {
+        $ExpectedPaths.Add($resolved)
+    }
+    return $resolved
+}
+
+function Add-TrackedSmokeUpdaterProcess {
+    param(
+        [Parameter(Mandatory)][System.Diagnostics.Process] $Process,
+        [Parameter(Mandatory)][string] $ExpectedPath,
+        [Parameter(Mandatory)][System.Collections.Generic.List[object]] $TrackedProcesses
+    )
+
+    $path = $Process.Path
+    Assert-Condition ([string]::Equals($path, $ExpectedPath, [System.StringComparison]::OrdinalIgnoreCase)) "Observed updater process has an unexpected executable path."
+    $TrackedProcesses.Add([pscustomobject]@{
+            Id = $Process.Id
+            Path = $path
+            StartTimeUtcTicks = $Process.StartTime.ToUniversalTime().Ticks
+        })
+}
+
+function Track-RunningSmokeUpdaterProcessesAtPath {
+    param([Parameter(Mandatory)][string] $ExpectedPath, [Parameter(Mandatory)][System.Collections.Generic.List[object]] $TrackedProcesses)
+
+    foreach ($process in @(Get-Process -ErrorAction SilentlyContinue)) {
+        try {
+            if ([string]::Equals($process.Path, $ExpectedPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                Add-TrackedSmokeUpdaterProcess $process $ExpectedPath $TrackedProcesses
+            }
+        }
+        catch {
+            # A process can exit between enumeration and identity capture.
+        }
+        finally {
+            $process.Dispose()
+        }
+    }
+}
+
+function Stop-ExactTrackedSmokeUpdaterProcesses {
+    param([Parameter(Mandatory)][System.Collections.Generic.List[object]] $TrackedProcesses)
+
+    foreach ($expectedProcess in $TrackedProcesses) {
+        $process = Get-Process -Id $expectedProcess.Id -ErrorAction SilentlyContinue
+        if ($null -eq $process) { continue }
+        try {
+            if ([string]::Equals($process.Path, $expectedProcess.Path, [System.StringComparison]::OrdinalIgnoreCase) -and
+                $process.StartTime.ToUniversalTime().Ticks -eq $expectedProcess.StartTimeUtcTicks) {
+                $process.Kill($true)
+                Assert-Condition ($process.WaitForExit(15000)) "Exact smoke updater process did not exit after cleanup."
+            }
+        }
+        finally {
+            $process.Dispose()
+        }
+    }
+}
+
+function Assert-NoRunningProcessAtPath {
+    param([Parameter(Mandatory)][string] $ExpectedPath)
+
+    foreach ($process in @(Get-Process -ErrorAction SilentlyContinue)) {
+        try {
+            Assert-Condition (-not [string]::Equals($process.Path, $ExpectedPath, [System.StringComparison]::OrdinalIgnoreCase)) "A smoke updater process remained at $ExpectedPath."
+        }
+        catch {
+            # A process can exit between enumeration and reading Path.
+        }
+        finally {
+            $process.Dispose()
+        }
+    }
+}
+
 function Invoke-PackageLocalUpdater {
     param(
         [Parameter(Mandatory)][string] $Target,
@@ -435,7 +514,8 @@ function Invoke-PackageLocalUpdater {
         [Parameter(Mandatory)][string] $ExpectedVersion,
         [Parameter(Mandatory)][string] $CurrentVersion,
         [Parameter(Mandatory)] $WaitProcess,
-        [Parameter(Mandatory)][string] $Token
+        [Parameter(Mandatory)][string] $Token,
+        [Parameter(Mandatory)][System.Collections.Generic.List[object]] $TrackedProcesses
     )
 
     $updaterPath = Join-Path $Target "RelayCove.Updater.exe"
@@ -451,9 +531,14 @@ function Invoke-PackageLocalUpdater {
         "--wait-start-time-utc-ticks", $WaitProcess.StartTicks.ToString([System.Globalization.CultureInfo]::InvariantCulture),
         "--bootstrap-token", $Token)
     $parent = Start-ProcessWithArguments $updaterPath $Target $arguments
-    Assert-Condition ($parent.WaitForExit(15000)) "Package-local bootstrap parent did not exit."
-    Assert-Condition ($parent.ExitCode -eq 0) "Package-local bootstrap parent rejected the handoff (exit code $($parent.ExitCode))."
-    $parent.Dispose()
+    try {
+        Add-TrackedSmokeUpdaterProcess $parent $updaterPath $TrackedProcesses
+        Assert-Condition ($parent.WaitForExit(15000)) "Package-local bootstrap parent did not exit."
+        Assert-Condition ($parent.ExitCode -eq 0) "Package-local bootstrap parent rejected the handoff (exit code $($parent.ExitCode))."
+    }
+    finally {
+        $parent.Dispose()
+    }
 }
 
 function Wait-ForManifestVersion {
@@ -532,12 +617,13 @@ function Wait-ForSmokeProbeMarker {
 }
 
 function Wait-ForProcessAtPath {
-    param([Parameter(Mandatory)][string] $ExecutablePath)
+    param([Parameter(Mandatory)][string] $ExecutablePath, [Parameter(Mandatory)][System.Collections.Generic.List[object]] $TrackedProcesses)
 
     for ($attempt = 0; $attempt -lt 120; $attempt++) {
         foreach ($process in @(Get-Process -ErrorAction SilentlyContinue)) {
             try {
                 if ([string]::Equals($process.Path, $ExecutablePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    Add-TrackedSmokeUpdaterProcess $process $ExecutablePath $TrackedProcesses
                     return $process.Id
                 }
             }
@@ -612,6 +698,8 @@ $serverProcessId = $null
 $certificateThumbprint = $null
 $httpClient = $null
 $smokeClientProcesses = @()
+$smokeUpdaterProcesses = [System.Collections.Generic.List[object]]::new()
+$expectedSmokeUpdaterPaths = [System.Collections.Generic.List[string]]::new()
 $evidence = $null
 $evidencePath = $null
 try {
@@ -666,6 +754,7 @@ try {
     New-Item -ItemType Directory -Path (Split-Path -Parent $target) | Out-Null
     Expand-ArchiveExactly $OldArchivePath $target
     Assert-Condition ((Read-PackageManifestVersion $target) -eq $OldVersion) "Old package was not prepared as the updater target."
+    $packageLocalUpdaterPath = Add-ExpectedSmokeUpdaterPath (Join-Path $target "RelayCove.Updater.exe") $expectedSmokeUpdaterPaths
     $corruptArchive = Join-Path $runRoot "corrupt.zip"
     Copy-Item -LiteralPath $downloadedArchive -Destination $corruptArchive
     $corruptStream = [System.IO.File]::Open($corruptArchive, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
@@ -679,11 +768,11 @@ try {
     finally { $corruptStream.Dispose() }
     $corruptToken = [Guid]::NewGuid().ToString("N")
     $corruptBootstrapDirectory = Join-Path (Split-Path -Parent $target) (".relaycove-updater-" + $corruptToken)
+    $corruptBootstrapUpdater = Add-ExpectedSmokeUpdaterPath (Join-Path $corruptBootstrapDirectory "RelayCove.Updater.exe") $expectedSmokeUpdaterPaths
     $failedWait = Start-ControlledExitProcess
-    Invoke-PackageLocalUpdater $target $corruptArchive $manifest.artifact.sha256 ([int64]$manifest.artifact.sizeBytes) $NewVersion $OldVersion $failedWait $corruptToken
+    Invoke-PackageLocalUpdater $target $corruptArchive $manifest.artifact.sha256 ([int64]$manifest.artifact.sizeBytes) $NewVersion $OldVersion $failedWait $corruptToken $smokeUpdaterProcesses
     Wait-ForBootstrapDirectory $corruptBootstrapDirectory
-    $corruptBootstrapUpdater = Join-Path $corruptBootstrapDirectory "RelayCove.Updater.exe"
-    Wait-ForProcessAtPath $corruptBootstrapUpdater | Out-Null
+    Wait-ForProcessAtPath $corruptBootstrapUpdater $smokeUpdaterProcesses | Out-Null
     $failedWait.Process.WaitForExit()
     Wait-ForProcessExitAtPath $corruptBootstrapUpdater
     Assert-Condition ((Read-PackageManifestVersion $target) -eq $OldVersion) "A corrupt package changed the old target."
@@ -691,6 +780,7 @@ try {
 
     $token = [Guid]::NewGuid().ToString("N")
     $bootstrapDirectory = Join-Path (Split-Path -Parent $target) (".relaycove-updater-" + $token)
+    $bootstrapUpdaterPath = Add-ExpectedSmokeUpdaterPath (Join-Path $bootstrapDirectory "RelayCove.Updater.exe") $expectedSmokeUpdaterPaths
     $siblingToken = [Guid]::NewGuid().ToString("N")
     $unrelatedSibling = Join-Path (Split-Path -Parent $target) (".relaycove-updater-" + $siblingToken)
     New-Item -ItemType Directory -Path $unrelatedSibling | Out-Null
@@ -701,8 +791,9 @@ try {
     $derivedLaunchArchive = New-SmokeDerivedArchive $downloadedArchive $NewVersion $runRoot
     Assert-Condition ($derivedLaunchArchive.Sha256 -ne $manifest.artifact.sha256) "Derived smoke archive must not be reported as the exact network-delivered release."
     $successWait = Start-ControlledExitProcess
-    Invoke-PackageLocalUpdater $target $derivedLaunchArchive.ArchivePath $derivedLaunchArchive.Sha256 $derivedLaunchArchive.SizeBytes $NewVersion $OldVersion $successWait $token
+    Invoke-PackageLocalUpdater $target $derivedLaunchArchive.ArchivePath $derivedLaunchArchive.Sha256 $derivedLaunchArchive.SizeBytes $NewVersion $OldVersion $successWait $token $smokeUpdaterProcesses
     Wait-ForBootstrapDirectory $bootstrapDirectory
+    Wait-ForProcessAtPath $bootstrapUpdaterPath $smokeUpdaterProcesses | Out-Null
     $markerPath = Join-Path $bootstrapDirectory ".relaycove-bootstrap-owner"
     Assert-Condition ((Get-Content -LiteralPath $markerPath -Raw) -eq ("relaycove-bootstrap-owner:" + $token)) "Bootstrap owner marker does not exactly match its token."
     $successWait.Process.WaitForExit()
@@ -725,7 +816,7 @@ try {
             }
         })
     $probeMarkerPath = Wait-ForSmokeProbeMarker $target $smokeClientProcesses
-    Wait-ForProcessExitAtPath (Join-Path $bootstrapDirectory "RelayCove.Updater.exe")
+    Wait-ForProcessExitAtPath $bootstrapUpdaterPath
     Remove-ExactOwnedBootstrapDirectory $bootstrapDirectory $token
     Assert-Condition (-not (Test-Path -LiteralPath $bootstrapDirectory)) "Exact owned bootstrap directory cleanup failed."
     Assert-Condition (Test-Path -LiteralPath $unrelatedSibling -PathType Container) "Updater deleted an unrelated bootstrap-looking sibling."
@@ -768,6 +859,13 @@ try {
 }
 finally {
     if ($null -ne $httpClient) { $httpClient.Dispose() }
+    foreach ($expectedUpdaterPath in $expectedSmokeUpdaterPaths) {
+        Track-RunningSmokeUpdaterProcessesAtPath $expectedUpdaterPath $smokeUpdaterProcesses
+    }
+    Stop-ExactTrackedSmokeUpdaterProcesses $smokeUpdaterProcesses
+    foreach ($expectedUpdaterPath in $expectedSmokeUpdaterPaths) {
+        Assert-NoRunningProcessAtPath $expectedUpdaterPath
+    }
     foreach ($expectedClient in $smokeClientProcesses) {
         $client = Get-Process -Id $expectedClient.Id -ErrorAction SilentlyContinue
         if ($null -ne $client) {
