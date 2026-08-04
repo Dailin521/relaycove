@@ -506,7 +506,7 @@ try {
     $manifestDirectory = Join-Path $hostRoot (Join-Path "updates\internal-rc" $NewVersion)
     New-Item -ItemType Directory -Path $manifestDirectory -Force | Out-Null
     Copy-Item -LiteralPath $NewArchivePath -Destination (Join-Path $manifestDirectory $artifactFileName)
-    Invoke-Checked pwsh $manifestScript -Version $NewVersion -MinimumSupportedVersion $NewVersion -Mandatory -DownloadUrl ($baseUri.AbsoluteUri + "api/updates/artifacts/" + $artifactFileName) -ReleaseNotes "Internal RC mandatory delivery smoke." -ClientReleaseRoot (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $NewArchivePath))) -OutputRoot $hostRoot -AllowDirtySource
+    Invoke-Checked pwsh $manifestScript -Version $NewVersion -MinimumSupportedVersion $NewVersion -Mandatory -DownloadUrl ($baseUri.AbsoluteUri + "api/updates/artifacts/" + $artifactFileName) -ReleaseNotes "Internal RC mandatory delivery smoke." -ClientReleaseRoot (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $NewArchivePath))) -OutputRoot $hostRoot -ExpectedCommit (Get-ArchiveCommit $NewArchivePath) -AllowDirtySource
     $manifestPath = Join-Path $manifestDirectory "manifest.json"
     Assert-Condition (Test-Path -LiteralPath $manifestPath -PathType Leaf) "Update manifest generator did not create the expected manifest."
 
