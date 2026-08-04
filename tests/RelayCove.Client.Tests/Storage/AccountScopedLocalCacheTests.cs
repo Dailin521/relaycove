@@ -43,6 +43,133 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         Assert.Equal(2, Scalar(identity, "SELECT COUNT(*) FROM LocalMessageMentions;"));
     }
 
+    [Fact]
+    public async Task MergeIncomingMessage_WhenAttachmentsAreValid_PersistsImmutableRemoteMetadata()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        var message = CreateAttachmentMessage(conversation.Id);
+        await RegisterAsync(cache, conversation);
+
+        var inserted = await cache.MergeIncomingMessageAsync(message);
+        Execute(identity, """
+            UPDATE LocalAttachments
+            SET LocalPath = 'account-cache/opaque.bin',
+                ThumbnailLocalPath = 'account-cache/opaque.thumb',
+                DownloadStatus = 2;
+            """);
+        var duplicate = await cache.MergeIncomingMessageAsync(message);
+        var firstAttachment = message.Attachments[0];
+        var conflictingAttachments = message.Attachments.ToArray();
+        conflictingAttachments[0] = firstAttachment with { Size = firstAttachment.Size + 1 };
+        var conflict = await cache.MergeIncomingMessageAsync(
+            message with { Attachments = conflictingAttachments });
+        var read = await cache.ReadMessagesAsync(conversation.Id);
+
+        Assert.Equal(IncomingMessageMergeResult.Inserted, inserted.Result);
+        Assert.Equal(IncomingMessageMergeResult.Duplicate, duplicate.Result);
+        Assert.Equal(IncomingMessageMergeResult.Conflict, conflict.Result);
+        Assert.Equal(LocalCacheOperationStatus.Ready, read.Status);
+        AssertMessage(message, Assert.Single(read.Messages));
+        Assert.Equal(1, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+        Assert.Equal(2, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments;"));
+        Assert.Equal(2, Scalar(identity, "SELECT MIN(DownloadStatus) FROM LocalAttachments;"));
+    }
+
+    [Fact]
+    public async Task MergeIncomingMessage_WhenAttachmentIdIsAlreadyBound_ConflictsWithoutPartialWrite()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        var first = CreateAttachmentMessage(conversation.Id);
+        var second = first with
+        {
+            Id = first.Id + 1,
+            ClientMessageId = Guid.NewGuid(),
+        };
+        await RegisterAsync(cache, conversation);
+
+        Assert.Equal(
+            IncomingMessageMergeResult.Inserted,
+            (await cache.MergeIncomingMessageAsync(first)).Result);
+        var conflict = await cache.MergeIncomingMessageAsync(second);
+
+        Assert.Equal(IncomingMessageMergeResult.Conflict, conflict.Result);
+        Assert.Equal(1, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+        Assert.Equal(2, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments;"));
+    }
+
+    [Fact]
+    public async Task MergeIncomingMessage_WhenAttachmentInsertFails_RollsBackMessageAndMetadata()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        var message = CreateAttachmentMessage(conversation.Id);
+        await RegisterAsync(cache, conversation);
+        Execute(identity, $"""
+            CREATE TRIGGER AbortSecondAttachmentInsert
+            BEFORE INSERT ON LocalAttachments
+            WHEN NEW.Id = '{message.Attachments[1].Id:D}'
+            BEGIN
+                SELECT RAISE(ABORT, 'injected attachment insert failure');
+            END;
+            """);
+
+        await Assert.ThrowsAsync<SqliteException>(() =>
+            cache.MergeIncomingMessageAsync(message));
+
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessageMentions;"));
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments;"));
+    }
+
+    [Fact]
+    public async Task MergeIncomingMessage_WhenAttachmentProtocolIsInvalid_RejectsBeforeWrite()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        var message = CreateAttachmentMessage(conversation.Id);
+        var first = message.Attachments[0];
+        var second = message.Attachments[1];
+        await RegisterAsync(cache, conversation);
+        var tooMany = Enumerable.Range(1, 11)
+            .Select(index => CreateAttachment(
+                Guid.Parse($"{index:x8}-1111-2222-3333-444444444444")))
+            .OrderBy(attachment => attachment.Id)
+            .ToArray();
+        MessageDto[] invalidMessages =
+        [
+            message with { Attachments = Array.Empty<AttachmentDto>() },
+            message with { Type = MessageType.Text },
+            message with { Attachments = [first, first] },
+            message with { Attachments = [second, first] },
+            message with { Attachments = tooMany },
+            message with { Attachments = [first with { Id = Guid.Empty }] },
+            message with { Attachments = [first with { OriginalFileName = "../secret.bin" }] },
+            message with { Attachments = [first with { ContentType = "Image/PNG" }] },
+            message with { Attachments = [first with { ContentType = "image/png; charset=utf-8" }] },
+            message with { Attachments = [first with { ContentType = "application/octet-stream" }] },
+            message with { Attachments = [first with { Size = 0 }] },
+            message with { Attachments = [first with { Size = 100L * 1024 * 1024 + 1 }] },
+            message with { Attachments = [first with { DownloadUrl = "https://evil.example/file" }] },
+            message with { Attachments = [first with { DownloadUrl = $"/api/attachments/{Guid.NewGuid():D}/download" }] },
+            message with { Attachments = [first with { ThumbnailUrl = "/thumbnail" }] },
+        ];
+
+        foreach (var invalidMessage in invalidMessages)
+        {
+            await Assert.ThrowsAsync<ArgumentException>(() =>
+                cache.MergeIncomingMessageAsync(invalidMessage));
+        }
+
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments;"));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
@@ -247,7 +374,7 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         await using var firstCache = await CreateCacheAsync(identity);
         await using var secondCache = await CreateCacheAsync(identity);
         var conversation = CreateConversation();
-        var message = CreateMessage(conversation.Id);
+        var message = CreateAttachmentMessage(conversation.Id);
         await RegisterAsync(firstCache, conversation);
         await RegisterAsync(secondCache, conversation);
 
@@ -261,6 +388,28 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         Assert.Equal(11, outcomes.Count(outcome => outcome.Result == IncomingMessageMergeResult.Duplicate));
         Assert.DoesNotContain(outcomes, outcome => outcome.Result == IncomingMessageMergeResult.Conflict);
         Assert.Equal(1, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+        Assert.Equal(2, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments;"));
+    }
+
+    [Fact]
+    public async Task LocalCacheRealtimeEventSink_WhenAttachmentMessageArrives_PersistsCompleteDto()
+    {
+        var identity = CreateIdentity(UserId);
+        await using var cache = await CreateCacheAsync(identity);
+        var conversation = CreateConversation();
+        var message = CreateAttachmentMessage(conversation.Id);
+        await ApplyCompleteSnapshotAsync(cache, conversation);
+        var sink = new LocalCacheRealtimeEventSink(
+            cache,
+            (_, _) => Task.CompletedTask,
+            NullLogger<LocalCacheRealtimeEventSink>.Instance);
+
+        await sink.OnNewMessageAsync(message, CancellationToken.None);
+
+        var read = await cache.ReadMessagesAsync(conversation.Id);
+        Assert.Equal(LocalCacheOperationStatus.Ready, read.Status);
+        AssertMessage(message, Assert.Single(read.Messages));
+        Assert.Equal(2, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments;"));
     }
 
     [Fact]
@@ -365,7 +514,7 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
     {
         var identity = CreateIdentity(UserId);
         var conversation = CreateConversation();
-        var message = CreateMessage(conversation.Id);
+        var message = CreateAttachmentMessage(conversation.Id);
         await using (var cache = await CreateCacheAsync(identity))
         {
             await RegisterAsync(cache, conversation);
@@ -387,6 +536,7 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalConversations;"));
         Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
         Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessageMentions;"));
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments;"));
         Assert.Equal(1, Scalar(identity, "SELECT COUNT(*) FROM RevokedConversations;"));
 
         await using var restarted = await CreateCacheAsync(identity);
@@ -501,8 +651,12 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         await using var firstCache = await CreateCacheAsync(firstIdentity);
         await using var secondCache = await CreateCacheAsync(secondIdentity);
         var conversation = CreateConversation();
-        var firstMessage = CreateMessage(conversation.Id);
-        var secondMessage = CreateMessage(conversation.Id) with { Id = 200 };
+        var firstMessage = CreateAttachmentMessage(conversation.Id);
+        var secondMessage = firstMessage with
+        {
+            Id = 200,
+            ClientMessageId = Guid.NewGuid(),
+        };
         await RegisterAsync(firstCache, conversation);
         await RegisterAsync(secondCache, conversation);
         await firstCache.MergeIncomingMessageAsync(firstMessage);
@@ -516,6 +670,8 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         var secondRead = await secondCache.ReadMessagesAsync(conversation.Id);
         Assert.Equal(LocalCacheOperationStatus.Ready, secondRead.Status);
         AssertMessage(secondMessage, Assert.Single(secondRead.Messages));
+        Assert.Equal(0, Scalar(firstIdentity, "SELECT COUNT(*) FROM LocalAttachments;"));
+        Assert.Equal(2, Scalar(secondIdentity, "SELECT COUNT(*) FROM LocalAttachments;"));
         Assert.NotEqual(firstIdentity.DatabasePath, secondIdentity.DatabasePath);
     }
 
@@ -550,10 +706,108 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         {
         }
 
-        Execute(identity, "PRAGMA user_version=2;");
+        Execute(identity, "PRAGMA user_version=3;");
 
         await Assert.ThrowsAsync<InvalidDataException>(() => CreateCacheAsync(identity));
+        Assert.Equal(3, Scalar(identity, "PRAGMA user_version;"));
+    }
+
+    [Fact]
+    public async Task CreateAsync_WhenSchemaIsV1_AtomicallyUpgradesAndPreservesExistingRows()
+    {
+        var identity = CreateIdentity(UserId);
+        var conversation = CreateConversation();
+        var message = CreateMessage(conversation.Id);
+        await using (var cache = await CreateCacheAsync(identity))
+        {
+            await RegisterAsync(cache, conversation);
+            Assert.Equal(
+                IncomingMessageMergeResult.Inserted,
+                (await cache.MergeIncomingMessageAsync(message)).Result);
+        }
+
+        DowngradeFixtureToSchemaV1(identity);
+        AccountScopedLocalCache.ResetProcessStateForTest(identity);
+
+        await using var upgraded = await CreateCacheAsync(identity);
+        await RegisterAsync(upgraded, conversation);
+        var read = await upgraded.ReadMessagesAsync(conversation.Id);
+
         Assert.Equal(2, Scalar(identity, "PRAGMA user_version;"));
+        Assert.Equal(2, Scalar(
+            identity,
+            "SELECT Value FROM LocalAppState WHERE Key = 'SchemaVersion';"));
+        Assert.Equal(1, Scalar(
+            identity,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'LocalAttachments';"));
+        Assert.Equal(1, Scalar(
+            identity,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'IX_LocalAttachments_LocalMessageId';"));
+        AssertMessage(message, Assert.Single(read.Messages));
+    }
+
+    [Fact]
+    public async Task CreateAsync_WhenV1SchemaCommitFails_RollsBackWholeMigration()
+    {
+        var identity = CreateIdentity(UserId);
+        var conversation = CreateConversation();
+        var message = CreateMessage(conversation.Id);
+        await using (var cache = await CreateCacheAsync(identity))
+        {
+            await RegisterAsync(cache, conversation);
+            await cache.MergeIncomingMessageAsync(message);
+        }
+
+        DowngradeFixtureToSchemaV1(identity);
+        AccountScopedLocalCache.ResetProcessStateForTest(identity);
+
+        await Assert.ThrowsAsync<IOException>(() => AccountScopedLocalCache.CreateAsync(
+            identity,
+            NullLogger<AccountScopedLocalCache>.Instance,
+            new SchemaCommitThrowingFaultInjector()));
+
+        Assert.Equal(1, Scalar(identity, "PRAGMA user_version;"));
+        Assert.Equal(1, Scalar(
+            identity,
+            "SELECT Value FROM LocalAppState WHERE Key = 'SchemaVersion';"));
+        Assert.Equal(0, Scalar(
+            identity,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'LocalAttachments';"));
+        Assert.Equal(1, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+
+        AccountScopedLocalCache.ResetProcessStateForTest(identity);
+        await using var recovered = await CreateCacheAsync(identity);
+        Assert.Equal(2, Scalar(identity, "PRAGMA user_version;"));
+        await RegisterAsync(recovered, conversation);
+        AssertMessage(
+            message,
+            Assert.Single((await recovered.ReadMessagesAsync(conversation.Id)).Messages));
+    }
+
+    [Fact]
+    public async Task ReadMessagePageAsync_WhenAttachmentRowIsCorrupt_FailsClosedWithoutLoggingMetadata()
+    {
+        var identity = CreateIdentity(UserId);
+        var logger = new RecordingLogger<AccountScopedLocalCache>();
+        await using var cache = await AccountScopedLocalCache.CreateAsync(identity, logger);
+        var conversation = CreateConversation();
+        var message = CreateAttachmentMessage(conversation.Id);
+        await ApplyCompleteSnapshotAsync(cache, conversation);
+        await cache.MergeIncomingMessageAsync(message);
+        const string corruptUrl = "https://token-secret.example/attachment";
+        Execute(
+            identity,
+            $"UPDATE LocalAttachments SET DownloadUrl = '{corruptUrl}';");
+
+        var page = await cache.ReadMessagePageAsync(conversation.Id, null, 50);
+
+        Assert.Equal(LocalCacheOperationStatus.FatalScope, page.Status);
+        Assert.True(cache.IsFatal);
+        Assert.DoesNotContain(corruptUrl, string.Join(' ', logger.Messages), StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            message.Attachments[0].OriginalFileName,
+            string.Join(' ', logger.Messages),
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -687,6 +941,7 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
                 Id = 11,
                 Type = MessageType.Image,
                 Content = null,
+                Attachments = [CreateAttachment()],
                 CreatedAt = updatedAt,
             })).Result);
 
@@ -1179,6 +1434,37 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         new[] { Guid.NewGuid(), Guid.NewGuid() },
         DateTimeOffset.Parse("2026-08-03T03:00:00Z"));
 
+    private static MessageDto CreateAttachmentMessage(Guid conversationId)
+    {
+        AttachmentDto[] attachments =
+        [
+            CreateAttachment(Guid.Parse("11111111-1111-1111-1111-111111111111")),
+            CreateAttachment(Guid.Parse("22222222-2222-2222-2222-222222222222")) with
+            {
+                OriginalFileName = "第二张图 🛰️.png",
+                Size = 2048,
+            },
+        ];
+        return CreateMessage(conversationId) with
+        {
+            Type = MessageType.Image,
+            Content = null,
+            Attachments = attachments.OrderBy(attachment => attachment.Id).ToArray(),
+        };
+    }
+
+    private static AttachmentDto CreateAttachment(Guid? id = null)
+    {
+        var attachmentId = id ?? Guid.Parse("33333333-3333-3333-3333-333333333333");
+        return new AttachmentDto(
+            attachmentId,
+            "safe-image.png",
+            "image/png",
+            1024,
+            $"/api/attachments/{attachmentId:D}/download",
+            ThumbnailUrl: null);
+    }
+
     private static PendingMessage CreatePendingMessage(Guid conversationId) => new(
         Guid.NewGuid(),
         conversationId,
@@ -1218,6 +1504,16 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
         command.ExecuteNonQuery();
     }
 
+    private static void DowngradeFixtureToSchemaV1(AccountScopeIdentity identity) =>
+        Execute(identity, """
+            DROP INDEX IX_LocalAttachments_LocalMessageId;
+            DROP TABLE LocalAttachments;
+            UPDATE LocalAppState
+            SET Value = '1'
+            WHERE Key = 'SchemaVersion';
+            PRAGMA user_version=1;
+            """);
+
     private static string TextScalar(AccountScopeIdentity identity, string sql)
     {
         using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
@@ -1251,6 +1547,16 @@ public sealed class AccountScopedLocalCacheTests : IDisposable
     {
         public void BeforeRevocationTombstone(Guid conversationId) =>
             throw new IOException("Injected revocation failure with token-secret-content.");
+    }
+
+    private sealed class SchemaCommitThrowingFaultInjector : ILocalCacheFaultInjector
+    {
+        public void BeforeRevocationTombstone(Guid conversationId)
+        {
+        }
+
+        public void BeforeSchemaCommit() =>
+            throw new IOException("Injected schema migration failure.");
     }
 
     private sealed class BlockingFaultInjector : ILocalCacheFaultInjector

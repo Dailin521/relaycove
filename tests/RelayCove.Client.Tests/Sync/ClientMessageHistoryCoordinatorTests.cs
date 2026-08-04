@@ -28,7 +28,7 @@ public sealed class ClientMessageHistoryCoordinatorTests : IDisposable
         var prepared = await CreatePreparedAsync(lastMessageId: 50, unreadCount: 0);
         var messages = new[]
         {
-            CreateMessage(10, prepared.Conversation.Id),
+            CreateAttachmentMessage(10, prepared.Conversation.Id),
             CreateMessage(11, prepared.Conversation.Id),
         };
         using var httpClient = new HttpClient(new DelegateHttpHandler((request, _) =>
@@ -61,6 +61,8 @@ public sealed class ClientMessageHistoryCoordinatorTests : IDisposable
             beforeMessageId: null,
             limit: 50);
         Assert.Equal([10L, 11L], local.Messages.Select(message => message.Id));
+        Assert.Equal(messages[0].Attachments, local.Messages[0].Attachments);
+        Assert.Equal(1, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalAttachments;"));
         Assert.Equal(50, Scalar(
             prepared.Identity,
             "SELECT LastMessageId FROM LocalConversations;"));
@@ -120,13 +122,40 @@ public sealed class ClientMessageHistoryCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadHistoryAsync_WhenAttachmentProtocolIsInvalid_RejectsWholeResponse()
+    {
+        var prepared = await CreatePreparedAsync(lastMessageId: 0, unreadCount: 0);
+        var message = CreateAttachmentMessage(1, prepared.Conversation.Id);
+        var attachment = Assert.Single(message.Attachments);
+        message = message with
+        {
+            Attachments = [attachment with { DownloadUrl = "https://evil.example/file" }],
+        };
+        using var httpClient = new HttpClient(new DelegateHttpHandler((_, _) =>
+            Task.FromResult(Ok(new MessageHistoryResponse(
+                [message],
+                NextBeforeMessageId: null,
+                HasMore: false)))));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        var outcome = await coordinator.LoadHistoryAsync(
+            prepared.Conversation.Id,
+            beforeMessageId: null,
+            limit: 50);
+
+        Assert.Equal(ClientMessageLoadStatus.ProtocolError, outcome.Status);
+        Assert.Equal(0, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalMessages;"));
+        Assert.Equal(0, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalAttachments;"));
+    }
+
+    [Fact]
     public async Task LoadAroundAsync_WhenTargetIsValid_MergesBoundedWindowAndPreservesFlags()
     {
         var prepared = await CreatePreparedAsync(lastMessageId: 30, unreadCount: 0);
         var messages = new[]
         {
             CreateMessage(19, prepared.Conversation.Id),
-            CreateMessage(20, prepared.Conversation.Id),
+            CreateAttachmentMessage(20, prepared.Conversation.Id),
             CreateMessage(21, prepared.Conversation.Id),
         };
         using var httpClient = new HttpClient(new DelegateHttpHandler((request, _) =>
@@ -152,6 +181,8 @@ public sealed class ClientMessageHistoryCoordinatorTests : IDisposable
         Assert.Equal(ClientMessageLoadStatus.Completed, outcome.Status);
         Assert.Equal(20, outcome.TargetMessageId);
         Assert.Equal([19L, 20L, 21L], outcome.Messages.Select(message => message.Id));
+        Assert.Equal(messages[1].Attachments, outcome.Messages[1].Attachments);
+        Assert.Equal(1, Scalar(prepared.Identity, "SELECT COUNT(*) FROM LocalAttachments;"));
         Assert.True(outcome.HasMoreBefore);
         Assert.True(outcome.HasMoreAfter);
     }
@@ -393,6 +424,26 @@ public sealed class ClientMessageHistoryCoordinatorTests : IDisposable
         Array.Empty<AttachmentDto>(),
         Array.Empty<Guid>(),
         DateTimeOffset.Parse("2026-08-03T03:00:00Z").AddSeconds(id));
+
+    private static MessageDto CreateAttachmentMessage(long id, Guid conversationId)
+    {
+        var attachmentId = Guid.Parse($"{id:x8}-1111-2222-3333-444444444444");
+        return CreateMessage(id, conversationId) with
+        {
+            Type = MessageType.File,
+            Content = null,
+            Attachments =
+            [
+                new AttachmentDto(
+                    attachmentId,
+                    $"history-{id}.pdf",
+                    "application/pdf",
+                    4096,
+                    $"/api/attachments/{attachmentId:D}/download",
+                    ThumbnailUrl: null),
+            ],
+        };
+    }
 
     private static long Scalar(AccountScopeIdentity identity, string sql)
     {

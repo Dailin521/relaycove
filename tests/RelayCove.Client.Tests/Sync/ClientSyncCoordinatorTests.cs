@@ -78,6 +78,35 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task ClientSync_WhenAttachmentProtocolIsInvalid_DoesNotAdvanceCursorOrWriteRows()
+    {
+        var identity = CreateIdentity();
+        var conversation = CreateConversation("Invalid attachment");
+        var message = CreateAttachmentMessage(1, conversation.Id);
+        var attachment = Assert.Single(message.Attachments);
+        message = message with
+        {
+            Attachments = [attachment with { ThumbnailUrl = "/unexpected-thumbnail" }],
+        };
+        var handler = new ScriptedHttpHandler();
+        handler.EnqueueResponse(Ok(new ConversationListResponse([conversation], Complete: true)));
+        handler.EnqueueResponse(Ok(new SyncResponse([message], 1, 1, HasMore: false)));
+        await using var cache = await CreateCacheAsync(identity);
+        await using var coordinator = CreateCoordinator(
+            identity,
+            handler,
+            new RecordingAuthenticationSession("current-token"),
+            cache);
+
+        var outcome = await coordinator.TriggerAsync(SyncReason.Startup);
+
+        Assert.Equal(ClientSyncRunStatus.ProtocolError, outcome.Status);
+        Assert.Equal(0, (await cache.ReadLastSyncCursorAsync()).Cursor);
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalMessages;"));
+        Assert.Equal(0, Scalar(identity, "SELECT COUNT(*) FROM LocalAttachments;"));
+    }
+
+    [Fact]
     public async Task ClientSync_WhenSnapshotRevokesConversation_ClearsNotificationAfterCommit()
     {
         var identity = CreateIdentity();
@@ -119,7 +148,7 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
     {
         var identity = CreateIdentity();
         var conversation = CreateConversation("Team");
-        var first = CreateMessage(1, conversation.Id);
+        var first = CreateAttachmentMessage(1, conversation.Id);
         var third = CreateMessage(3, conversation.Id);
         var handler = new ScriptedHttpHandler();
         handler.EnqueueResponse(Ok(new ConversationListResponse([conversation], Complete: true)));
@@ -137,6 +166,7 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
         Assert.Equal(3, (await cache.ReadLastSyncCursorAsync()).Cursor);
         var messages = await cache.ReadMessagesAsync(conversation.Id);
         Assert.Equal([1L, 3L], messages.Messages.Select(message => message.Id));
+        Assert.Equal(first.Attachments, messages.Messages[0].Attachments);
         Assert.Equal(
             [
                 "/relay/api/conversations",
@@ -824,6 +854,26 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
         Array.Empty<AttachmentDto>(),
         [Guid.NewGuid()],
         new DateTimeOffset(2026, 8, 3, 3, 0, 0, TimeSpan.Zero).AddSeconds(id));
+
+    private static MessageDto CreateAttachmentMessage(long id, Guid conversationId)
+    {
+        var attachmentId = Guid.Parse($"{id:x8}-aaaa-bbbb-cccc-dddddddddddd");
+        return CreateMessage(id, conversationId) with
+        {
+            Type = MessageType.Image,
+            Content = null,
+            Attachments =
+            [
+                new AttachmentDto(
+                    attachmentId,
+                    $"sync-{id}.png",
+                    "image/png",
+                    2048,
+                    $"/api/attachments/{attachmentId:D}/download",
+                    ThumbnailUrl: null),
+            ],
+        };
+    }
 
     private static PendingMessage CreatePending(Guid conversationId) => new(
         Guid.NewGuid(),

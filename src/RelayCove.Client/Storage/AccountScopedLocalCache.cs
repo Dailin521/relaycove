@@ -1,6 +1,9 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO;
+using System.Net.Http.Headers;
+using System.Text;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using RelayCove.Shared.Conversations;
@@ -18,6 +21,12 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private const int CurrentNotificationStateVersion = 1;
     private const int MaxNotificationCandidateIds = 1000;
     private const int MaxOutstandingPendingMessages = 50;
+    private const int MaximumAttachmentsPerMessage = 10;
+    private const int MaximumOriginalFileNameScalars = 255;
+    private const int MaximumContentTypeLength = 127;
+    private const long AbsoluteMaximumAttachmentSize = 100L * 1024 * 1024;
+    private const int NotDownloadedAttachmentStatus = 0;
+    private const int CurrentSchemaVersion = 2;
     private const int WriteRetryCount = 4;
     private static readonly IReadOnlyList<MessageDto> NoMessages = Array.Empty<MessageDto>();
     private static readonly ConcurrentDictionary<string, ScopeAccessState> ProcessScopeStates =
@@ -975,13 +984,18 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 var schemaVersion = Convert.ToInt32(
                     versionCommand.ExecuteScalar(),
                     CultureInfo.InvariantCulture);
-                if (schemaVersion is not 0 and not 1)
+                if (schemaVersion is < 0 or > CurrentSchemaVersion)
                 {
                     throw new InvalidDataException(
                         "The local cache schema version is not supported.");
                 }
 
-                ExecuteNonQuery(connection, null, SchemaSql);
+                using (var schemaTransaction = connection.BeginTransaction(deferred: false))
+                {
+                    ExecuteNonQuery(connection, schemaTransaction, SchemaSql);
+                    faultInjector?.BeforeSchemaCommit();
+                    schemaTransaction.Commit();
+                }
                 if (Interlocked.CompareExchange(
                         ref scopeState.PendingRecoveryCompleted,
                         1,
@@ -2230,6 +2244,13 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 candidateMessageId);
         }
 
+        if (AnyAttachmentExists(connection, transaction, message.Attachments))
+        {
+            return new LocalCacheMergeOutcome(
+                LocalCacheOperationStatus.Ready,
+                IncomingMessageMergeResult.Conflict);
+        }
+
         using var insert = CreateCommand(connection, transaction, """
             INSERT INTO LocalMessages (
                 ServerMessageId, ClientMessageId, ConversationId, SenderId,
@@ -2240,11 +2261,17 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             """);
         AddMessageParameters(insert, message);
         insert.ExecuteNonQuery();
+        var localMessageId = GetLastInsertRowId(connection, transaction);
         InsertMentions(
             connection,
             transaction,
-            GetLastInsertRowId(connection, transaction),
+            localMessageId,
             message.MentionUserIds);
+        InsertAttachments(
+            connection,
+            transaction,
+            localMessageId,
+            message.Attachments);
         var insertedResult = IncomingMessageMergeResult.Inserted;
         var insertedCandidateMessageId = ApplyMessageAttentionEffects(
             connection,
@@ -2640,44 +2667,70 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
 
     private LocalCacheReadOutcome ReadMessages(Guid conversationId)
     {
-        var status = GetAccessStatus(conversationId);
-        if (status != LocalCacheOperationStatus.Ready)
+        try
         {
-            return new LocalCacheReadOutcome(status, NoMessages);
-        }
-
-        using var connection = OpenConnection();
-        if (HasTombstone(connection, null, conversationId) ||
-            HasRevocationIntent(connection, null, conversationId))
-        {
-            deniedConversations.TryAdd(conversationId, 0);
-            authorizedConversations.TryRemove(conversationId, out _);
-            authoritativeLastMessageIds.TryRemove(conversationId, out _);
-            return new LocalCacheReadOutcome(LocalCacheOperationStatus.RevokedConversation, NoMessages);
-        }
-
-        using var command = CreateCommand(connection, null, """
-            SELECT LocalId, ServerMessageId, ClientMessageId, ConversationId, SenderId,
-                   SenderDisplayName, Type, Content, ReplyToMessageId, CreatedAt, LocalSendStatus
-            FROM LocalMessages
-            WHERE ConversationId = $conversationId
-            ORDER BY COALESCE(ServerMessageId, 9223372036854775807), LocalId;
-            """);
-        AddParameter(command, "$conversationId", FormatGuid(conversationId));
-        var records = new List<LocalMessageRecord>();
-        using (var reader = command.ExecuteReader())
-        {
-            while (reader.Read())
+            var status = GetAccessStatus(conversationId);
+            if (status != LocalCacheOperationStatus.Ready)
             {
-                records.Add(ReadMessageRecord(reader));
+                return new LocalCacheReadOutcome(status, NoMessages);
             }
-        }
 
-        var messages = records
-            .Where(record => record.ServerMessageId is not null)
-            .Select(record => ToMessageDto(connection, record))
-            .ToArray();
-        return new LocalCacheReadOutcome(LocalCacheOperationStatus.Ready, messages);
+            using var connection = OpenConnection();
+            if (HasTombstone(connection, null, conversationId) ||
+                HasRevocationIntent(connection, null, conversationId))
+            {
+                deniedConversations.TryAdd(conversationId, 0);
+                authorizedConversations.TryRemove(conversationId, out _);
+                authoritativeLastMessageIds.TryRemove(conversationId, out _);
+                return new LocalCacheReadOutcome(
+                    LocalCacheOperationStatus.RevokedConversation,
+                    NoMessages);
+            }
+
+            using var command = CreateCommand(connection, null, """
+                SELECT LocalId, ServerMessageId, ClientMessageId, ConversationId, SenderId,
+                       SenderDisplayName, Type, Content, ReplyToMessageId, CreatedAt,
+                       LocalSendStatus
+                FROM LocalMessages
+                WHERE ConversationId = $conversationId
+                ORDER BY COALESCE(ServerMessageId, 9223372036854775807), LocalId;
+                """);
+            AddParameter(command, "$conversationId", FormatGuid(conversationId));
+            var records = new List<LocalMessageRecord>();
+            using (var reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    records.Add(ReadMessageRecord(reader));
+                }
+            }
+
+            var messages = records
+                .Where(record => record.ServerMessageId is not null)
+                .Select(record => ToMessageDto(connection, record))
+                .ToArray();
+            return new LocalCacheReadOutcome(LocalCacheOperationStatus.Ready, messages);
+        }
+        catch (SqliteException exception) when (IsBusy(exception))
+        {
+            logger.LogWarning(
+                "Reading local messages was busy; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return new LocalCacheReadOutcome(
+                LocalCacheOperationStatus.TransientFailure,
+                NoMessages);
+        }
+        catch (Exception exception)
+        {
+            MarkScopeFatal();
+            logger.LogCritical(
+                "Local cache scope entered fatal fail-closed state while reading messages " +
+                "after an error of type {ExceptionType}.",
+                exception.GetType().Name);
+            return new LocalCacheReadOutcome(
+                LocalCacheOperationStatus.FatalScope,
+                NoMessages);
+        }
     }
 
     private LocalMessagePageReadOutcome ReadMessagePage(
@@ -3836,18 +3889,28 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private static MessageDto ToMessageDto(
         SqliteConnection connection,
         LocalMessageRecord record,
-        SqliteTransaction? transaction = null) => new(
-        record.ServerMessageId!.Value,
-        record.ClientMessageId,
-        record.ConversationId,
-        record.SenderId,
-        record.SenderDisplayName,
-        record.Type,
-        record.Content,
-        record.ReplyToMessageId,
-        Array.Empty<AttachmentDto>(),
-        LoadMentions(connection, transaction, record.LocalId),
-        record.CreatedAt);
+        SqliteTransaction? transaction = null)
+    {
+        var attachments = LoadAttachments(connection, transaction, record.LocalId);
+        if (!IsValidAttachmentCollection(record.Type, attachments))
+        {
+            throw new InvalidDataException(
+                "The local cache contains an invalid message attachment collection.");
+        }
+
+        return new MessageDto(
+            record.ServerMessageId!.Value,
+            record.ClientMessageId,
+            record.ConversationId,
+            record.SenderId,
+            record.SenderDisplayName,
+            record.Type,
+            record.Content,
+            record.ReplyToMessageId,
+            attachments,
+            LoadMentions(connection, transaction, record.LocalId),
+            record.CreatedAt);
+    }
 
     private static LocalPendingMessage ToLocalPendingMessage(
         SqliteConnection connection,
@@ -3932,7 +3995,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             record.SenderId != message.SenderId ||
             record.Type != message.Type ||
             !string.Equals(record.Content, message.Content, StringComparison.Ordinal) ||
-            record.ReplyToMessageId != message.ReplyToMessageId)
+            record.ReplyToMessageId != message.ReplyToMessageId ||
+            message.Attachments.Count != 0)
         {
             return false;
         }
@@ -3953,10 +4017,64 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             return false;
         }
 
-        return MentionSetsEqual(
-            LoadMentions(connection, transaction, record.LocalId),
-            message.MentionUserIds);
+        var attachments = LoadAttachments(connection, transaction, record.LocalId);
+        if (!IsValidAttachmentCollection(record.Type, attachments))
+        {
+            throw new InvalidDataException(
+                "The local cache contains an invalid message attachment collection.");
+        }
+
+        return AttachmentSetsEqual(attachments, message.Attachments) &&
+            MentionSetsEqual(
+                LoadMentions(connection, transaction, record.LocalId),
+                message.MentionUserIds);
     }
+
+    private static IReadOnlyList<AttachmentDto> LoadAttachments(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        long localMessageId)
+    {
+        using var command = CreateCommand(connection, transaction, """
+            SELECT Id, OriginalFileName, ContentType, Size, DownloadUrl
+            FROM LocalAttachments
+            WHERE LocalMessageId = $localMessageId;
+            """);
+        AddParameter(command, "$localMessageId", localMessageId);
+        var attachments = new List<AttachmentDto>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (!Guid.TryParseExact(reader.GetString(0), "D", out var id) ||
+                id == Guid.Empty)
+            {
+                throw new InvalidDataException(
+                    "The local cache contains an invalid attachment identifier.");
+            }
+
+            var attachment = new AttachmentDto(
+                id,
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.GetInt64(3),
+                reader.GetString(4),
+                ThumbnailUrl: null);
+            if (!IsValidAttachmentMetadata(attachment))
+            {
+                throw new InvalidDataException(
+                    "The local cache contains invalid attachment metadata.");
+            }
+
+            attachments.Add(attachment);
+        }
+
+        return attachments.OrderBy(attachment => attachment.Id).ToArray();
+    }
+
+    private static bool AttachmentSetsEqual(
+        IReadOnlyList<AttachmentDto> first,
+        IReadOnlyList<AttachmentDto> second) =>
+        first.SequenceEqual(second);
 
     private static IReadOnlyList<Guid> LoadMentions(
         SqliteConnection connection,
@@ -4000,6 +4118,60 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             AddParameter(command, "$localMessageId", localMessageId);
             AddParameter(command, "$mentionedUserId", FormatGuid(mentionUserId));
             command.ExecuteNonQuery();
+        }
+    }
+
+    private static bool AnyAttachmentExists(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IReadOnlyList<AttachmentDto> attachments)
+    {
+        foreach (var attachment in attachments)
+        {
+            using var command = CreateCommand(connection, transaction, """
+                SELECT 1
+                FROM LocalAttachments
+                WHERE Id = $id
+                LIMIT 1;
+                """);
+            AddParameter(command, "$id", FormatGuid(attachment.Id));
+            if (command.ExecuteScalar() is not null)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static void InsertAttachments(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        long localMessageId,
+        IReadOnlyList<AttachmentDto> attachments)
+    {
+        foreach (var attachment in attachments)
+        {
+            using var command = CreateCommand(connection, transaction, """
+                INSERT INTO LocalAttachments (
+                    Id, LocalMessageId, OriginalFileName, ContentType, Size,
+                    DownloadUrl, LocalPath, ThumbnailLocalPath, DownloadStatus)
+                VALUES (
+                    $id, $localMessageId, $originalFileName, $contentType, $size,
+                    $downloadUrl, NULL, NULL, $downloadStatus);
+                """);
+            AddParameter(command, "$id", FormatGuid(attachment.Id));
+            AddParameter(command, "$localMessageId", localMessageId);
+            AddParameter(command, "$originalFileName", attachment.OriginalFileName);
+            AddParameter(command, "$contentType", attachment.ContentType);
+            AddParameter(command, "$size", attachment.Size);
+            AddParameter(command, "$downloadUrl", attachment.DownloadUrl);
+            AddParameter(command, "$downloadStatus", NotDownloadedAttachmentStatus);
+            if (command.ExecuteNonQuery() != 1)
+            {
+                throw new InvalidOperationException(
+                    "Saving attachment metadata did not insert exactly one row.");
+            }
         }
     }
 
@@ -4206,11 +4378,105 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         if (message.Id <= 0 ||
             !Enum.IsDefined(message.Type) ||
             message.ReplyToMessageId is <= 0 ||
-            message.Attachments.Count != 0 ||
+            !IsValidAttachmentCollection(message.Type, message.Attachments) ||
             message.MentionUserIds.Any(id => id == Guid.Empty))
         {
             throw new ArgumentException("Message contains unsupported or invalid values.", nameof(message));
         }
+    }
+
+    private static bool IsValidAttachmentCollection(
+        MessageType messageType,
+        IReadOnlyList<AttachmentDto> attachments)
+    {
+        if (messageType is MessageType.Text or MessageType.System)
+        {
+            return attachments.Count == 0;
+        }
+
+        if (messageType is not MessageType.Image and not MessageType.File ||
+            attachments.Count is < 1 or > MaximumAttachmentsPerMessage)
+        {
+            return false;
+        }
+
+        Guid? previousId = null;
+        foreach (var attachment in attachments)
+        {
+            if (attachment is null ||
+                !IsValidAttachmentMetadata(attachment) ||
+                (messageType == MessageType.Image &&
+                 !attachment.ContentType.StartsWith(
+                     "image/",
+                     StringComparison.OrdinalIgnoreCase)) ||
+                (previousId.HasValue && previousId.Value.CompareTo(attachment.Id) >= 0))
+            {
+                return false;
+            }
+
+            previousId = attachment.Id;
+        }
+
+        return true;
+    }
+
+    private static bool IsValidAttachmentMetadata(AttachmentDto attachment)
+    {
+        if (attachment.Id == Guid.Empty ||
+            attachment.Size is < 1 or > AbsoluteMaximumAttachmentSize ||
+            attachment.ThumbnailUrl is not null ||
+            !string.Equals(
+                attachment.DownloadUrl,
+                $"/api/attachments/{attachment.Id:D}/download",
+                StringComparison.Ordinal) ||
+            !IsValidOriginalFileName(attachment.OriginalFileName) ||
+            string.IsNullOrWhiteSpace(attachment.ContentType) ||
+            attachment.ContentType.Length > MaximumContentTypeLength ||
+            attachment.ContentType.Contains('*', StringComparison.Ordinal) ||
+            !MediaTypeHeaderValue.TryParse(attachment.ContentType, out var parsedContentType) ||
+            parsedContentType.MediaType is null)
+        {
+            return false;
+        }
+
+        return string.Equals(
+            attachment.ContentType,
+            parsedContentType.MediaType.ToLowerInvariant(),
+            StringComparison.Ordinal);
+    }
+
+    private static bool IsValidOriginalFileName(string? fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName) ||
+            fileName is "." or ".." ||
+            !string.Equals(fileName, fileName.Trim(), StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var scalarCount = 0;
+        var remaining = fileName.AsSpan();
+        while (!remaining.IsEmpty)
+        {
+            var status = Rune.DecodeFromUtf16(remaining, out var rune, out var consumed);
+            if (status != OperationStatus.Done ||
+                rune.Value is '/' or '\\' ||
+                Rune.GetUnicodeCategory(rune) is UnicodeCategory.Control or
+                    UnicodeCategory.Format)
+            {
+                return false;
+            }
+
+            scalarCount++;
+            if (scalarCount > MaximumOriginalFileNameScalars)
+            {
+                return false;
+            }
+
+            remaining = remaining[consumed..];
+        }
+
+        return true;
     }
 
     private static void ValidateIngestionContext(
@@ -4403,6 +4669,22 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             FOREIGN KEY(LocalMessageId) REFERENCES LocalMessages(LocalId) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS LocalAttachments (
+            Id TEXT PRIMARY KEY,
+            LocalMessageId INTEGER NULL,
+            OriginalFileName TEXT NOT NULL,
+            ContentType TEXT NOT NULL,
+            Size INTEGER NOT NULL,
+            DownloadUrl TEXT NOT NULL,
+            LocalPath TEXT NULL,
+            ThumbnailLocalPath TEXT NULL,
+            DownloadStatus INTEGER NOT NULL,
+            FOREIGN KEY(LocalMessageId) REFERENCES LocalMessages(LocalId) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS IX_LocalAttachments_LocalMessageId
+            ON LocalAttachments(LocalMessageId);
+
         CREATE TABLE IF NOT EXISTS RevokedConversations (
             ConversationId TEXT PRIMARY KEY,
             RevokedAt TEXT NOT NULL
@@ -4415,9 +4697,11 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         );
 
         INSERT INTO LocalAppState (Key, Value, UpdatedAt)
-        VALUES ('SchemaVersion', '1', CURRENT_TIMESTAMP)
-        ON CONFLICT(Key) DO NOTHING;
+        VALUES ('SchemaVersion', '2', CURRENT_TIMESTAMP)
+        ON CONFLICT(Key) DO UPDATE SET
+            Value = excluded.Value,
+            UpdatedAt = excluded.UpdatedAt;
 
-        PRAGMA user_version=1;
+        PRAGMA user_version=2;
         """;
 }

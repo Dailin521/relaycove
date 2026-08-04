@@ -4,6 +4,10 @@ internal interface ILocalCacheFaultInjector
 {
     void BeforeRevocationTombstone(Guid conversationId);
 
+    void BeforeSchemaCommit()
+    {
+    }
+
     void BeforeAuthoritativeSnapshotCommit()
     {
     }

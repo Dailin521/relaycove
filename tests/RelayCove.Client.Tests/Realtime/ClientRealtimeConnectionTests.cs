@@ -40,7 +40,22 @@ public sealed class ClientRealtimeConnectionTests
         Assert.Equal(ConnectionState.Connected, connection.State);
         await WaitUntilAsync(() => sink.States.Contains(ConnectionState.Connected));
 
-        var firstMessage = CreateMessage(id: 101, content: "complete realtime payload");
+        var attachmentId = Guid.Parse("11111111-2222-3333-4444-555555555555");
+        var firstMessage = CreateMessage(id: 101, content: "complete realtime payload") with
+        {
+            Type = MessageType.Image,
+            Content = null,
+            Attachments =
+            [
+                new AttachmentDto(
+                    attachmentId,
+                    "realtime-image.png",
+                    "image/png",
+                    1024,
+                    $"/api/attachments/{attachmentId:D}/download",
+                    ThumbnailUrl: null),
+            ],
+        };
         await host.HubContext.Clients.All.SendAsync("NewMessage", firstMessage);
         var receivedMessage = await sink.FirstMessage.Task.WaitAsync(TimeSpan.FromSeconds(5));
         AssertMessageEqual(firstMessage, receivedMessage);
