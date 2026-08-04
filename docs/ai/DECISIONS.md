@@ -504,3 +504,15 @@
 - **理由：** 正文 token 是用户可见意图，ID 是授权与不可变协议载荷；以严格 token 存活条件维护二者对应，既避免正文已删除却仍静默提及，也避免昵称歧义。pending 前规范排序使服务端 `Order()` 响应、Realtime 与本地顺序比较一致，并确保不确定结果的同键重试不会改变语义。
 - **影响：** Client 增加无 schema 的候选 transport/coordinator、token policy、runtime/shell/WPF 接线并扩展发送方法参数；不改 Shared/Server 协议、SQLite schema/migration 或依赖。富文本高亮、自动补全、昵称/模糊/全局搜索与真实跨机体验不在本决策范围。
 - **来源：** 工程落地方案第 8.3、10.4、12.1–12.3、12.6–12.8、阶段 8；`DEC-010`、`DEC-017`、`DEC-035`、`DEC-040`；`docs/ai/tasks/2026-08-04-stage-8-mention-compose.md`；最终 Fast/三次 Full 860 项（Shared 37、Server 192、Client 630、Updater 1）、提及/发送/shell 关键集 740/740、真实 Release WPF 响应窗口/单实例/精确清理、model drift、八项目漏洞审计、敏感日志检索与空白检查。无登录会话下账户面板按设计折叠，因此 picker UIA 未冒充通过，真实登录视觉/键盘/Narrator 留到 M5。Claude #68 因认证源优先级失败，无结论；Codex 固定差异与本机门禁为最终依据。
+
+### DEC-042：未绑定附件以有界 multipart 流进入非公开随机文件与事务元数据
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** Shared 协议已携带 `AttachmentDto` 与消息附件集合，但所有写入/投影仍冻结为空，服务端没有附件表、存储根或上传入口。阶段 9 第一条要求先上传再以 ID 发消息；因此上传成功到消息提交之间必然存在只属于上传者、尚无会话授权上下文的未绑定附件。直接使用请求文件名、`IFormFile` 无界缓冲或先提交 DB 再落盘会分别引入路径穿越/覆盖、资源耗尽或永久坏行。
+- **决策：** `POST /api/attachments` 只接受正常认证 subject 的一个 `multipart/form-data` 文件 section，字段名固定 `file`，拒绝所有额外字段/文件。使用 `MultipartReader` 流式处理并分别限制总请求、boundary/header、section 和实际写入字节；默认单文件 25 MiB、硬上限 100 MiB，按 subject 固定窗口限流。超限返回稳定 413，且 exact-limit 必须可成功。
+- **决策：** 原始文件名仅作有界展示元数据，验证后也绝不参与物理路径、日志、错误或 `ToString()`；声明 MIME 仅作规范化元数据。服务端在受信任配置根内生成无扩展、严格字符集、不可预测的暂存/最终 basename，以 `CreateNew` 和同目录无覆盖 rename 防止覆盖；根目录不经静态文件中间件公开，未绑定附件不提供下载。
+- **决策：** 内容流入暂存文件时计算 SHA-256。暂存完成后开启 SQLite 写事务并再次确认 actor 正常，插入 nullable `MessageId` 元数据行，在事务提交前把暂存文件 rename 为最终名，随后 commit；任何正常异常/取消都回滚并清理本次文件。该顺序保证不会提交一个尚未存在物理文件的行，但进程在 rename 与 commit 之间崩溃可能留下无行文件，因此启动恢复只清理严格托管命名且数据库无对应行的暂存/最终残留，不删除未知文件。
+- **理由：** 上传 endpoint 尚无会话信息，只有“上传者拥有的未绑定 reservation”是可证明的最小授权状态；真正加入消息时仍须在消息写事务内验证上传者、未绑定状态与会话权限。无扩展随机名、非静态根与不可下载状态把任意内容保持为不执行、不分发的 opaque blob；多层限长与 subject 限流约束单请求和短期滥用。
+- **影响：** Server 新增 attachment schema/migration、options、流式 parser、文件存储/启动恢复、上传 endpoint 和限流；Shared 只补稳定过大错误码与 `AttachmentDto` 脱敏，不改变 JSON 字段。消息仍只支持 Text 且要求空附件，Client/schema/Sync/Realtime 不变。病毒扫描、内容嗅探、长期未绑定租约/配额、下载和 attach-once 消息事务必须在开放内容读取前继续决策。
+- **来源：** 工程落地方案第 3.4、7.5、8.2、10.2、11.1–11.2、14.1–14.2、17.2、18.4、阶段 9、21.3；Microsoft ASP.NET Core 10 上传与限流官方文档（2026-08-04）；`docs/ai/tasks/2026-08-04-stage-9-attachment-upload.md`；绿色集成头 Fast 860 项基线和仓库协议/数据库/认证证据。Claude #69 因认证源优先级失败，无结论；最终门禁待本任务完成记录补齐。
