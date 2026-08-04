@@ -91,7 +91,7 @@ Claude #81 后台只读运行；Codex 三路并行实现/挑战，所有意见�
 `已完成`。
 
 - 生产提交：`47c6f88e83e822d9225bc358edff128599099596`（可复现 Server/migration bundle、USTAR、manifest/hash、systemd/Nginx/config、部署文档与 Packaging 测试）；`a482d35fd0225feb9a412933fba0d5c6c444a4ed`（loopback 单跳代理头、认证限流分区、迁移失败恢复、秘密与 ELF fail-closed）；`b13188643cfc72c9d0896fc919fe53448e1c7ea5`（三个 self-contained runtime 库及 Nginx 转发头进入离线强制验证）。
-- 产物：干净提交 `a482d35` 的两份 `1.0.0-rc.4` 均为 361 文件、`linux-x64` self-contained，Server、migration bundle 与关键 runtime 库为 ELF64 x86-64；两个 110,914,241-byte 归档字节一致，SHA-256 均为 `ed01d0b8ccd026ea648d48a43e83093a25b1dc58ee4a6bc5a947bd9cc3ed1c24`。最新 `b131886` 验证器再次通过该双包比较。
+- 产物：干净交接提交 `158a760c5909d5ce1795ff745bac11d9399b491b` 的两份 `1.0.0-rc.5` 均为 361 文件、`linux-x64` self-contained，Server、migration bundle 与关键 runtime 库为 ELF64 x86-64；两个 110,913,824-byte 归档字节一致，SHA-256 均为 `5b37fe1940e74e7548c58b0ac9f47bff0826777347cfa279eb50d860cf58e474`，manifest 记录 SDK `10.0.101` 与 `sourceTreeClean=true`。
 - 自动化：Packaging + 认证代理限流定向 20/20；最终 Fast/Full 均为 1,445/1,445（Shared 41、Server 302、Client 1,101、Updater 1），Release 构建 0 警告/0 错误，PowerShell parser、format 与 `git diff --check` 通过。EF model drift 无变化；8 个项目 direct/transitive 漏洞审计无已知漏洞。
 - 复核：运维/安全两路独立 Codex 首轮发现代理限流、迁移 fail-fast/精确恢复、权限、Nginx lifecycle、ELF/runtime 与秘密排除缺口，成立项均修正；最终交叉复审关闭 runtime ELF 与 Nginx 转发头两项 P1，无剩余 P0/P1。Claude #81 本机持久 Sonnet/High 任务 `6798888b` 仍在运行，完成后读取并由主代理按真实 Linux/VPS 边界裁定。
 - 边界：Windows 已验证生成、结构、hash、重复构建、配置/秘密与自动化，不声称 Linux、systemd、Nginx/TLS、migration/restore、真实 VPS、真实客户端或双客户端已运行；这些仍是 M5 Gate。Client/Updater、安装器、更新 manifest、Tag/Release 与生产部署未包含在本切片。
