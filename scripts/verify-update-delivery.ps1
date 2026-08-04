@@ -493,8 +493,9 @@ function Assert-NoRunningProcessAtPath {
     param([Parameter(Mandatory)][string] $ExpectedPath)
 
     foreach ($process in @(Get-Process -ErrorAction SilentlyContinue)) {
+        $matchesExpectedPath = $false
         try {
-            Assert-Condition (-not [string]::Equals($process.Path, $ExpectedPath, [System.StringComparison]::OrdinalIgnoreCase)) "A smoke updater process remained at $ExpectedPath."
+            $matchesExpectedPath = [string]::Equals($process.Path, $ExpectedPath, [System.StringComparison]::OrdinalIgnoreCase)
         }
         catch {
             # A process can exit between enumeration and reading Path.
@@ -502,6 +503,7 @@ function Assert-NoRunningProcessAtPath {
         finally {
             $process.Dispose()
         }
+        Assert-Condition (-not $matchesExpectedPath) "A smoke updater process remained at $ExpectedPath."
     }
 }
 
