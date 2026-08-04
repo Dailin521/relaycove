@@ -606,3 +606,16 @@
 - **理由：** object identity 与版本门把每次 UI flight 绑定到不可复用的用户上下文，避免仅比较 conversation/message/attachment 值无法识别的 ABA。DB→pinned content→最终授权事务→短提交→无锁 shell 的顺序同时封闭 TOCTOU、撤权和无限外部等待，又诚实承认提交后的 Windows 行为不能回滚。目录定位不执行内容，也不需要伪造扩展名或产生脱离 cache 生命周期的副本。
 - **影响：** Client 扩展无 schema 的本地页投影、presentation/runtime/shell、WPF 行模板和 Windows interop；不改 Shared/Server、SQLite migration、受控 cache 命名、quota 或依赖。直接打开文件明确延期，必须另行裁定可信 handler、扩展名、MOTW/Attachment Manager 和临时副本/撤权生命周期；图片缩略图与有界原图查看进入下一切片，真实登录视觉/Narrator 与 VPS/双客户端保留到 M5 Gate。
 - **来源：** 工程方案第 9.2–9.4、14.3–14.5、阶段 9、21.3；`DEC-034/038/043/044/048`；`docs/ai/tasks/2026-08-04-stage-9-wpf-attachment-download.md`；production `c7dea98`–`6a92064`；最终附件/MessageListPresenter/AccountShell 定向 338/338、Full 1,211/1,211（Shared 39、Server 255、Client 916、Updater 1）、真实 Explorer 选中、model drift、八项目漏洞审计、日志/format/空白检查。两路 Codex reviewer 与 Windows interop 复核均无 P0–P2；Claude #76 的成立意见经 Codex 修正复验，不成立意见由 Microsoft 官方契约与实机证据裁定。
+
+### DEC-050：本地图片预览以账户级解码预算和最终授权提交
+
+- **状态：** 已接受
+- **日期：** 2026-08-04
+- **背景：** `DEC-048/049` 已提供可信下载、pinned cache 复验和 exact WPF 附件状态，但直接把不可信图片交给 WPF decoder 会产生压缩炸弹、超大分配、取消不合作、撤权后句柄阻塞清理及虚拟化迟到回调风险。持久缩略图又会扩大 schema、配额、撤权和孤儿恢复范围。
+- **决策：** 只对当前 Ready exact membership 中已下载的 `image/*` 加载，且缩略图不触发网络。cache 在只读句柄固定期间完成路径、reparse、长度和 SHA-256 复验，并把最多 25 MiB 的精确内容复制到无路径私有内存；随后释放磁盘能力再解码，完成后清零输入。渲染提交前重新读取完整下载记录和当前访问权，并再次比较 runtime、conversation/message/attachment、context version、state 与 operation identity。
+- **决策：** 首版只允许文件签名和 Windows 内置 `CodecId` 同时匹配的 PNG/JPEG；GIF/BMP、未知/第三方 codec 和损坏内容 fail closed。源上限为 16,777,216 像素、单边 16,384，PNG 源像素不得超过输入字节 256 倍；缩略图最长边 320、查看器最长边 2,560，输出上限 6,553,600 像素/25 MiB。尺寸与 stride 运算均 checked，复制前验证实际输出，只向 WPF 交付 frozen BGRA8 premultiplied `BitmapSource`。
+- **决策：** 同一本地账户数据库 scope 跨 runtime/coordinator generation 共享两个 decoder slot 和 attachment/rendition single-flight；等待 slot 与实际 decode 各有 10 秒上限。超时或取消只停止 UI 等待，不合作的 decoder 在实际返回前继续拥有输入和 slot，防止连续超时绕过预算；脱离任务的关键进程异常在移除 flight、释放 slot、清理输入并重试 purge 后进入 production fail-fast。codec 崩溃、两个 slot 长期占满、压力内存不可接受、扩展格式或第三方 codec 是迁移到独立低权限 helper 的重新评估触发条件。
+- **决策：** WPF 只为可见行维护内存缩略图，虚拟化卸载、DataContext 替换、选择/撤权/注销/退出清 flight 与强引用；`InProgress` 重试有总次数和可取消退避。单一模态查看器支持关闭/Escape，自动失效时清图并把 overlay 内键盘焦点回退到稳定消息列表或编辑框。所有可渲染状态、UIA、日志和结果字符串不暴露路径、URL、hash 或内部 ID。
+- **理由：** pinned 验证、私有有界内存、跨 generation 账户预算和最终授权/UI 双提交把磁盘完整性、解码资源、撤权与 presentation identity 分成可验证的线性边界；不持久化缩略图可复用既有 cache 生命周期而不新增 schema 或 orphan 类别。
+- **影响：** Client 新增无 schema、无协议、无第三方依赖的图片 decoder/coordinator/runtime/WPF surface；不写 `ThumbnailLocalPath`，不新增服务端缩略图，也不开放外部 handler。永久不返回的进程内 decoder 仍会保留一个 slot 和最多 25 MiB 输入直到进程退出；真实恶意样本、登录视觉/Narrator、VPS 与双客户端留在后续/M5 Gate。
+- **来源：** 工程方案第 9.4、14.4、阶段 9、21.3；`DEC-034/044/048/049`；`docs/ai/tasks/2026-08-04-stage-9-attachment-thumbnails.md`；production `fabe16c28476237a1ed9d91f26a6738d09057c0f`；最终相关定向 218/218、Full 1,267/1,267（Shared 39、Server 255、Client 972、Updater 1）、真实 PNG/JPEG 与预算/超时/ABA/recycling/viewer/focus 回归、model drift、八项目漏洞审计、format/空白检查。两路 Codex 独立复审发现均已修复并补回归；Claude #77 的成立意见经 Codex 复算纳入，实际模型、时长和精确费用已记录。
