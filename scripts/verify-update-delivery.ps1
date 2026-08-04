@@ -398,7 +398,7 @@ function Get-ClientProcessIdsAtPath {
 }
 
 function Wait-ForNewClientStart {
-    param([Parameter(Mandatory)][string] $ClientExecutablePath, [Parameter(Mandatory)][int[]] $ExistingIds)
+    param([Parameter(Mandatory)][string] $ClientExecutablePath, [int[]] $ExistingIds = @())
 
     for ($attempt = 0; $attempt -lt 120; $attempt++) {
         $started = @(Get-ClientProcessIdsAtPath $ClientExecutablePath | Where-Object { $_ -notin $ExistingIds })
