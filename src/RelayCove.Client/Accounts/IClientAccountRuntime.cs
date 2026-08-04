@@ -50,6 +50,12 @@ internal interface IClientAccountRuntime : IAsyncDisposable
         int limit = ClientMentionCandidateCoordinator.DefaultLimit,
         CancellationToken cancellationToken = default);
 
+    Task<ClientSearchOutcome> SearchMessagesAsync(
+        string? keyword,
+        Guid? conversationId,
+        int limit = ClientSearchCoordinator.DefaultLimit,
+        CancellationToken cancellationToken = default);
+
     Task<ClientMessageSendOutcome> SendTextMessageAsync(
         Guid conversationId,
         string? content,

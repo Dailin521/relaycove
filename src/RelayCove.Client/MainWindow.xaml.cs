@@ -9,10 +9,12 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using RelayCove.Client.Accounts;
 using RelayCove.Client.Attachments;
 using RelayCove.Client.Mentions;
 using RelayCove.Client.Notifications;
+using RelayCove.Client.Search;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
 using RelayCove.Shared.Messages;
@@ -22,10 +24,25 @@ namespace RelayCove.Client;
 public partial class MainWindow : Window
 {
     private const int MaximumAttachmentThumbnailInProgressRetries = 15;
+    private const int MaximumSearchHighlightMaterializationAttempts = 5;
     private static readonly TimeSpan AttachmentThumbnailRetryMinimumDelay =
         TimeSpan.FromMilliseconds(50);
     private static readonly TimeSpan AttachmentThumbnailRetryMaximumDelay =
         TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan SearchHighlightDuration = TimeSpan.FromSeconds(2);
+    private static readonly SolidColorBrush SearchHighlightBackground =
+        CreateFrozenBrush(0xFF, 0xF3, 0xC4);
+    private static readonly SolidColorBrush SearchHighlightBorder =
+        CreateFrozenBrush(0xE5, 0x9A, 0x13);
+    private static readonly SolidColorBrush MessageCardBackground =
+        CreateFrozenBrush(0xFF, 0xFF, 0xFF);
+    private static readonly SolidColorBrush MessageCardBorder =
+        CreateFrozenBrush(0xE5, 0xEB, 0xF2);
+    private readonly IReadOnlyList<ClientSearchScopeOption> messageSearchScopeOptions =
+    [
+        new(ClientSearchScope.Global, "全部会话"),
+        new(ClientSearchScope.CurrentConversation, "当前会话"),
+    ];
     private ClientAccountShellCoordinator? accountShell;
     private Guid? pendingConversationSelectionId;
     private long lastConversationRevision;
@@ -56,7 +73,15 @@ public partial class MainWindow : Window
         ClientAttachmentImageOperation> attachmentThumbnailOperations = [];
     private ClientAttachmentImageViewerOperation? attachmentImageViewerOperation;
     private IInputElement? attachmentImageViewerRestoreFocus;
+    private IReadOnlyList<ClientSearchResultPresentation> messageSearchResults =
+        Array.Empty<ClientSearchResultPresentation>();
+    private CancellationTokenSource? messageSearchCancellationSource;
+    private CancellationTokenSource? searchNavigationCancellationSource;
+    private SearchHighlightLease? searchHighlightLease;
+    private DispatcherTimer? searchHighlightTimer;
     private long mentionSearchVersion;
+    private long messageSearchVersion;
+    private long searchNavigationVersion;
     private long attachmentSubmissionVersion;
     private long attachmentDownloadContextVersion;
     private Guid? attachmentDownloadConversationId;
@@ -66,6 +91,9 @@ public partial class MainWindow : Window
     private bool composerAvailable;
     private bool composerSubmissionRunning;
     private bool mentionSearchRunning;
+    private bool messageSearchRunning;
+    private bool searchNavigationRunning;
+    private bool suppressMessageSearchInputChanges;
     private bool attachmentInputRunning;
     private CancellationTokenSource? attachmentInputCancellationSource;
     private int lastAnnouncedAttachmentIndex;
@@ -74,11 +102,22 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        MessageSearchScopeComboBox.ItemsSource = messageSearchScopeOptions;
+        MessageSearchScopeComboBox.SelectedIndex = 0;
+        UpdateMessageSearchState();
     }
 
     internal void BindAccountShell(ClientAccountShellCoordinator coordinator)
     {
-        accountShell = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+        ArgumentNullException.ThrowIfNull(coordinator);
+        if (accountShell is not null)
+        {
+            accountShell.SearchResultsInvalidated -= OnSearchResultsInvalidated;
+        }
+
+        ClearMessageSearchPresentation(closePanel: true, clearKeyword: true);
+        accountShell = coordinator;
+        coordinator.SearchResultsInvalidated += OnSearchResultsInvalidated;
         ApplyAccountShellSnapshot(coordinator.Snapshot);
         ApplyConversationListSnapshot(coordinator.ConversationList);
         ApplyMessageListSnapshot(coordinator.MessageList);
@@ -95,6 +134,11 @@ public partial class MainWindow : Window
         }
 
         ResetAttachmentDownloadContext(conversationId: null);
+        InvalidateMessageSearchFromUi(closePanel: true, clearKeyword: true);
+        if (accountShell is not null)
+        {
+            accountShell.SearchResultsInvalidated -= OnSearchResultsInvalidated;
+        }
     }
 
     internal void ApplyAccountShellSnapshot(ClientAccountShellSnapshot snapshot)
@@ -108,6 +152,7 @@ public partial class MainWindow : Window
             UpdateComposerConversationContext(conversationId: null, isReady: false);
             ClearComposerReply();
             UpdateComposerState();
+            ClearMessageSearchPresentation(closePanel: true, clearKeyword: true);
         }
 
         var presentation = ClientAccountShellPresenter.Present(snapshot);
@@ -137,6 +182,8 @@ public partial class MainWindow : Window
         PasswordInput.IsEnabled = !presentation.IsBusy;
         RetryButton.IsEnabled = presentation.CanRetry;
         LogoutButton.IsEnabled = presentation.CanLogout;
+        OpenSearchButton.IsEnabled = snapshot.HasActiveAccount && !presentation.IsBusy;
+        UpdateMessageSearchState();
     }
 
     internal void ApplyConversationListSnapshot(LocalConversationListReadOutcome outcome)
@@ -193,6 +240,7 @@ public partial class MainWindow : Window
         }
 
         accountShell?.SelectConversation(SelectedConversationId);
+        UpdateMessageSearchState();
     }
 
     internal void ShowAuthorizedNotificationTarget(
@@ -246,6 +294,15 @@ public partial class MainWindow : Window
         }
 
         snapshot = ReconcileAttachmentDownloadSnapshot(snapshot);
+        if (!searchNavigationRunning &&
+            searchHighlightLease is { } searchLease &&
+            (snapshot.ConversationId != searchLease.ConversationId ||
+             snapshot.TargetMessageId != searchLease.MessageId ||
+             snapshot.Status is not ClientMessageListStatus.Loading and
+                 not ClientMessageListStatus.Ready))
+        {
+            ClearSearchHighlight();
+        }
 
         var previousItems = MessageList.ItemsSource?
             .OfType<ClientMessageListItemPresentation>()
@@ -283,6 +340,8 @@ public partial class MainWindow : Window
             targetChanged,
             contentAppended,
             snapshot.Messages.Count != 0);
+        var searchTargetOwnsAcknowledgment = IsSearchHighlightTarget(snapshot);
+        var searchTargetMaterializedNow = false;
 
         applyingMessageSnapshot = true;
         try
@@ -343,6 +402,15 @@ public partial class MainWindow : Window
                 MessageList.ScrollIntoView(snapshot.Messages[^1]);
             }
 
+            if (searchTargetOwnsAcknowledgment)
+            {
+                searchTargetMaterializedNow = TryMaterializeSearchHighlight(snapshot);
+                if (!searchTargetMaterializedNow)
+                {
+                    ScheduleSearchHighlightMaterialization();
+                }
+            }
+
             NewMessageIndicatorButton.Visibility = decision.ShowNewMessageIndicator
                 ? Visibility.Visible
                 : Visibility.Collapsed;
@@ -358,12 +426,28 @@ public partial class MainWindow : Window
         if (snapshot.Status == ClientMessageListStatus.Ready &&
             snapshot.ConversationId is { } conversationId)
         {
+            var observedThroughMessageId = decision.ObservedThroughMessageId;
+            if (searchTargetOwnsAcknowledgment)
+            {
+                observedThroughMessageId = searchTargetMaterializedNow
+                    ? snapshot.TargetMessageId
+                    : null;
+                if (searchTargetMaterializedNow && searchHighlightLease is { } lease)
+                {
+                    lease.TargetAcknowledged = true;
+                }
+            }
+
             accountShell?.AcknowledgeMessageSnapshotApplied(
                 conversationId,
                 snapshot.Revision,
-                decision.ObservedThroughMessageId,
-                IsNearBottom(scrollViewer));
+                observedThroughMessageId,
+                searchTargetOwnsAcknowledgment && !searchTargetMaterializedNow
+                    ? false
+                    : IsNearBottom(scrollViewer));
         }
+
+        UpdateMessageSearchState();
     }
 
     internal void SetNotificationAvailability(bool? isAvailable)
@@ -436,6 +520,706 @@ public partial class MainWindow : Window
 
         textBlock.Text = value;
         RaiseLiveRegionChanged(textBlock);
+    }
+
+    private void OnOpenSearchClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        SearchPanel.Visibility = Visibility.Visible;
+        UpdateMessageSearchState();
+        MessageSearchTextBox.Focus();
+        MessageSearchTextBox.SelectAll();
+    }
+
+    private void OnCloseSearchClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        InvalidateMessageSearchFromUi(closePanel: true, clearKeyword: true);
+        ConversationList.Focus();
+    }
+
+    private void OnMessageSearchTextChanged(object sender, TextChangedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (suppressMessageSearchInputChanges)
+        {
+            return;
+        }
+
+        InvalidateMessageSearchFromUi(closePanel: false, clearKeyword: false);
+    }
+
+    private async void OnMessageSearchPreviewKeyDown(
+        object sender,
+        System.Windows.Input.KeyEventArgs e)
+    {
+        _ = sender;
+        if (e.Key != Key.Enter || Keyboard.Modifiers != ModifierKeys.None)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        await RunMessageSearchAsync();
+    }
+
+    private void OnMessageSearchScopeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (suppressMessageSearchInputChanges)
+        {
+            return;
+        }
+
+        InvalidateMessageSearchFromUi(closePanel: false, clearKeyword: false);
+    }
+
+    private async void OnRunSearchClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        await RunMessageSearchAsync();
+    }
+
+    private async Task RunMessageSearchAsync()
+    {
+        var coordinator = accountShell;
+        var scope = (MessageSearchScopeComboBox.SelectedItem as ClientSearchScopeOption)?.Scope ??
+            ClientSearchScope.Global;
+        if (coordinator is null ||
+            !ClientSearchPolicy.TryNormalizeKeyword(
+                MessageSearchTextBox.Text,
+                out var normalizedKeyword))
+        {
+            SetLiveText(
+                MessageSearchStatusText,
+                "请输入 1–64 个有效字符的关键词后再搜索。");
+            UpdateMessageSearchState();
+            return;
+        }
+
+        if (scope == ClientSearchScope.CurrentConversation &&
+            (displayedMessageSnapshot?.Status != ClientMessageListStatus.Ready ||
+             displayedMessageSnapshot.ConversationId != SelectedConversationId))
+        {
+            SetLiveText(MessageSearchStatusText, "请先选择并打开一个可用会话。");
+            UpdateMessageSearchState();
+            return;
+        }
+
+        CancelMessageSearchOperation(messageSearchCancellationSource);
+        messageSearchCancellationSource = new CancellationTokenSource();
+        var cancellationSource = messageSearchCancellationSource;
+        var version = ++messageSearchVersion;
+        ++searchNavigationVersion;
+        CancelMessageSearchOperation(searchNavigationCancellationSource);
+        searchNavigationCancellationSource = null;
+        searchNavigationRunning = false;
+        ClearSearchHighlight();
+        messageSearchResults = Array.Empty<ClientSearchResultPresentation>();
+        MessageSearchResultList.ItemsSource = null;
+        messageSearchRunning = true;
+        SetLiveText(MessageSearchStatusText, "正在搜索已授权的聊天记录…");
+        UpdateMessageSearchState();
+
+        ClientSearchOutcome outcome;
+        try
+        {
+            outcome = await coordinator.SearchMessagesAsync(
+                normalizedKeyword,
+                scope,
+                cancellationToken: cancellationSource.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            outcome = ClientSearchOutcome.Failure(ClientSearchStatus.Canceled);
+        }
+        catch (ObjectDisposedException)
+        {
+            outcome = ClientSearchOutcome.Failure(ClientSearchStatus.Stale);
+        }
+        finally
+        {
+            cancellationSource.Dispose();
+        }
+
+        if (version != messageSearchVersion ||
+            !ReferenceEquals(accountShell, coordinator) ||
+            !ReferenceEquals(messageSearchCancellationSource, cancellationSource))
+        {
+            if (ReferenceEquals(messageSearchCancellationSource, cancellationSource))
+            {
+                messageSearchCancellationSource = null;
+                messageSearchRunning = false;
+                UpdateMessageSearchState();
+            }
+
+            return;
+        }
+
+        messageSearchCancellationSource = null;
+        messageSearchRunning = false;
+        if (outcome.Status == ClientSearchStatus.Completed)
+        {
+            messageSearchResults = outcome.Results
+                .Select(ClientSearchResultPresentation.Create)
+                .ToList()
+                .AsReadOnly();
+            MessageSearchResultList.ItemsSource = messageSearchResults;
+            SetLiveText(
+                MessageSearchStatusText,
+                messageSearchResults.Count == 0
+                    ? "没有找到匹配的消息。"
+                    : outcome.HasMore
+                        ? $"已显示 {messageSearchResults.Count} 条结果；还有更多结果，请缩小关键词范围。"
+                        : $"找到 {messageSearchResults.Count} 条结果。");
+        }
+        else
+        {
+            messageSearchResults = Array.Empty<ClientSearchResultPresentation>();
+            MessageSearchResultList.ItemsSource = null;
+            SetLiveText(MessageSearchStatusText, DescribeMessageSearchOutcome(outcome));
+        }
+
+        UpdateMessageSearchState();
+    }
+
+    private async void OnSearchResultClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not FrameworkElement { DataContext: ClientSearchResultPresentation item } ||
+            !messageSearchResults.Any(candidate => ReferenceEquals(candidate, item)))
+        {
+            return;
+        }
+
+        var coordinator = accountShell;
+        if (coordinator is null)
+        {
+            return;
+        }
+
+        CancelMessageSearchOperation(searchNavigationCancellationSource);
+        searchNavigationCancellationSource = new CancellationTokenSource();
+        var cancellationSource = searchNavigationCancellationSource;
+        var version = ++searchNavigationVersion;
+        ClearSearchHighlight();
+        searchHighlightLease = new SearchHighlightLease(
+            item.Result.ConversationId,
+            item.Result.MessageId,
+            version);
+        searchNavigationRunning = true;
+        SetLiveText(
+            MessageSearchStatusText,
+            "正在向服务端重新确认访问权限并读取消息上下文…");
+        UpdateMessageSearchState();
+
+        ClientSearchNavigationOutcome outcome;
+        try
+        {
+            outcome = await coordinator.NavigateSearchResultAsync(
+                item.Result,
+                cancellationSource.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            outcome = ClientSearchNavigationOutcome.Failure(
+                ClientSearchNavigationStatus.Canceled);
+        }
+        catch (ObjectDisposedException)
+        {
+            outcome = ClientSearchNavigationOutcome.Failure(
+                ClientSearchNavigationStatus.Stale);
+        }
+        finally
+        {
+            cancellationSource.Dispose();
+        }
+
+        if (version != searchNavigationVersion ||
+            !ReferenceEquals(accountShell, coordinator) ||
+            !ReferenceEquals(searchNavigationCancellationSource, cancellationSource) ||
+            searchHighlightLease is not { NavigationVersion: var leaseVersion } ||
+            leaseVersion != version)
+        {
+            if (ReferenceEquals(searchNavigationCancellationSource, cancellationSource))
+            {
+                searchNavigationCancellationSource = null;
+                searchNavigationRunning = false;
+                ClearSearchHighlight();
+                UpdateMessageSearchState();
+            }
+
+            return;
+        }
+
+        searchNavigationCancellationSource = null;
+        searchNavigationRunning = false;
+        if (outcome.Status == ClientSearchNavigationStatus.Completed)
+        {
+            messageSearchResults = Array.Empty<ClientSearchResultPresentation>();
+            MessageSearchResultList.ItemsSource = null;
+            SelectSearchConversation(item.Result.ConversationId);
+            SearchPanel.Visibility = Visibility.Collapsed;
+            SetLiveText(
+                NavigationNoticeText,
+                "访问权限已重新确认；正在定位并短暂高亮目标消息。");
+            ScheduleSearchHighlightMaterialization();
+        }
+        else
+        {
+            ClearSearchHighlight();
+            SetLiveText(
+                MessageSearchStatusText,
+                DescribeSearchNavigationOutcome(outcome.Status));
+        }
+
+        UpdateMessageSearchState();
+    }
+
+    private void SelectSearchConversation(Guid conversationId)
+    {
+        pendingConversationSelectionId = conversationId;
+        var selected = ConversationList.Items
+            .OfType<ClientConversationListItemPresentation>()
+            .FirstOrDefault(item => item.Id == conversationId);
+        if (selected is null)
+        {
+            return;
+        }
+
+        suppressSelectionRequest = true;
+        try
+        {
+            ConversationList.SelectedItem = selected;
+            ConversationList.ScrollIntoView(selected);
+            pendingConversationSelectionId = null;
+            ApplySelectedConversation(selected);
+        }
+        finally
+        {
+            suppressSelectionRequest = false;
+        }
+    }
+
+    private void OnSearchResultsInvalidated()
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+            {
+                return;
+            }
+
+            try
+            {
+                Dispatcher.Invoke(
+                    ApplySearchResultsInvalidated,
+                    DispatcherPriority.Send);
+            }
+            catch (InvalidOperationException) when (
+                Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+            {
+            }
+
+            return;
+        }
+
+        ApplySearchResultsInvalidated();
+    }
+
+    internal void ApplySearchResultsInvalidated()
+    {
+        messageSearchResults = Array.Empty<ClientSearchResultPresentation>();
+        MessageSearchResultList.ItemsSource = null;
+        ++searchNavigationVersion;
+        searchNavigationCancellationSource = null;
+        searchNavigationRunning = false;
+        ClearSearchHighlight();
+        ++messageSearchVersion;
+        messageSearchCancellationSource = null;
+        messageSearchRunning = false;
+
+        if (MessageSearchResultList.IsKeyboardFocusWithin)
+        {
+            MessageSearchTextBox.Focus();
+        }
+
+        if (SearchPanel.Visibility == Visibility.Visible)
+        {
+            SetLiveText(
+                MessageSearchStatusText,
+                "搜索结果已因账户、会话或消息状态变化而清除。");
+        }
+
+        UpdateMessageSearchState();
+    }
+
+    private void InvalidateMessageSearchFromUi(bool closePanel, bool clearKeyword)
+    {
+        ClearMessageSearchPresentation(closePanel, clearKeyword);
+        try
+        {
+            accountShell?.InvalidateSearchResults();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private void ClearMessageSearchPresentation(bool closePanel, bool clearKeyword)
+    {
+        ++messageSearchVersion;
+        ++searchNavigationVersion;
+        CancelMessageSearchOperation(messageSearchCancellationSource);
+        CancelMessageSearchOperation(searchNavigationCancellationSource);
+        messageSearchCancellationSource = null;
+        searchNavigationCancellationSource = null;
+        messageSearchRunning = false;
+        searchNavigationRunning = false;
+        messageSearchResults = Array.Empty<ClientSearchResultPresentation>();
+        MessageSearchResultList.ItemsSource = null;
+        ClearSearchHighlight();
+        if (clearKeyword)
+        {
+            suppressMessageSearchInputChanges = true;
+            try
+            {
+                MessageSearchTextBox.Clear();
+            }
+            finally
+            {
+                suppressMessageSearchInputChanges = false;
+            }
+        }
+
+        if (closePanel)
+        {
+            SearchPanel.Visibility = Visibility.Collapsed;
+        }
+
+        SetLiveText(MessageSearchStatusText, "输入关键词并选择搜索范围。");
+        UpdateMessageSearchState();
+    }
+
+    private void UpdateMessageSearchState()
+    {
+        var scope = (MessageSearchScopeComboBox.SelectedItem as ClientSearchScopeOption)?.Scope ??
+            ClientSearchScope.Global;
+        var hasValidKeyword = ClientSearchPolicy.TryNormalizeKeyword(
+            MessageSearchTextBox.Text,
+            out _);
+        var hasCurrentConversation = displayedMessageSnapshot?.Status ==
+                ClientMessageListStatus.Ready &&
+            displayedMessageSnapshot.ConversationId == SelectedConversationId;
+        MessageSearchTextBox.IsEnabled = !searchNavigationRunning;
+        MessageSearchScopeComboBox.IsEnabled = !searchNavigationRunning;
+        RunSearchButton.IsEnabled = accountShell is not null &&
+            !messageSearchRunning &&
+            !searchNavigationRunning &&
+            hasValidKeyword &&
+            (scope == ClientSearchScope.Global || hasCurrentConversation);
+        CloseSearchButton.IsEnabled = true;
+    }
+
+    private static string DescribeMessageSearchOutcome(ClientSearchOutcome outcome) =>
+        outcome.Status switch
+        {
+            ClientSearchStatus.ValidationFailed =>
+                "关键词或搜索范围无效，请检查后重试。",
+            ClientSearchStatus.AuthenticationRequired => "登录已失效，请重新登录。",
+            ClientSearchStatus.AccessRevoked => "会话访问已撤销，相关本地内容已隐藏。",
+            ClientSearchStatus.AccessDenied => "当前账户无权搜索该会话。",
+            ClientSearchStatus.RateLimited => outcome.RetryAfterSeconds is { } seconds
+                ? $"搜索过于频繁，请约 {seconds} 秒后重试。"
+                : "搜索过于频繁，请稍后重试。",
+            ClientSearchStatus.Timeout or ClientSearchStatus.TransientFailure =>
+                "网络暂时不可用，请稍后重试。",
+            ClientSearchStatus.ProtocolError => "搜索响应不符合协议，已拒绝显示。",
+            ClientSearchStatus.Canceled => "搜索已取消。",
+            ClientSearchStatus.Stale => "账户或会话已变化，旧搜索结果已丢弃。",
+            ClientSearchStatus.Unavailable => "当前没有可用的搜索上下文。",
+            _ => "搜索失败，请稍后重试。",
+        };
+
+    private static string DescribeSearchNavigationOutcome(
+        ClientSearchNavigationStatus status) =>
+        status switch
+        {
+            ClientSearchNavigationStatus.AuthenticationRequired => "登录已失效，请重新登录。",
+            ClientSearchNavigationStatus.AccessRevoked =>
+                "会话访问已撤销，未打开本地缓存内容。",
+            ClientSearchNavigationStatus.AccessDenied =>
+                "服务端拒绝访问该消息，未打开本地缓存内容。",
+            ClientSearchNavigationStatus.TransientFailure =>
+                "网络暂时不可用，未打开本地缓存内容。",
+            ClientSearchNavigationStatus.ProtocolError =>
+                "消息上下文响应无效，未打开本地缓存内容。",
+            ClientSearchNavigationStatus.Canceled => "定位已取消。",
+            ClientSearchNavigationStatus.Stale => "结果已过期，请重新搜索。",
+            ClientSearchNavigationStatus.Unavailable => "该结果已不可用，请重新搜索。",
+            _ => "无法定位该消息，请稍后重试。",
+        };
+
+    private static void CancelMessageSearchOperation(CancellationTokenSource? cancellationSource)
+    {
+        if (cancellationSource is null)
+        {
+            return;
+        }
+
+        try
+        {
+            cancellationSource.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private void OnMessageCardLoaded(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is Border card && IsSearchTargetCard(card))
+        {
+            ScheduleSearchHighlightMaterialization();
+        }
+    }
+
+    private void OnMessageCardUnloaded(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is Border card &&
+            ReferenceEquals(searchHighlightLease?.HighlightedCard, card))
+        {
+            ClearSearchHighlight();
+        }
+    }
+
+    private void OnMessageCardDataContextChanged(
+        object sender,
+        DependencyPropertyChangedEventArgs e)
+    {
+        if (sender is not Border card)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(searchHighlightLease?.HighlightedCard, card) &&
+            !IsSearchTargetMessage(e.NewValue))
+        {
+            ClearSearchHighlight();
+            return;
+        }
+
+        if (IsSearchTargetMessage(e.NewValue))
+        {
+            ScheduleSearchHighlightMaterialization();
+        }
+    }
+
+    private bool IsSearchHighlightTarget(ClientMessageListSnapshot snapshot) =>
+        searchHighlightLease is { } lease &&
+        !lease.IsMaterialized &&
+        snapshot.Status == ClientMessageListStatus.Ready &&
+        snapshot.ConversationId == lease.ConversationId &&
+        snapshot.TargetMessageId == lease.MessageId;
+
+    private bool IsSearchTargetCard(Border card) =>
+        string.Equals(card.Tag as string, "MessageCard", StringComparison.Ordinal) &&
+        IsSearchTargetMessage(card.DataContext);
+
+    private bool IsSearchTargetMessage(object? value) =>
+        searchHighlightLease is { } lease &&
+        value is ClientMessageListItemPresentation item &&
+        item.ServerMessageId == lease.MessageId;
+
+    private bool TryMaterializeSearchHighlight(ClientMessageListSnapshot snapshot)
+    {
+        var lease = searchHighlightLease;
+        if (lease is null || lease.IsMaterialized ||
+            snapshot.Status != ClientMessageListStatus.Ready ||
+            snapshot.ConversationId != lease.ConversationId ||
+            snapshot.TargetMessageId != lease.MessageId)
+        {
+            return false;
+        }
+
+        var targetItem = snapshot.Messages.FirstOrDefault(
+            item => item.ServerMessageId == lease.MessageId);
+        if (targetItem is null)
+        {
+            return false;
+        }
+
+        MessageList.ScrollIntoView(targetItem);
+        MessageList.UpdateLayout();
+        if (MessageList.ItemContainerGenerator.ContainerFromItem(targetItem) is not
+                ListBoxItem container)
+        {
+            return false;
+        }
+
+        var card = FindVisualDescendants<Border>(container)
+            .FirstOrDefault(candidate =>
+                string.Equals(candidate.Tag as string, "MessageCard", StringComparison.Ordinal) &&
+                candidate.DataContext is ClientMessageListItemPresentation presentation &&
+                presentation.ServerMessageId == lease.MessageId);
+        if (card is null || !IsActuallyVisibleWithin(card, MessageList))
+        {
+            return false;
+        }
+
+        card.Background = SearchHighlightBackground;
+        card.BorderBrush = SearchHighlightBorder;
+        card.BorderThickness = new Thickness(2);
+        lease.HighlightedCard = card;
+        lease.IsMaterialized = true;
+        lease.MaterializationScheduled = false;
+        StartSearchHighlightTimer();
+        SetLiveText(
+            NavigationNoticeText,
+            "已定位目标消息；高亮将在约 2 秒后自动消失。");
+        return true;
+    }
+
+    private void ScheduleSearchHighlightMaterialization()
+    {
+        var lease = searchHighlightLease;
+        var snapshot = displayedMessageSnapshot;
+        if (lease is null || lease.IsMaterialized || lease.MaterializationScheduled ||
+            snapshot is null || snapshot.Status != ClientMessageListStatus.Ready ||
+            snapshot.ConversationId != lease.ConversationId ||
+            snapshot.TargetMessageId != lease.MessageId)
+        {
+            return;
+        }
+
+        lease.MaterializationScheduled = true;
+        _ = Dispatcher.BeginInvoke(
+            DispatcherPriority.Loaded,
+            () => TryCompleteScheduledSearchHighlight(lease.NavigationVersion));
+    }
+
+    private void TryCompleteScheduledSearchHighlight(long navigationVersion)
+    {
+        var lease = searchHighlightLease;
+        if (lease is null || lease.NavigationVersion != navigationVersion ||
+            lease.IsMaterialized)
+        {
+            return;
+        }
+
+        lease.MaterializationScheduled = false;
+        lease.MaterializationAttempts++;
+        var snapshot = displayedMessageSnapshot;
+        if (snapshot is not null && TryMaterializeSearchHighlight(snapshot))
+        {
+            AcknowledgeMaterializedSearchTarget(snapshot, lease);
+            return;
+        }
+
+        if (lease.MaterializationAttempts < MaximumSearchHighlightMaterializationAttempts)
+        {
+            ScheduleSearchHighlightMaterialization();
+            return;
+        }
+
+        ClearSearchHighlight();
+        SetLiveText(
+            NavigationNoticeText,
+            "已打开会话，但目标消息未能在可见窗口中定位；未推进该目标的已读位置。");
+    }
+
+    private void AcknowledgeMaterializedSearchTarget(
+        ClientMessageListSnapshot snapshot,
+        SearchHighlightLease lease)
+    {
+        if (lease.TargetAcknowledged ||
+            !ReferenceEquals(searchHighlightLease, lease) ||
+            snapshot.Status != ClientMessageListStatus.Ready ||
+            snapshot.ConversationId != lease.ConversationId ||
+            snapshot.TargetMessageId != lease.MessageId)
+        {
+            return;
+        }
+
+        lease.TargetAcknowledged = true;
+        accountShell?.AcknowledgeMessageSnapshotApplied(
+            lease.ConversationId,
+            snapshot.Revision,
+            lease.MessageId,
+            IsNearBottom(FindVisualChild<ScrollViewer>(MessageList)));
+    }
+
+    private void StartSearchHighlightTimer()
+    {
+        searchHighlightTimer?.Stop();
+        if (searchHighlightTimer is not null)
+        {
+            searchHighlightTimer.Tick -= OnSearchHighlightTimerTick;
+        }
+
+        searchHighlightTimer = new DispatcherTimer(
+            DispatcherPriority.Background,
+            Dispatcher)
+        {
+            Interval = SearchHighlightDuration,
+        };
+        searchHighlightTimer.Tick += OnSearchHighlightTimerTick;
+        searchHighlightTimer.Start();
+    }
+
+    private void OnSearchHighlightTimerTick(object? sender, EventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        ClearSearchHighlight();
+    }
+
+    private void ClearSearchHighlight()
+    {
+        if (searchHighlightTimer is not null)
+        {
+            searchHighlightTimer.Stop();
+            searchHighlightTimer.Tick -= OnSearchHighlightTimerTick;
+            searchHighlightTimer = null;
+        }
+
+        if (searchHighlightLease?.HighlightedCard is { } card)
+        {
+            card.Background = MessageCardBackground;
+            card.BorderBrush = MessageCardBorder;
+            card.BorderThickness = new Thickness(1);
+        }
+
+        searchHighlightLease = null;
+    }
+
+    private static bool IsActuallyVisibleWithin(FrameworkElement element, FrameworkElement host)
+    {
+        if (!element.IsVisible || !host.IsVisible ||
+            element.ActualWidth <= 0 || element.ActualHeight <= 0 ||
+            host.ActualWidth <= 0 || host.ActualHeight <= 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            var bounds = element
+                .TransformToAncestor(host)
+                .TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
+            return bounds.IntersectsWith(new Rect(0, 0, host.ActualWidth, host.ActualHeight));
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     private async void OnLoginClicked(object sender, RoutedEventArgs e)
@@ -511,11 +1295,30 @@ public partial class MainWindow : Window
         _ = e;
         var selected = ConversationList.SelectedItem as
             ClientConversationListItemPresentation;
+        if (!suppressSelectionRequest && searchNavigationRunning)
+        {
+            ++searchNavigationVersion;
+            CancelMessageSearchOperation(searchNavigationCancellationSource);
+            searchNavigationCancellationSource = null;
+            searchNavigationRunning = false;
+            ClearSearchHighlight();
+            SetLiveText(MessageSearchStatusText, "会话已切换，本次定位已取消。");
+        }
+
+        if (!suppressSelectionRequest &&
+            searchHighlightLease is { } lease &&
+            selected?.Id != lease.ConversationId)
+        {
+            ClearSearchHighlight();
+        }
+
         ApplySelectedConversation(selected);
         if (!suppressSelectionRequest)
         {
             accountShell?.SelectConversation(selected?.Id);
         }
+
+        UpdateMessageSearchState();
     }
 
     private async void OnLoadOlderMessagesClicked(object sender, RoutedEventArgs e)
@@ -2709,6 +3512,13 @@ public partial class MainWindow : Window
         if (snapshot?.Status == ClientMessageListStatus.Ready &&
             snapshot.ConversationId is { } conversationId)
         {
+            if (searchHighlightLease is { IsMaterialized: false } lease &&
+                snapshot.ConversationId == lease.ConversationId &&
+                snapshot.TargetMessageId == lease.MessageId)
+            {
+                return;
+            }
+
             accountShell?.AcknowledgeMessageViewportChanged(
                 conversationId,
                 snapshot.Revision,
@@ -2729,6 +3539,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        ClearSearchHighlight();
         MessageList.ScrollIntoView(snapshot.Messages[^1]);
         NewMessageIndicatorButton.Visibility = Visibility.Collapsed;
         accountShell?.AcknowledgeMessageViewportChanged(
@@ -3220,6 +4031,28 @@ public partial class MainWindow : Window
         }
     }
 
+    private sealed class SearchHighlightLease(
+        Guid conversationId,
+        long messageId,
+        long navigationVersion)
+    {
+        public Guid ConversationId { get; } = conversationId;
+
+        public long MessageId { get; } = messageId;
+
+        public long NavigationVersion { get; } = navigationVersion;
+
+        public Border? HighlightedCard { get; set; }
+
+        public int MaterializationAttempts { get; set; }
+
+        public bool IsMaterialized { get; set; }
+
+        public bool MaterializationScheduled { get; set; }
+
+        public bool TargetAcknowledged { get; set; }
+    }
+
     private sealed class ClientAttachmentDownloadStateEntry(
         ClientAttachmentDownloadViewState state,
         ClientAttachmentImageViewState imageState,
@@ -3411,6 +4244,14 @@ public partial class MainWindow : Window
     private static bool IsNearBottom(ScrollViewer? scrollViewer) =>
         scrollViewer is null ||
         scrollViewer.ScrollableHeight - scrollViewer.VerticalOffset <= 1.5;
+
+    private static SolidColorBrush CreateFrozenBrush(byte red, byte green, byte blue)
+    {
+        var brush = new SolidColorBrush(
+            System.Windows.Media.Color.FromRgb(red, green, blue));
+        brush.Freeze();
+        return brush;
+    }
 
     private static T? FindVisualChild<T>(DependencyObject parent)
         where T : DependencyObject

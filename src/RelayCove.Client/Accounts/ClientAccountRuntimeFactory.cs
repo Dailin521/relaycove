@@ -161,6 +161,7 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
         ClientReadThroughCoordinator? readThroughCoordinator = null;
         ClientMessageHistoryCoordinator? messageHistoryCoordinator = null;
         ClientMentionCandidateCoordinator? mentionCandidateCoordinator = null;
+        ClientSearchCoordinator? searchCoordinator = null;
         ClientMessageSendCoordinator? messageSendCoordinator = null;
         ClientAttachmentDownloadCoordinator? attachmentDownloadCoordinator = null;
         ClientAutomaticSyncScheduler? automaticSyncScheduler = null;
@@ -242,6 +243,13 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                 cache,
                 loggerFactory.CreateLogger<ClientMentionCandidateCoordinator>(),
                 notificationRoundCoordinator.ConversationRevokedAsync);
+            searchCoordinator = new ClientSearchCoordinator(
+                identity,
+                httpClient,
+                authenticationSession,
+                cache,
+                loggerFactory.CreateLogger<ClientSearchCoordinator>(),
+                notificationRoundCoordinator.ConversationRevokedAsync);
             messageSendCoordinator = new ClientMessageSendCoordinator(
                 identity,
                 authenticationSession.DisplayName ?? string.Empty,
@@ -316,10 +324,12 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                 messageHistoryCoordinator,
                 messageSendCoordinator,
                 mentionCandidateCoordinator,
-                attachmentDownloadCoordinator);
+                attachmentDownloadCoordinator,
+                searchCoordinator);
             unownedNotificationRoundCoordinator = null;
             attachmentDownloadCoordinator = null;
             automaticSyncScheduler = null;
+            searchCoordinator = null;
             return runtime;
         }
         catch (Exception creationFailure)
@@ -380,6 +390,14 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
             {
                 await CaptureCleanupFailureAsync(
                         () => attachmentDownloadCoordinator.DisposeAsync(),
+                        cleanupFailures)
+                    .ConfigureAwait(false);
+            }
+
+            if (searchCoordinator is not null)
+            {
+                await CaptureCleanupFailureAsync(
+                        () => searchCoordinator.DisposeAsync(),
                         cleanupFailures)
                     .ConfigureAwait(false);
             }

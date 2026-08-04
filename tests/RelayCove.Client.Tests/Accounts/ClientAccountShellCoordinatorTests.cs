@@ -7,6 +7,7 @@ using RelayCove.Client.Activation;
 using RelayCove.Client.Attachments;
 using RelayCove.Client.Auth;
 using RelayCove.Client.Notifications;
+using RelayCove.Client.Search;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
 using RelayCove.Shared.Auth;
@@ -3356,6 +3357,451 @@ public sealed class ClientAccountShellCoordinatorTests
         Assert.Equal(DecompressionMethods.None, uploadHandler.AutomaticDecompression);
     }
 
+    [Fact]
+    public async Task SearchMessagesAsync_WhenOlderIgnoredCancellationCompletesLate_OnlyCommitsLatestResults()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var firstStarted = NewSignal();
+        var completeFirst = NewSignal();
+        var firstResult = CreateSearchResult(10, conversationId);
+        var secondResult = CreateSearchResult(11, conversationId);
+        var invalidated = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            SearchMessagesAction = async (keyword, _, _, _) =>
+            {
+                if (keyword == "first")
+                {
+                    firstStarted.TrySetResult();
+                    await completeFirst.Task;
+                    return new ClientSearchOutcome(
+                        ClientSearchStatus.Completed,
+                        [firstResult],
+                        HasMore: false,
+                        RetryAfterSeconds: null);
+                }
+
+                return new ClientSearchOutcome(
+                    ClientSearchStatus.Completed,
+                    [secondResult],
+                    HasMore: false,
+                    RetryAfterSeconds: null);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        coordinator.SearchResultsInvalidated += () => Interlocked.Increment(ref invalidated);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+
+        var first = coordinator.SearchMessagesAsync("first", ClientSearchScope.Global);
+        await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = await coordinator.SearchMessagesAsync("second", ClientSearchScope.Global);
+        completeFirst.TrySetResult();
+        var stale = await first;
+
+        Assert.Equal(ClientSearchStatus.Completed, second.Status);
+        Assert.Equal(ClientSearchStatus.Stale, stale.Status);
+        Assert.Same(secondResult, Assert.Single(coordinator.SearchResults));
+        Assert.Equal(0, Volatile.Read(ref invalidated));
+    }
+
+    [Fact]
+    public async Task SearchMessagesAsync_WhenCurrentSelectionChanges_DiscardsLateCurrentResult()
+    {
+        var session = CreateSession();
+        var firstConversationId = Guid.NewGuid();
+        var secondConversationId = Guid.NewGuid();
+        var searchStarted = NewSignal();
+        var completeSearch = NewSignal();
+        Guid? requestedConversationId = null;
+        var invalidated = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(
+                firstConversationId,
+                secondConversationId),
+            SearchMessagesAction = async (_, conversationId, _, _) =>
+            {
+                requestedConversationId = conversationId;
+                searchStarted.TrySetResult();
+                await completeSearch.Task;
+                return new ClientSearchOutcome(
+                    ClientSearchStatus.Completed,
+                    [CreateSearchResult(10, firstConversationId)],
+                    HasMore: false,
+                    RetryAfterSeconds: null);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        coordinator.SearchResultsInvalidated += () => Interlocked.Increment(ref invalidated);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(firstConversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status == ClientMessageListStatus.Ready);
+
+        var search = coordinator.SearchMessagesAsync("needle", ClientSearchScope.CurrentConversation);
+        await searchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        coordinator.SelectConversation(secondConversationId);
+        completeSearch.TrySetResult();
+        var outcome = await search;
+
+        Assert.Equal(firstConversationId, requestedConversationId);
+        Assert.Equal(ClientSearchStatus.Stale, outcome.Status);
+        Assert.Empty(coordinator.SearchResults);
+        Assert.Equal(1, Volatile.Read(ref invalidated));
+    }
+
+    [Fact]
+    public async Task NavigateSearchResultAsync_WhenResultIsLocal_StillLoadsExactAroundOnce()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var result = CreateSearchResult(42, conversationId);
+        var aroundCalls = 0;
+        var invalidated = 0;
+        Guid? requestedConversation = null;
+        long requestedMessage = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            SearchMessagesAction = (_, _, _, _) => Task.FromResult(new ClientSearchOutcome(
+                ClientSearchStatus.Completed,
+                [result],
+                HasMore: false,
+                RetryAfterSeconds: null)),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [CreateMessage(42, id)],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            MessageAroundLoadAction = (id, messageId, _, _, _) =>
+            {
+                aroundCalls++;
+                requestedConversation = id;
+                requestedMessage = messageId;
+                return Task.FromResult(new ClientMessageAroundOutcome(
+                    ClientMessageLoadStatus.Completed,
+                    [CreateMessage(messageId, id)],
+                    messageId,
+                    HasMoreBefore: false,
+                    HasMoreAfter: false));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        coordinator.SearchResultsInvalidated += () => Interlocked.Increment(ref invalidated);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        await coordinator.SearchMessagesAsync("needle", ClientSearchScope.Global);
+
+        var outcome = await coordinator.NavigateSearchResultAsync(result);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready && coordinator.MessageList.TargetMessageId == 42);
+
+        Assert.Equal(ClientSearchNavigationStatus.Completed, outcome.Status);
+        Assert.Equal(1, aroundCalls);
+        Assert.Equal(conversationId, requestedConversation);
+        Assert.Equal(42, requestedMessage);
+        Assert.Equal(0, Volatile.Read(ref invalidated));
+    }
+
+    [Fact]
+    public async Task NavigateSearchResultAsync_WhenResultIdentityIsNotCommitted_DoesNotLoadAround()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var result = CreateSearchResult(42, conversationId);
+        var aroundCalls = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            SearchMessagesAction = (_, _, _, _) => Task.FromResult(new ClientSearchOutcome(
+                ClientSearchStatus.Completed,
+                [result],
+                HasMore: false,
+                RetryAfterSeconds: null)),
+            MessageAroundLoadAction = (_, _, _, _, _) =>
+            {
+                aroundCalls++;
+                return Task.FromResult(ClientMessageAroundOutcome.Failure(
+                    ClientMessageLoadStatus.RemoteFailure));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        await coordinator.SearchMessagesAsync("needle", ClientSearchScope.Global);
+
+        var outcome = await coordinator.NavigateSearchResultAsync(result with { });
+
+        Assert.Equal(ClientSearchNavigationStatus.Unavailable, outcome.Status);
+        Assert.Equal(0, aroundCalls);
+        Assert.Equal(ClientMessageListStatus.None, coordinator.MessageList.Status);
+    }
+
+    [Fact]
+    public async Task NavigateSearchResultAsync_WhenConversationStateChangesDuringIgnoredAround_DiscardsLateCompletedAround()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var result = CreateSearchResult(42, conversationId);
+        var aroundStarted = NewSignal();
+        var releaseAround = NewSignal();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            SearchMessagesAction = (_, _, _, _) => Task.FromResult(new ClientSearchOutcome(
+                ClientSearchStatus.Completed,
+                [result],
+                HasMore: false,
+                RetryAfterSeconds: null)),
+            MessageAroundLoadAction = async (id, messageId, _, _, _) =>
+            {
+                aroundStarted.TrySetResult();
+                await releaseAround.Task;
+                return new ClientMessageAroundOutcome(
+                    ClientMessageLoadStatus.Completed,
+                    [CreateMessage(messageId, id)],
+                    messageId,
+                    HasMoreBefore: false,
+                    HasMoreAfter: false);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        await coordinator.SearchMessagesAsync("needle", ClientSearchScope.Global);
+
+        var navigation = coordinator.NavigateSearchResultAsync(result);
+        await aroundStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        runtime.RaiseConversationStateChanged(2);
+        releaseAround.TrySetResult();
+        var outcome = await navigation;
+
+        Assert.Equal(ClientSearchNavigationStatus.Stale, outcome.Status);
+        Assert.Equal(ClientMessageListStatus.None, coordinator.MessageList.Status);
+        Assert.Empty(coordinator.SearchResults);
+    }
+
+    [Theory]
+    [InlineData((int)ClientMessageLoadStatus.AccessDenied, (int)ClientSearchNavigationStatus.AccessDenied)]
+    [InlineData((int)ClientMessageLoadStatus.ProtocolError, (int)ClientSearchNavigationStatus.ProtocolError)]
+    [InlineData((int)ClientMessageLoadStatus.TransientFailure, (int)ClientSearchNavigationStatus.TransientFailure)]
+    public async Task NavigateSearchResultAsync_WhenAroundFailsWithoutRevocation_DoesNotPublishSelection(
+        int aroundStatusValue,
+        int expectedStatusValue)
+    {
+        var aroundStatus = (ClientMessageLoadStatus)aroundStatusValue;
+        var expectedStatus = (ClientSearchNavigationStatus)expectedStatusValue;
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var result = CreateSearchResult(42, conversationId);
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            SearchMessagesAction = (_, _, _, _) => Task.FromResult(new ClientSearchOutcome(
+                ClientSearchStatus.Completed,
+                [result],
+                HasMore: false,
+                RetryAfterSeconds: null)),
+            MessageAroundLoadAction = (_, _, _, _, _) => Task.FromResult(
+                ClientMessageAroundOutcome.Failure(aroundStatus)),
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        await coordinator.SearchMessagesAsync("needle", ClientSearchScope.Global);
+
+        var outcome = await coordinator.NavigateSearchResultAsync(result);
+
+        Assert.Equal(expectedStatus, outcome.Status);
+        Assert.Equal(ClientMessageListStatus.None, coordinator.MessageList.Status);
+        Assert.Same(result, Assert.Single(coordinator.SearchResults));
+    }
+
+    [Fact]
+    public async Task SearchMessagesAsync_WhenRuntimeReturnsAfterAccountAtoBtoA_DiscardsLateFirstRuntimeResult()
+    {
+        var firstSession = CreateSession();
+        var secondSession = CreateSession();
+        var thirdSession = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var searchStarted = NewSignal();
+        var releaseSearch = NewSignal();
+        var firstRuntime = new FakeRuntime(firstSession)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            SearchMessagesAction = async (_, _, _, _) =>
+            {
+                searchStarted.TrySetResult();
+                await releaseSearch.Task;
+                return new ClientSearchOutcome(
+                    ClientSearchStatus.Completed,
+                    [CreateSearchResult(42, conversationId)],
+                    HasMore: false,
+                    RetryAfterSeconds: null);
+            },
+        };
+        var secondRuntime = new FakeRuntime(secondSession)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+        };
+        var thirdRuntime = new FakeRuntime(thirdSession)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+        };
+        var sessions = new Queue<ClientAuthenticationSession>(
+            [firstSession, secondSession, thirdSession]);
+        var authentication = new FakeAuthentication
+        {
+            LoginAction = _ => Task.FromResult(
+                PersistentClientAuthenticationOutcome.Authenticated(
+                    sessions.Dequeue(),
+                    isCredentialPersisted: true)),
+        };
+        var factory = new FakeRuntimeFactory();
+        factory.Runtimes.Enqueue(firstRuntime);
+        factory.Runtimes.Enqueue(secondRuntime);
+        factory.Runtimes.Enqueue(thirdRuntime);
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(authentication, factory, router);
+
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        var firstSearch = coordinator.SearchMessagesAsync("needle", ClientSearchScope.Global);
+        await searchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await coordinator.LogoutAsync();
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await coordinator.LogoutAsync();
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        releaseSearch.TrySetResult();
+        var outcome = await firstSearch;
+
+        Assert.Equal(ClientSearchStatus.Stale, outcome.Status);
+        Assert.Empty(coordinator.SearchResults);
+        Assert.Equal(thirdRuntime.Identity.Id, firstRuntime.Identity.Id);
+        Assert.Equal(thirdRuntime.Identity.Id, secondRuntime.Identity.Id);
+    }
+
+    [Fact]
+    public async Task SearchMessagesAsync_WhenGlobalSelectionChanges_CommitsCurrentRuntimeResult()
+    {
+        var session = CreateSession();
+        var firstConversationId = Guid.NewGuid();
+        var secondConversationId = Guid.NewGuid();
+        var result = CreateSearchResult(42, firstConversationId);
+        var searchStarted = NewSignal();
+        var releaseSearch = NewSignal();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(
+                firstConversationId,
+                secondConversationId),
+            SearchMessagesAction = async (_, conversationId, _, _) =>
+            {
+                Assert.Null(conversationId);
+                searchStarted.TrySetResult();
+                await releaseSearch.Task;
+                return new ClientSearchOutcome(
+                    ClientSearchStatus.Completed,
+                    [result],
+                    HasMore: false,
+                    RetryAfterSeconds: null);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+
+        var search = coordinator.SearchMessagesAsync("needle", ClientSearchScope.Global);
+        await searchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        coordinator.SelectConversation(secondConversationId);
+        releaseSearch.TrySetResult();
+        var outcome = await search;
+
+        Assert.Equal(ClientSearchStatus.Completed, outcome.Status);
+        Assert.Same(result, Assert.Single(coordinator.SearchResults));
+    }
+
+    [Fact]
+    public async Task SearchResults_WhenConversationStateChanges_ClearsAndInvalidates()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var result = CreateSearchResult(42, conversationId);
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            SearchMessagesAction = (_, _, _, _) => Task.FromResult(new ClientSearchOutcome(
+                ClientSearchStatus.Completed,
+                [result],
+                HasMore: false,
+                RetryAfterSeconds: null)),
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        var invalidated = 0;
+        coordinator.SearchResultsInvalidated += () => Interlocked.Increment(ref invalidated);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        await coordinator.SearchMessagesAsync("needle", ClientSearchScope.Global);
+
+        runtime.RaiseConversationStateChanged(2);
+
+        Assert.Empty(coordinator.SearchResults);
+        Assert.Equal(1, Volatile.Read(ref invalidated));
+
+        coordinator.InvalidateSearchResults();
+
+        Assert.Equal(2, Volatile.Read(ref invalidated));
+    }
+
     private static ClientAccountShellCoordinator CreateCoordinator(
         IClientPersistentAuthentication authentication,
         IClientAccountRuntimeFactory factory,
@@ -3467,6 +3913,15 @@ public sealed class ClientAccountShellCoordinatorTests
         Array.Empty<AttachmentDto>(),
         Array.Empty<Guid>(),
         Now.AddSeconds(id));
+
+    private static SearchResultDto CreateSearchResult(long messageId, Guid conversationId) => new(
+        messageId,
+        conversationId,
+        "Conversation",
+        "Sender",
+        "snippet",
+        Now.AddSeconds(messageId),
+        MatchedAttachmentFileName: null);
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
@@ -3612,6 +4067,13 @@ public sealed class ClientAccountShellCoordinatorTests
 
         public Func<Guid, string?, int, CancellationToken, Task<ClientMentionCandidateOutcome>>?
             MentionCandidateSearchAction
+        {
+            get;
+            set;
+        }
+
+        public Func<string?, Guid?, int, CancellationToken, Task<ClientSearchOutcome>>?
+            SearchMessagesAction
         {
             get;
             set;
@@ -3785,6 +4247,14 @@ public sealed class ClientAccountShellCoordinatorTests
                 cancellationToken) ??
             Task.FromResult(ClientMentionCandidateOutcome.Failure(
                 ClientMentionCandidateStatus.RemoteFailure));
+
+        public Task<ClientSearchOutcome> SearchMessagesAsync(
+            string? keyword,
+            Guid? conversationId,
+            int limit = ClientSearchCoordinator.DefaultLimit,
+            CancellationToken cancellationToken = default) =>
+            SearchMessagesAction?.Invoke(keyword, conversationId, limit, cancellationToken) ??
+            Task.FromResult(ClientSearchOutcome.Failure(ClientSearchStatus.RemoteFailure));
 
         public Task<ClientMessageSendOutcome> SendTextMessageAsync(
             Guid conversationId,

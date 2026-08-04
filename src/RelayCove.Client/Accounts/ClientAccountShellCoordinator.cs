@@ -3,6 +3,7 @@ using RelayCove.Client.Activation;
 using RelayCove.Client.Attachments;
 using RelayCove.Client.Auth;
 using RelayCove.Client.Mentions;
+using RelayCove.Client.Search;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
 using RelayCove.Shared.Auth;
@@ -37,6 +38,13 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             revision: 0);
     private ClientMessageListSnapshot messageList = ClientMessageListSnapshot.Initial;
     private MessageSelection? messageSelection;
+    private IReadOnlyList<SearchResultDto> activeSearchResults =
+        Array.Empty<SearchResultDto>();
+    private CancellationTokenSource? searchFlightCancellation;
+    private CancellationTokenSource? navigationFlightCancellation;
+    private ClientSearchScope? activeSearchScope;
+    private long searchSerial;
+    private long navigationSerial;
     private Guid? renderedConversationId;
     private long conversationPublicationRevision;
     private long messagePublicationRevision;
@@ -70,12 +78,27 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 
     public event Action<ClientMessageListSnapshot>? MessageListChanged;
 
+    // Results are deliberately not carried in the invalidation event. Consumers must
+    // clear their own view immediately rather than retaining a payload from an old lease.
+    public event Action? SearchResultsInvalidated;
+
     public ClientAccountShellSnapshot Snapshot => Volatile.Read(ref snapshot);
 
     public LocalConversationListReadOutcome ConversationList =>
         Volatile.Read(ref conversationList);
 
     public ClientMessageListSnapshot MessageList => Volatile.Read(ref messageList);
+
+    public IReadOnlyList<SearchResultDto> SearchResults
+    {
+        get
+        {
+            lock (stateGate)
+            {
+                return activeSearchResults;
+            }
+        }
+    }
 
     public Task RestoreAsync(CancellationToken cancellationToken = default) =>
         StartRestoreAsync(cancellationToken);
@@ -180,7 +203,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                 ClientAccountShellPhase.SigningOut,
                 activeRuntime.ConnectionState,
                 Snapshot.LastSyncStatus);
-            ClearActiveOwnership(out var lease, out var detachedRuntime);
+            ClearActiveOwnership(out var lease, out var detachedRuntime, out var searchInvalidation);
+            CompleteSearchInvalidation(searchInvalidation);
             lease?.Dispose();
 
             if (detachedRuntime is null)
@@ -261,6 +285,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         ThrowIfStopping();
         MessageSelection? previousSelection;
         MessageSelection? nextSelection = null;
+        SearchInvalidation searchInvalidation;
         IClientAccountRuntime? activeRuntime;
         ClientActivitySnapshot activity;
         lock (stateGate)
@@ -283,6 +308,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             previousSelection = messageSelection;
             messageSelection = null;
             renderedConversationId = null;
+            searchInvalidation = InvalidateCurrentSearchResultsLocked();
             if (isAuthorizedSelection)
             {
                 nextSelection = new MessageSelection(
@@ -297,6 +323,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             activity = BuildRuntimeActivityLocked();
         }
 
+        CompleteSearchInvalidation(searchInvalidation);
         previousSelection?.Cancel();
         PublishMessageList(nextSelection is null
             ? ClientMessageListSnapshot.Initial
@@ -309,6 +336,299 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         if (nextSelection is not null)
         {
             _ = OpenMessageSelectionAsync(nextSelection);
+        }
+    }
+
+    public void InvalidateSearchResults()
+    {
+        SearchInvalidation invalidation;
+        lock (stateGate)
+        {
+            invalidation = InvalidateSearchResultsLocked(forcePublishHandlers: true);
+        }
+
+        CompleteSearchInvalidation(invalidation);
+    }
+
+    public async Task<ClientSearchOutcome> SearchMessagesAsync(
+        string? keyword,
+        ClientSearchScope scope,
+        int limit = ClientSearchCoordinator.DefaultLimit,
+        CancellationToken cancellationToken = default)
+    {
+        if (!Enum.IsDefined(scope))
+        {
+            return ClientSearchOutcome.Failure(ClientSearchStatus.ValidationFailed);
+        }
+
+        RuntimeSubscription? subscription;
+        MessageSelection? selection = null;
+        Guid? conversationId;
+        long serial;
+        CancellationTokenSource? previousSearch = null;
+        CancellationTokenSource? previousNavigation = null;
+        CancellationTokenSource flightCancellation;
+        lock (stateGate)
+        {
+            if (runtime is null || runtimeSubscription is null ||
+                Volatile.Read(ref disposeStarted) != 0)
+            {
+                return ClientSearchOutcome.Failure(ClientSearchStatus.Unavailable);
+            }
+
+            if (scope == ClientSearchScope.CurrentConversation)
+            {
+                selection = messageSelection;
+                if (selection is null ||
+                    !IsCurrentMessageSelectionLocked(selection) ||
+                    messageList.Status != ClientMessageListStatus.Ready)
+                {
+                    return ClientSearchOutcome.Failure(ClientSearchStatus.Unavailable);
+                }
+
+                conversationId = selection.ConversationId;
+            }
+            else
+            {
+                conversationId = null;
+            }
+
+            previousSearch = searchFlightCancellation;
+            previousNavigation = navigationFlightCancellation;
+            searchFlightCancellation = flightCancellation =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    lifetimeCancellation.Token,
+                    cancellationToken);
+            navigationFlightCancellation = null;
+            activeSearchResults = Array.Empty<SearchResultDto>();
+            activeSearchScope = scope;
+            serial = ++searchSerial;
+            ++navigationSerial;
+            subscription = runtimeSubscription;
+        }
+
+        CancelSearchFlight(previousSearch);
+        CancelSearchFlight(previousNavigation);
+
+        try
+        {
+            var outcome = await subscription.Runtime
+                .SearchMessagesAsync(
+                    keyword,
+                    conversationId,
+                    limit,
+                    flightCancellation.Token)
+                .ConfigureAwait(false);
+            if (outcome.Status == ClientSearchStatus.AuthenticationRequired)
+            {
+                await EndAuthenticationRequiredSessionAsync(subscription.Runtime)
+                    .ConfigureAwait(false);
+                return outcome;
+            }
+
+            lock (stateGate)
+            {
+                if (!IsCurrentSearchLeaseLocked(
+                        subscription,
+                        selection,
+                        scope,
+                        serial,
+                        flightCancellation) ||
+                    !AreSearchResultsAuthorizedLocked(outcome.Results))
+                {
+                    return ClientSearchOutcome.Failure(ClientSearchStatus.Stale);
+                }
+
+                if (outcome.Status == ClientSearchStatus.Completed)
+                {
+                    activeSearchResults = outcome.Results;
+                }
+                else
+                {
+                    activeSearchScope = null;
+                }
+
+                searchFlightCancellation = null;
+                return outcome;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            lock (stateGate)
+            {
+                return IsCurrentSearchLeaseLocked(
+                    subscription,
+                    selection,
+                    scope,
+                    serial,
+                    flightCancellation)
+                    ? ClientSearchOutcome.Failure(ClientSearchStatus.Canceled)
+                    : ClientSearchOutcome.Failure(ClientSearchStatus.Stale);
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientSearchOutcome.Failure(ClientSearchStatus.Stale);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Searching messages through the active account failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientSearchOutcome.Failure(ClientSearchStatus.LocalCacheFailure);
+        }
+        finally
+        {
+            lock (stateGate)
+            {
+                if (ReferenceEquals(searchFlightCancellation, flightCancellation))
+                {
+                    searchFlightCancellation = null;
+                }
+            }
+
+            flightCancellation.Dispose();
+        }
+    }
+
+    public async Task<ClientSearchNavigationOutcome> NavigateSearchResultAsync(
+        SearchResultDto result,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+
+        RuntimeSubscription? subscription;
+        long currentSearchSerial;
+        long currentNavigationSerial;
+        CancellationTokenSource? previousNavigation;
+        CancellationTokenSource flightCancellation;
+        lock (stateGate)
+        {
+            subscription = runtimeSubscription;
+            if (subscription is null || runtime is null ||
+                Volatile.Read(ref disposeStarted) != 0 ||
+                !ContainsActiveSearchResultLocked(result) ||
+                !IsConversationAuthorizedLocked(result.ConversationId))
+            {
+                return ClientSearchNavigationOutcome.Failure(
+                    ClientSearchNavigationStatus.Unavailable);
+            }
+
+            previousNavigation = navigationFlightCancellation;
+            navigationFlightCancellation = flightCancellation =
+                CancellationTokenSource.CreateLinkedTokenSource(
+                    lifetimeCancellation.Token,
+                    cancellationToken);
+            currentSearchSerial = searchSerial;
+            currentNavigationSerial = ++navigationSerial;
+        }
+
+        CancelSearchFlight(previousNavigation);
+        try
+        {
+            var around = await subscription.Runtime
+                .LoadMessageAroundAsync(
+                    result.ConversationId,
+                    result.MessageId,
+                    before: 20,
+                    after: 20,
+                    flightCancellation.Token)
+                .ConfigureAwait(false);
+            if (around.Status == ClientMessageLoadStatus.AuthenticationRequired)
+            {
+                await EndAuthenticationRequiredSessionAsync(subscription.Runtime)
+                    .ConfigureAwait(false);
+                return ClientSearchNavigationOutcome.Failure(
+                    ClientSearchNavigationStatus.AuthenticationRequired);
+            }
+
+            MessageSelection? previousSelection;
+            MessageSelection? nextSelection;
+            ClientActivitySnapshot activity;
+            SearchInvalidation searchInvalidation;
+            lock (stateGate)
+            {
+                if (!IsCurrentNavigationLeaseLocked(
+                        subscription,
+                        result,
+                        currentSearchSerial,
+                        currentNavigationSerial,
+                        flightCancellation))
+                {
+                    return ClientSearchNavigationOutcome.Failure(
+                        ClientSearchNavigationStatus.Stale);
+                }
+
+                if (!IsCompletedAroundForSearchResult(around, result))
+                {
+                    return ClientSearchNavigationOutcome.Failure(
+                        around.Status == ClientMessageLoadStatus.Completed
+                            ? ClientSearchNavigationStatus.ProtocolError
+                            : MapSearchNavigationStatus(around.Status));
+                }
+
+                searchInvalidation = InvalidateSearchResultsLocked(publishHandlers: false);
+                previousSelection = messageSelection;
+                nextSelection = new MessageSelection(
+                    result.ConversationId,
+                    result.MessageId,
+                    subscription,
+                    CancellationTokenSource.CreateLinkedTokenSource(
+                        lifetimeCancellation.Token),
+                    around);
+                messageSelection = nextSelection;
+                renderedConversationId = null;
+                activity = BuildRuntimeActivityLocked();
+            }
+
+            CompleteSearchInvalidation(searchInvalidation);
+            previousSelection?.Cancel();
+            PublishMessageList(CreateMessageSnapshot(
+                nextSelection,
+                ClientMessageListStatus.Loading,
+                isLoading: true,
+                lastLoadStatus: null));
+            TryUpdateRuntimeActivity(subscription.Runtime, activity);
+            _ = OpenMessageSelectionAsync(nextSelection);
+            return new ClientSearchNavigationOutcome(ClientSearchNavigationStatus.Completed);
+        }
+        catch (OperationCanceledException)
+        {
+            lock (stateGate)
+            {
+                return IsCurrentNavigationLeaseLocked(
+                    subscription,
+                    result,
+                    currentSearchSerial,
+                    currentNavigationSerial,
+                    flightCancellation)
+                    ? ClientSearchNavigationOutcome.Failure(ClientSearchNavigationStatus.Canceled)
+                    : ClientSearchNavigationOutcome.Failure(ClientSearchNavigationStatus.Stale);
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientSearchNavigationOutcome.Failure(ClientSearchNavigationStatus.Stale);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Navigating to a search result failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientSearchNavigationOutcome.Failure(
+                ClientSearchNavigationStatus.LocalCacheFailure);
+        }
+        finally
+        {
+            lock (stateGate)
+            {
+                if (ReferenceEquals(navigationFlightCancellation, flightCancellation))
+                {
+                    navigationFlightCancellation = null;
+                }
+            }
+
+            flightCancellation.Dispose();
         }
     }
 
@@ -1114,6 +1434,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         IDisposable? lease;
         RuntimeSubscription? subscription;
         MessageSelection? selection;
+        SearchInvalidation searchInvalidation;
         lock (stateGate)
         {
             if (Interlocked.Exchange(ref disposeStarted, 1) != 0)
@@ -1129,15 +1450,18 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             selection = messageSelection;
             messageSelection = null;
             renderedConversationId = null;
+            searchInvalidation = InvalidateSearchResultsLocked();
             SnapshotChanged = null;
             ConversationListChanged = null;
             MessageListChanged = null;
+            SearchResultsInvalidated = null;
         }
 
         lifetimeCancellation.Cancel();
         selection?.Cancel();
         subscription?.Detach();
         lease?.Dispose();
+        CompleteSearchInvalidation(searchInvalidation);
     }
 
     public ValueTask DisposeAsync()
@@ -1190,7 +1514,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             await operationGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
             try
             {
-                ClearActiveOwnership(out var lease, out var activeRuntime);
+                ClearActiveOwnership(out var lease, out var activeRuntime, out var searchInvalidation);
+                CompleteSearchInvalidation(searchInvalidation);
                 lease?.Dispose();
                 if (activeRuntime is not null)
                 {
@@ -1225,6 +1550,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                 SnapshotChanged = null;
                 ConversationListChanged = null;
                 MessageListChanged = null;
+                SearchResultsInvalidated = null;
             }
 
             if (failure is null)
@@ -1585,6 +1911,156 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         }
     }
 
+    private SearchInvalidation InvalidateSearchResultsLocked(
+        bool publishHandlers = true,
+        bool forcePublishHandlers = false)
+    {
+        var searchCancellation = searchFlightCancellation;
+        var navigationCancellation = navigationFlightCancellation;
+        var handlers = publishHandlers ? SearchResultsInvalidated : null;
+        var shouldPublish = forcePublishHandlers || activeSearchResults.Count != 0 ||
+            searchCancellation is not null || navigationCancellation is not null;
+        ++searchSerial;
+        ++navigationSerial;
+        searchFlightCancellation = null;
+        navigationFlightCancellation = null;
+        activeSearchResults = Array.Empty<SearchResultDto>();
+        activeSearchScope = null;
+        return new SearchInvalidation(
+            searchCancellation,
+            navigationCancellation,
+            shouldPublish ? handlers : null);
+    }
+
+    private SearchInvalidation InvalidateCurrentSearchResultsLocked()
+    {
+        if (activeSearchScope == ClientSearchScope.CurrentConversation)
+        {
+            return InvalidateSearchResultsLocked();
+        }
+
+        var navigationCancellation = navigationFlightCancellation;
+        navigationFlightCancellation = null;
+        ++navigationSerial;
+        return new SearchInvalidation(
+            SearchCancellation: null,
+            NavigationCancellation: navigationCancellation,
+            Handlers: null);
+    }
+
+    private bool IsCurrentSearchLeaseLocked(
+        RuntimeSubscription subscription,
+        MessageSelection? expectedSelection,
+        ClientSearchScope scope,
+        long serial,
+        CancellationTokenSource flightCancellation) =>
+        ReferenceEquals(runtimeSubscription, subscription) &&
+        ReferenceEquals(runtime, subscription.Runtime) &&
+        ReferenceEquals(searchFlightCancellation, flightCancellation) &&
+        searchSerial == serial &&
+        Volatile.Read(ref disposeStarted) == 0 &&
+        (scope != ClientSearchScope.CurrentConversation ||
+         (expectedSelection is not null &&
+          IsCurrentMessageSelectionLocked(expectedSelection) &&
+          messageList.Status == ClientMessageListStatus.Ready));
+
+    private bool IsCurrentNavigationLeaseLocked(
+        RuntimeSubscription subscription,
+        SearchResultDto result,
+        long expectedSearchSerial,
+        long expectedNavigationSerial,
+        CancellationTokenSource flightCancellation) =>
+        ReferenceEquals(runtimeSubscription, subscription) &&
+        ReferenceEquals(runtime, subscription.Runtime) &&
+        ReferenceEquals(navigationFlightCancellation, flightCancellation) &&
+        searchSerial == expectedSearchSerial &&
+        navigationSerial == expectedNavigationSerial &&
+        Volatile.Read(ref disposeStarted) == 0 &&
+        ContainsActiveSearchResultLocked(result) &&
+        IsConversationAuthorizedLocked(result.ConversationId);
+
+    private bool AreSearchResultsAuthorizedLocked(IReadOnlyList<SearchResultDto> results) =>
+        conversationList.Status == LocalCacheOperationStatus.Ready &&
+        results.All(result => IsConversationAuthorizedLocked(result.ConversationId));
+
+    private bool IsConversationAuthorizedLocked(Guid conversationId) =>
+        conversationList.Status == LocalCacheOperationStatus.Ready &&
+        conversationList.Conversations.Any(conversation => conversation.Id == conversationId);
+
+    private bool ContainsActiveSearchResultLocked(SearchResultDto result) =>
+        activeSearchResults.Any(candidate => ReferenceEquals(candidate, result));
+
+    private static bool IsCompletedAroundForSearchResult(
+        ClientMessageAroundOutcome around,
+        SearchResultDto result) =>
+        around.Status == ClientMessageLoadStatus.Completed &&
+        around.TargetMessageId == result.MessageId &&
+        around.Messages.Any(message =>
+            message.Id == result.MessageId &&
+            message.ConversationId == result.ConversationId);
+
+    private static ClientSearchNavigationStatus MapSearchNavigationStatus(
+        ClientMessageLoadStatus status) =>
+        status switch
+        {
+            ClientMessageLoadStatus.Completed => ClientSearchNavigationStatus.Completed,
+            ClientMessageLoadStatus.Canceled => ClientSearchNavigationStatus.Canceled,
+            ClientMessageLoadStatus.AuthenticationRequired =>
+                ClientSearchNavigationStatus.AuthenticationRequired,
+            ClientMessageLoadStatus.AccessRevoked => ClientSearchNavigationStatus.AccessRevoked,
+            ClientMessageLoadStatus.AccessDenied => ClientSearchNavigationStatus.AccessDenied,
+            ClientMessageLoadStatus.TransientFailure =>
+                ClientSearchNavigationStatus.TransientFailure,
+            ClientMessageLoadStatus.ProtocolError => ClientSearchNavigationStatus.ProtocolError,
+            ClientMessageLoadStatus.RemoteFailure => ClientSearchNavigationStatus.RemoteFailure,
+            _ => ClientSearchNavigationStatus.LocalCacheFailure,
+        };
+
+    private static void CancelSearchFlight(CancellationTokenSource? cancellation)
+    {
+        if (cancellation is null)
+        {
+            return;
+        }
+
+        try
+        {
+            cancellation.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private void CompleteSearchInvalidation(SearchInvalidation invalidation)
+    {
+        CancelSearchFlight(invalidation.SearchCancellation);
+        CancelSearchFlight(invalidation.NavigationCancellation);
+        PublishSearchResultsInvalidated(invalidation.Handlers);
+    }
+
+    private void PublishSearchResultsInvalidated(Action? handlers)
+    {
+        if (handlers is null)
+        {
+            return;
+        }
+
+        foreach (Action handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler();
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    "Publishing a search-results invalidation failed; errorType={ErrorType}.",
+                    exception.GetType().Name);
+            }
+        }
+    }
+
     private bool IsCurrentSubscription(RuntimeSubscription expectedSubscription)
     {
         lock (stateGate)
@@ -1607,6 +2083,20 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         long revision)
     {
         _ = revision;
+        SearchInvalidation invalidation;
+        lock (stateGate)
+        {
+            if (!ReferenceEquals(runtimeSubscription, subscription) ||
+                !ReferenceEquals(runtime, subscription.Runtime) ||
+                Volatile.Read(ref disposeStarted) != 0)
+            {
+                return;
+            }
+
+            invalidation = InvalidateSearchResultsLocked();
+        }
+
+        CompleteSearchInvalidation(invalidation);
         RequestConversationRefresh(subscription);
         RequestMessageRefresh(subscription);
     }
@@ -1727,7 +2217,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             if (selection.TargetMessageId is { } targetMessageId &&
                 !SelectionContainsMessage(selection, targetMessageId))
             {
-                var around = await selection.Subscription.Runtime
+                var around = selection.VerifiedAroundOutcome ?? await selection.Subscription.Runtime
                     .LoadMessageAroundAsync(
                         selection.ConversationId,
                         targetMessageId,
@@ -2644,7 +3134,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
 
     private void ClearActiveOwnership(
         out IDisposable? lease,
-        out IClientAccountRuntime? activeRuntime)
+        out IClientAccountRuntime? activeRuntime,
+        out SearchInvalidation searchInvalidation)
     {
         RuntimeSubscription? subscription;
         MessageSelection? selection;
@@ -2659,6 +3150,7 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             selection = messageSelection;
             messageSelection = null;
             renderedConversationId = null;
+            searchInvalidation = InvalidateSearchResultsLocked();
             activeDisplayName = null;
             activeServerBaseUri = null;
         }
@@ -2758,6 +3250,11 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         }
     }
 
+    private sealed record SearchInvalidation(
+        CancellationTokenSource? SearchCancellation,
+        CancellationTokenSource? NavigationCancellation,
+        Action? Handlers);
+
     private sealed class MessageSelection
     {
         private readonly CancellationTokenSource cancellation;
@@ -2767,13 +3264,15 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
             Guid conversationId,
             long? targetMessageId,
             RuntimeSubscription subscription,
-            CancellationTokenSource cancellation)
+            CancellationTokenSource cancellation,
+            ClientMessageAroundOutcome? verifiedAroundOutcome = null)
         {
             ConversationId = conversationId;
             TargetMessageId = targetMessageId;
             Subscription = subscription;
             this.cancellation = cancellation;
             Token = cancellation.Token;
+            VerifiedAroundOutcome = verifiedAroundOutcome;
         }
 
         public Guid ConversationId { get; }
@@ -2783,6 +3282,8 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         public RuntimeSubscription Subscription { get; }
 
         public CancellationToken Token { get; }
+
+        public ClientMessageAroundOutcome? VerifiedAroundOutcome { get; }
 
         public SortedDictionary<long, MessageDto> Messages { get; } = [];
 
