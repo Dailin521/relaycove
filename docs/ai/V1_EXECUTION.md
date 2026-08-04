@@ -6,14 +6,14 @@
 
 ```text
 ExecutionStatus: running
-CurrentMilestone: M4
-CurrentStage: M4-04 更新托管、下载与客户端交接（completed；branch green pending integration）
-ActiveTask: docs/ai/tasks/2026-08-04-stage-12-update-delivery.md
-TaskStatus: completed_branch_green_pending_integration
+CurrentMilestone: M5
+CurrentStage: M5-01 香港 VPS 与 Windows 双客户端最终 Gate
+ActiveTask: docs/ai/tasks/2026-08-04-stage-13-vps-windows-gate.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 08417dafc3c88213712a71ed07940c00ea8a1543
-LatestGreenIntegrationCommit: 6444656cc966780cf1fea7ee77beab5940e79f66
-NextAction: 提交证据、push、FF 集成，然后进入 M5
+LatestGreenIntegrationCommit: c69b98342f1a43dd46056cb73f5ca68eefc99fe6
+NextAction: 并行盘点指定 VPS、真实 Windows 双客户端矩阵与内部 RC 阻断缺口，随后部署 exact RC 并执行 Gate
 ClaudeCalls: 83（#1–#83 全部终态；#81–#83 实际 claude-sonnet-5 / High 答案均已读取并本地裁定）
 ClaudeCostUsd: 83.3341725 exact confirmed + 94.83 local CLI displayed（#44–#50/#74–#76/#81–#82）；按显示值合计约 178.1641725；其余未返回费用保持 unavailable
 Blocker: none
@@ -35,8 +35,8 @@ RequiredUserGate: none
 | M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
 | M2 | `completed` | 阶段 9 附件纵向闭环与 Internal Alpha 证据包已由 `8ff8c15` 合入绿色集成分支 | 已进入 M3 |
 | M3 | `completed` | 权限化搜索 API、客户端 Global/Current 搜索、Around-first 跳转和一次性高亮已由 `8d8d5d2` 完成绿色集成，最终 Fast/Full 1,426/1,426 | 已进入 M4 |
-| M4 | `completed` | M4-01/M4-02/M4-03 已由 `6444656` 绿色集成；M4-04 已在任务分支绿色完成，待绿色 FF 集成 | 提交证据、push、绿色 FF 后进入 M5 |
-| M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
+| M4 | `completed` | M4-01–M4-04 已由 `c69b983` 完成绿色集成，最终 Fast/Full 1,566/1,566 与更新交付 smoke 通过 | 已进入 M5 |
+| M5 | `running` | `agent/stage-13-vps-gate` 已启动三路只读盘点 | exact RC 部署及真实 Windows/VPS/双客户端 Gate 完成 |
 
 里程碑顺序来自当前 v1 执行目标；每个里程碑的功能口径和最终交付标准仍由工程方案、决策记录和对应最小纵向任务冻结，本文件不预写实现细节。
 
@@ -188,9 +188,9 @@ RequiredUserGate: none
 
 ## 阻塞与用户 Gate
 
-- 当前阻塞：无；Claude #81–#83 已完成、读取并由 Codex 以仓库与本机证据裁定。M4-04 分支绿色，待提交证据、push 与绿色 FF 集成。
+- 当前阻塞：无；Claude #81–#83 已完成、读取并由 Codex 以仓库与本机证据裁定。M4-04 已由 `c69b983` 绿色集成，M5 实机 Gate 进行中。
 - 当前所需用户 Gate：无。
-- `未验证`：用户已提供仓库外的香港 Light-A2 协作应用主机配置汇总，保留到 M5 真实 VPS/双客户端 Gate；当前不读取，届时仅最小读取所需配置且不把地址、密钥或凭据提交到仓库或测试日志。
+- `进行中`：用户已提供仓库外的香港 Light-A2 协作应用主机配置汇总；M5 只最小读取所需配置，地址、密钥、凭据和 token 不提交到仓库或测试日志。
 - 只有 `AGENTS.md`、`WORKFLOW.md` 和 v1 执行目标列出的重大产品、不可逆、安全、凭据、真实体验或发布事项才请求用户裁决；普通工程实现由当前任务自行收敛。
 
 ## 恢复与更新规则

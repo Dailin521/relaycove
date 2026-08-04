@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-- **当前阶段：** M4-04 — 更新交付闭环已完成；`agent/stage-12-update-delivery` 分支绿色，待仅快进
+- **当前阶段：** M5-01 — 香港 VPS 与 Windows 双客户端最终 Gate 进行中
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮；M4-01 可复现 Linux x64 Server RC、M4-02 可复现 Windows Client 自包含 ZIP、M4-03 共享更新协议、确定性清单、外部自举 Updater 与真实 rc.6→rc.11 替换恢复，以及 M4-04 Server exact 托管、Client 检查/下载、optional/mandatory UI 和显式 Exit→Updater 交接均已完成
 - **最近验证通过的状态：** M4-04 production `08417dafc3c88213712a71ed07940c00ea8a1543`、最终分支 `894028c` 的干净 `1.0.0-rc.12` exact ZIP（`165675267` bytes，SHA-256 `e623f38cd3df9c71a62d0eb7f4e86f5a6d69457f2fd0b9d044e6c19b80f057e0`）已通过受控下载、校验与安全 handoff smoke；真实 generator、离线 verifier、升级/失败恢复边界、model drift、依赖漏洞、format 与空白检查均通过
 - **可构建状态：** `已验证` — Fast、Full 与 Release 构建均为 0 警告、0 错误
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- M4-04 已完成，最终分支 `894028c` 绿色待仅快进；下一阶段进入 M5 真实 Windows、香港 VPS 与双客户端 Gate。签名、真实 VPS/TLS、真实账号及双客户端业务验收仍未验证。
+- M4-04 已由 `c69b983` 绿色集成并推送；`agent/stage-13-vps-gate` 正并行盘点真实 Windows 双客户端矩阵、香港 VPS 部署路径和内部 RC 阻断缺口，随后部署 exact RC 执行最终 Gate。
 
 ## 已完成
 
@@ -83,7 +83,7 @@
 
 ## 下一任务
 
-执行 M5 Gate：在真实 Windows 环境、香港 VPS/TLS 与两个真实客户端上完成登录、消息、同步、通知和更新交付验收。签名、公开发布与其他未覆盖的生产信任链工作继续保持未验证，除非获得独立证据。
+继续 M5 Gate：完成只读环境盘点，生成并验证 exact RC，在香港 VPS/TLS 部署后以两个隔离的真实 Windows Client 验收登录、消息、同步、通知、附件、搜索和更新；阻断项只做最小修复。
 
 ## 阻塞项
 
