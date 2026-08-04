@@ -1,4 +1,5 @@
 using System.IO;
+using System.Net;
 using System.Net.Http;
 using Microsoft.Extensions.Logging;
 using RelayCove.Client.Activation;
@@ -58,6 +59,7 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
             Path.GetFullPath(localAppDataRoot));
         var credentialRoot = ResolveChildDirectory(normalizedRoot, "Authentication");
         var accountRoot = ResolveChildDirectory(normalizedRoot, "Accounts");
+        var attachmentCacheRoot = ResolveChildDirectory(normalizedRoot, "cache");
         var httpClient = CreateDefaultHttpClient();
         var attachmentUploadHttpClient = CreateAttachmentUploadHttpClient();
         try
@@ -74,6 +76,7 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
                 httpClient,
                 attachmentUploadHttpClient,
                 accountRoot,
+                attachmentCacheRoot,
                 loggerFactory,
                 notificationAttention);
             var coordinator = new ClientAccountShellCoordinator(
@@ -174,6 +177,7 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
     internal static SocketsHttpHandler CreateAttachmentUploadHttpHandler() => new()
     {
         AllowAutoRedirect = false,
+        AutomaticDecompression = DecompressionMethods.None,
     };
 
     private void DisposeAttachmentUploadHttpClient()

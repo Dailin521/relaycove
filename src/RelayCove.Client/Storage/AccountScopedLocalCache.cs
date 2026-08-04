@@ -8,7 +8,7 @@ using RelayCove.Shared.Messages;
 
 namespace RelayCove.Client.Storage;
 
-public sealed class AccountScopedLocalCache : IAsyncDisposable
+public sealed partial class AccountScopedLocalCache : IAsyncDisposable
 {
     private readonly object eventGate = new();
     private const string RevocationIntentPrefix = "RevocationIntent/";
@@ -28,6 +28,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     private readonly ILogger<AccountScopedLocalCache> logger;
     private readonly ILocalCacheFaultInjector? faultInjector;
     private readonly ScopeAccessState scopeState;
+    private readonly Guid cacheInstanceId = Guid.NewGuid();
     private readonly SemaphoreSlim operationGate;
     private readonly ConcurrentDictionary<Guid, byte> authorizedConversations = new();
     private readonly ConcurrentDictionary<Guid, long> authoritativeLastMessageIds = new();
@@ -442,6 +443,12 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         finally
         {
             operationGate.Release();
+        }
+
+        if (outcome.Status == LocalCacheOperationStatus.Ready)
+        {
+            await PublishAttachmentCachePurgedAsync(outcome.AttachmentPurgeConversationIds)
+                .ConfigureAwait(false);
         }
 
         PublishConversationStateChanged();
@@ -984,6 +991,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
         authorizedConversations.TryRemove(conversationId, out _);
         authoritativeLastMessageIds.TryRemove(conversationId, out _);
         invalidReadThroughConversations.TryRemove(conversationId, out _);
+        PublishAttachmentDownloadCancellationRequested(conversationId);
 
         // Once a revocation reaches this boundary, caller cancellation must not drop
         // the durable intent or tombstone work.
@@ -1006,6 +1014,11 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             operationGate.Release();
         }
 
+        if (outcome == LocalCacheOperationStatus.RevokedConversation)
+        {
+            await PublishAttachmentCachePurgedAsync([conversationId]).ConfigureAwait(false);
+        }
+
         PublishConversationStateChanged();
         return outcome;
     }
@@ -1013,6 +1026,25 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     public ValueTask DisposeAsync()
     {
         Interlocked.Exchange(ref disposed, 1);
+        foreach (var activeDownload in scopeState.ActiveAttachmentDownloads)
+        {
+            if (activeDownload.Value == cacheInstanceId)
+            {
+                scopeState.ActiveAttachmentDownloads.TryRemove(
+                    activeDownload.Key,
+                    out _);
+            }
+        }
+
+        lock (scopeState.AttachmentEventGate)
+        {
+            scopeState.AttachmentDownloadCancellationRequested -=
+                attachmentDownloadCancellationRequested;
+            scopeState.AttachmentCachePurged -= attachmentCachePurged;
+            attachmentDownloadCancellationRequested = null;
+            attachmentCachePurged = null;
+        }
+
         lock (eventGate)
         {
             conversationStateChanged = null;
@@ -1551,6 +1583,7 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 deniedConversations.TryAdd(conversationId, 0);
                 authorizedConversations.TryRemove(conversationId, out _);
                 authoritativeLastMessageIds.TryRemove(conversationId, out _);
+                PublishAttachmentDownloadCancellationRequested(conversationId);
             }
 
             PersistRevocationIntents(newlyMissingConversationIds);
@@ -1600,7 +1633,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
             logger.LogInformation("An authoritative conversation snapshot was committed.");
             return new LocalAuthoritativeConversationSnapshotOutcome(
                 LocalCacheOperationStatus.Ready,
-                notificationClearConversationIds);
+                notificationClearConversationIds,
+                newlyMissingConversationIds);
         }
         catch (Exception exception)
         {
@@ -1611,7 +1645,8 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
                 exception.GetType().Name);
             return new LocalAuthoritativeConversationSnapshotOutcome(
                 LocalCacheOperationStatus.FatalScope,
-                notificationClearConversationIds);
+                notificationClearConversationIds,
+                newlyMissingConversationIds);
         }
     }
 
@@ -4848,7 +4883,17 @@ public sealed class AccountScopedLocalCache : IAsyncDisposable
     {
         public SemaphoreSlim OperationGate { get; } = new(1, 1);
 
+        public object AttachmentEventGate { get; } = new();
+
+        public Action<Guid>? AttachmentDownloadCancellationRequested;
+
+        public Func<Guid, Task>? AttachmentCachePurged;
+
         public ConcurrentDictionary<Guid, byte> DeniedConversations { get; } = new();
+
+        public ConcurrentDictionary<(Guid ConversationId, Guid AttachmentId), Guid>
+            ActiveAttachmentDownloads
+        { get; } = new();
 
         public int FatalScope;
 

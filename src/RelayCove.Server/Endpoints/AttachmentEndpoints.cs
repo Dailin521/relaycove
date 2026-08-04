@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Net.Http.Headers;
 using RelayCove.Server.Errors;
 using RelayCove.Server.Options;
 using RelayCove.Server.RateLimiting;
@@ -86,6 +87,7 @@ public static class AttachmentEndpoints
             stream,
             attachment.ContentType,
             attachment.OriginalFileName,
+            entityTag: new EntityTagHeaderValue($"\"{attachment.Sha256}\""),
             enableRangeProcessing: true);
     }
 

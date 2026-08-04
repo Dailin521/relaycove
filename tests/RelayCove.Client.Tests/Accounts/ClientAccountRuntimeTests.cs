@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -216,6 +218,94 @@ public sealed class ClientAccountRuntimeTests
         Assert.Equal(conversation.Id, Assert.Single(list.Conversations).Id);
         Assert.NotEmpty(conversationRevisions);
         Assert.Equal([ConnectionState.Reconnecting], connectionStates);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task FactoryRuntime_WhenAttachmentDownloads_UsesDedicatedTransferClientAndCacheRoot()
+    {
+        using var directory = new TemporaryDirectory();
+        var accountRoot = Path.Combine(directory.Path, "accounts");
+        var cacheRoot = Path.Combine(directory.Path, "cache");
+        var payload = "runtime attachment"u8.ToArray();
+        var conversation = new ConversationDto(
+            Guid.NewGuid(),
+            ConversationType.PrivateChannel,
+            "Attachment conversation",
+            null,
+            Now.AddHours(-2),
+            Now.AddHours(-1),
+            LastMessageId: 1,
+            LastReadMessageId: 0,
+            UnreadCount: 1);
+        var attachmentId = Guid.NewGuid();
+        var attachment = new AttachmentDto(
+            attachmentId,
+            "runtime.bin",
+            "application/octet-stream",
+            payload.LongLength,
+            $"/api/attachments/{attachmentId:D}/download",
+            ThumbnailUrl: null);
+        var message = CreateMessage(conversation.Id) with
+        {
+            Type = MessageType.File,
+            Content = null,
+            Attachments = [attachment],
+        };
+        var normalRequests = 0;
+        using var normalClient = new HttpClient(new DelegateHttpHandler((request, _) =>
+        {
+            Interlocked.Increment(ref normalRequests);
+            if (request.RequestUri!.AbsolutePath.EndsWith(
+                    "/api/conversations",
+                    StringComparison.Ordinal))
+            {
+                return Task.FromResult(Ok(
+                    new ConversationListResponse([conversation], Complete: true)));
+            }
+
+            if (request.RequestUri.AbsolutePath.EndsWith("/api/sync", StringComparison.Ordinal))
+            {
+                return Task.FromResult(Ok(
+                    new SyncResponse([message], 1, 1, HasMore: false)));
+            }
+
+            throw new InvalidOperationException(
+                "Attachment download must not use the normal HTTP client.");
+        }));
+        var transferRequests = 0;
+        using var transferClient = new HttpClient(new DelegateHttpHandler((request, _) =>
+        {
+            Interlocked.Increment(ref transferRequests);
+            Assert.EndsWith(attachment.DownloadUrl, request.RequestUri!.AbsolutePath);
+            var content = new ByteArrayContent(payload);
+            content.Headers.ContentType = new MediaTypeHeaderValue(attachment.ContentType);
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = content };
+            var hash = Convert.ToHexString(SHA256.HashData(payload)).ToLowerInvariant();
+            response.Headers.ETag = new EntityTagHeaderValue($"\"{hash}\"");
+            return Task.FromResult(response);
+        }));
+        var factory = new ClientAccountRuntimeFactory(
+            normalClient,
+            accountRoot,
+            NullLoggerFactory.Instance,
+            (_, _, _, _) => new FakeRealtimeConnection(),
+            attachmentUploadHttpClient: transferClient,
+            attachmentCacheRootDirectory: cacheRoot);
+        var runtime = await factory.CreateAsync(CreateSession());
+        Assert.True((await runtime.StartAsync()).IsAuthoritativeCacheReady);
+
+        var outcome = await runtime.DownloadAttachmentAsync(
+            conversation.Id,
+            attachment.Id);
+
+        Assert.Equal(ClientAttachmentDownloadStatus.Completed, outcome.Status);
+        Assert.Equal(2, Volatile.Read(ref normalRequests));
+        Assert.Equal(1, Volatile.Read(ref transferRequests));
+        Assert.True(File.Exists(Path.Combine(
+            cacheRoot,
+            runtime.Identity.Id,
+            outcome.LocalPath!)));
         await runtime.DisposeAsync();
     }
 

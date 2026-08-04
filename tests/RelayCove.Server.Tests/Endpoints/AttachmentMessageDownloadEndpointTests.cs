@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using RelayCove.Server.Data;
@@ -264,7 +265,10 @@ public sealed class AttachmentMessageDownloadEndpointTests
             publicConversation.Id,
             "报告-🛰️.bin",
             [0, 1, 2, 3, 4, 5]);
-        await AssertMetadataAndFullDownloadAsync(outsiderClient, publicAttachment, [0, 1, 2, 3, 4, 5]);
+        var publicEtag = await AssertMetadataAndFullDownloadAsync(
+            outsiderClient,
+            publicAttachment,
+            [0, 1, 2, 3, 4, 5]);
 
         using (var rangeRequest = new HttpRequestMessage(
                    HttpMethod.Get,
@@ -277,6 +281,9 @@ public sealed class AttachmentMessageDownloadEndpointTests
             Assert.Equal("bytes", rangeResponse.Content.Headers.ContentRange!.Unit);
             Assert.Equal(2, rangeResponse.Content.Headers.ContentRange.From);
             Assert.Equal(4, rangeResponse.Content.Headers.ContentRange.To);
+            Assert.Equal(publicEtag, rangeResponse.Headers.ETag!.ToString());
+            Assert.False(rangeResponse.Headers.ETag.IsWeak);
+            Assert.Matches("^\"[0-9a-f]{64}\"$", rangeResponse.Headers.ETag.ToString());
         }
 
         await using (var scope = factory.Services.CreateAsyncScope())
@@ -329,6 +336,7 @@ public sealed class AttachmentMessageDownloadEndpointTests
             anonymousDownload,
             HttpStatusCode.Unauthorized,
             ApiErrorCodes.AuthenticationRequired);
+        Assert.Null(anonymousDownload.Headers.ETag);
     }
 
     [Fact]
@@ -368,6 +376,7 @@ public sealed class AttachmentMessageDownloadEndpointTests
             response,
             HttpStatusCode.InternalServerError,
             ApiErrorCodes.InternalServerError);
+        Assert.Null(response.Headers.ETag);
         var logs = string.Join('\n', factory.LogMessages.Skip(logOffset));
         Assert.DoesNotContain(originalFileName, logs, StringComparison.Ordinal);
         Assert.DoesNotContain(storedFileName, logs, StringComparison.Ordinal);
@@ -417,6 +426,7 @@ public sealed class AttachmentMessageDownloadEndpointTests
             response,
             HttpStatusCode.InternalServerError,
             ApiErrorCodes.InternalServerError);
+        Assert.Null(response.Headers.ETag);
         var logs = string.Join('\n', factory.LogMessages.Skip(logOffset));
         Assert.DoesNotContain(originalFileName, logs, StringComparison.Ordinal);
         Assert.DoesNotContain(storedFileName, logs, StringComparison.Ordinal);
@@ -453,7 +463,7 @@ public sealed class AttachmentMessageDownloadEndpointTests
         return (await response.Content.ReadFromJsonAsync<AttachmentDto>())!;
     }
 
-    private static async Task AssertMetadataAndFullDownloadAsync(
+    private static async Task<string> AssertMetadataAndFullDownloadAsync(
         HttpClient client,
         AttachmentDto expected,
         byte[] expectedBytes)
@@ -477,6 +487,11 @@ public sealed class AttachmentMessageDownloadEndpointTests
         Assert.False(string.IsNullOrWhiteSpace(
             downloadResponse.Content.Headers.ContentDisposition.FileNameStar ??
             downloadResponse.Content.Headers.ContentDisposition.FileName));
+        var expectedEtag = $"\"{Convert.ToHexString(SHA256.HashData(expectedBytes)).ToLowerInvariant()}\"";
+        Assert.Equal(expectedEtag, downloadResponse.Headers.ETag!.ToString());
+        Assert.False(downloadResponse.Headers.ETag.IsWeak);
+        Assert.Matches("^\"[0-9a-f]{64}\"$", downloadResponse.Headers.ETag.ToString());
+        return expectedEtag;
     }
 
     private static async Task AssertAttachmentDeniedAsync(HttpClient client, Guid attachmentId)
@@ -486,11 +501,13 @@ public sealed class AttachmentMessageDownloadEndpointTests
             metadata,
             HttpStatusCode.Forbidden,
             ApiErrorCodes.ConversationAccessRevoked);
+        Assert.Null(metadata.Headers.ETag);
         using var download = await client.GetAsync($"/api/attachments/{attachmentId:D}/download");
         await AssertErrorAsync(
             download,
             HttpStatusCode.Forbidden,
             ApiErrorCodes.ConversationAccessRevoked);
+        Assert.Null(download.Headers.ETag);
     }
 
     private static void AssertAttachmentPayload(

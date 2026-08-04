@@ -31,6 +31,7 @@ public sealed class AttachmentQueryService(
                     attachment.StoredFileName,
                     attachment.ContentType,
                     attachment.Size,
+                    attachment.Sha256,
                 })
             .SingleOrDefaultAsync(cancellationToken);
         if (row is null)
@@ -54,6 +55,7 @@ public sealed class AttachmentQueryService(
                     row.Size),
                 row.OriginalFileName,
                 row.ContentType,
-                storedPath));
+                storedPath,
+                row.Sha256));
     }
 }

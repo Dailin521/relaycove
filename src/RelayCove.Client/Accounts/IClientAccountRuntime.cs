@@ -70,6 +70,12 @@ internal interface IClientAccountRuntime : IAsyncDisposable
         Guid clientMessageId,
         CancellationToken cancellationToken = default);
 
+    Task<ClientAttachmentDownloadOutcome> DownloadAttachmentAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        CancellationToken cancellationToken = default,
+        IProgress<ClientAttachmentDownloadProgress>? progress = null);
+
     Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(
         Guid conversationId,
         long messageId,

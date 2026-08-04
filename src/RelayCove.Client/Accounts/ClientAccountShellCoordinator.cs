@@ -571,6 +571,91 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         }
     }
 
+    public async Task<ClientAttachmentDownloadOutcome> DownloadAttachmentAsync(
+        Guid attachmentId,
+        CancellationToken cancellationToken = default,
+        IProgress<ClientAttachmentDownloadProgress>? progress = null)
+    {
+        if (attachmentId == Guid.Empty)
+        {
+            return ClientAttachmentDownloadOutcome.Failure(
+                ClientAttachmentDownloadStatus.AttachmentUnavailable);
+        }
+
+        IClientAccountRuntime? activeRuntime;
+        MessageSelection? selection;
+        lock (stateGate)
+        {
+            selection = messageSelection;
+            if (selection is null ||
+                !IsCurrentMessageSelectionLocked(selection) ||
+                messageList.Status != ClientMessageListStatus.Ready)
+            {
+                return ClientAttachmentDownloadOutcome.Failure(
+                    ClientAttachmentDownloadStatus.AttachmentUnavailable);
+            }
+
+            activeRuntime = runtime;
+        }
+
+        if (activeRuntime is null)
+        {
+            return ClientAttachmentDownloadOutcome.Failure(
+                ClientAttachmentDownloadStatus.AttachmentUnavailable);
+        }
+
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            selection.Token,
+            lifetimeCancellation.Token);
+        try
+        {
+            var outcome = await activeRuntime
+                .DownloadAttachmentAsync(
+                    selection.ConversationId,
+                    attachmentId,
+                    linkedCancellation.Token,
+                    progress)
+                .ConfigureAwait(false);
+            if (outcome.Status == ClientAttachmentDownloadStatus.AuthenticationRequired)
+            {
+                await EndAuthenticationRequiredSessionAsync(activeRuntime)
+                    .ConfigureAwait(false);
+            }
+
+            lock (stateGate)
+            {
+                if (!ReferenceEquals(runtime, activeRuntime) ||
+                    !IsCurrentMessageSelectionLocked(selection))
+                {
+                    return ClientAttachmentDownloadOutcome.Failure(
+                        ClientAttachmentDownloadStatus.Canceled);
+                }
+            }
+
+            return outcome;
+        }
+        catch (OperationCanceledException)
+        {
+            return ClientAttachmentDownloadOutcome.Failure(
+                ClientAttachmentDownloadStatus.Canceled);
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientAttachmentDownloadOutcome.Failure(
+                ClientAttachmentDownloadStatus.Canceled);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Downloading an attachment through the active account failed; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientAttachmentDownloadOutcome.Failure(
+                ClientAttachmentDownloadStatus.LocalCacheFailure);
+        }
+    }
+
     public async Task<ClientMessageSendOutcome> RetryPendingMessageAsync(
         Guid clientMessageId,
         CancellationToken cancellationToken = default)

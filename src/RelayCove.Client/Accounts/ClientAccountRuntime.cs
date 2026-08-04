@@ -18,6 +18,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
     private readonly ClientMessageHistoryCoordinator? messageHistoryCoordinator;
     private readonly ClientMentionCandidateCoordinator? mentionCandidateCoordinator;
     private readonly ClientMessageSendCoordinator? messageSendCoordinator;
+    private readonly IClientAttachmentDownloadCoordinator? attachmentDownloadCoordinator;
     private readonly ClientAutomaticSyncScheduler automaticSyncScheduler;
     private readonly IAsyncDisposable notificationCoordinator;
     private readonly IAsyncDisposable localCache;
@@ -49,7 +50,8 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         ClientAccountRuntimeStateHub? stateHub = null,
         ClientMessageHistoryCoordinator? messageHistoryCoordinator = null,
         ClientMessageSendCoordinator? messageSendCoordinator = null,
-        ClientMentionCandidateCoordinator? mentionCandidateCoordinator = null)
+        ClientMentionCandidateCoordinator? mentionCandidateCoordinator = null,
+        IClientAttachmentDownloadCoordinator? attachmentDownloadCoordinator = null)
     {
         Identity = identity ?? throw new ArgumentNullException(nameof(identity));
         this.authenticationSession = authenticationSession ??
@@ -67,6 +69,7 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         this.messageHistoryCoordinator = messageHistoryCoordinator;
         this.messageSendCoordinator = messageSendCoordinator;
         this.mentionCandidateCoordinator = mentionCandidateCoordinator;
+        this.attachmentDownloadCoordinator = attachmentDownloadCoordinator;
         this.automaticSyncScheduler = automaticSyncScheduler ??
             throw new ArgumentNullException(nameof(automaticSyncScheduler));
         this.activityState = activityState ?? throw new ArgumentNullException(nameof(activityState));
@@ -274,6 +277,22 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
                     conversationId,
                     clientMessageId,
                     token),
+            cancellationToken);
+
+    public Task<ClientAttachmentDownloadOutcome> DownloadAttachmentAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        CancellationToken cancellationToken = default,
+        IProgress<ClientAttachmentDownloadProgress>? progress = null) =>
+        TrackRuntimeOperation(
+            token => attachmentDownloadCoordinator is null
+                ? Task.FromResult(ClientAttachmentDownloadOutcome.Failure(
+                    ClientAttachmentDownloadStatus.LocalCacheFailure))
+                : attachmentDownloadCoordinator.DownloadAsync(
+                    conversationId,
+                    attachmentId,
+                    token,
+                    progress),
             cancellationToken);
 
     public Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(
@@ -667,6 +686,13 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         {
             await CaptureFailureAsync(
                     () => messageSendCoordinator.DisposeAsync(),
+                    failures)
+                .ConfigureAwait(false);
+        }
+        if (attachmentDownloadCoordinator is not null)
+        {
+            await CaptureFailureAsync(
+                    () => attachmentDownloadCoordinator.DisposeAsync(),
                     failures)
                 .ConfigureAwait(false);
         }

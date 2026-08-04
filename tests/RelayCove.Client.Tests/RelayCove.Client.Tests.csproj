@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\RelayCove.Client\RelayCove.Client.csproj" />
+    <ProjectReference Include="..\RelayCove.Server.Tests\RelayCove.Server.Tests.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net.Http;
 using Microsoft.Extensions.Logging;
 using RelayCove.Client.Auth;
@@ -14,6 +15,7 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
     private readonly HttpClient httpClient;
     private readonly HttpClient attachmentUploadHttpClient;
     private readonly string accountDataRootDirectory;
+    private readonly string attachmentCacheRootDirectory;
     private readonly ILoggerFactory loggerFactory;
     private readonly Func<
         Uri,
@@ -59,6 +61,26 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
     {
     }
 
+    public ClientAccountRuntimeFactory(
+        HttpClient httpClient,
+        HttpClient attachmentUploadHttpClient,
+        string accountDataRootDirectory,
+        string attachmentCacheRootDirectory,
+        ILoggerFactory loggerFactory,
+        IClientNotificationAttention? notificationAttention = null)
+        : this(
+            httpClient,
+            accountDataRootDirectory,
+            loggerFactory,
+            createRealtimeConnection: null,
+            notificationPlatform: null,
+            notificationSettingsProvider: null,
+            notificationAttention: notificationAttention,
+            attachmentUploadHttpClient: attachmentUploadHttpClient,
+            attachmentCacheRootDirectory: attachmentCacheRootDirectory)
+    {
+    }
+
     internal ClientAccountRuntimeFactory(
         HttpClient httpClient,
         string accountDataRootDirectory,
@@ -72,12 +94,16 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
         IClientNotificationPlatform? notificationPlatform = null,
         Func<ClientNotificationSettingsSnapshot>? notificationSettingsProvider = null,
         IClientNotificationAttention? notificationAttention = null,
-        HttpClient? attachmentUploadHttpClient = null)
+        HttpClient? attachmentUploadHttpClient = null,
+        string? attachmentCacheRootDirectory = null)
     {
         this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         this.attachmentUploadHttpClient = attachmentUploadHttpClient ?? httpClient;
         ArgumentException.ThrowIfNullOrWhiteSpace(accountDataRootDirectory);
-        this.accountDataRootDirectory = accountDataRootDirectory;
+        this.accountDataRootDirectory = Path.GetFullPath(accountDataRootDirectory);
+        this.attachmentCacheRootDirectory = Path.GetFullPath(
+            attachmentCacheRootDirectory ??
+            Path.Combine(this.accountDataRootDirectory, "cache"));
         this.loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
         this.createRealtimeConnection = createRealtimeConnection ??
             CreateDefaultRealtimeConnection;
@@ -126,6 +152,7 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
         ClientMessageHistoryCoordinator? messageHistoryCoordinator = null;
         ClientMentionCandidateCoordinator? mentionCandidateCoordinator = null;
         ClientMessageSendCoordinator? messageSendCoordinator = null;
+        ClientAttachmentDownloadCoordinator? attachmentDownloadCoordinator = null;
         ClientAutomaticSyncScheduler? automaticSyncScheduler = null;
         ClientSyncCoordinator? syncCoordinator = null;
         IClientNotificationRoundCoordinator? unownedNotificationRoundCoordinator = null;
@@ -156,6 +183,28 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                 activityState,
                 loggerFactory.CreateLogger<ClientNotificationRoundCoordinator>());
             unownedNotificationRoundCoordinator = notificationRoundCoordinator;
+            var attachmentCacheStore = new ClientAttachmentCacheStore(
+                identity,
+                attachmentCacheRootDirectory);
+            var attachmentDownloadTransport = new ClientAttachmentDownloadHttpTransport(
+                identity,
+                attachmentUploadHttpClient,
+                authenticationSession,
+                loggerFactory.CreateLogger<ClientAttachmentDownloadHttpTransport>());
+            attachmentDownloadCoordinator = new ClientAttachmentDownloadCoordinator(
+                cache,
+                attachmentCacheStore,
+                attachmentDownloadTransport,
+                loggerFactory.CreateLogger<ClientAttachmentDownloadCoordinator>(),
+                notificationRoundCoordinator.ConversationRevokedAsync);
+            var attachmentRecovery = await attachmentDownloadCoordinator
+                .RecoverAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (attachmentRecovery != ClientAttachmentCacheRecoveryStatus.Ready)
+            {
+                throw new InvalidOperationException(
+                    "The account attachment cache could not be recovered safely.");
+            }
             readThroughCoordinator = new ClientReadThroughCoordinator(
                 identity,
                 httpClient,
@@ -253,8 +302,10 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                 stateHub,
                 messageHistoryCoordinator,
                 messageSendCoordinator,
-                mentionCandidateCoordinator);
+                mentionCandidateCoordinator,
+                attachmentDownloadCoordinator);
             unownedNotificationRoundCoordinator = null;
+            attachmentDownloadCoordinator = null;
             automaticSyncScheduler = null;
             return runtime;
         }
@@ -308,6 +359,14 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
             {
                 await CaptureCleanupFailureAsync(
                         () => messageSendCoordinator.DisposeAsync(),
+                        cleanupFailures)
+                    .ConfigureAwait(false);
+            }
+
+            if (attachmentDownloadCoordinator is not null)
+            {
+                await CaptureCleanupFailureAsync(
+                        () => attachmentDownloadCoordinator.DisposeAsync(),
                         cleanupFailures)
                     .ConfigureAwait(false);
             }

@@ -1496,6 +1496,58 @@ public sealed class ClientAccountShellCoordinatorTests
     }
 
     [Fact]
+    public async Task DownloadAttachmentAsync_WhenSelectionIsReady_ForwardsContextAndProgress()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var attachmentId = Guid.NewGuid();
+        var progress = new Progress<ClientAttachmentDownloadProgress>(_ => { });
+        Guid? capturedConversationId = null;
+        Guid? capturedAttachmentId = null;
+        IProgress<ClientAttachmentDownloadProgress>? capturedProgress = null;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    Array.Empty<MessageDto>(),
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            AttachmentDownloadAction = (conversation, attachment, _, reportedProgress) =>
+            {
+                capturedConversationId = conversation;
+                capturedAttachmentId = attachment;
+                capturedProgress = reportedProgress;
+                return Task.FromResult(new ClientAttachmentDownloadOutcome(
+                    ClientAttachmentDownloadStatus.Completed,
+                    "managed.cache"));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        var outcome = await coordinator.DownloadAttachmentAsync(
+            attachmentId,
+            progress: progress);
+
+        Assert.Equal(ClientAttachmentDownloadStatus.Completed, outcome.Status);
+        Assert.Equal(conversationId, capturedConversationId);
+        Assert.Equal(attachmentId, capturedAttachmentId);
+        Assert.Same(progress, capturedProgress);
+    }
+
+    [Fact]
     public async Task SendTextMessageAsync_WhenReplyAndMentionsAreValid_ForwardsCanonicalPayload()
     {
         var session = CreateSession();
@@ -2212,6 +2264,7 @@ public sealed class ClientAccountShellCoordinatorTests
         Assert.Equal(TimeSpan.FromSeconds(30), standardClient.Timeout);
         Assert.Equal(TimeSpan.FromMinutes(10), uploadClient.Timeout);
         Assert.False(uploadHandler.AllowAutoRedirect);
+        Assert.Equal(DecompressionMethods.None, uploadHandler.AutomaticDecompression);
     }
 
     private static ClientAccountShellCoordinator CreateCoordinator(
@@ -2496,6 +2549,15 @@ public sealed class ClientAccountShellCoordinatorTests
             set;
         }
 
+        public Func<Guid, Guid, CancellationToken,
+            IProgress<ClientAttachmentDownloadProgress>?,
+            Task<ClientAttachmentDownloadOutcome>>?
+            AttachmentDownloadAction
+        {
+            get;
+            set;
+        }
+
         public Func<Guid, long, CancellationToken, Task<LocalCacheOperationStatus>>?
             MarkRenderedAction
         {
@@ -2651,6 +2713,19 @@ public sealed class ClientAccountShellCoordinatorTests
                 cancellationToken) ??
             Task.FromResult(ClientMessageSendOutcome.Failure(
                 ClientMessageSendStatus.RemoteFailure));
+
+        public Task<ClientAttachmentDownloadOutcome> DownloadAttachmentAsync(
+            Guid conversationId,
+            Guid attachmentId,
+            CancellationToken cancellationToken = default,
+            IProgress<ClientAttachmentDownloadProgress>? progress = null) =>
+            AttachmentDownloadAction?.Invoke(
+                conversationId,
+                attachmentId,
+                cancellationToken,
+                progress) ??
+            Task.FromResult(ClientAttachmentDownloadOutcome.Failure(
+                ClientAttachmentDownloadStatus.RemoteFailure));
 
         public Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(
             Guid conversationId,

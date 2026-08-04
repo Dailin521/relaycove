@@ -31,4 +31,8 @@ internal interface ILocalCacheFaultInjector
     void BeforeUnboundReservationRecovery()
     {
     }
+
+    void BeforeAttachmentDownloadCommit()
+    {
+    }
 }
