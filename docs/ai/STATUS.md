@@ -6,17 +6,17 @@
 
 - **当前阶段：** 阶段 10 — 搜索
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 受权限约束的中文/Unicode 消息正文与附件原名搜索 Shared/Server API 已完成
-- **最近验证通过的状态：** 搜索 production 检查点 `4c4edbab9fd8a3178d39cd7fbddd49c36c16c82c` 已通过最终 Fast/Full 1,378/1,378、Search 定向 30/30、两路独立复审、真实 HTTP/SQLite 权限/LIKE/snippet/限流回归、model drift、依赖漏洞、format 与空白检查；任务分支待仅快进合入 `agent/v1-integration`
+- **最近验证通过的状态：** 搜索 production 检查点 `4c4edbab9fd8a3178d39cd7fbddd49c36c16c82c` 与交接头 `883e55afb8bf150b03f2d20719a215632693b09f` 已通过最终 Fast/Full 1,378/1,378、Search 定向 30/30、两路独立复审、真实 HTTP/SQLite 权限/LIKE/snippet/限流回归、model drift、依赖漏洞、format 与空白检查，并已仅快进合入本地/远端 `agent/v1-integration`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — 当前最终 Fast/Full、format 与 1,378 项测试（Shared 41、Server 283、Client 1,053、Updater 1）通过；Search 定向 30/30。覆盖中文/Unicode、正文/附件原名、权限内嵌、撤权、LIKE 字面转义、ASCII/非 ASCII 大小写语义、唯一消息限额、snippet、日志脱敏和每 subject 稳定 429；客户端搜索 UI、真实登录视觉/Narrator 与 VPS 保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
-- **最近 Claude 调用：** `已记录` — 搜索协议/权限/SQLite 决策唯一一次只读 #79 按 Sonnet/XHigh 发起，但当前任务暴露的旧兼容入口再次强加 `$0.5` 预算并在答案前失败；无 job、正式答案、可靠实际模型、duration 或费用，按单次策略未重试。仓库证据、SQLite/EF 官方契约与三路 Codex 只读调查继续作为裁定依据，Claude 不替代本地验证
+- **最近 Claude 调用：** `运行中` — 客户端搜索撤权/迟到结果/Around-first 决策唯一一次 #80 已通过本机 Claude Code 2.1.221 后台持久任务 `213daa77` 以 Sonnet/High 发起，仓库只读且工具限于 Read/Glob/Grep；主线继续并行，完成后读取并由 Codex 本地裁定
 - **Codex 项目配置：** `已验证` — 已移除仓库中遮蔽全局配置的旧 Claude MCP v0.3 `consult_claude` override；`codex mcp get claude_second_brain` 现解析到全局 0.5.0 的 start/list/check/read 持久工具，Fast/Explorer/Reviewer 项目设置保留
 
 ## 进行中
 
-- M3 的 Shared/Server 搜索 API 已在 `4c4edba` 完成并通过全部门禁，等待仅快进合入；下一切片直接接入客户端 current/global 搜索结果、Around 跳转与一次性高亮。仍不读取 VPS 配置。
+- M3 的 Shared/Server 搜索 API 已由 `883e55a` 合入绿色集成分支；当前 `agent/stage-10-search-ui` 正在实现客户端 current/global 显式搜索、runtime/request lease、Around-first 重新授权跳转与一次性高亮。仍不读取 VPS 配置。
 
 ## 已完成
 
@@ -76,7 +76,7 @@
 
 ## 下一任务
 
-仅快进合入当前 Shared/Server 搜索 API，随后直接接入客户端 current/global 搜索、Around 跳转和短暂高亮。真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
+完成客户端 current/global 搜索、Around-first 跳转和短暂高亮的自动化与真实 WPF smoke，形成 M3 Beta 证据。真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
 
 ## 阻塞项
 
