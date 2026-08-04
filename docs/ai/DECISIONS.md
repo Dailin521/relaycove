@@ -529,3 +529,16 @@
 - **理由：** INSERT 后的 owner/null 条件更新同时保持原幂等顺序和数据库裁决的 attach-once；允许已绑定预检使合法 replay 不会被“只能绑定一次”的新建规则误拒绝。授权查询从消息会话重新求值，确保撤权后的新下载请求不能借 uploader 或陈旧 DTO 绕过。DB-first TTL 删除把失败方向限制为可恢复孤儿文件，而不是不可恢复的“行存在但文件缺失”。
 - **影响：** Server 扩展消息验证/命令/投影、附件查询/下载和后台 lease 清理，无新消息 ID、Sync cursor 或数据库列。现有 Client 明确拒绝非空附件 DTO，本切片不宣称客户端兼容；客户端发送/cache/UI、病毒扫描、搜索和 VPS 另开任务。
 - **来源：** 工程落地方案第 7.4–7.5、8.2、10.2、11.1–11.2、12.1–12.4、14.1–14.3、阶段 9、21.2–21.3；`DEC-010`、`DEC-014`、`DEC-042`；`docs/ai/tasks/2026-08-04-stage-9-attachment-message-download.md`；固定代码提交 `41f7d11e207fd984bbc3e2a8c003f9bf2ed6a2e9` 最终 Fast/两次 Full 924 项、Attachment/Message Release 定向集 960/960、真实 Kestrel 的 201/200/409/403/200/206/401、lease DB/file/cancel 故障、model drift、八项目漏洞审计、日志脱敏与空白检查。Claude #70 因认证源优先级失败，无 job、模型、workspace、费用或结论；Codex 固定差异审查与本机门禁为最终依据。
+
+### DEC-044：客户端附件元数据随消息原子入库并限制为受信任相对路由
+
+- **状态：** 待验证
+- **日期：** 2026-08-04
+- **背景：** `DEC-043` 已让所有服务端消息投影携带完整附件集合，但客户端 v1 本地缓存仍明确拒绝非空 `Attachments`，回读固定为空且不可变重复比较不包含附件。直接只改 DTO 接受会让重启后丢字段、同 ID 不同附件被误判重复；非原子建表或消息/附件分开提交又会产生半升级和不可展示消息。
+- **决策：** 本地 schema v2 新增工程方案中的 `LocalAttachments`，`Id` 为主键，nullable `LocalMessageId` 外键对 `LocalMessages.LocalId` 级联并建立索引；远端展示元数据与 `DownloadUrl` 持久化，`LocalPath/ThumbnailLocalPath` 初始为空，`DownloadStatus=0`。本切片只创建绑定到已确认消息的行，不创建游离附件或访问物理内容。
+- **决策：** 初始化只接受 `PRAGMA user_version` 0/1/2；所有 `CREATE IF NOT EXISTS`、`LocalAppState.SchemaVersion=2` 和 `user_version=2` 在一个 immediate SQLite 事务中提交，提交前故障必须完整回滚，未来版本不得降级。既有账户数据库原位升级，不改 `AccountScopeId` 或数据库路径。
+- **决策：** Image/File 必须携带 1–10 个唯一且按 .NET Guid 规范排序的附件，Text/System 必须为空。每项只接受服务端冻结的安全展示文件名、规范小写无通配 media type、1–100 MiB、精确 `/api/attachments/{id:D}/download` 和空 `ThumbnailUrl`；因此远端字段不能把客户端引向任意主机，未来缩略图或 URL 形态变化必须显式升级协议。
+- **决策：** 新消息行、mentions 和 attachments 在同一现有写事务插入；回读按 Guid 规范排序恢复完整 DTO。重复判定比较全部远端附件字段，但明确忽略未来本地可变路径/下载状态。现有客户端只产生 Text pending，带附件的响应不提升 pending。撤权仍先建立 deny-set/intent/tombstone，删除会话后由双层外键级联消息及附件；损坏本地附件行进入既有 fatal fail-closed。
+- **理由：** 同事务和完整不可变比较把 Realtime/Sync/History/SendResponse 乱序统一到现有消息合并裁决；严格相对路由把当前仅存储的网络定位符限制在同一受信任服务端端点。nullable 外键与工程方案一致，可在后续上传切片复用，但当前不提前开放游离行行为。
+- **影响：** Client 本地 schema 从 v1 升到 v2并开始兼容服务端附件消息；Shared/Server、Sync cursor、消息 ID、账户 scope 与依赖不变。上传/发送、下载内容、物理缓存、缩略图、打开和 UI 留在后续切片；本决策完成前状态保持待验证。
+- **来源：** 工程落地方案第 3.4、12.3、12.6–12.8、13.1、14、阶段 9、21.2–21.3；`DEC-017/018/026/034/043`；`docs/ai/tasks/2026-08-04-stage-9-client-attachment-ingestion.md`；基准 Fast 924/924。Claude #71 因认证源优先级失败，无 job、模型、workspace、费用或结论；最终只采信 Codex 固定差异与本机门禁。

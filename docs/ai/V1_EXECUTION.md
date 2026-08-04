@@ -8,13 +8,13 @@
 ExecutionStatus: running
 CurrentMilestone: M1
 CurrentStage: 阶段 9
-ActiveTask: docs/ai/tasks/2026-08-04-stage-9-attachment-message-download.md
-TaskStatus: completed
+ActiveTask: docs/ai/tasks/2026-08-04-stage-9-client-attachment-ingestion.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: 41f7d11e207fd984bbc3e2a8c003f9bf2ed6a2e9
-LatestGreenIntegrationCommit: 4e4ac09337368db4329e6bc1ae30ddcedb9e5042
-NextAction: 仅快进集成服务端附件消息/下载切片，然后冻结客户端附件 transport/cache/UI 最小纵向任务
-ClaudeCalls: 70（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70 失败；仅关键用途调用）
+LatestGreenIntegrationCommit: 2fd2f418103fa550275fab9fc039017ee9557b9b
+NextAction: 实现并验证客户端附件元数据 v2 原子入库、完整回读、冲突判定与撤权级联
+ClaudeCalls: 71（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71 失败；仅关键用途调用）
 ClaudeCostUsd: 80.07301150 exact confirmed + 45.97 local CLI displayed（#44–#50）；按显示值合计约 126.04301150；另有三十七次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
@@ -155,9 +155,10 @@ RequiredUserGate: none
 | 68 | 2026-08-04 | 客户端提及组合与可靠发送 | MCP 只读可靠性 challenge | Opus / XHigh | 当前 Desktop 仍只暴露兼容 `consult_claude`，未暴露 0.5 持久 start/check/read；RPC 等待后因 `ANTHROPIC_API_KEY`/其他认证源优于 claude.ai 登录失败；无 job、模型、workspace 回执、费用或结论 | `unavailable` |
 | 69 | 2026-08-04 | 服务端附件流式上传与存储 | MCP 只读架构/安全 challenge | Opus / XHigh | 当前 Desktop 仍只暴露兼容 `consult_claude`；RPC 等待后因 `ANTHROPIC_API_KEY`/其他认证源优于 claude.ai 登录失败；无 job、模型、workspace 回执、费用或结论 | `unavailable` |
 | 70 | 2026-08-04 | 附件消息绑定、授权下载与未绑定 lease | MCP 只读架构/安全 challenge | Opus / XHigh | 当前 Desktop 仍只暴露兼容 `consult_claude`；RPC 等待后因 `ANTHROPIC_API_KEY`/其他认证源优于 claude.ai 登录失败；无 job、模型、workspace 回执、费用或结论 | `unavailable` |
+| 71 | 2026-08-04 | 客户端附件元数据原子入库 | MCP 只读架构/安全/可靠性 challenge | Opus / XHigh | 当前 Desktop 仍只暴露兼容 `consult_claude`；调用启动前因 `ANTHROPIC_API_KEY`/其他认证源优于 claude.ai 登录失败；无 job、模型、workspace 回执、费用或结论 | `unavailable` |
 
-- 调用计数：`70`（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70 失败）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
-- 已确认精确费用合计：`$80.07301150`；另有 #44–#50 本机 Claude Code 状态显示值合计 `$45.97`（界面两位小数，未伪造更高精度），按显示值总计约 `$126.04301150`。其余三十七次未返回费用，保持 `unavailable`，不得推定为 `$0`。
+- 调用计数：`71`（全部终态；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71 失败）；用户已取消固定次数上限，但 Claude 只用于关键架构/安全/可靠性审查，Codex 为主且不因第二意见停止本地验证。
+- 已确认精确费用合计：`$80.07301150`；另有 #44–#50 本机 Claude Code 状态显示值合计 `$45.97`（界面两位小数，未伪造更高精度），按显示值总计约 `$126.04301150`。其余三十八次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
 ## 阻塞与用户 Gate
