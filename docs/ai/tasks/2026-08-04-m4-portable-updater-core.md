@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** M4 内部 RC 便携更新核心纵向切片
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `1a802d613f1d1a7fd07eda7a657b71efd559efa6`
 - **工作分支：** `agent/m4-updater-contract`
 - **相关方案章节：** 16、阶段 12、阶段 13；`DEC-055`
@@ -48,11 +48,11 @@
 
 ### 验收标准
 
-- [ ] 更新 DTO/版本/决策和生成器对合法内部 RC 清单稳定输出，对 schema、通道、版本、URL、size/hash 和 downgrade fail closed。
-- [ ] Client ZIP 包含可独立运行的 self-contained single-file x64 `RelayCove.Updater.exe`，重复构建仍字节一致。
-- [ ] Updater 在临时便携安装目录完成真实 rc 版本升级，旧进程退出后新 Client 被启动；用户数据目录不在替换范围。
-- [ ] hash/size/版本/内层 manifest/ZIP 路径或文件 hash 不匹配时目标目录不变；替换中断状态能在下一次运行恢复到完整旧版或完整新版。
-- [ ] 定向测试、Fast、Full、双包比较、真实 apply smoke、model drift、依赖漏洞、format/空白和两路 Codex 独立复核通过；Claude challenge 完成后读取并裁定 P0/P1。
+- [x] 更新 DTO/版本/决策和生成器对合法内部 RC 清单稳定输出，对 schema、通道、版本、URL、size/hash 和 downgrade fail closed。
+- [x] Client ZIP 包含可独立运行的 self-contained single-file x64 `RelayCove.Updater.exe`，重复构建仍字节一致。
+- [x] Updater 在临时便携安装目录完成真实 rc 版本升级，旧进程退出后新 Client 被启动；用户数据目录不在替换范围。
+- [x] hash/size/版本/内层 manifest/ZIP 路径或文件 hash 不匹配时目标目录不变；替换中断状态能在下一次运行恢复到完整旧版或完整新版。
+- [x] 定向测试、Fast、Full、双包比较、真实 apply smoke、model drift、依赖漏洞、format/空白和两路 Codex 独立复核通过；Claude challenge 完成后读取并裁定 P0/P1。
 
 ### 验证命令
 
@@ -60,8 +60,8 @@
 dotnet test tests/RelayCove.Shared.Tests/RelayCove.Shared.Tests.csproj --configuration Debug --filter "FullyQualifiedName~Updates"
 dotnet test tests/RelayCove.Updater.Tests/RelayCove.Updater.Tests.csproj --configuration Debug
 dotnet test tests/RelayCove.Client.Tests/RelayCove.Client.Tests.csproj --configuration Debug --filter "FullyQualifiedName~Packaging"
-pwsh ./scripts/publish-client.ps1 -Version 1.0.0-rc.7
-pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.7
+pwsh ./scripts/publish-client.ps1 -Version 1.0.0-rc.11
+pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.11
 pwsh ./scripts/verify.ps1 -Mode Fast
 pwsh ./scripts/verify.ps1 -Mode Full
 dotnet ef migrations has-pending-model-changes --project src/RelayCove.Server/RelayCove.Server.csproj --startup-project src/RelayCove.Server/RelayCove.Server.csproj --context RelayCoveDbContext --configuration Release --no-build
@@ -83,5 +83,12 @@ git diff --check
 
 ## 任务结果
 
-`进行中`。
+`已完成`：
 
+- `已验证`：production 提交链 `96596d8..84b3b95` 交付 Shared 严格 SemVer/更新清单与决策、确定性清单生成器、离线 single-file Updater、Client 发布/离线 verifier 接线，以及可恢复的同卷目录替换。后续 `c34fc9b`、`c7e7cbc` 仅同步脚本断言与测试格式。
+- `已验证`：基于 `84b3b955afde3bda2a3830e2e2a8be3aacbea88b` 的两份 `1.0.0-rc.11` `win-x64` self-contained Client ZIP 字节一致；每份 `165651787` bytes，SHA-256 `b2ccbf1a6df10dc6f413cfd391f7c88ff9f7767944823a012c4ba19959e6cb17`。外层 schema 1 清单由真实 generator 产生，并与 ZIP size/hash 精确一致。
+- `已验证`：真实临时目录从 `1.0.0-rc.6` 启动旧 Client，包内 Updater 在目标外自举并保持等待；精确旧进程退出后替换到 `1.0.0-rc.11`、启动新版、移除旧 marker，backup/quarantine/journal/lock 残留为 0，且未创建用户本地数据。自举目录保留 1 个，按明确所有权清理留给 M4-04 Client 交接。
+- `已验证`：Shared Updates 24/24、Updater 33/33、Client Packaging 13/13；干净工作区最终 Fast 与 Full 均为 1514/1514（Shared 65、Updater 33、Server 302、Client 1114），Release 构建 0 警告、0 错误，format、`git diff --check`、EF model drift 与八项目直接/传递漏洞审计通过。首轮 Fast 与一次 Client 复跑受并行 publisher 改写构建输出污染；所有外部 publisher 结束后的干净复跑全绿，未作为产品失败掩盖。
+- `已验证`：Shared/Packaging、Updater state machine 与完整 M4-03 差异的多路 Codex 独立复核均已关闭全部 P0/P1。修复包括 verifier 命名参数、archive 单句柄 TOCTOU、可恢复 lock/journal、launch failure quarantine，以及启动前持久化 no-rollback `launching` 状态。
+- `已验证`：Claude #82 实际 `claude-sonnet-5` / High 的答案已读取；其对 portable ZIP/M4-03→M4-04 拆分无异议，指出的 stale lock 与 journal recovery 风险已修复。当前版本检查与 bootstrap handoff 语义已落实；精确清理自举残留作为非阻塞项进入 M4-04。
+- `未验证`：Server 清单托管、Client 检查/下载/UI/mandatory 阻断/显式 Exit 交接仍属 M4-04；安装器、签名、SmartScreen、VPS、真实账号与公开发布仍不在本切片完成口径内。
