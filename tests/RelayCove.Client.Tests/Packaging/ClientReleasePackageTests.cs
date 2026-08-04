@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Security.Cryptography;
-using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 
 namespace RelayCove.Client.Tests.Packaging;
@@ -47,30 +49,47 @@ public sealed partial class ClientReleasePackageTests
         await AssertStandaloneUpdaterAsync(firstOutput.Path, first.ArchivePath, version);
 
         var originalSidecar = await File.ReadAllTextAsync(first.SidecarPath);
-        var originalArchive = await File.ReadAllBytesAsync(first.ArchivePath);
-        await File.WriteAllTextAsync(first.SidecarPath, new string('0', 64) + "  invalid.zip\n");
-        await AssertScriptFailsAsync(
-            "scripts/verify-client-release.ps1",
-            ["-Version", version, "-OutputRoot", firstOutput.Path, "-AllowDirtySource"],
-            VerifyTimeout);
-        await File.WriteAllTextAsync(first.SidecarPath, originalSidecar);
+        var archiveBackupPath = Path.Combine(firstOutput.Path, $"archive-backup-{Guid.NewGuid():N}.zip");
+        File.Copy(first.ArchivePath, archiveBackupPath);
+        try
+        {
+            await File.WriteAllTextAsync(first.SidecarPath, new string('0', 64) + "  invalid.zip\n");
+            await AssertScriptFailsAsync(
+                "scripts/verify-client-release.ps1",
+                ["-Version", version, "-OutputRoot", firstOutput.Path, "-AllowDirtySource"],
+                VerifyTimeout);
+            await File.WriteAllTextAsync(first.SidecarPath, originalSidecar);
 
-        RemoveArchiveEntry(first.ArchivePath, $"RelayCove.Client-{version}-{RuntimeIdentifier}/RelayCove.Updater.exe");
-        await WriteArchiveSidecarAsync(first.ArchivePath, first.SidecarPath);
-        var missingUpdater = await PowerShellProcess.RunAsync(
-            "scripts/verify-client-release.ps1",
-            ["-Version", version, "-OutputRoot", firstOutput.Path, "-AllowDirtySource"],
-            VerifyTimeout);
-        Assert.NotEqual(0, missingUpdater.ExitCode);
-        Assert.Contains("RelayCove.Updater.exe", missingUpdater.CombinedOutput, StringComparison.Ordinal);
-        await File.WriteAllBytesAsync(first.ArchivePath, originalArchive);
-        await File.WriteAllTextAsync(first.SidecarPath, originalSidecar);
+            RemoveArchiveEntry(first.ArchivePath, $"RelayCove.Client-{version}-{RuntimeIdentifier}/RelayCove.Updater.exe");
+            await WriteArchiveSidecarAsync(first.ArchivePath, first.SidecarPath);
+            var missingUpdater = await PowerShellProcess.RunAsync(
+                "scripts/verify-client-release.ps1",
+                ["-Version", version, "-OutputRoot", firstOutput.Path, "-AllowDirtySource"],
+                VerifyTimeout);
+            Assert.NotEqual(0, missingUpdater.ExitCode);
+            Assert.Contains("RelayCove.Updater.exe", missingUpdater.CombinedOutput, StringComparison.Ordinal);
+            RestoreArchive(archiveBackupPath, first.ArchivePath, first.SidecarPath, originalSidecar);
 
-        CorruptArchive(first.ArchivePath);
-        await AssertScriptFailsAsync(
-            "scripts/verify-client-release.ps1",
-            ["-Version", version, "-OutputRoot", firstOutput.Path, "-AllowDirtySource"],
-            VerifyTimeout);
+            await AddUpdaterCompanionAsync(first.ArchivePath, packageName: $"RelayCove.Client-{version}-{RuntimeIdentifier}");
+            await WriteArchiveSidecarAsync(first.ArchivePath, first.SidecarPath);
+            var companionUpdater = await PowerShellProcess.RunAsync(
+                "scripts/verify-client-release.ps1",
+                ["-Version", version, "-OutputRoot", firstOutput.Path, "-AllowDirtySource"],
+                VerifyTimeout);
+            Assert.NotEqual(0, companionUpdater.ExitCode);
+            Assert.Contains("forbidden updater companion", companionUpdater.CombinedOutput, StringComparison.OrdinalIgnoreCase);
+            RestoreArchive(archiveBackupPath, first.ArchivePath, first.SidecarPath, originalSidecar);
+
+            CorruptArchive(first.ArchivePath);
+            await AssertScriptFailsAsync(
+                "scripts/verify-client-release.ps1",
+                ["-Version", version, "-OutputRoot", firstOutput.Path, "-AllowDirtySource"],
+                VerifyTimeout);
+        }
+        finally
+        {
+            File.Delete(archiveBackupPath);
+        }
     }
 
     private static ClientReleaseInspection InspectPackage(string outputRoot, string version)
@@ -334,8 +353,108 @@ public sealed partial class ClientReleasePackageTests
 
     private static async Task WriteArchiveSidecarAsync(string archivePath, string sidecarPath)
     {
-        var hash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(archivePath))).ToLowerInvariant();
+        await using var archiveStream = new FileStream(
+            archivePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            bufferSize: 81920,
+            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var hash = Convert.ToHexString(await SHA256.HashDataAsync(archiveStream)).ToLowerInvariant();
         await File.WriteAllTextAsync(sidecarPath, $"{hash}  {Path.GetFileName(archivePath)}{Environment.NewLine}");
+    }
+
+    private static void RestoreArchive(
+        string backupPath,
+        string archivePath,
+        string sidecarPath,
+        string originalSidecar)
+    {
+        File.Copy(backupPath, archivePath, overwrite: true);
+        File.WriteAllText(sidecarPath, originalSidecar);
+    }
+
+    private static async Task AddUpdaterCompanionAsync(string archivePath, string packageName)
+    {
+        var companionPath = $"{packageName}/RelayCove.Updater.dll";
+        var manifestPath = $"{packageName}/manifest.json";
+        var companionContent = Encoding.UTF8.GetBytes("not a standalone updater");
+        var temporaryArchivePath = $"{archivePath}.mutation-{Guid.NewGuid():N}.tmp";
+
+        try
+        {
+            using (var sourceArchive = ZipFile.OpenRead(archivePath))
+            {
+                var manifestEntry = sourceArchive.GetEntry(manifestPath);
+                Assert.NotNull(manifestEntry);
+                JsonObject manifest;
+                await using (var manifestStream = manifestEntry.Open())
+                {
+                    manifest = Assert.IsType<JsonObject>(await JsonNode.ParseAsync(manifestStream));
+                }
+
+                var files = Assert.IsType<JsonArray>(manifest["files"]);
+                files.Add(new JsonObject
+                {
+                    ["path"] = "RelayCove.Updater.dll",
+                    ["length"] = companionContent.LongLength,
+                    ["sha256"] = Convert.ToHexString(SHA256.HashData(companionContent)).ToLowerInvariant(),
+                    ["attributes"] = "00000080",
+                });
+                manifest["files"] = new JsonArray(
+                    files.Select(file => file!.DeepClone())
+                        .OrderBy(
+                            file => file!["path"]!.GetValue<string>(),
+                            StringComparer.Ordinal)
+                        .ToArray());
+                var manifestContent = Encoding.UTF8.GetBytes(
+                    manifest.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) +
+                    Environment.NewLine);
+
+                await using var targetStream = new FileStream(
+                    temporaryArchivePath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    bufferSize: 81920,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan);
+                using var targetArchive = new ZipArchive(
+                    targetStream,
+                    ZipArchiveMode.Create,
+                    leaveOpen: true,
+                    Encoding.UTF8);
+                foreach (var entryName in sourceArchive.Entries.Select(entry => entry.FullName)
+                             .Append(companionPath)
+                             .OrderBy(name => name, StringComparer.Ordinal))
+                {
+                    var targetEntry = targetArchive.CreateEntry(entryName, CompressionLevel.Optimal);
+                    targetEntry.LastWriteTime = new DateTimeOffset(1980, 1, 1, 0, 0, 0, TimeSpan.Zero);
+                    targetEntry.ExternalAttributes = 0x00000080;
+                    await using var targetEntryStream = targetEntry.Open();
+                    if (entryName == manifestPath)
+                    {
+                        await targetEntryStream.WriteAsync(manifestContent);
+                    }
+                    else if (entryName == companionPath)
+                    {
+                        await targetEntryStream.WriteAsync(companionContent);
+                    }
+                    else
+                    {
+                        var sourceEntry = sourceArchive.GetEntry(entryName);
+                        Assert.NotNull(sourceEntry);
+                        await using var sourceEntryStream = sourceEntry.Open();
+                        await sourceEntryStream.CopyToAsync(targetEntryStream);
+                    }
+                }
+            }
+
+            File.Move(temporaryArchivePath, archivePath, overwrite: true);
+        }
+        finally
+        {
+            File.Delete(temporaryArchivePath);
+        }
     }
 
     private static void CorruptArchive(string archivePath)

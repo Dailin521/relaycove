@@ -221,6 +221,11 @@ function Assert-PackagePaths {
 
     foreach ($fileInfo in Get-SortedPackageFiles $PackageRoot) {
         $relativePath = $fileInfo.RelativePath
+        $fileName = [System.IO.Path]::GetFileName($relativePath)
+        if ($fileName.StartsWith("RelayCove.Updater.", [System.StringComparison]::OrdinalIgnoreCase) -and
+            -not $relativePath.Equals("RelayCove.Updater.exe", [System.StringComparison]::Ordinal)) {
+            throw "Release package contains forbidden updater companion '$relativePath'."
+        }
         if ($relativePath -match '(?i)(^|/)(bin|obj|uploads|logs|cache)(/|$)|\.pdb$|\.cs$|\.csproj$|\.sln$|\.(db|sqlite)(-wal|-shm)?$|(^|/)\.env(?:\.[^/]*)?$|(^|/)[^/]*secret[^/]*\.json$|(^|/)[^/]*(credential|refresh[-_.]?token|access[-_.]?token)[^/]*\.(json|dat|bin)$|\.(pfx|p12|pem|key|user|bak|tmp)$') {
             throw "Release package contains forbidden file '$relativePath'."
         }

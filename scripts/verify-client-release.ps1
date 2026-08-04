@@ -428,6 +428,11 @@ function Get-ReleaseSummary {
             if ($relativePath -ne "") { throw "Archive contains an unexpected directory '$relativePath'." }
             continue
         }
+        $fileName = [System.IO.Path]::GetFileName($relativePath)
+        if ($fileName.StartsWith("RelayCove.Updater.", [System.StringComparison]::OrdinalIgnoreCase) -and
+            -not $relativePath.Equals("RelayCove.Updater.exe", [System.StringComparison]::Ordinal)) {
+            throw "Archive contains forbidden updater companion '$relativePath'."
+        }
         if ($relativePath -ne "manifest.json" -and (Test-ForbiddenPath $relativePath)) {
             throw "Archive contains forbidden file '$relativePath'."
         }

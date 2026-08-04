@@ -23,6 +23,13 @@ manifest, waits only for the specified Client process to exit, stages on the
 same volume, and swaps the old directory to a backup before activating the new
 one. It never kills the Client process.
 
+When the package-local Updater returns exit code `0`, that means only that its
+external bootstrap process was started and accepted the handoff; it does not
+mean the archive has already been applied. The Client must then perform its
+explicit process exit. It must not synchronously wait for apply completion while
+remaining alive, because the external Updater is waiting for that exact Client
+process to exit.
+
 ## Recovery and data
 
 The updater keeps its staging, backup, and recovery journal beside the portable
@@ -43,3 +50,7 @@ protect against a compromised release host or TLS trust chain. Code signing,
 timestamping, SmartScreen reputation, installer/elevation support, Program
 Files, reboot scheduling, incremental updates, channels, silent updates, and
 public distribution remain outside this RC and require later release work.
+The self-contained external bootstrap can remain as a controlled sibling
+artifact if exact cleanup is interrupted or fails. M4-04 may clean only an
+exactly recorded, owned bootstrap path; it must not use wildcard sibling
+deletion.
