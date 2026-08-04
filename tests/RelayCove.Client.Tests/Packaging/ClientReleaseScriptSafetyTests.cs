@@ -71,6 +71,31 @@ public sealed class ClientReleaseScriptSafetyTests
     }
 
     [Theory]
+    [InlineData("1.0")]
+    [InlineData("01.0.0")]
+    [InlineData("1.0.0+build")]
+    [InlineData("1.0.0-01")]
+    public async Task ReleaseScripts_WhenVersionIsNotStrictSemVer_RejectBeforeWork(string version)
+    {
+        using var outputRoot = new TemporaryArtifactDirectory("strict-semver");
+        foreach (var script in new[]
+                 {
+                     (Path: "scripts/publish-client.ps1", DirtySwitch: "-AllowDirty"),
+                     (Path: "scripts/verify-client-release.ps1", DirtySwitch: "-AllowDirtySource"),
+                 })
+        {
+            var result = await PowerShellProcess.RunAsync(
+                script.Path,
+                ["-Version", version, "-OutputRoot", outputRoot.Path, script.DirtySwitch],
+                ScriptTimeout);
+
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("SemVer", result.CombinedOutput, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("> dotnet", result.CombinedOutput, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Theory]
     [InlineData("scripts/publish-client.ps1", "-AllowDirty")]
     [InlineData("scripts/verify-client-release.ps1", "-AllowDirtySource")]
     public async Task ReleaseScript_WhenOutputRootTraversesJunction_RejectsWithoutFollowingLink(

@@ -14,6 +14,7 @@ $ErrorActionPreference = "Stop"
 $repositoryRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $artifactsRoot = Join-Path $repositoryRoot "artifacts"
 $clientProject = Join-Path $repositoryRoot "src\RelayCove.Client\RelayCove.Client.csproj"
+$updaterProject = Join-Path $repositoryRoot "src\RelayCove.Updater\RelayCove.Updater.csproj"
 $runtimeIdentifier = "win-x64"
 $archivePrefix = "RelayCove.Client"
 $zipTimestamp = [System.DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [System.TimeSpan]::Zero)
@@ -35,9 +36,10 @@ function Invoke-Checked {
 function Assert-ReleaseVersion {
     param([Parameter(Mandatory)][string] $Value)
 
-    if ($Value -notmatch '\A[0-9A-Za-z](?:[0-9A-Za-z.-]{0,63})\z' -or
-        $Value.Contains("..", [System.StringComparison]::Ordinal)) {
-        throw "Version must be 1-64 ASCII letters, digits, dots, or hyphens without '..'."
+    $identifier = '(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+    $semVerPattern = "\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-$identifier(?:\.$identifier)*)?\z"
+    if ($Value.Length -gt 64 -or $Value -notmatch $semVerPattern) {
+        throw "Version must be a 1-64 character SemVer value: major.minor.patch with an optional prerelease, without build metadata."
     }
 }
 
@@ -196,6 +198,7 @@ function Assert-PackagePaths {
 
     $requiredFiles = @(
         "RelayCove.Client.exe",
+        "RelayCove.Updater.exe",
         "RelayCove.Client.dll",
         "RelayCove.Client.deps.json",
         "RelayCove.Client.runtimeconfig.json",
@@ -224,6 +227,12 @@ function Assert-PackagePaths {
     }
 
     Assert-WindowsX64Pe (Join-Path $PackageRoot "RelayCove.Client.exe") "RelayCove.Client.exe"
+    $updaterPath = Join-Path $PackageRoot "RelayCove.Updater.exe"
+    $updaterLength = (Get-Item -LiteralPath $updaterPath -Force).Length
+    if ($updaterLength -lt 1MB -or $updaterLength -gt 1GB) {
+        throw "Release package updater must be a standalone executable between 1 MiB and 1 GiB."
+    }
+    Assert-WindowsX64Pe $updaterPath "RelayCove.Updater.exe"
 }
 
 function Get-PackageFiles {
@@ -324,6 +333,9 @@ Assert-ReleaseVersion $Version
 if (-not (Test-Path -LiteralPath $clientProject -PathType Leaf)) {
     throw "Client project was not found: $clientProject"
 }
+if (-not (Test-Path -LiteralPath $updaterProject -PathType Leaf)) {
+    throw "Updater project was not found: $updaterProject"
+}
 
 $resolvedOutputRoot = Resolve-PathInside $OutputRoot $artifactsRoot "OutputRoot" -AllowRoot
 Assert-NoReparsePointAncestors $resolvedOutputRoot $artifactsRoot
@@ -344,6 +356,7 @@ $stagingRoot = Resolve-PathInside (
     Join-Path $artifactsRoot (Join-Path ".staging" ([System.Guid]::NewGuid().ToString("N")))) $artifactsRoot "staging directory"
 $stagedContainer = Join-Path (Join-Path $stagingRoot "client") $Version
 $dotnetArtifactsPath = Join-Path $stagingRoot ".dotnet-artifacts"
+$updaterPublishRoot = Join-Path $stagingRoot ".updater-publish"
 $packageRoot = Join-Path $stagedContainer $packageName
 $archiveFileName = "$packageName.zip"
 $archivePath = Join-Path $stagedContainer $archiveFileName
@@ -384,6 +397,35 @@ try {
             "--artifacts-path", $dotnetArtifactsPath,
             "--no-restore",
             "--output", $packageRoot) + $commonProperties)
+
+    Invoke-Checked "dotnet" @(
+        "publish", $updaterProject,
+        "--configuration", "Release",
+        "--runtime", $runtimeIdentifier,
+        "--self-contained", "true",
+        "--artifacts-path", $dotnetArtifactsPath,
+        "--output", $updaterPublishRoot,
+        "/p:Version=$Version",
+        "/p:DebugType=None",
+        "/p:DebugSymbols=false",
+        "/p:ContinuousIntegrationBuild=true",
+        "/p:SelfContained=true",
+        "/p:PublishSingleFile=true",
+        "/p:PublishTrimmed=false",
+        "/p:PublishReadyToRun=false")
+
+    $updaterPublishItems = @(Get-ChildItem -LiteralPath $updaterPublishRoot -Force)
+    if ($updaterPublishItems.Count -ne 1 -or $updaterPublishItems[0].PSIsContainer -or
+        ($updaterPublishItems[0].Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $updaterPublishItems[0].Name -ne "RelayCove.Updater.exe") {
+        throw "Standalone updater publish must contain only RelayCove.Updater.exe."
+    }
+    $updaterFile = $updaterPublishItems[0]
+    $packageUpdaterPath = Join-Path $packageRoot "RelayCove.Updater.exe"
+    if (Test-Path -LiteralPath $packageUpdaterPath) {
+        throw "Client publish unexpectedly produced RelayCove.Updater.exe."
+    }
+    Copy-Item -LiteralPath $updaterFile.FullName -Destination $packageUpdaterPath
 
     Assert-PackagePaths $packageRoot
     $manifest = [ordered]@{

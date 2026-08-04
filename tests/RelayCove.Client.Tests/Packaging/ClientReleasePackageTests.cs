@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -43,12 +44,26 @@ public sealed partial class ClientReleasePackageTests
             ],
             VerifyTimeout);
 
+        await AssertStandaloneUpdaterAsync(firstOutput.Path, first.ArchivePath, version);
+
         var originalSidecar = await File.ReadAllTextAsync(first.SidecarPath);
+        var originalArchive = await File.ReadAllBytesAsync(first.ArchivePath);
         await File.WriteAllTextAsync(first.SidecarPath, new string('0', 64) + "  invalid.zip\n");
         await AssertScriptFailsAsync(
             "scripts/verify-client-release.ps1",
             ["-Version", version, "-OutputRoot", firstOutput.Path, "-AllowDirtySource"],
             VerifyTimeout);
+        await File.WriteAllTextAsync(first.SidecarPath, originalSidecar);
+
+        RemoveArchiveEntry(first.ArchivePath, $"RelayCove.Client-{version}-{RuntimeIdentifier}/RelayCove.Updater.exe");
+        await WriteArchiveSidecarAsync(first.ArchivePath, first.SidecarPath);
+        var missingUpdater = await PowerShellProcess.RunAsync(
+            "scripts/verify-client-release.ps1",
+            ["-Version", version, "-OutputRoot", firstOutput.Path, "-AllowDirtySource"],
+            VerifyTimeout);
+        Assert.NotEqual(0, missingUpdater.ExitCode);
+        Assert.Contains("RelayCove.Updater.exe", missingUpdater.CombinedOutput, StringComparison.Ordinal);
+        await File.WriteAllBytesAsync(first.ArchivePath, originalArchive);
         await File.WriteAllTextAsync(first.SidecarPath, originalSidecar);
 
         CorruptArchive(first.ArchivePath);
@@ -105,6 +120,13 @@ public sealed partial class ClientReleasePackageTests
 
         var executable = ReadEntry(entriesByPath[$"{packageName}/RelayCove.Client.exe"]);
         AssertWindowsX64Pe(executable);
+        var updater = ReadEntry(entriesByPath[$"{packageName}/RelayCove.Updater.exe"]);
+        Assert.InRange(updater.Length, 1024 * 1024, 1024 * 1024 * 1024);
+        AssertWindowsX64Pe(updater);
+        Assert.Equal(
+            [$"{packageName}/RelayCove.Updater.exe"],
+            entries.Where(entry => entry.FullName.StartsWith($"{packageName}/RelayCove.Updater.", StringComparison.Ordinal))
+                .Select(entry => entry.FullName));
         AssertSelfContainedRuntimeConfig(
             ReadEntryText(entriesByPath[$"{packageName}/RelayCove.Client.runtimeconfig.json"]));
 
@@ -118,6 +140,7 @@ public sealed partial class ClientReleasePackageTests
         foreach (var path in new[]
                  {
                      "RelayCove.Client.exe",
+                     "RelayCove.Updater.exe",
                      "RelayCove.Client.dll",
                      "RelayCove.Client.deps.json",
                      "RelayCove.Client.runtimeconfig.json",
@@ -237,6 +260,82 @@ public sealed partial class ClientReleasePackageTests
     {
         var result = await PowerShellProcess.RunAsync(path, arguments, timeout);
         Assert.NotEqual(0, result.ExitCode);
+    }
+
+    private static async Task AssertStandaloneUpdaterAsync(string outputRoot, string archivePath, string version)
+    {
+        var packageName = $"RelayCove.Client-{version}-{RuntimeIdentifier}";
+        var extractionRoot = Path.Combine(outputRoot, "updater-smoke");
+        ZipFile.ExtractToDirectory(archivePath, extractionRoot);
+        var packageRoot = Path.Combine(extractionRoot, packageName);
+        var updaterPath = Path.Combine(packageRoot, "RelayCove.Updater.exe");
+
+        var help = await RunExecutableAsync(updaterPath, ["--help"], TimeSpan.FromMinutes(1), packageRoot);
+        Assert.Equal(0, help.ExitCode);
+        Assert.Contains("RelayCove Updater", help.CombinedOutput, StringComparison.Ordinal);
+
+        var expectedHash = new string('a', 64);
+        var invalid = await RunExecutableAsync(
+            updaterPath,
+            ["apply", "--expected-sha256", expectedHash],
+            TimeSpan.FromMinutes(1),
+            packageRoot);
+        Assert.NotEqual(0, invalid.ExitCode);
+        Assert.DoesNotContain(packageRoot, invalid.CombinedOutput, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(expectedHash, invalid.CombinedOutput, StringComparison.Ordinal);
+    }
+
+    private static async Task<PackagingProcessResult> RunExecutableAsync(
+        string executablePath,
+        IReadOnlyList<string> arguments,
+        TimeSpan timeout,
+        string workingDirectory)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = executablePath,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(startInfo);
+        Assert.NotNull(process);
+        using var cancellation = new CancellationTokenSource(timeout);
+        var standardOutput = process.StandardOutput.ReadToEndAsync(cancellation.Token);
+        var standardError = process.StandardError.ReadToEndAsync(cancellation.Token);
+        try
+        {
+            await process.WaitForExitAsync(cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            throw new TimeoutException($"Executable exceeded {timeout}: {executablePath}");
+        }
+
+        return new PackagingProcessResult(process.ExitCode, await standardOutput, await standardError);
+    }
+
+    private static void RemoveArchiveEntry(string archivePath, string entryName)
+    {
+        using var archive = ZipFile.Open(archivePath, ZipArchiveMode.Update);
+        var entry = archive.GetEntry(entryName);
+        Assert.NotNull(entry);
+        entry.Delete();
+    }
+
+    private static async Task WriteArchiveSidecarAsync(string archivePath, string sidecarPath)
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(archivePath))).ToLowerInvariant();
+        await File.WriteAllTextAsync(sidecarPath, $"{hash}  {Path.GetFileName(archivePath)}{Environment.NewLine}");
     }
 
     private static void CorruptArchive(string archivePath)

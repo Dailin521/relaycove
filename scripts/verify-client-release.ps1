@@ -26,9 +26,10 @@ $maximumUncompressedBytes = 2GB
 function Assert-ReleaseVersion {
     param([Parameter(Mandatory)][string] $Value)
 
-    if ($Value -notmatch '\A[0-9A-Za-z](?:[0-9A-Za-z.-]{0,63})\z' -or
-        $Value.Contains("..", [System.StringComparison]::Ordinal)) {
-        throw "Version must be 1-64 ASCII letters, digits, dots, or hyphens without '..'."
+    $identifier = '(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)'
+    $semVerPattern = "\A(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-$identifier(?:\.$identifier)*)?\z"
+    if ($Value.Length -gt 64 -or $Value -notmatch $semVerPattern) {
+        throw "Version must be a 1-64 character SemVer value: major.minor.patch with an optional prerelease, without build metadata."
     }
 }
 
@@ -362,6 +363,7 @@ function Get-ExpectedPaths {
 
     return @(
         "$PackageName/RelayCove.Client.exe",
+        "$PackageName/RelayCove.Updater.exe",
         "$PackageName/RelayCove.Client.dll",
         "$PackageName/RelayCove.Client.deps.json",
         "$PackageName/RelayCove.Client.runtimeconfig.json",
@@ -414,6 +416,11 @@ function Get-ReleaseSummary {
     Assert-SelfContainedRuntimeConfiguration $archive.TextEntries["$packageName/RelayCove.Client.runtimeconfig.json"]
     Assert-ArchiveOrdering $archive.Entries
     Assert-WindowsX64Pe $entryMap["$packageName/RelayCove.Client.exe"] "RelayCove.Client.exe"
+    $updaterEntry = $entryMap["$packageName/RelayCove.Updater.exe"]
+    if ($updaterEntry.length -lt 1MB -or $updaterEntry.length -gt 1GB) {
+        throw "Archive updater must be a standalone executable between 1 MiB and 1 GiB."
+    }
+    Assert-WindowsX64Pe $updaterEntry "RelayCove.Updater.exe"
 
     foreach ($entry in $archive.Entries) {
         $relativePath = $entry.name.Substring($packageName.Length).Trim('/')

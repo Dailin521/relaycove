@@ -1,8 +1,8 @@
 # RelayCove Client Internal RC ZIP
 
 This document describes the **internal, unsigned** Windows Client RC ZIP. It is
-not an installer, does not update an existing copy, and is not approved for
-public distribution.
+not an installer or a complete automatic-update experience, and is not approved
+for public distribution.
 
 ## Build and verify
 
@@ -33,7 +33,8 @@ Get-Content -LiteralPath "$archive.sha256" -Raw
 The hexadecimal SHA-256 from `Get-FileHash` must equal the first field in the
 sidecar, and the sidecar filename must name that exact ZIP. The verifier also
 checks the ZIP layout, manifest, file hashes, PE architecture, required runtime
-assets, and prohibited local or secret-bearing files.
+assets (including the standalone updater), and prohibited local or secret-bearing
+files.
 
 ## Run the RC
 
@@ -43,8 +44,11 @@ assets, and prohibited local or secret-bearing files.
 4. To exit the process completely, use the tray menu's explicit exit action;
    closing the main window normally keeps the Client in the tray.
 
-The package is a `win-x64`, self-contained, unpackaged WPF Client. It does not
-need a separately installed .NET runtime. It is unsigned: Windows trust
+The package is a `win-x64`, self-contained, unpackaged WPF Client. Its package
+root also contains `RelayCove.Updater.exe`, a separate `win-x64`, self-contained
+single-file tool for a future Client update handoff; it is not launched by hand
+for normal use. Neither executable needs a separately installed .NET runtime.
+The package is unsigned: Windows trust
 warnings, SmartScreen behavior, enterprise policy, installation, uninstall, and
 file associations are outside this RC contract.
 
@@ -63,10 +67,11 @@ not run it.
 
 ## Explicit limits and next gates
 
-This RC does not provide an installer, code signing, timestamping, Updater,
-update manifest/API, mandatory-version UI, download-and-replace flow, or
-automatic rollback. Do not represent it as an installed or publicly releasable
-application.
+This RC does not provide an installer, code signing, timestamping, update
+manifest/API hosting, mandatory-version UI, download flow, or a Client update
+entry point. The packaged Updater implements only the offline replacement core;
+its invocation is owned by the next Client slice. Do not represent it as an
+installed or publicly releasable application.
 
 M4 will next use a stable Client delivery format to define the Updater and
 update-manifest contract. M5 retains the real signed-installation, SmartScreen,
