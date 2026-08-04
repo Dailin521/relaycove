@@ -35,4 +35,8 @@ internal interface ILocalCacheFaultInjector
     void BeforeAttachmentDownloadCommit()
     {
     }
+
+    void BeforeDownloadedAttachmentConfirmationRollback()
+    {
+    }
 }

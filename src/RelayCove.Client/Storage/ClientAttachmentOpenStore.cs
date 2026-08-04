@@ -20,9 +20,6 @@ internal sealed class ClientAttachmentOpenStore
     private static readonly Regex ManagedFileName = new(
         "\\A[0-9a-f]{32}\\.[a-z0-9]{1,16}\\z",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
-    private static readonly Regex TerminalExtension = new(
-        "\\A[a-z0-9]{1,16}\\z",
-        RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly ConcurrentDictionary<string, ScopeState> ProcessScopeStates =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -566,8 +563,34 @@ internal sealed class ClientAttachmentOpenStore
             return false;
         }
 
-        extension = rawExtension[1..].ToLowerInvariant();
-        return TerminalExtension.IsMatch(extension);
+        var rawTerminalExtension = rawExtension[1..];
+        if (!IsAsciiTerminalExtension(rawTerminalExtension))
+        {
+            return false;
+        }
+
+        extension = rawTerminalExtension.ToLowerInvariant();
+        return true;
+    }
+
+    // Validate the original UTF-16 form before case folding: invariant case folding can map
+    // Unicode lookalikes (for example U+212A Kelvin sign) into ASCII letters.
+    private static bool IsAsciiTerminalExtension(string rawTerminalExtension)
+    {
+        if (rawTerminalExtension.Length is < 1 or > 16)
+        {
+            return false;
+        }
+
+        foreach (var character in rawTerminalExtension)
+        {
+            if (character is not (>= 'A' and <= 'Z') and not (>= 'a' and <= 'z') and not (>= '0' and <= '9'))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool IsValidWindowsLeafText(string value)
@@ -590,19 +613,21 @@ internal sealed class ClientAttachmentOpenStore
 
     private static bool IsReservedWindowsDeviceStem(string stem)
     {
-        if (string.Equals(stem, "CON", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(stem, "PRN", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(stem, "AUX", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(stem, "NUL", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(stem, "CLOCK$", StringComparison.OrdinalIgnoreCase))
+        var firstDot = stem.IndexOf('.');
+        var deviceStem = (firstDot >= 0 ? stem[..firstDot] : stem).TrimEnd(' ', '.');
+        if (string.Equals(deviceStem, "CON", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(deviceStem, "PRN", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(deviceStem, "AUX", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(deviceStem, "NUL", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(deviceStem, "CLOCK$", StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
-        return stem.Length == 4 &&
-            (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) ||
-             stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) &&
-            stem[3] is >= '1' and <= '9';
+        return deviceStem.Length == 4 &&
+            (deviceStem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) ||
+             deviceStem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) &&
+            deviceStem[3] is >= '1' and <= '9';
     }
 
     private List<string> EnumerateManagedFiles()

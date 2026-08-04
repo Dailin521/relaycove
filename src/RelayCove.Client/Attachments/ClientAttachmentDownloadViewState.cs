@@ -86,6 +86,11 @@ internal sealed class ClientAttachmentDownloadViewState : INotifyPropertyChanged
 
     public bool CanInvoke => Phase != ClientAttachmentDownloadPhase.Canceling;
 
+    // Opening is a separate, explicit operation from locating the cache file in
+    // Explorer.  The presentation only exposes it after the persisted download
+    // state has reached the same completed phase that enables "Show in folder".
+    public bool CanOpen => Phase == ClientAttachmentDownloadPhase.Downloaded;
+
     public bool ShowProgress =>
         Phase is ClientAttachmentDownloadPhase.Downloading or ClientAttachmentDownloadPhase.Canceling;
 
@@ -310,6 +315,7 @@ internal sealed class ClientAttachmentDownloadViewState : INotifyPropertyChanged
         OnPropertyChanged(nameof(Action));
         OnPropertyChanged(nameof(ActionLabel));
         OnPropertyChanged(nameof(CanInvoke));
+        OnPropertyChanged(nameof(CanOpen));
         OnPropertyChanged(nameof(ShowProgress));
         OnPropertyChanged(nameof(AutomationName));
     }

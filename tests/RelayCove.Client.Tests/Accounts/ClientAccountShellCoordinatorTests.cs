@@ -1735,6 +1735,70 @@ public sealed class ClientAccountShellCoordinatorTests
     }
 
     [Fact]
+    public async Task OpenAttachmentAsync_WhenAttachmentIsInExactSelection_ForwardsIdentityAndWindow()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var attachmentId = Guid.NewGuid();
+        var attachment = new AttachmentDto(
+            attachmentId,
+            "opened.txt",
+            "text/plain",
+            3,
+            $"/api/attachments/{attachmentId:D}/download",
+            ThumbnailUrl: null);
+        var message = CreateMessage(10, conversationId) with
+        {
+            Type = MessageType.File,
+            Content = null,
+            Attachments = [attachment],
+        };
+        Guid? capturedConversationId = null;
+        Guid? capturedAttachmentId = null;
+        IntPtr capturedWindow = IntPtr.Zero;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [message],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)
+                {
+                    DownloadedAttachmentIds = new HashSet<Guid> { attachmentId },
+                }),
+            AttachmentOpenAction = (conversation, requestedAttachment, ownerWindow, commit, _) =>
+            {
+                capturedConversationId = conversation;
+                capturedAttachmentId = requestedAttachment;
+                capturedWindow = ownerWindow;
+                return Task.FromResult(ClientAttachmentOpenOutcome.FromStatus(
+                    commit(static () => true)));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        var outcome = await coordinator.OpenAttachmentAsync(attachmentId, new IntPtr(42));
+
+        Assert.Equal(ClientAttachmentOpenStatus.HandedToWindows, outcome.Status);
+        Assert.Equal(conversationId, capturedConversationId);
+        Assert.Equal(attachmentId, capturedAttachmentId);
+        Assert.Equal(new IntPtr(42), capturedWindow);
+    }
+
+    [Fact]
     public async Task RevealAttachmentInFolderAsync_WhenAttachmentIsNotInSelection_DoesNotCallRuntime()
     {
         var session = CreateSession();
@@ -1918,6 +1982,286 @@ public sealed class ClientAccountShellCoordinatorTests
 
         Assert.Equal(ClientAttachmentRevealStatus.Stale, outcome.Status);
         Assert.Equal(0, Volatile.Read(ref revealCalls));
+    }
+
+    [Fact]
+    public async Task OpenAttachmentAsync_WhenSelectionChangesFromAtoBtoABeforeCommit_DoesNotAuthorizeOpen()
+    {
+        var session = CreateSession();
+        var firstConversationId = Guid.NewGuid();
+        var secondConversationId = Guid.NewGuid();
+        var attachmentId = Guid.NewGuid();
+        var attachment = new AttachmentDto(
+            attachmentId,
+            "selection-race.txt",
+            "text/plain",
+            3,
+            $"/api/attachments/{attachmentId:D}/download",
+            ThumbnailUrl: null);
+        var message = CreateMessage(10, firstConversationId) with
+        {
+            Type = MessageType.File,
+            Content = null,
+            Attachments = [attachment],
+        };
+        var commitReady = NewSignal();
+        var commitRelease = NewSignal();
+        var authorizedOpens = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(
+                firstConversationId,
+                secondConversationId),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    id == firstConversationId ? [message] : [],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            AttachmentOpenAction = async (_, _, _, commit, _) =>
+            {
+                commitReady.TrySetResult();
+                await commitRelease.Task;
+                var status = commit(static () => true);
+                if (status == ClientAttachmentOpenStatus.HandedToWindows)
+                {
+                    Interlocked.Increment(ref authorizedOpens);
+                }
+
+                return ClientAttachmentOpenOutcome.FromStatus(status);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(firstConversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready &&
+            coordinator.MessageList.ConversationId == firstConversationId);
+
+        var open = coordinator.OpenAttachmentAsync(attachmentId, new IntPtr(42));
+        await commitReady.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        coordinator.SelectConversation(secondConversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready &&
+            coordinator.MessageList.ConversationId == secondConversationId);
+        coordinator.SelectConversation(firstConversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready &&
+            coordinator.MessageList.ConversationId == firstConversationId);
+
+        commitRelease.TrySetResult();
+        var outcome = await open;
+
+        Assert.Equal(ClientAttachmentOpenStatus.Stale, outcome.Status);
+        Assert.Equal(0, Volatile.Read(ref authorizedOpens));
+    }
+
+    [Fact]
+    public async Task OpenAttachmentAsync_WhenSelectionBecomesNonReadyBeforeCommit_DoesNotAuthorizeOpen()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var attachmentId = Guid.NewGuid();
+        var attachment = new AttachmentDto(
+            attachmentId,
+            "non-ready.txt",
+            "text/plain",
+            3,
+            $"/api/attachments/{attachmentId:D}/download",
+            ThumbnailUrl: null);
+        var message = CreateMessage(10, conversationId) with
+        {
+            Type = MessageType.File,
+            Content = null,
+            Attachments = [attachment],
+        };
+        var returnFailure = 0;
+        var commitReady = NewSignal();
+        var commitRelease = NewSignal();
+        var authorizedOpens = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                Volatile.Read(ref returnFailure) == 0
+                    ? new LocalMessagePageReadOutcome(
+                        LocalCacheOperationStatus.Ready,
+                        id,
+                        [message],
+                        NextBeforeMessageId: null,
+                        HasMoreBefore: false)
+                    : LocalMessagePageReadOutcome.Failure(
+                        LocalCacheOperationStatus.FatalScope,
+                        id)),
+            AttachmentOpenAction = async (_, _, _, commit, _) =>
+            {
+                commitReady.TrySetResult();
+                await commitRelease.Task;
+                var status = commit(static () => true);
+                if (status == ClientAttachmentOpenStatus.HandedToWindows)
+                {
+                    Interlocked.Increment(ref authorizedOpens);
+                }
+
+                return ClientAttachmentOpenOutcome.FromStatus(status);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        var open = coordinator.OpenAttachmentAsync(attachmentId, new IntPtr(42));
+        await commitReady.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Interlocked.Exchange(ref returnFailure, 1);
+        runtime.RaiseConversationStateChanged(2);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.FatalScope);
+
+        commitRelease.TrySetResult();
+        var outcome = await open;
+
+        Assert.Equal(ClientAttachmentOpenStatus.Stale, outcome.Status);
+        Assert.Equal(0, Volatile.Read(ref authorizedOpens));
+    }
+
+    [Fact]
+    public async Task OpenAttachmentAsync_WhenAccountTransitionsAtoBtoA_OldPreAndPostCommitCallbacksCannotAuthorizeNewRuntime()
+    {
+        var firstSession = CreateSession();
+        var secondSession = CreateSession(Guid.NewGuid());
+        var thirdSession = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var preCommitAttachmentId = Guid.NewGuid();
+        var postCommitAttachmentId = Guid.NewGuid();
+        var message = CreateMessage(10, conversationId) with
+        {
+            Type = MessageType.File,
+            Content = null,
+            Attachments =
+            [
+                new AttachmentDto(preCommitAttachmentId, "first.txt", "text/plain", 3,
+                    $"/api/attachments/{preCommitAttachmentId:D}/download", ThumbnailUrl: null),
+                new AttachmentDto(postCommitAttachmentId, "second.txt", "text/plain", 3,
+                    $"/api/attachments/{postCommitAttachmentId:D}/download", ThumbnailUrl: null),
+            ],
+        };
+        var preCommitReady = NewSignal();
+        var preCommitRelease = NewSignal();
+        var postCommitReady = NewSignal();
+        var postCommitRelease = NewSignal();
+        var preparedPreCommitJobs = 0;
+        var preparedPostCommitJobs = 0;
+        var thirdRuntimeOpenCalls = 0;
+        var firstRuntime = new FakeRuntime(firstSession)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [message],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)
+                {
+                    DownloadedAttachmentIds = new HashSet<Guid>(
+                        [preCommitAttachmentId, postCommitAttachmentId]),
+                }),
+            AttachmentOpenAction = async (_, attachmentId, _, commit, _) =>
+            {
+                if (attachmentId == preCommitAttachmentId)
+                {
+                    preCommitReady.TrySetResult();
+                    await preCommitRelease.Task;
+                    return ClientAttachmentOpenOutcome.FromStatus(commit(() =>
+                    {
+                        Interlocked.Increment(ref preparedPreCommitJobs);
+                        return true;
+                    }));
+                }
+
+                Assert.Equal(postCommitAttachmentId, attachmentId);
+                var status = commit(() =>
+                {
+                    Interlocked.Increment(ref preparedPostCommitJobs);
+                    return true;
+                });
+                postCommitReady.TrySetResult();
+                await postCommitRelease.Task;
+                return ClientAttachmentOpenOutcome.FromStatus(status);
+            },
+        };
+        var secondRuntime = new FakeRuntime(secondSession)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(Guid.NewGuid(), 0),
+        };
+        var thirdRuntime = new FakeRuntime(thirdSession)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(Guid.NewGuid(), 0),
+            AttachmentOpenAction = (_, _, _, _, _) =>
+            {
+                Interlocked.Increment(ref thirdRuntimeOpenCalls);
+                return Task.FromResult(ClientAttachmentOpenOutcome.FromStatus(
+                    ClientAttachmentOpenStatus.LocalFailure));
+            },
+        };
+        var outcomes = new Queue<PersistentClientAuthenticationOutcome>(
+        [
+            PersistentClientAuthenticationOutcome.Authenticated(firstSession, true),
+            PersistentClientAuthenticationOutcome.Authenticated(secondSession, true),
+            PersistentClientAuthenticationOutcome.Authenticated(thirdSession, true),
+        ]);
+        var authentication = new FakeAuthentication
+        {
+            LoginAction = _ => Task.FromResult(outcomes.Dequeue()),
+        };
+        var factory = new FakeRuntimeFactory();
+        factory.Runtimes.Enqueue(firstRuntime);
+        factory.Runtimes.Enqueue(secondRuntime);
+        factory.Runtimes.Enqueue(thirdRuntime);
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(authentication, factory, router);
+
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status == ClientMessageListStatus.Ready);
+
+        var preCommitOpen = coordinator.OpenAttachmentAsync(preCommitAttachmentId, new IntPtr(42));
+        await preCommitReady.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var postCommitOpen = coordinator.OpenAttachmentAsync(postCommitAttachmentId, new IntPtr(42));
+        await postCommitReady.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await coordinator.LogoutAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await coordinator.LogoutAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+
+        preCommitRelease.TrySetResult();
+        postCommitRelease.TrySetResult();
+
+        Assert.Equal(ClientAttachmentOpenStatus.Stale, (await preCommitOpen).Status);
+        Assert.Equal(ClientAttachmentOpenStatus.HandedToWindows, (await postCommitOpen).Status);
+        Assert.Equal(0, Volatile.Read(ref preparedPreCommitJobs));
+        Assert.Equal(1, Volatile.Read(ref preparedPostCommitJobs));
+        Assert.Equal(0, Volatile.Read(ref thirdRuntimeOpenCalls));
+        Assert.NotEqual(firstRuntime.Identity.Id, secondRuntime.Identity.Id);
+        Assert.Equal(firstRuntime.Identity.Id, thirdRuntime.Identity.Id);
     }
 
     [Fact]
@@ -3039,13 +3383,13 @@ public sealed class ClientAccountShellCoordinatorTests
                 isCredentialPersisted: true),
         };
 
-    private static ClientAuthenticationSession CreateSession() =>
+    private static ClientAuthenticationSession CreateSession(Guid? userId = null) =>
         new(
             ServerBaseUri,
             new HttpClient(new DelegateHttpHandler()),
             NullLogger<ClientAuthenticationClient>.Instance,
             new LoginResponse(
-                UserId,
+                userId ?? UserId,
                 "Shell User",
                 "classified-access-token",
                 "classified-refresh-token",
@@ -3188,6 +3532,8 @@ public sealed class ClientAccountShellCoordinatorTests
     {
         public FakeRuntime? Runtime { get; init; }
 
+        public Queue<FakeRuntime> Runtimes { get; } = new();
+
         public Exception? CreateException { get; init; }
 
         public Task<IClientAccountRuntime> CreateAsync(
@@ -3200,8 +3546,9 @@ public sealed class ClientAccountShellCoordinatorTests
                 throw CreateException;
             }
 
-            Assert.Same(authenticationSession, Runtime?.Session);
-            return Task.FromResult<IClientAccountRuntime>(Runtime!);
+            var runtime = Runtimes.Count > 0 ? Runtimes.Dequeue() : Runtime;
+            Assert.Same(authenticationSession, runtime?.Session);
+            return Task.FromResult<IClientAccountRuntime>(runtime!);
         }
     }
 
@@ -3306,6 +3653,14 @@ public sealed class ClientAccountShellCoordinatorTests
         public Func<Guid, Guid, ClientAttachmentRevealCommit, CancellationToken,
             Task<ClientAttachmentRevealOutcome>>?
             AttachmentRevealAction
+        {
+            get;
+            set;
+        }
+
+        public Func<Guid, Guid, IntPtr, ClientAttachmentOpenCommit, CancellationToken,
+            Task<ClientAttachmentOpenOutcome>>?
+            AttachmentOpenAction
         {
             get;
             set;
@@ -3501,6 +3856,21 @@ public sealed class ClientAccountShellCoordinatorTests
                 cancellationToken) ??
             Task.FromResult(ClientAttachmentRevealOutcome.FromStatus(
                 ClientAttachmentRevealStatus.ShellUnavailable));
+
+        public Task<ClientAttachmentOpenOutcome> OpenAttachmentAsync(
+            Guid conversationId,
+            Guid attachmentId,
+            IntPtr ownerWindow,
+            ClientAttachmentOpenCommit commit,
+            CancellationToken cancellationToken = default) =>
+            AttachmentOpenAction?.Invoke(
+                conversationId,
+                attachmentId,
+                ownerWindow,
+                commit,
+                cancellationToken) ??
+            Task.FromResult(ClientAttachmentOpenOutcome.FromStatus(
+                ClientAttachmentOpenStatus.LocalFailure));
 
         public Task<ClientAttachmentImageLoadOutcome> LoadAttachmentImageAsync(
             Guid conversationId,

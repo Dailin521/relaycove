@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using Microsoft.Extensions.Logging;
 using RelayCove.Client.Activation;
+using RelayCove.Client.Attachments;
 using RelayCove.Client.Auth;
 using RelayCove.Client.Notifications;
 
@@ -15,6 +16,7 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
     private readonly object stateGate = new();
     private readonly HttpClient httpClient;
     private readonly HttpClient attachmentUploadHttpClient;
+    private readonly IWindowsAttachmentOpenService? attachmentOpenService;
     private Task? disposeTask;
     private bool detachedForProcessExit;
 
@@ -28,12 +30,14 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
     internal ClientAccountComposition(
         HttpClient httpClient,
         HttpClient attachmentUploadHttpClient,
-        ClientAccountShellCoordinator coordinator)
+        ClientAccountShellCoordinator coordinator,
+        IWindowsAttachmentOpenService? attachmentOpenService = null)
     {
         this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         this.attachmentUploadHttpClient = attachmentUploadHttpClient ??
             throw new ArgumentNullException(nameof(attachmentUploadHttpClient));
         Coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+        this.attachmentOpenService = attachmentOpenService;
     }
 
     public ClientAccountShellCoordinator Coordinator { get; }
@@ -62,6 +66,7 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
         var attachmentCacheRoot = ResolveChildDirectory(normalizedRoot, "cache");
         var httpClient = CreateDefaultHttpClient();
         var attachmentUploadHttpClient = CreateAttachmentUploadHttpClient();
+        IWindowsAttachmentOpenService? attachmentOpenService = null;
         try
         {
             var credentialStore = new ClientCredentialStore(
@@ -72,22 +77,34 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
                 credentialStore,
                 loggerFactory.CreateLogger<ClientAuthenticationClient>(),
                 loggerFactory.CreateLogger<PersistentClientAuthentication>());
+            attachmentOpenService = new WindowsAttachmentOpenService(
+                loggerFactory.CreateLogger<WindowsAttachmentOpenService>());
             var runtimeFactory = new ClientAccountRuntimeFactory(
-                httpClient,
-                attachmentUploadHttpClient,
-                accountRoot,
-                attachmentCacheRoot,
-                loggerFactory,
-                notificationAttention);
+                httpClient: httpClient,
+                accountDataRootDirectory: accountRoot,
+                loggerFactory: loggerFactory,
+                createRealtimeConnection: null,
+                notificationAttention: notificationAttention,
+                attachmentUploadHttpClient: attachmentUploadHttpClient,
+                attachmentCacheRootDirectory: attachmentCacheRoot,
+                attachmentOpenService: attachmentOpenService);
             var coordinator = new ClientAccountShellCoordinator(
                 authentication,
                 runtimeFactory,
                 activationRouter,
                 loggerFactory.CreateLogger<ClientAccountShellCoordinator>());
-            return new ClientAccountComposition(httpClient, attachmentUploadHttpClient, coordinator);
+            return new ClientAccountComposition(
+                httpClient,
+                attachmentUploadHttpClient,
+                coordinator,
+                attachmentOpenService);
         }
         catch
         {
+            if (attachmentOpenService is not null)
+            {
+                _ = attachmentOpenService.DisposeAsync();
+            }
             httpClient.Dispose();
             attachmentUploadHttpClient.Dispose();
             throw;
@@ -147,6 +164,10 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
         try
         {
             await Coordinator.DisposeAsync().ConfigureAwait(false);
+            if (attachmentOpenService is not null)
+            {
+                await attachmentOpenService.DisposeAsync().ConfigureAwait(false);
+            }
             httpClient.Dispose();
             DisposeAttachmentUploadHttpClient();
             completion.TrySetResult();
@@ -155,6 +176,10 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
         {
             httpClient.Dispose();
             DisposeAttachmentUploadHttpClient();
+            if (attachmentOpenService is not null)
+            {
+                await attachmentOpenService.DisposeAsync().ConfigureAwait(false);
+            }
             completion.TrySetException(exception);
         }
     }

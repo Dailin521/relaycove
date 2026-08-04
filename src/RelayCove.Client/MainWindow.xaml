@@ -480,14 +480,34 @@
                                                                                        Foreground="#FF718396"
                                                                                        FontSize="11" />
                                                                         </StackPanel>
-                                                                        <Button Grid.Column="1"
-                                                                                MinWidth="72"
-                                                                                Margin="12,0,0,0"
-                                                                                Padding="9,3"
-                                                                                Content="{Binding DownloadState.ActionLabel}"
-                                                                                IsEnabled="{Binding DownloadState.CanInvoke}"
-                                                                                AutomationProperties.Name="{Binding DownloadState.AutomationName}"
-                                                                                Click="OnAttachmentDownloadActionClicked" />
+                                                                        <StackPanel Grid.Column="1"
+                                                                                    Margin="12,0,0,0"
+                                                                                    Orientation="Horizontal">
+                                                                            <Button MinWidth="52"
+                                                                                    Margin="0,0,6,0"
+                                                                                    Padding="9,3"
+                                                                                    Content="打开"
+                                                                                    IsEnabled="{Binding DownloadState.CanOpen}"
+                                                                                    AutomationProperties.Name="{Binding DownloadState.DisplayName, StringFormat=打开附件：{0}}"
+                                                                                    Click="OnAttachmentOpenClicked">
+                                                                                <Button.Style>
+                                                                                    <Style TargetType="Button">
+                                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                                        <Style.Triggers>
+                                                                                            <DataTrigger Binding="{Binding DownloadState.CanOpen}" Value="True">
+                                                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                                            </DataTrigger>
+                                                                                        </Style.Triggers>
+                                                                                    </Style>
+                                                                                </Button.Style>
+                                                                            </Button>
+                                                                            <Button MinWidth="72"
+                                                                                    Padding="9,3"
+                                                                                    Content="{Binding DownloadState.ActionLabel}"
+                                                                                    IsEnabled="{Binding DownloadState.CanInvoke}"
+                                                                                    AutomationProperties.Name="{Binding DownloadState.AutomationName}"
+                                                                                    Click="OnAttachmentDownloadActionClicked" />
+                                                                        </StackPanel>
                                                                         <TextBlock Grid.Row="1"
                                                                                    Grid.ColumnSpan="2"
                                                                                    Margin="0,5,0,0"

@@ -22,6 +22,11 @@ internal sealed class WindowsAttachmentOpenPreparation : IDisposable
 
     public bool Commit() => job?.Commit() == true;
 
+    // Commit only proves that the STA is foreground-protected. The caller must
+    // release Execute after every local authorization gate and transaction that
+    // surrounded Commit has unwound.
+    public bool ReleaseExecute() => job?.ReleaseExecute() == true;
+
     public bool Abort() => job?.Abort() == true;
 
     public void Dispose() => Abort();

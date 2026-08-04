@@ -6,6 +6,7 @@ using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using RelayCove.Client.Accounts;
@@ -47,6 +48,9 @@ public partial class MainWindow : Window
     private readonly Dictionary<
         ClientAttachmentViewKey,
         ClientAttachmentRevealOperation> attachmentRevealOperations = [];
+    private readonly Dictionary<
+        ClientAttachmentViewKey,
+        ClientAttachmentOpenOperation> attachmentOpenOperations = [];
     private readonly Dictionary<
         ClientAttachmentViewKey,
         ClientAttachmentImageOperation> attachmentThumbnailOperations = [];
@@ -1284,6 +1288,24 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void OnAttachmentOpenClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button
+            {
+                DataContext: ClientMessageAttachmentPresentation
+                {
+                    DownloadState: { } state,
+                },
+            } ||
+            !state.CanOpen)
+        {
+            return;
+        }
+
+        await OpenAttachmentAsync(state);
+    }
+
     private async void OnAttachmentThumbnailLoaded(object sender, RoutedEventArgs e)
     {
         _ = e;
@@ -1861,6 +1883,103 @@ public partial class MainWindow : Window
         }
     }
 
+    private async Task OpenAttachmentAsync(ClientAttachmentDownloadViewState state)
+    {
+        var shell = accountShell;
+        var key = ClientAttachmentViewKey.From(state.Context);
+        if (shell is null || !state.CanOpen || !TryResolveCurrentAttachment(state, out _, out _))
+        {
+            return;
+        }
+
+        var ownerWindow = new WindowInteropHelper(this).Handle;
+        if (ownerWindow == IntPtr.Zero)
+        {
+            SetLiveText(MessageComposerStatusText, "无法使用当前窗口安全打开附件。");
+            return;
+        }
+
+        var operation = new ClientAttachmentOpenOperation(
+            state.Context,
+            state,
+            new CancellationTokenSource());
+        if (!attachmentOpenOperations.TryAdd(key, operation))
+        {
+            operation.Dispose();
+            return;
+        }
+
+        SetLiveText(MessageComposerStatusText, "正在验证附件并交给 Windows 安全打开…");
+        try
+        {
+            var outcome = await shell.OpenAttachmentAsync(
+                state.Context.AttachmentId,
+                ownerWindow,
+                operation.Cancellation.Token);
+            if (!IsCurrentAttachmentOpenOperation(key, state, operation))
+            {
+                return;
+            }
+
+            if (outcome.Status is ClientAttachmentOpenStatus.NotDownloaded or
+                ClientAttachmentOpenStatus.AttachmentUnavailable or
+                ClientAttachmentOpenStatus.ValidationFailed)
+            {
+                MarkAttachmentNoLongerDownloaded(state.Context);
+            }
+
+            SetLiveText(
+                MessageComposerStatusText,
+                DescribeAttachmentOpenOutcome(outcome.Status));
+        }
+        catch (OperationCanceledException)
+        {
+            if (IsCurrentAttachmentOpenOperation(key, state, operation))
+            {
+                SetLiveText(MessageComposerStatusText, "附件打开已取消。");
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            if (IsCurrentAttachmentOpenOperation(key, state, operation))
+            {
+                SetLiveText(MessageComposerStatusText, "账户已结束，无法打开附件。");
+            }
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            Debug.WriteLine($"Attachment open presentation failed: {exception.GetType().Name}.");
+            if (IsCurrentAttachmentOpenOperation(key, state, operation))
+            {
+                SetLiveText(MessageComposerStatusText, "无法安全打开附件，请稍后重试。");
+            }
+        }
+        finally
+        {
+            CompleteAttachmentOpenOperation(key, operation);
+        }
+    }
+
+    private static string DescribeAttachmentOpenOutcome(ClientAttachmentOpenStatus status) =>
+        status switch
+        {
+            ClientAttachmentOpenStatus.HandedToWindows => "已交给 Windows 打开。",
+            ClientAttachmentOpenStatus.InProgress => "附件正在准备打开，请稍后重试。",
+            ClientAttachmentOpenStatus.NotDownloaded => "附件尚未下载，请重新下载。",
+            ClientAttachmentOpenStatus.AttachmentUnavailable => "附件不可用或已被移除。",
+            ClientAttachmentOpenStatus.AccessRevoked => "已失去此会话的访问权限。",
+            ClientAttachmentOpenStatus.Stale => "附件上下文已变化，请重试。",
+            ClientAttachmentOpenStatus.ValidationFailed =>
+                "本地附件未通过完整性校验，请重新下载。",
+            ClientAttachmentOpenStatus.InvalidFileName => "附件名称不满足安全打开要求。",
+            ClientAttachmentOpenStatus.StoreFull => "安全打开空间不足，请稍后重试。",
+            ClientAttachmentOpenStatus.PolicyRejected => "Windows 安全策略阻止了打开。",
+            ClientAttachmentOpenStatus.UserCanceled => "已取消 Windows 打开操作。",
+            ClientAttachmentOpenStatus.NoAssociation => "Windows 未找到可用的关联应用。",
+            ClientAttachmentOpenStatus.LocalFailure => "无法安全打开附件，请稍后重试。",
+            _ => "附件打开已取消。",
+        };
+
     private static string DescribeAttachmentRevealOutcome(
         ClientAttachmentRevealStatus status) =>
         status switch
@@ -1959,6 +2078,10 @@ public partial class MainWindow : Window
                 entry.PendingPersistedDownloaded = null;
                 entry.PersistedDownloaded = pendingDownloaded;
                 _ = state.SynchronizePersistedDownloaded(pendingDownloaded);
+                if (!pendingDownloaded)
+                {
+                    CancelAttachmentOpenForNoLongerDownloaded(state);
+                }
             }
 
             if (outcome.Status is not (ClientAttachmentDownloadStatus.Completed or
@@ -2751,6 +2874,7 @@ public partial class MainWindow : Window
                 attachmentDownloadStates.Count != 0 ||
                 attachmentDownloadOperations.Count != 0 ||
                 attachmentRevealOperations.Count != 0 ||
+                attachmentOpenOperations.Count != 0 ||
                 attachmentThumbnailOperations.Count != 0 ||
                 attachmentImageViewerOperation is not null ||
                 AttachmentImageViewerOverlay.Visibility == Visibility.Visible)
@@ -2809,6 +2933,11 @@ public partial class MainWindow : Window
                     if (entry.State.SynchronizePersistedDownloaded(
                             attachment.IsDownloaded))
                     {
+                        if (!attachment.IsDownloaded)
+                        {
+                            CancelAttachmentOpenForNoLongerDownloaded(entry.State);
+                        }
+
                         RaiseAttachmentDownloadLiveRegion(entry.State);
                         entry.PersistedDownloaded = attachment.IsDownloaded;
                         entry.PendingPersistedDownloaded = null;
@@ -2849,6 +2978,11 @@ public partial class MainWindow : Window
             if (attachmentRevealOperations.Remove(removedKey, out var revealOperation))
             {
                 revealOperation.Cancel();
+            }
+
+            if (attachmentOpenOperations.Remove(removedKey, out var openOperation))
+            {
+                openOperation.Cancel();
             }
 
             if (attachmentThumbnailOperations.Remove(removedKey, out var imageOperation))
@@ -2951,10 +3085,11 @@ public partial class MainWindow : Window
         entry.PersistedDownloaded = false;
         entry.PendingPersistedDownloaded = null;
         _ = entry.State.SynchronizePersistedDownloaded(isDownloaded: false);
+        CancelAttachmentOpenForNoLongerDownloaded(entry.State);
         SynchronizeAttachmentImageEligibility(entry, isEligible: false);
         SetLiveText(
             MessageComposerStatusText,
-            "本地图片状态已失效，请重新下载后再预览。");
+            "本地附件状态已失效，请重新下载后再打开或预览。");
     }
 
     private bool IsCurrentAttachmentRevealOperation(
@@ -2980,6 +3115,40 @@ public partial class MainWindow : Window
         operation.Dispose();
     }
 
+    private bool IsCurrentAttachmentOpenOperation(
+        ClientAttachmentViewKey key,
+        ClientAttachmentDownloadViewState state,
+        ClientAttachmentOpenOperation operation) =>
+        attachmentOpenOperations.TryGetValue(key, out var activeOperation) &&
+        ReferenceEquals(activeOperation, operation) &&
+        ReferenceEquals(operation.State, state) &&
+        ReferenceEquals(operation.Context, state.Context) &&
+        state.CanOpen &&
+        TryResolveCurrentAttachment(state, out _, out _);
+
+    private void CancelAttachmentOpenForNoLongerDownloaded(
+        ClientAttachmentDownloadViewState state)
+    {
+        var key = ClientAttachmentViewKey.From(state.Context);
+        if (attachmentOpenOperations.Remove(key, out var operation))
+        {
+            operation.Cancel();
+        }
+    }
+
+    private void CompleteAttachmentOpenOperation(
+        ClientAttachmentViewKey key,
+        ClientAttachmentOpenOperation operation)
+    {
+        if (attachmentOpenOperations.TryGetValue(key, out var activeOperation) &&
+            ReferenceEquals(activeOperation, operation))
+        {
+            attachmentOpenOperations.Remove(key);
+        }
+
+        operation.Dispose();
+    }
+
     private void ResetAttachmentDownloadContext(Guid? conversationId)
     {
         attachmentDownloadContextVersion++;
@@ -2996,6 +3165,12 @@ public partial class MainWindow : Window
         }
 
         attachmentRevealOperations.Clear();
+        foreach (var operation in attachmentOpenOperations.Values)
+        {
+            operation.Cancel();
+        }
+
+        attachmentOpenOperations.Clear();
         foreach (var operation in attachmentThumbnailOperations.Values)
         {
             operation.Cancel();
@@ -3090,6 +3265,42 @@ public partial class MainWindow : Window
     }
 
     private sealed class ClientAttachmentRevealOperation(
+        ClientAttachmentDownloadContext context,
+        ClientAttachmentDownloadViewState state,
+        CancellationTokenSource cancellation) : IDisposable
+    {
+        private int disposed;
+
+        public ClientAttachmentDownloadContext Context { get; } = context ??
+            throw new ArgumentNullException(nameof(context));
+
+        public ClientAttachmentDownloadViewState State { get; } = state ??
+            throw new ArgumentNullException(nameof(state));
+
+        public CancellationTokenSource Cancellation { get; } = cancellation ??
+            throw new ArgumentNullException(nameof(cancellation));
+
+        public void Cancel()
+        {
+            try
+            {
+                Cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                Cancellation.Dispose();
+            }
+        }
+    }
+
+    private sealed class ClientAttachmentOpenOperation(
         ClientAttachmentDownloadContext context,
         ClientAttachmentDownloadViewState state,
         CancellationTokenSource cancellation) : IDisposable

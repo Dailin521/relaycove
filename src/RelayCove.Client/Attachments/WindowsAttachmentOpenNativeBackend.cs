@@ -82,8 +82,15 @@ internal sealed class WindowsAttachmentOpenNativeBackend : IWindowsAttachmentOpe
 
         public int CheckPolicy() => Value.CheckPolicy();
 
-        public int Execute(IntPtr ownerWindow, out IntPtr processHandle) =>
-            Value.Execute(ownerWindow, null, out processHandle);
+        public int Execute(
+            IntPtr ownerWindow,
+            Action enteredExecute,
+            out IntPtr processHandle)
+        {
+            ArgumentNullException.ThrowIfNull(enteredExecute);
+            enteredExecute();
+            return Value.Execute(ownerWindow, null, out processHandle);
+        }
     }
 
     [ComImport]

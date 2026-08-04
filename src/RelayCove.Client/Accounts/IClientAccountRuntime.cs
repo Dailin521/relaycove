@@ -83,6 +83,13 @@ internal interface IClientAccountRuntime : IAsyncDisposable
         ClientAttachmentRevealCommit commit,
         CancellationToken cancellationToken = default);
 
+    Task<ClientAttachmentOpenOutcome> OpenAttachmentAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        IntPtr ownerWindow,
+        ClientAttachmentOpenCommit commit,
+        CancellationToken cancellationToken = default);
+
     Task<ClientAttachmentImageLoadOutcome> LoadAttachmentImageAsync(
         Guid conversationId,
         Guid attachmentId,

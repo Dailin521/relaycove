@@ -354,6 +354,44 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         return flight;
     }
 
+    public Task<ClientAttachmentOpenOutcome> OpenAttachmentAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        IntPtr ownerWindow,
+        ClientAttachmentOpenCommit commit,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(commit);
+        var openStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<ClientAttachmentOpenOutcome> flight;
+        lock (stateGate)
+        {
+            ThrowIfTerminating();
+            flight = RunOpenOperationAsync(
+                (token, openCommit) => attachmentDownloadCoordinator is null
+                    ? Task.FromResult(ClientAttachmentOpenOutcome.FromStatus(
+                        ClientAttachmentOpenStatus.LocalFailure))
+                    : attachmentDownloadCoordinator.OpenAsync(
+                        conversationId,
+                        attachmentId,
+                        ownerWindow,
+                        openCommit,
+                        token),
+                cancellationToken,
+                lifetimeCancellation.Token,
+                commit,
+                openStarted);
+            // The open operation becomes external only after the coordinator's
+            // exact confirmation commits the already-handoff STA job. Termination
+            // waits for the pre-commit work but never for Attachment Manager.
+            TrackExplicitFlight(openStarted.Task);
+        }
+
+        return flight;
+    }
+
     public Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(
         Guid conversationId,
         long messageId,
@@ -934,6 +972,47 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
             if (!committed)
             {
                 revealStarted.TrySetResult();
+            }
+        }
+    }
+
+    private static async Task<ClientAttachmentOpenOutcome> RunOpenOperationAsync(
+        Func<CancellationToken, ClientAttachmentOpenCommit,
+            Task<ClientAttachmentOpenOutcome>> operation,
+        CancellationToken callerCancellation,
+        CancellationToken lifetimeToken,
+        ClientAttachmentOpenCommit commit,
+        TaskCompletionSource openStarted)
+    {
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            callerCancellation,
+            lifetimeToken);
+        var handedToWindows = false;
+        ClientAttachmentOpenStatus Commit(Func<bool> commitPreparedJob)
+        {
+            var status = commit(commitPreparedJob);
+            if (status == ClientAttachmentOpenStatus.HandedToWindows)
+            {
+                handedToWindows = true;
+                openStarted.TrySetResult();
+            }
+
+            return status;
+        }
+
+        try
+        {
+            return await operation(linkedCancellation.Token, Commit).ConfigureAwait(false);
+        }
+        finally
+        {
+            // Only a successful commit hands an already-started STA operation
+            // to Windows. Every other commit result, and a throwing callback,
+            // remains pre-commit work that termination must await until the
+            // coordinator has completed its cleanup.
+            if (!handedToWindows)
+            {
+                openStarted.TrySetResult();
             }
         }
     }

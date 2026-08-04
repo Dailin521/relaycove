@@ -42,6 +42,7 @@ public sealed class WindowsAttachmentOpenServiceTests
         Assert.Equal(WindowsAttachmentOpenStatus.Prepared, preparation.Status);
         Assert.True(preparation.Commit());
         Assert.False(preparation.Commit());
+        Assert.True(preparation.ReleaseExecute());
         var result = await preparation.Completion;
         await backend.Released.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
@@ -73,6 +74,34 @@ public sealed class WindowsAttachmentOpenServiceTests
         Assert.Equal(0, backend.AttachmentExecute.ExecuteCount);
     }
 
+    [Fact]
+    public async Task PrepareAsync_WhenCanceledDuringBlockedPolicy_CompletesOnlyAfterComRelease()
+    {
+        var backend = new FakeNativeBackend
+        {
+            AttachmentExecute = { BlockCheckPolicy = true },
+        };
+        await using var fixture = new ServiceFixture(backend);
+        using var cancellation = new CancellationTokenSource();
+
+        var preparationTask = fixture.Service.PrepareAsync(
+            CreateLease(),
+            new IntPtr(42),
+            cancellation.Token).AsTask();
+        await backend.AttachmentExecute.PolicyCheckStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+
+        using var preparation = await preparationTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(WindowsAttachmentOpenStatus.Canceled, preparation.Status);
+        Assert.False(preparation.Completion.IsCompleted);
+        Assert.Equal(0, backend.AttachmentExecute.ExecuteCount);
+
+        backend.AttachmentExecute.AllowPolicyCheck.TrySetResult();
+        Assert.Equal(WindowsAttachmentOpenStatus.Aborted, (await preparation.Completion).Status);
+        await backend.Released.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, backend.AttachmentExecute.ExecuteCount);
+    }
+
     [Theory]
     [InlineData(-2147023673, 7)]
     [InlineData(-2147023741, 8)]
@@ -93,6 +122,7 @@ public sealed class WindowsAttachmentOpenServiceTests
         using var preparation = await fixture.Service.PrepareAsync(CreateLease(), new IntPtr(42));
 
         Assert.True(preparation.Commit());
+        Assert.True(preparation.ReleaseExecute());
 
         Assert.Equal((WindowsAttachmentOpenStatus)expectedStatus, (await preparation.Completion).Status);
         await backend.Released.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -101,7 +131,7 @@ public sealed class WindowsAttachmentOpenServiceTests
     }
 
     [Fact]
-    public async Task PrepareAsync_WhenTwoJobsAreActive_ReturnsBusyWithoutCreatingAThirdAttachmentManager()
+    public async Task PrepareAsync_WhenOneJobIsActive_ReturnsBusyWithoutQueuingAnotherJob()
     {
         var backend = new FakeNativeBackend
         {
@@ -111,20 +141,16 @@ public sealed class WindowsAttachmentOpenServiceTests
         using var first = await fixture.Service.PrepareAsync(CreateLease(), new IntPtr(42));
 
         Assert.True(first.Commit());
+        Assert.True(first.ReleaseExecute());
         await backend.AttachmentExecute.ExecuteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        var secondTask = fixture.Service.PrepareAsync(CreateLease(), new IntPtr(42)).AsTask();
-        var third = await fixture.Service.PrepareAsync(CreateLease(), new IntPtr(42));
+        using var second = await fixture.Service.PrepareAsync(CreateLease(), new IntPtr(42));
 
-        Assert.Equal(WindowsAttachmentOpenStatus.Busy, third.Status);
-        Assert.Equal(WindowsAttachmentOpenStatus.Busy, (await third.Completion).Status);
+        Assert.Equal(WindowsAttachmentOpenStatus.Busy, second.Status);
+        Assert.Equal(WindowsAttachmentOpenStatus.Busy, (await second.Completion).Status);
         Assert.Equal(1, backend.Calls.Count(static call => call == "Create"));
 
         backend.AttachmentExecute.AllowExecute.TrySetResult();
-        using var second = await secondTask.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(WindowsAttachmentOpenStatus.Prepared, second.Status);
-        Assert.True(second.Abort());
         await first.Completion;
-        await second.Completion;
     }
 
     [Fact]
@@ -141,12 +167,14 @@ public sealed class WindowsAttachmentOpenServiceTests
         {
             using var preparation = await service.PrepareAsync(CreateLease(), new IntPtr(42));
             Assert.True(preparation.Commit());
+            Assert.True(preparation.ReleaseExecute());
             await backend.AttachmentExecute.ExecuteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
             var disposal = service.DisposeAsync();
 
             Assert.True(disposal.IsCompletedSuccessfully);
             Assert.False(preparation.Completion.IsCompleted);
+            Assert.True(backend.AttachmentExecute.ExecuteWasForeground);
             backend.AttachmentExecute.AllowExecute.TrySetResult();
             Assert.Equal(WindowsAttachmentOpenStatus.Executed, (await preparation.Completion).Status);
         }
@@ -155,6 +183,104 @@ public sealed class WindowsAttachmentOpenServiceTests
             backend.AttachmentExecute.AllowExecute.TrySetResult();
             await service.DisposeAsync();
             await service.Stopped.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(backend.UninitializeWasBackground);
+        }
+    }
+
+    [Fact]
+    public async Task DisposeAsync_WhenCommittedImmediatelyBeforeExecute_WaitsForAttemptButNotExecuteReturn()
+    {
+        var backend = new FakeNativeBackend
+        {
+            AttachmentExecute =
+            {
+                BlockExecuteEntry = true,
+                BlockExecute = true,
+            },
+        };
+        var service = new WindowsAttachmentOpenService(
+            NullLogger<WindowsAttachmentOpenService>.Instance,
+            backend);
+        try
+        {
+            using var preparation = await service.PrepareAsync(CreateLease(), new IntPtr(42));
+
+            Assert.True(preparation.Commit());
+            var disposal = service.DisposeAsync().AsTask();
+            Assert.False(disposal.IsCompleted);
+
+            Assert.True(preparation.ReleaseExecute());
+            await backend.AttachmentExecute.ExecuteMethodEntered.Task.WaitAsync(
+                TimeSpan.FromSeconds(5));
+
+            backend.AttachmentExecute.AllowExecuteEntry.TrySetResult();
+            await disposal.WaitAsync(TimeSpan.FromSeconds(5));
+
+            await backend.AttachmentExecute.ExecuteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(preparation.Completion.IsCompleted);
+            backend.AttachmentExecute.AllowExecute.TrySetResult();
+            Assert.Equal(WindowsAttachmentOpenStatus.Executed, (await preparation.Completion).Status);
+        }
+        finally
+        {
+            backend.AttachmentExecute.AllowExecuteEntry.TrySetResult();
+            backend.AttachmentExecute.AllowExecute.TrySetResult();
+            await service.DisposeAsync();
+            await service.Stopped.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Fact]
+    public async Task Commit_WhenForegroundProtectionIsBlocked_DoesNotAcknowledgeHandoffUntilWorkerIsForeground()
+    {
+        var promotionReached = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowPromotion = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var workerWasBackgroundBeforePromotion = false;
+        var backend = new FakeNativeBackend
+        {
+            AttachmentExecute = { BlockExecute = true },
+        };
+        var service = new WindowsAttachmentOpenService(
+            NullLogger<WindowsAttachmentOpenService>.Instance,
+            backend,
+            () =>
+            {
+                workerWasBackgroundBeforePromotion = Thread.CurrentThread.IsBackground;
+                promotionReached.TrySetResult();
+                allowPromotion.Task.GetAwaiter().GetResult();
+            });
+        try
+        {
+            using var preparation = await service.PrepareAsync(CreateLease(), new IntPtr(42));
+            var commit = Task.Run(preparation.Commit);
+            await promotionReached.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.True(workerWasBackgroundBeforePromotion);
+            Assert.False(commit.IsCompleted);
+            Assert.Equal(0, backend.AttachmentExecute.ExecuteCount);
+
+            allowPromotion.TrySetResult();
+            Assert.True(await commit.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(0, backend.AttachmentExecute.ExecuteCount);
+            Assert.True(preparation.ReleaseExecute());
+            await backend.AttachmentExecute.ExecuteStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(backend.AttachmentExecute.ExecuteWasForeground);
+
+            await service.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            backend.AttachmentExecute.AllowExecute.TrySetResult();
+            Assert.Equal(
+                WindowsAttachmentOpenStatus.Executed,
+                (await preparation.Completion).Status);
+        }
+        finally
+        {
+            allowPromotion.TrySetResult();
+            backend.AttachmentExecute.AllowExecute.TrySetResult();
+            await service.DisposeAsync();
+            await service.Stopped.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(backend.UninitializeWasBackground);
         }
     }
 
@@ -281,6 +407,8 @@ public sealed class WindowsAttachmentOpenServiceTests
 
         public int CloseHandleCount { get; private set; }
 
+        public bool UninitializeWasBackground { get; private set; }
+
         public TaskCompletionSource Released { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -294,7 +422,11 @@ public sealed class WindowsAttachmentOpenServiceTests
             return InitializeApartmentResult;
         }
 
-        public void UninitializeApartment() => Record("Uninitialize");
+        public void UninitializeApartment()
+        {
+            UninitializeWasBackground = Thread.CurrentThread.IsBackground;
+            Record("Uninitialize");
+        }
 
         public bool IsWindow(IntPtr window)
         {
@@ -346,9 +478,27 @@ public sealed class WindowsAttachmentOpenServiceTests
 
         public int ExecuteCount { get; private set; }
 
+        public bool ExecuteWasForeground { get; private set; }
+
         public bool BlockExecute { get; set; }
 
+        public bool BlockExecuteEntry { get; set; }
+
+        public bool BlockCheckPolicy { get; set; }
+
+        public TaskCompletionSource PolicyCheckStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowPolicyCheck { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
         public TaskCompletionSource ExecuteStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ExecuteMethodEntered { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource AllowExecuteEntry { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource AllowExecute { get; } = new(
@@ -377,11 +527,28 @@ public sealed class WindowsAttachmentOpenServiceTests
         public int CheckPolicy()
         {
             Record?.Invoke("CheckPolicy");
+            PolicyCheckStarted.TrySetResult();
+            if (BlockCheckPolicy)
+            {
+                AllowPolicyCheck.Task.GetAwaiter().GetResult();
+            }
+
             return CheckPolicyResult;
         }
 
-        public int Execute(IntPtr ownerWindow, out IntPtr processHandle)
+        public int Execute(
+            IntPtr ownerWindow,
+            Action enteredExecute,
+            out IntPtr processHandle)
         {
+            ExecuteMethodEntered.TrySetResult();
+            if (BlockExecuteEntry)
+            {
+                AllowExecuteEntry.Task.GetAwaiter().GetResult();
+            }
+
+            enteredExecute();
+            ExecuteWasForeground = !Thread.CurrentThread.IsBackground;
             Record?.Invoke("Execute");
             ExecuteCount++;
             ExecuteStarted.TrySetResult();

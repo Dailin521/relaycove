@@ -765,6 +765,98 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         }
     }
 
+    public async Task<ClientAttachmentOpenOutcome> OpenAttachmentAsync(
+        Guid attachmentId,
+        IntPtr ownerWindow,
+        CancellationToken cancellationToken = default)
+    {
+        if (attachmentId == Guid.Empty || ownerWindow == IntPtr.Zero)
+        {
+            return ClientAttachmentOpenOutcome.FromStatus(
+                ClientAttachmentOpenStatus.AttachmentUnavailable);
+        }
+
+        IClientAccountRuntime? activeRuntime;
+        MessageSelection? selection;
+        lock (stateGate)
+        {
+            selection = messageSelection;
+            if (selection is null ||
+                !IsCurrentMessageSelectionLocked(selection) ||
+                messageList.Status != ClientMessageListStatus.Ready ||
+                !SelectionContainsAttachment(selection, attachmentId))
+            {
+                return ClientAttachmentOpenOutcome.FromStatus(
+                    ClientAttachmentOpenStatus.AttachmentUnavailable);
+            }
+
+            activeRuntime = runtime;
+        }
+
+        if (activeRuntime is null)
+        {
+            return ClientAttachmentOpenOutcome.FromStatus(
+                ClientAttachmentOpenStatus.AttachmentUnavailable);
+        }
+
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            selection.Token,
+            lifetimeCancellation.Token);
+        ClientAttachmentOpenStatus CommitOpen(Func<bool> commitPreparedJob)
+        {
+            ArgumentNullException.ThrowIfNull(commitPreparedJob);
+            lock (stateGate)
+            {
+                if (!ReferenceEquals(runtime, activeRuntime) ||
+                    !IsCurrentMessageSelectionLocked(selection) ||
+                    messageList.Status != ClientMessageListStatus.Ready ||
+                    !SelectionContainsAttachment(selection, attachmentId))
+                {
+                    return ClientAttachmentOpenStatus.Stale;
+                }
+
+                if (linkedCancellation.IsCancellationRequested)
+                {
+                    return ClientAttachmentOpenStatus.Canceled;
+                }
+
+                // This runs only the coordinator's already prepared, synchronous
+                // no-I/O state transition. The worker owns the later COM call.
+                return commitPreparedJob()
+                    ? ClientAttachmentOpenStatus.HandedToWindows
+                    : ClientAttachmentOpenStatus.LocalFailure;
+            }
+        }
+
+        try
+        {
+            return await activeRuntime
+                .OpenAttachmentAsync(
+                    selection.ConversationId,
+                    attachmentId,
+                    ownerWindow,
+                    CommitOpen,
+                    linkedCancellation.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return ClientAttachmentOpenOutcome.FromStatus(ClientAttachmentOpenStatus.Canceled);
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientAttachmentOpenOutcome.FromStatus(ClientAttachmentOpenStatus.Canceled);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                "Opening an attachment through the active account failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientAttachmentOpenOutcome.FromStatus(ClientAttachmentOpenStatus.LocalFailure);
+        }
+    }
+
     public async Task<ClientAttachmentImageLoadOutcome> LoadAttachmentImageAsync(
         Guid attachmentId,
         ClientAttachmentImageRendition rendition,

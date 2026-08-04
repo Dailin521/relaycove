@@ -368,6 +368,223 @@ public sealed class ClientAccountRuntimeTests
     }
 
     [Fact]
+    public async Task LogoutAsync_WhenAttachmentOpenIsPreCommit_CancelsAndWaitsBeforeCacheDisposal()
+    {
+        using var directory = new TemporaryDirectory();
+        var openStarted = NewSignal();
+        var openCanceled = NewSignal();
+        var cacheDisposed = false;
+        var session = CreateSession();
+        var attachmentCoordinator = new FakeAttachmentDownloadCoordinator
+        {
+            OpenAction = async (_, _, _, _, cancellationToken) =>
+            {
+                openStarted.TrySetResult();
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    openCanceled.TrySetResult();
+                    throw;
+                }
+
+                throw new InvalidOperationException("The cancellation path must throw.");
+            },
+        };
+        var runtime = CreateRuntime(
+            directory.Path,
+            session,
+            new FakeRealtimeConnection(),
+            new FakeSyncCoordinator(),
+            cache: new RecordingAsyncDisposable(() =>
+            {
+                Assert.True(openCanceled.Task.IsCompleted);
+                cacheDisposed = true;
+                return ValueTask.CompletedTask;
+            }),
+            attachmentDownloadCoordinator: attachmentCoordinator);
+
+        var open = runtime.OpenAttachmentAsync(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            new IntPtr(42),
+            _ => ClientAttachmentOpenStatus.HandedToWindows);
+        await openStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var logout = await runtime.LogoutAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(ClientLogoutStatus.LoggedOut, logout);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => open);
+        Assert.True(cacheDisposed);
+        Assert.True(session.IsDisposeCompleted);
+        Assert.True(attachmentCoordinator.IsDisposeCompleted);
+    }
+
+    [Fact]
+    public async Task LogoutAsync_WhenAttachmentOpenCommitIsStale_WaitsForCoordinatorCleanup()
+    {
+        using var directory = new TemporaryDirectory();
+        var cleanupStarted = NewSignal();
+        var cleanupRelease = NewSignal();
+        var coordinatorDisposed = NewSignal();
+        var cacheDisposed = false;
+        var session = CreateSession();
+        var attachmentCoordinator = new FakeAttachmentDownloadCoordinator
+        {
+            OpenAction = async (_, _, _, commit, _) =>
+            {
+                Assert.Equal(ClientAttachmentOpenStatus.Stale, commit(static () => true));
+                cleanupStarted.TrySetResult();
+                await cleanupRelease.Task;
+                return ClientAttachmentOpenOutcome.FromStatus(ClientAttachmentOpenStatus.Stale);
+            },
+            DisposeAction = () =>
+            {
+                coordinatorDisposed.TrySetResult();
+                return ValueTask.CompletedTask;
+            },
+        };
+        var runtime = CreateRuntime(
+            directory.Path,
+            session,
+            new FakeRealtimeConnection(),
+            new FakeSyncCoordinator(),
+            cache: new RecordingAsyncDisposable(() =>
+            {
+                cacheDisposed = true;
+                return ValueTask.CompletedTask;
+            }),
+            attachmentDownloadCoordinator: attachmentCoordinator);
+
+        var open = runtime.OpenAttachmentAsync(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            new IntPtr(42),
+            _ => ClientAttachmentOpenStatus.Stale);
+        await cleanupStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var logout = runtime.LogoutAsync();
+        await coordinatorDisposed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(logout.IsCompleted);
+        Assert.False(cacheDisposed);
+        Assert.False(session.IsDisposeCompleted);
+
+        cleanupRelease.TrySetResult();
+
+        Assert.Equal(ClientAttachmentOpenStatus.Stale, (await open).Status);
+        Assert.Equal(ClientLogoutStatus.LoggedOut, await logout.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(cacheDisposed);
+        Assert.True(session.IsDisposeCompleted);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_WhenAttachmentOpenIsCommitted_DoesNotWaitForWindowsCompletion()
+    {
+        using var directory = new TemporaryDirectory();
+        var windowsStarted = NewSignal();
+        var windowsRelease = NewSignal();
+        var cacheDisposed = false;
+        var attachmentCoordinator = new FakeAttachmentDownloadCoordinator
+        {
+            OpenAction = async (_, _, _, commit, _) =>
+            {
+                var status = commit(static () => true);
+                if (status != ClientAttachmentOpenStatus.HandedToWindows)
+                {
+                    return ClientAttachmentOpenOutcome.FromStatus(status);
+                }
+
+                windowsStarted.TrySetResult();
+                await windowsRelease.Task;
+                return ClientAttachmentOpenOutcome.FromStatus(
+                    ClientAttachmentOpenStatus.HandedToWindows);
+            },
+        };
+        var runtime = CreateRuntime(
+            directory.Path,
+            CreateSession(),
+            new FakeRealtimeConnection(),
+            new FakeSyncCoordinator(),
+            cache: new RecordingAsyncDisposable(() =>
+            {
+                cacheDisposed = true;
+                return ValueTask.CompletedTask;
+            }),
+            attachmentDownloadCoordinator: attachmentCoordinator);
+
+        var open = runtime.OpenAttachmentAsync(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            new IntPtr(42),
+            _ => ClientAttachmentOpenStatus.HandedToWindows);
+        await windowsStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await runtime.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(cacheDisposed);
+        Assert.True(attachmentCoordinator.IsDisposeCompleted);
+        windowsRelease.TrySetResult();
+        Assert.Equal(ClientAttachmentOpenStatus.HandedToWindows, (await open).Status);
+    }
+
+    [Fact]
+    public async Task LogoutAsync_WhenAttachmentOpenIsCommitted_DoesNotWaitForWindowsCompletion()
+    {
+        using var directory = new TemporaryDirectory();
+        var windowsStarted = NewSignal();
+        var windowsRelease = NewSignal();
+        var cacheDisposed = false;
+        var session = CreateSession();
+        var attachmentCoordinator = new FakeAttachmentDownloadCoordinator
+        {
+            OpenAction = async (_, _, _, commit, _) =>
+            {
+                var status = commit(static () => true);
+                if (status != ClientAttachmentOpenStatus.HandedToWindows)
+                {
+                    return ClientAttachmentOpenOutcome.FromStatus(status);
+                }
+
+                windowsStarted.TrySetResult();
+                await windowsRelease.Task;
+                return ClientAttachmentOpenOutcome.FromStatus(
+                    ClientAttachmentOpenStatus.HandedToWindows);
+            },
+        };
+        var runtime = CreateRuntime(
+            directory.Path,
+            session,
+            new FakeRealtimeConnection(),
+            new FakeSyncCoordinator(),
+            cache: new RecordingAsyncDisposable(() =>
+            {
+                cacheDisposed = true;
+                return ValueTask.CompletedTask;
+            }),
+            attachmentDownloadCoordinator: attachmentCoordinator);
+
+        var open = runtime.OpenAttachmentAsync(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            new IntPtr(42),
+            _ => ClientAttachmentOpenStatus.HandedToWindows);
+        await windowsStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var logout = await runtime.LogoutAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(ClientLogoutStatus.LoggedOut, logout);
+        Assert.True(cacheDisposed);
+        Assert.True(session.IsDisposeCompleted);
+        Assert.True(attachmentCoordinator.IsDisposeCompleted);
+        Assert.False(open.IsCompleted);
+
+        windowsRelease.TrySetResult();
+        Assert.Equal(ClientAttachmentOpenStatus.HandedToWindows, (await open).Status);
+    }
+
+    [Fact]
     public async Task LoadAttachmentImageAsync_WhenCoordinatorIsAvailable_ForwardsExactIdentityRenditionAndCommit()
     {
         using var directory = new TemporaryDirectory();
@@ -1877,6 +2094,16 @@ public sealed class ClientAccountRuntimeTests
             init;
         }
 
+        public Func<Guid, Guid, IntPtr, ClientAttachmentOpenCommit, CancellationToken,
+            Task<ClientAttachmentOpenOutcome>>?
+            OpenAction
+        {
+            get;
+            init;
+        }
+
+        public Func<ValueTask>? DisposeAction { get; init; }
+
         public Func<Guid, Guid, ClientAttachmentImageRendition,
             ClientAttachmentImageCommit, CancellationToken,
             Task<ClientAttachmentImageLoadOutcome>>?
@@ -1909,6 +2136,16 @@ public sealed class ClientAccountRuntimeTests
             Task.FromResult(ClientAttachmentRevealOutcome.FromStatus(
                 ClientAttachmentRevealStatus.LocalCacheFailure));
 
+        public Task<ClientAttachmentOpenOutcome> OpenAsync(
+            Guid conversationId,
+            Guid attachmentId,
+            IntPtr ownerWindow,
+            ClientAttachmentOpenCommit commit,
+            CancellationToken cancellationToken = default) =>
+            OpenAction?.Invoke(conversationId, attachmentId, ownerWindow, commit, cancellationToken) ??
+            Task.FromResult(ClientAttachmentOpenOutcome.FromStatus(
+                ClientAttachmentOpenStatus.LocalFailure));
+
         public Task<ClientAttachmentImageLoadOutcome> LoadImageAsync(
             Guid conversationId,
             Guid attachmentId,
@@ -1927,7 +2164,7 @@ public sealed class ClientAccountRuntimeTests
         public ValueTask DisposeAsync()
         {
             IsDisposeCompleted = true;
-            return ValueTask.CompletedTask;
+            return DisposeAction?.Invoke() ?? ValueTask.CompletedTask;
         }
     }
 

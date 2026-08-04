@@ -539,6 +539,15 @@ public sealed partial class AccountScopedLocalCache
                 }
             }
 
+            if (result == LocalDownloadedAttachmentConfirmationResult.Confirmed)
+            {
+                // This is deliberately after the authorization callback: tests use
+                // it to cover the narrow post-authorize tail where the external
+                // Windows handoff can already exist but the read transaction has
+                // not yet been rolled back.
+                faultInjector?.BeforeDownloadedAttachmentConfirmationRollback();
+            }
+
             transaction.Rollback();
             return new LocalDownloadedAttachmentConfirmationOutcome(
                 LocalCacheOperationStatus.Ready,

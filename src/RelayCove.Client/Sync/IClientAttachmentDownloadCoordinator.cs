@@ -19,6 +19,13 @@ internal interface IClientAttachmentDownloadCoordinator : IAsyncDisposable
         ClientAttachmentRevealCommit commit,
         CancellationToken cancellationToken = default);
 
+    Task<ClientAttachmentOpenOutcome> OpenAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        IntPtr ownerWindow,
+        ClientAttachmentOpenCommit commit,
+        CancellationToken cancellationToken = default);
+
     Task<ClientAttachmentImageLoadOutcome> LoadImageAsync(
         Guid conversationId,
         Guid attachmentId,

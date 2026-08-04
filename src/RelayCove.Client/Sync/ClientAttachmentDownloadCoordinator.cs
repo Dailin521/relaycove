@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RelayCove.Client.Attachments;
 using RelayCove.Client.Storage;
 
@@ -13,11 +14,18 @@ internal sealed class ClientAttachmentDownloadCoordinator :
     private static readonly TimeSpan ImageProcessingWaitTimeout = TimeSpan.FromSeconds(10);
     private static readonly ConcurrentDictionary<string, AttachmentImageScopeState>
         ProcessImageScopeStates = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<
+        string,
+        ConcurrentDictionary<AttachmentFlightKey, AttachmentOpenFlight>>
+        ProcessOpenFlights = new(StringComparer.OrdinalIgnoreCase);
     private readonly Guid coordinatorInstanceId = Guid.NewGuid();
     private readonly AccountScopedLocalCache localCache;
     private readonly IClientAttachmentCacheStore cacheStore;
     private readonly ClientAttachmentDownloadHttpTransport transport;
     private readonly IWindowsAttachmentShell attachmentShell;
+    private readonly ClientAttachmentOpenStore attachmentOpenStore;
+    private readonly IWindowsAttachmentOpenService attachmentOpenService;
+    private readonly bool ownsAttachmentOpenService;
     private readonly Func<Guid, CancellationToken, Task> conversationRevokedAsync;
     private readonly ILogger<ClientAttachmentDownloadCoordinator> logger;
     private readonly CancellationTokenSource lifetimeCancellation = new();
@@ -27,6 +35,7 @@ internal sealed class ClientAttachmentDownloadCoordinator :
     private readonly ConcurrentDictionary<
         AttachmentFlightKey,
         AttachmentRevealFlight> activeReveals = new();
+    private readonly ConcurrentDictionary<AttachmentFlightKey, AttachmentOpenFlight> activeOpens;
     private readonly ConcurrentDictionary<
         AttachmentImageFlightKey,
         AttachmentImageFlight> activeImages;
@@ -48,13 +57,20 @@ internal sealed class ClientAttachmentDownloadCoordinator :
         IWindowsAttachmentShell? attachmentShell = null,
         ClientAttachmentImageDecodeAsync? decodeImageAsync = null,
         TimeSpan? imageDecodeTimeout = null,
-        Action<Exception>? criticalImageDecodeFailure = null)
+        Action<Exception>? criticalImageDecodeFailure = null,
+        ClientAttachmentOpenStore? attachmentOpenStore = null,
+        IWindowsAttachmentOpenService? attachmentOpenService = null)
     {
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
         this.cacheStore = cacheStore ?? throw new ArgumentNullException(nameof(cacheStore));
         this.transport = transport ?? throw new ArgumentNullException(nameof(transport));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.attachmentShell = attachmentShell ?? new WindowsAttachmentShell();
+        this.attachmentOpenStore = attachmentOpenStore ?? new ClientAttachmentOpenStore(
+            this.localCache.Identity);
+        ownsAttachmentOpenService = attachmentOpenService is null;
+        this.attachmentOpenService = attachmentOpenService ?? new WindowsAttachmentOpenService(
+            NullLogger<WindowsAttachmentOpenService>.Instance);
         this.decodeImageAsync = decodeImageAsync ?? ClientAttachmentImageDecoder.DecodeAsync;
         this.criticalImageDecodeFailure = criticalImageDecodeFailure ??
             FailFastOnCriticalImageDecodeFailure;
@@ -63,6 +79,9 @@ internal sealed class ClientAttachmentDownloadCoordinator :
             static _ => new AttachmentImageScopeState());
         activeImages = imageScopeState.ActiveImages;
         imageProcessingGate = imageScopeState.ProcessingGate;
+        activeOpens = ProcessOpenFlights.GetOrAdd(
+            this.localCache.Identity.DatabasePath,
+            static _ => new ConcurrentDictionary<AttachmentFlightKey, AttachmentOpenFlight>());
         this.imageDecodeTimeout = imageDecodeTimeout ?? TimeSpan.FromSeconds(10);
         if (this.imageDecodeTimeout <= TimeSpan.Zero ||
             this.imageDecodeTimeout > TimeSpan.FromMinutes(1))
@@ -505,6 +524,431 @@ internal sealed class ClientAttachmentDownloadCoordinator :
         }
     }
 
+    public async Task<ClientAttachmentOpenOutcome> OpenAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        IntPtr ownerWindow,
+        ClientAttachmentOpenCommit commit,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ValidateGuid(conversationId, nameof(conversationId));
+        ValidateGuid(attachmentId, nameof(attachmentId));
+        ArgumentNullException.ThrowIfNull(commit);
+        if (ownerWindow == IntPtr.Zero)
+        {
+            return ClientAttachmentOpenOutcome.FromStatus(ClientAttachmentOpenStatus.LocalFailure);
+        }
+
+        if (Volatile.Read(ref recoveryCompleted) == 0)
+        {
+            return ClientAttachmentOpenOutcome.FromStatus(ClientAttachmentOpenStatus.LocalFailure);
+        }
+
+        var flightKey = new AttachmentFlightKey(conversationId, attachmentId);
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            lifetimeCancellation.Token);
+        var flight = new AttachmentOpenFlight(coordinatorInstanceId, linkedCancellation);
+        if (!activeOpens.TryAdd(flightKey, flight))
+        {
+            return ClientAttachmentOpenOutcome.FromStatus(ClientAttachmentOpenStatus.InProgress);
+        }
+
+        var token = linkedCancellation.Token;
+        using var cancellationBarrier = token.UnsafeRegister(
+            static state =>
+            {
+                var activeOpen = (AttachmentOpenFlight)state!;
+                lock (activeOpen.CommitGate)
+                {
+                }
+            },
+            flight);
+        ClientAttachmentOpenLease? lease = null;
+        WindowsAttachmentOpenPreparation? preparation = null;
+        var managedLeaseCommitted = false;
+        var committedLaunch = false;
+        var detachedUncommittedCleanup = false;
+        try
+        {
+            var read = await localCache
+                .ReadDownloadedAttachmentAsync(conversationId, attachmentId, token)
+                .ConfigureAwait(false);
+            if (read.Status != LocalCacheOperationStatus.Ready)
+            {
+                return ClientAttachmentOpenOutcome.FromStatus(MapLocalOpenStatus(read.Status));
+            }
+
+            if (read.Result != LocalDownloadedAttachmentReadResult.Downloaded || read.Record is null)
+            {
+                return ClientAttachmentOpenOutcome.FromStatus(
+                    read.Result == LocalDownloadedAttachmentReadResult.AttachmentUnavailable
+                        ? ClientAttachmentOpenStatus.AttachmentUnavailable
+                        : ClientAttachmentOpenStatus.NotDownloaded);
+            }
+
+            var record = read.Record;
+            var cacheKey = CreateKeyFromRecord(record);
+            var resolution = await cacheStore
+                .ValidateAndResolveAsync(
+                    record.LocalPath!,
+                    cacheKey,
+                    record.Attachment.Size,
+                    token)
+                .ConfigureAwait(false);
+            var file = resolution.File;
+            if (resolution.Status != ClientAttachmentCacheStoreStatus.Ready || file is null)
+            {
+                return ClientAttachmentOpenOutcome.FromStatus(
+                    resolution.Status is ClientAttachmentCacheStoreStatus.NotFound or
+                        ClientAttachmentCacheStoreStatus.InvalidRelativePath or
+                        ClientAttachmentCacheStoreStatus.ValidationFailed
+                        ? ClientAttachmentOpenStatus.ValidationFailed
+                        : ClientAttachmentOpenStatus.LocalFailure);
+            }
+
+            ClientAttachmentOpenCopyOutcome copy;
+            using (file)
+            {
+                copy = await attachmentOpenStore
+                    .CreateCopyAsync(
+                        file,
+                        record.Attachment.OriginalFileName,
+                        record.Attachment.Size,
+                        cacheKey.Sha256,
+                        token)
+                    .ConfigureAwait(false);
+            }
+            if (copy.Status != ClientAttachmentOpenStoreStatus.Ready || copy.Lease is null)
+            {
+                return ClientAttachmentOpenOutcome.FromStatus(MapOpenStoreStatus(copy.Status));
+            }
+
+            lease = copy.Lease;
+            preparation = await attachmentOpenService
+                .PrepareAsync(lease, ownerWindow, token)
+                .ConfigureAwait(false);
+            if (!preparation.CanCommit)
+            {
+                return ClientAttachmentOpenOutcome.FromStatus(
+                    MapWindowsOpenStatus(preparation.Status));
+            }
+
+            var committedStatus = ClientAttachmentOpenStatus.LocalFailure;
+            LocalDownloadedAttachmentConfirmationOutcome confirmation;
+            try
+            {
+                confirmation = await localCache
+                    .ConfirmDownloadedAttachmentAsync(
+                        record,
+                        () =>
+                        {
+                            lock (flight.CommitGate)
+                            {
+                                if (token.IsCancellationRequested)
+                                {
+                                    committedStatus = MapCancellationOpenStatus(conversationId);
+                                    return;
+                                }
+
+                                var accessStatus = localCache.GetConversationAccessStatus(
+                                    conversationId);
+                                if (accessStatus != LocalCacheOperationStatus.Ready)
+                                {
+                                    committedStatus = MapLocalOpenStatus(accessStatus);
+                                    return;
+                                }
+
+                                // The shell executes this prepared-job transition while
+                                // holding its exact identity/selection gate. Nothing here
+                                // performs I/O or enters COM; successful return means all
+                                // three commit boundaries have linearized together.
+                                var shellStatus = commit(() =>
+                                {
+                                    // The managed lease becomes committed before the
+                                    // STA is allowed to acknowledge foreground
+                                    // protection. Execute remains separately held until
+                                    // this whole confirmation call unwinds its SQLite
+                                    // transaction, commit gate, and shell gate.
+                                    lease.Commit();
+                                    managedLeaseCommitted = true;
+                                    try
+                                    {
+                                        if (!preparation.Commit())
+                                        {
+                                            lease.RequestPurge();
+                                            return false;
+                                        }
+                                    }
+                                    catch
+                                    {
+                                        lease.RequestPurge();
+                                        throw;
+                                    }
+
+                                    committedLaunch = true;
+                                    return true;
+                                });
+                                // A caller that claims success without invoking the
+                                // supplied capability has not committed the STA job;
+                                // fail closed. Conversely, once the capability has
+                                // succeeded the external effect exists, so report the
+                                // actual handoff even if a faulty caller returns a
+                                // contradictory status afterwards.
+                                committedStatus = committedLaunch
+                                    ? ClientAttachmentOpenStatus.HandedToWindows
+                                    : shellStatus == ClientAttachmentOpenStatus.HandedToWindows
+                                        ? ClientAttachmentOpenStatus.LocalFailure
+                                        : shellStatus;
+                            }
+                        },
+                        token)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                // Only the confirmation call's caller can know every local gate
+                // has unwound. This is deliberately outside the callback: releasing
+                // inside it could overlap COM Execute with the SQLite transaction,
+                // the coordinator commit gate, or the shell state gate.
+                preparation.ReleaseExecute();
+            }
+            if (confirmation.Status != LocalCacheOperationStatus.Ready)
+            {
+                if (committedLaunch)
+                {
+                    logger.LogWarning(
+                        "Downloaded attachment confirmation completed after Windows handoff " +
+                        "with localStatus={LocalStatus}.",
+                        confirmation.Status);
+                    return await AwaitCommittedOpenOutcomeAsync(preparation).ConfigureAwait(false);
+                }
+
+                return ClientAttachmentOpenOutcome.FromStatus(
+                    MapLocalOpenStatus(confirmation.Status));
+            }
+
+            if (confirmation.Result != LocalDownloadedAttachmentConfirmationResult.Confirmed)
+            {
+                if (committedLaunch)
+                {
+                    logger.LogWarning(
+                        "Downloaded attachment confirmation completed after Windows handoff " +
+                        "with localResult={LocalResult}.",
+                        confirmation.Result);
+                    return await AwaitCommittedOpenOutcomeAsync(preparation).ConfigureAwait(false);
+                }
+
+                return ClientAttachmentOpenOutcome.FromStatus(
+                    confirmation.Result switch
+                    {
+                        LocalDownloadedAttachmentConfirmationResult.AttachmentUnavailable =>
+                            ClientAttachmentOpenStatus.AttachmentUnavailable,
+                        LocalDownloadedAttachmentConfirmationResult.NotDownloaded =>
+                            ClientAttachmentOpenStatus.NotDownloaded,
+                        _ => ClientAttachmentOpenStatus.Stale,
+                    });
+            }
+
+            if (!committedLaunch)
+            {
+                return ClientAttachmentOpenOutcome.FromStatus(committedStatus);
+            }
+
+            // Do not pass caller or runtime cancellation beyond the committed
+            // boundary. Attachment Manager owns this one Execute attempt now; its
+            // final stable result is still useful to the current WPF operation,
+            // while runtime termination was released by the commit callback.
+            return await AwaitCommittedOpenOutcomeAsync(preparation).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException exception)
+        {
+            if (committedLaunch)
+            {
+                logger.LogWarning(
+                    "Downloaded attachment confirmation threw after Windows handoff; " +
+                    "errorType={ErrorType}.",
+                    exception.GetType().Name);
+                return await AwaitCommittedOpenOutcomeAsync(preparation!).ConfigureAwait(false);
+            }
+
+            return ClientAttachmentOpenOutcome.FromStatus(MapCancellationOpenStatus(conversationId));
+        }
+        catch (ObjectDisposedException exception)
+        {
+            if (committedLaunch)
+            {
+                logger.LogWarning(
+                    "Downloaded attachment confirmation threw after Windows handoff; " +
+                    "errorType={ErrorType}.",
+                    exception.GetType().Name);
+                return await AwaitCommittedOpenOutcomeAsync(preparation!).ConfigureAwait(false);
+            }
+
+            return ClientAttachmentOpenOutcome.FromStatus(ClientAttachmentOpenStatus.Canceled);
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            if (committedLaunch)
+            {
+                logger.LogWarning(
+                    "Downloaded attachment confirmation threw after Windows handoff; " +
+                    "errorType={ErrorType}.",
+                    exception.GetType().Name);
+                return await AwaitCommittedOpenOutcomeAsync(preparation!).ConfigureAwait(false);
+            }
+
+            logger.LogWarning(
+                "Opening a downloaded attachment failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientAttachmentOpenOutcome.FromStatus(ClientAttachmentOpenStatus.LocalFailure);
+        }
+        finally
+        {
+            if (managedLeaseCommitted && preparation is not null && lease is not null)
+            {
+                await CompleteCommittedOpenCleanupAsync(preparation, lease).ConfigureAwait(false);
+                preparation = null;
+                lease = null;
+                managedLeaseCommitted = false;
+            }
+            else if (preparation is not null && lease is not null)
+            {
+                if (token.IsCancellationRequested)
+                {
+                    DetachUncommittedOpenCleanup(preparation, lease, flightKey, flight);
+                    detachedUncommittedCleanup = true;
+                }
+                else
+                {
+                    await CompleteUncommittedOpenCleanupAsync(preparation, lease, flightKey, flight)
+                        .ConfigureAwait(false);
+                }
+
+                preparation = null;
+                lease = null;
+            }
+
+            preparation?.Abort();
+            preparation?.Dispose();
+
+            if (lease is not null)
+            {
+                await lease.DisposeAsync().ConfigureAwait(false);
+            }
+
+            if (!managedLeaseCommitted &&
+                !detachedUncommittedCleanup &&
+                activeOpens.TryGetValue(flightKey, out var activeOpen) &&
+                ReferenceEquals(activeOpen, flight))
+            {
+                activeOpens.TryRemove(flightKey, out _);
+            }
+
+            await RetryPendingPurgeIfQuiescentAsync(conversationId).ConfigureAwait(false);
+        }
+    }
+
+    private void DetachUncommittedOpenCleanup(
+        WindowsAttachmentOpenPreparation preparation,
+        ClientAttachmentOpenLease lease,
+        AttachmentFlightKey flightKey,
+        AttachmentOpenFlight flight)
+    {
+        _ = CompleteUncommittedOpenCleanupAsync(preparation, lease, flightKey, flight);
+    }
+
+    private async Task CompleteUncommittedOpenCleanupAsync(
+        WindowsAttachmentOpenPreparation preparation,
+        ClientAttachmentOpenLease lease,
+        AttachmentFlightKey flightKey,
+        AttachmentOpenFlight flight)
+    {
+        try
+        {
+            preparation.Abort();
+            await preparation.Completion.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            logger.LogWarning(
+                "Waiting for an uncommitted attachment open cleanup failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
+        finally
+        {
+            preparation.Dispose();
+            try
+            {
+                await lease.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception) when (!IsCriticalException(exception))
+            {
+                logger.LogWarning(
+                    "Cleaning an uncommitted attachment open copy failed; errorType={ErrorType}.",
+                    exception.GetType().Name);
+            }
+
+            if (activeOpens.TryGetValue(flightKey, out var activeOpen) &&
+                ReferenceEquals(activeOpen, flight))
+            {
+                activeOpens.TryRemove(flightKey, out _);
+            }
+        }
+    }
+
+    private async Task CompleteCommittedOpenCleanupAsync(
+        WindowsAttachmentOpenPreparation preparation,
+        ClientAttachmentOpenLease lease)
+    {
+        try
+        {
+            // ConfirmDownloadedAttachmentAsync can report a stale/non-ready result
+            // after its callback has already committed. Never delete this managed
+            // path until the STA has completed and released its COM object.
+            await preparation.Completion.ConfigureAwait(false);
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            logger.LogWarning(
+                "Waiting for a committed attachment open completion failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
+        finally
+        {
+            preparation.Dispose();
+            try
+            {
+                var cleanup = await attachmentOpenStore
+                    .CompleteLaunchAsync(lease, CancellationToken.None)
+                    .ConfigureAwait(false);
+                if (cleanup.Status is ClientAttachmentOpenStoreStatus.StorageFailure or
+                    ClientAttachmentOpenStoreStatus.CleanupPending)
+                {
+                    logger.LogWarning(
+                        "Committed attachment open cleanup needs retry; status={Status}.",
+                        cleanup.Status);
+                }
+            }
+            catch (Exception exception) when (!IsCriticalException(exception))
+            {
+                logger.LogWarning(
+                    "Completing a committed attachment open cleanup failed; " +
+                    "errorType={ErrorType}.",
+                    exception.GetType().Name);
+            }
+        }
+    }
+
+    private static async Task<ClientAttachmentOpenOutcome> AwaitCommittedOpenOutcomeAsync(
+        WindowsAttachmentOpenPreparation preparation)
+    {
+        var execution = await preparation.Completion.ConfigureAwait(false);
+        return ClientAttachmentOpenOutcome.FromStatus(
+            MapCompletedWindowsOpenStatus(execution.Status));
+    }
+
     public async Task<ClientAttachmentCacheRecoveryStatus> RecoverAsync(
         CancellationToken cancellationToken = default)
     {
@@ -520,6 +964,14 @@ internal sealed class ClientAttachmentDownloadCoordinator :
             if (Volatile.Read(ref recoveryCompleted) != 0)
             {
                 return ClientAttachmentCacheRecoveryStatus.Ready;
+            }
+
+            var openRecovery = await attachmentOpenStore
+                .RecoverOrphansAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (openRecovery.Status == ClientAttachmentOpenStoreStatus.StorageFailure)
+            {
+                return ClientAttachmentCacheRecoveryStatus.StorageFailure;
             }
 
             var database = await localCache
@@ -675,7 +1127,7 @@ internal sealed class ClientAttachmentDownloadCoordinator :
         }
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref disposed, 1) == 0)
         {
@@ -706,6 +1158,23 @@ internal sealed class ClientAttachmentDownloadCoordinator :
                 }
             }
 
+            foreach (var open in activeOpens.Values)
+            {
+                if (open.OwnerId != coordinatorInstanceId)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    open.Cancellation.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // A committed Windows handoff is deliberately detached.
+                }
+            }
+
             foreach (var image in activeImages.Values)
             {
                 if (image.OwnerId != coordinatorInstanceId)
@@ -723,11 +1192,14 @@ internal sealed class ClientAttachmentDownloadCoordinator :
                 }
             }
 
+            await CleanupOpenCopiesAsync().ConfigureAwait(false);
+            if (ownsAttachmentOpenService)
+            {
+                await attachmentOpenService.DisposeAsync().ConfigureAwait(false);
+            }
             lifetimeCancellation.Dispose();
             recoveryGate.Dispose();
         }
-
-        return ValueTask.CompletedTask;
     }
 
     public override string ToString() =>
@@ -1076,6 +1548,23 @@ internal sealed class ClientAttachmentDownloadCoordinator :
             }
         }
 
+        foreach (var open in activeOpens)
+        {
+            if (open.Key.ConversationId != conversationId)
+            {
+                continue;
+            }
+
+            try
+            {
+                open.Value.Cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // A committed Windows handoff is deliberately no longer cancelable.
+            }
+        }
+
         foreach (var image in activeImages)
         {
             if (image.Key.ConversationId != conversationId)
@@ -1096,6 +1585,7 @@ internal sealed class ClientAttachmentDownloadCoordinator :
 
     private async Task PurgeConversationCacheAsync(Guid conversationId)
     {
+        await CleanupOpenCopiesAsync().ConfigureAwait(false);
         var outcome = await cacheStore
             .DeleteConversationAsync(conversationId, CancellationToken.None)
             .ConfigureAwait(false);
@@ -1107,6 +1597,29 @@ internal sealed class ClientAttachmentDownloadCoordinator :
 
         pendingConversationPurges.TryAdd(conversationId, 0);
         await RetryPendingPurgeIfQuiescentAsync(conversationId).ConfigureAwait(false);
+    }
+
+    private async Task CleanupOpenCopiesAsync()
+    {
+        try
+        {
+            var cleanup = await attachmentOpenStore
+                .CleanupCommittedAsync(CancellationToken.None)
+                .ConfigureAwait(false);
+            if (cleanup.Status is ClientAttachmentOpenStoreStatus.StorageFailure or
+                ClientAttachmentOpenStoreStatus.CleanupPending)
+            {
+                logger.LogWarning(
+                    "Attachment open-copy cleanup needs retry; status={Status}.",
+                    cleanup.Status);
+            }
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            logger.LogWarning(
+                "Attachment open-copy cleanup failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
     }
 
     private async Task RetryPendingPurgeIfQuiescentAsync(Guid conversationId)
@@ -1268,6 +1781,21 @@ internal sealed class ClientAttachmentDownloadCoordinator :
         }
     }
 
+    private ClientAttachmentOpenStatus MapCancellationOpenStatus(Guid conversationId)
+    {
+        try
+        {
+            return localCache.GetConversationAccessStatus(conversationId) ==
+                LocalCacheOperationStatus.RevokedConversation
+                    ? ClientAttachmentOpenStatus.AccessRevoked
+                    : ClientAttachmentOpenStatus.Canceled;
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientAttachmentOpenStatus.Canceled;
+        }
+    }
+
     private ClientAttachmentImageLoadStatus MapCancellationImageStatus(Guid conversationId)
     {
         try
@@ -1327,6 +1855,54 @@ internal sealed class ClientAttachmentDownloadCoordinator :
                 ClientAttachmentRevealStatus.Stale,
             _ => ClientAttachmentRevealStatus.LocalCacheFailure,
         };
+
+    private static ClientAttachmentOpenStatus MapLocalOpenStatus(
+        LocalCacheOperationStatus status) =>
+        status switch
+        {
+            LocalCacheOperationStatus.RevokedConversation =>
+                ClientAttachmentOpenStatus.AccessRevoked,
+            LocalCacheOperationStatus.UnknownConversation =>
+                ClientAttachmentOpenStatus.AttachmentUnavailable,
+            LocalCacheOperationStatus.TransientFailure or LocalCacheOperationStatus.Conflict =>
+                ClientAttachmentOpenStatus.Stale,
+            _ => ClientAttachmentOpenStatus.LocalFailure,
+        };
+
+    private static ClientAttachmentOpenStatus MapOpenStoreStatus(
+        ClientAttachmentOpenStoreStatus status) =>
+        status switch
+        {
+            ClientAttachmentOpenStoreStatus.InvalidFileName =>
+                ClientAttachmentOpenStatus.InvalidFileName,
+            ClientAttachmentOpenStoreStatus.QuotaExceeded or
+                ClientAttachmentOpenStoreStatus.StoreFull => ClientAttachmentOpenStatus.StoreFull,
+            ClientAttachmentOpenStoreStatus.ValidationFailed =>
+                ClientAttachmentOpenStatus.ValidationFailed,
+            _ => ClientAttachmentOpenStatus.LocalFailure,
+        };
+
+    private static ClientAttachmentOpenStatus MapWindowsOpenStatus(
+        WindowsAttachmentOpenStatus status) =>
+        status switch
+        {
+            WindowsAttachmentOpenStatus.Busy => ClientAttachmentOpenStatus.InProgress,
+            WindowsAttachmentOpenStatus.PolicyRejected =>
+                ClientAttachmentOpenStatus.PolicyRejected,
+            WindowsAttachmentOpenStatus.UserCanceled =>
+                ClientAttachmentOpenStatus.UserCanceled,
+            WindowsAttachmentOpenStatus.NoAssociation =>
+                ClientAttachmentOpenStatus.NoAssociation,
+            WindowsAttachmentOpenStatus.Canceled or WindowsAttachmentOpenStatus.Aborted =>
+                ClientAttachmentOpenStatus.Canceled,
+            _ => ClientAttachmentOpenStatus.LocalFailure,
+        };
+
+    private static ClientAttachmentOpenStatus MapCompletedWindowsOpenStatus(
+        WindowsAttachmentOpenStatus status) =>
+        status == WindowsAttachmentOpenStatus.Executed
+            ? ClientAttachmentOpenStatus.HandedToWindows
+            : MapWindowsOpenStatus(status);
 
     private static ClientAttachmentDownloadStatus MapLocalStatus(
         LocalCacheOperationStatus status) =>
@@ -1411,6 +1987,17 @@ internal sealed class ClientAttachmentDownloadCoordinator :
     private sealed class AttachmentRevealFlight(
         CancellationTokenSource cancellation)
     {
+        public object CommitGate { get; } = new();
+
+        public CancellationTokenSource Cancellation { get; } = cancellation;
+    }
+
+    private sealed class AttachmentOpenFlight(
+        Guid ownerId,
+        CancellationTokenSource cancellation)
+    {
+        public Guid OwnerId { get; } = ownerId;
+
         public object CommitGate { get; } = new();
 
         public CancellationTokenSource Cancellation { get; } = cancellation;

@@ -25,5 +25,12 @@ internal interface IWindowsAttachmentExecuteNative
 
     int CheckPolicy();
 
-    int Execute(IntPtr ownerWindow, out IntPtr processHandle);
+    // Invokes enteredExecute at the native Execute call boundary, immediately
+    // before the COM call. Service shutdown uses this acknowledgement to keep
+    // the background STA alive for an already committed launch without waiting
+    // for the external application or policy provider to return.
+    int Execute(
+        IntPtr ownerWindow,
+        Action enteredExecute,
+        out IntPtr processHandle);
 }

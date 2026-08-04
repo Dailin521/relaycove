@@ -8,7 +8,7 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
 {
     private const int HResultUserCanceled = unchecked((int)0x800704C7);
     private const int HResultNoAssociation = unchecked((int)0x80070483);
-    private const int MaximumActiveJobs = 2;
+    private const int MaximumActiveJobs = 1;
     private const string ClientTitle = "RelayCove";
     private static readonly Guid ClientGuid = new("59CC8A1C-F552-4F45-96D5-2E0B7B5CB6F9");
 
@@ -23,19 +23,24 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
     private readonly HashSet<OpenJob> activeJobs = [];
     private readonly IWindowsAttachmentOpenNativeBackend nativeBackend;
     private readonly ILogger<WindowsAttachmentOpenService> logger;
+    private readonly Action? beforeForegroundProtection;
     private readonly TaskCompletionSource started = new(
         TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource stopped = new(
+        TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource disposalCompletion = new(
         TaskCreationOptions.RunContinuationsAsynchronously);
     private int disposed;
     private int workerStopped;
 
     public WindowsAttachmentOpenService(
         ILogger<WindowsAttachmentOpenService> logger,
-        IWindowsAttachmentOpenNativeBackend? nativeBackend = null)
+        IWindowsAttachmentOpenNativeBackend? nativeBackend = null,
+        Action? beforeForegroundProtection = null)
     {
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.nativeBackend = nativeBackend ?? new WindowsAttachmentOpenNativeBackend();
+        this.beforeForegroundProtection = beforeForegroundProtection;
 
         var worker = new Thread(WorkerMain)
         {
@@ -79,7 +84,14 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
             return CreateUnavailablePreparation(WindowsAttachmentOpenStatus.Unavailable);
         }
 
-        await started.Task.ConfigureAwait(false);
+        try
+        {
+            await started.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return CreateUnavailablePreparation(WindowsAttachmentOpenStatus.Canceled);
+        }
         if (Volatile.Read(ref disposed) != 0 || Volatile.Read(ref workerStopped) != 0)
         {
             return CreateUnavailablePreparation(WindowsAttachmentOpenStatus.Unavailable);
@@ -124,7 +136,7 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0)
         {
-            return ValueTask.CompletedTask;
+            return new ValueTask(disposalCompletion.Task);
         }
 
         OpenJob[] jobsToAbort;
@@ -132,15 +144,48 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
         {
             jobsToAbort = [.. activeJobs];
             jobs.Writer.TryComplete();
+            var disposal = DisposeActiveJobs(jobsToAbort);
+            if (disposal.IsCompletedSuccessfully)
+            {
+                disposalCompletion.TrySetResult();
+            }
+            else
+            {
+                _ = CompleteDisposalAsync(disposal);
+            }
         }
 
+        return new ValueTask(disposalCompletion.Task);
+    }
+
+    private async Task CompleteDisposalAsync(Task disposal)
+    {
+        try
+        {
+            await disposal.ConfigureAwait(false);
+            disposalCompletion.TrySetResult();
+        }
+        catch (Exception exception) when (!IsFatal(exception))
+        {
+            disposalCompletion.TrySetException(exception);
+        }
+    }
+
+    private static Task DisposeActiveJobs(OpenJob[] jobsToAbort)
+    {
         foreach (var job in jobsToAbort)
         {
             job.Abort();
         }
 
-        return ValueTask.CompletedTask;
+        var committedJobs = jobsToAbort.Where(static job => job.IsCommitted).ToArray();
+        return WaitForCommittedJobsToAttemptExecuteAsync(committedJobs);
     }
+
+    private static Task WaitForCommittedJobsToAttemptExecuteAsync(OpenJob[] committedJobs) =>
+        committedJobs.Length == 0
+            ? Task.CompletedTask
+            : Task.WhenAll(committedJobs.Select(static job => job.ExecuteAttemptOrTerminal.Task));
 
     private void WorkerMain()
     {
@@ -203,6 +248,7 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
     private void ProcessJob(OpenJob job, bool apartmentAvailable)
     {
         IWindowsAttachmentExecuteNative? attachmentExecute = null;
+        var foregroundExecution = false;
         try
         {
             if (job.IsAborted)
@@ -256,6 +302,32 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
                 return;
             }
 
+            try
+            {
+                // A background STA may be torn down during normal WPF process
+                // shutdown between managed acknowledgement and the COM call. Keep
+                // this one committed launch alive through Execute, handle/COM
+                // release, completion, and retirement; DisposeAsync still waits
+                // only for the native Execute boundary acknowledgement.
+                beforeForegroundProtection?.Invoke();
+                Thread.CurrentThread.IsBackground = false;
+                foregroundExecution = true;
+                job.CompleteForegroundProtection(succeeded: true);
+
+                // Commit acknowledgement intentionally precedes the COM call.
+                // The coordinator releases this only after its SQLite transaction,
+                // commit gate, and shell identity gate have all unwound.
+                job.ExecuteRelease.Task.GetAwaiter().GetResult();
+            }
+            catch (Exception exception) when (!IsFatal(exception))
+            {
+                logger.LogWarning(
+                    "Windows attachment open worker could not retain a committed execution.");
+                job.CompleteForegroundProtection(succeeded: false);
+                job.CompleteExecution(WindowsAttachmentOpenStatus.ExecuteFailed);
+                return;
+            }
+
             ExecuteOnce(attachmentExecute, job);
         }
         catch (Exception exception) when (!IsFatal(exception))
@@ -285,7 +357,20 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
             }
 
             job.CompleteIfNeeded();
+            job.CompleteForegroundProtection(succeeded: false);
+            job.CompleteAfterRelease();
             job.Retire();
+            if (foregroundExecution)
+            {
+                try
+                {
+                    Thread.CurrentThread.IsBackground = true;
+                }
+                catch (Exception exception) when (!IsFatal(exception))
+                {
+                    logger.LogWarning("Windows attachment open worker background restore failed.");
+                }
+            }
         }
     }
 
@@ -295,7 +380,10 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
         var executeResult = unchecked((int)0x80004005);
         try
         {
-            executeResult = attachmentExecute.Execute(job.OwnerWindow, out processHandle);
+            executeResult = attachmentExecute.Execute(
+                job.OwnerWindow,
+                job.MarkExecuteAttempted,
+                out processHandle);
         }
         finally
         {
@@ -321,6 +409,7 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
         {
             job.CompletePreparation(WindowsAttachmentOpenStatus.Unavailable);
             job.CompleteIfNeeded();
+            job.CompleteAfterRelease();
             job.Retire();
         }
     }
@@ -358,6 +447,8 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
         private int completed;
         private int retired;
         private int decision;
+        private int executeAttempted;
+        private WindowsAttachmentOpenStatus? terminalStatus;
 
         public OpenJob(string managedOpenCopyPath, IntPtr ownerWindow, Action<OpenJob> onCompleted)
         {
@@ -379,7 +470,18 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
         public TaskCompletionSource<WindowsAttachmentOpenResult> Completion { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public TaskCompletionSource ExecuteAttemptOrTerminal { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource ExecuteRelease { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private TaskCompletionSource<bool> ForegroundProtection { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
         public bool IsAborted => Volatile.Read(ref decision) == (int)OpenJobDecision.Aborted;
+
+        public bool IsCommitted => Volatile.Read(ref decision) == (int)OpenJobDecision.Committed;
 
         public bool IsPrepared => Volatile.Read(ref staged) != 0;
 
@@ -394,7 +496,7 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
             }
 
             Decision.TrySetResult(OpenJobDecision.Committed);
-            return true;
+            return ForegroundProtection.Task.GetAwaiter().GetResult();
         }
 
         public bool Abort()
@@ -410,6 +512,8 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
             Decision.TrySetResult(OpenJobDecision.Aborted);
             return true;
         }
+
+        public bool ReleaseExecute() => ExecuteRelease.TrySetResult();
 
         public bool CompletePreparation(WindowsAttachmentOpenStatus status)
         {
@@ -431,8 +535,36 @@ internal sealed class WindowsAttachmentOpenService : IWindowsAttachmentOpenServi
         {
             if (Interlocked.Exchange(ref completed, 1) == 0)
             {
-                Completion.TrySetResult(new WindowsAttachmentOpenResult(status));
+                terminalStatus = status;
+                if (Volatile.Read(ref executeAttempted) == 0)
+                {
+                    ExecuteAttemptOrTerminal.TrySetResult();
+                }
             }
+        }
+
+        public void MarkExecuteAttempted()
+        {
+            if (Interlocked.Exchange(ref executeAttempted, 1) == 0)
+            {
+                ExecuteAttemptOrTerminal.TrySetResult();
+            }
+        }
+
+        public void CompleteForegroundProtection(bool succeeded) =>
+            ForegroundProtection.TrySetResult(succeeded);
+
+        internal void FailForegroundProtection(Exception exception)
+        {
+            ArgumentNullException.ThrowIfNull(exception);
+            ForegroundProtection.TrySetException(exception);
+        }
+
+        public void CompleteAfterRelease()
+        {
+            CompleteIfNeeded();
+            Completion.TrySetResult(new WindowsAttachmentOpenResult(
+                terminalStatus ?? WindowsAttachmentOpenStatus.Unavailable));
         }
 
         public void Retire()

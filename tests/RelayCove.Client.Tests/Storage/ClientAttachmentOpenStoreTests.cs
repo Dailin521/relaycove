@@ -1,5 +1,5 @@
-using System.Security.Cryptography;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 using RelayCove.Client.Storage;
 
@@ -49,7 +49,13 @@ public sealed class ClientAttachmentOpenStoreTests : IDisposable
     [InlineData(".hidden.txt")]
     [InlineData("CON.txt")]
     [InlineData("COM1.txt")]
+    [InlineData("CON.payload.txt")]
+    [InlineData("LPT1.any.exe")]
     [InlineData("right-to-left\u202E.txt")]
+    [InlineData("payload.K")]
+    [InlineData("payload.Ｋ")]
+    [InlineData("payload.ＴＸＴ")]
+    [InlineData("payload.é")]
     [InlineData("document.abcdefghijklmnopq")]
     public async Task CreateCopyAsync_WhenLeafDoesNotHaveSafeTerminalExtension_RejectsWithoutCreatingCopy(string fileName)
     {

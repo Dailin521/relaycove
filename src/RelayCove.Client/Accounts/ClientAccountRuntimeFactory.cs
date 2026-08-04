@@ -1,6 +1,7 @@
 using System.IO;
 using System.Net.Http;
 using Microsoft.Extensions.Logging;
+using RelayCove.Client.Attachments;
 using RelayCove.Client.Auth;
 using RelayCove.Client.Notifications;
 using RelayCove.Client.Realtime;
@@ -27,6 +28,7 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
     private readonly Func<ClientNotificationSettingsSnapshot> notificationSettingsProvider;
     private readonly IClientNotificationAttention notificationAttention;
     private readonly IWindowsAttachmentShell attachmentShell;
+    private readonly IWindowsAttachmentOpenService? attachmentOpenService;
 
     public ClientAccountRuntimeFactory(
         HttpClient httpClient,
@@ -97,7 +99,8 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
         IClientNotificationAttention? notificationAttention = null,
         HttpClient? attachmentUploadHttpClient = null,
         string? attachmentCacheRootDirectory = null,
-        IWindowsAttachmentShell? attachmentShell = null)
+        IWindowsAttachmentShell? attachmentShell = null,
+        IWindowsAttachmentOpenService? attachmentOpenService = null)
     {
         this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         this.attachmentUploadHttpClient = attachmentUploadHttpClient ?? httpClient;
@@ -112,6 +115,10 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
         this.notificationAttention = notificationAttention ??
             NoOpClientNotificationAttention.Instance;
         this.attachmentShell = attachmentShell ?? new WindowsAttachmentShell();
+        // Production composition injects its application-lifetime STA service. Test
+        // and compatibility factory paths deliberately leave this null so each
+        // coordinator owns and disposes its short-lived fallback worker.
+        this.attachmentOpenService = attachmentOpenService;
         if (notificationPlatform is null)
         {
             var windowsPlatform = new WindowsClientNotificationPlatform(
@@ -200,7 +207,9 @@ internal sealed class ClientAccountRuntimeFactory : IClientAccountRuntimeFactory
                 attachmentDownloadTransport,
                 loggerFactory.CreateLogger<ClientAttachmentDownloadCoordinator>(),
                 notificationRoundCoordinator.ConversationRevokedAsync,
-                attachmentShell);
+                attachmentShell,
+                attachmentOpenStore: new ClientAttachmentOpenStore(identity),
+                attachmentOpenService: attachmentOpenService);
             var attachmentRecovery = await attachmentDownloadCoordinator
                 .RecoverAsync(cancellationToken)
                 .ConfigureAwait(false);

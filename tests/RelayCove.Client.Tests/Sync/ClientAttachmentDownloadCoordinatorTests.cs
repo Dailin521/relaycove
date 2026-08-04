@@ -721,6 +721,498 @@ public sealed class ClientAttachmentDownloadCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task OpenAsync_WhenExactConfirmationAndUiCommitSucceed_ExecutesAndReturnsHandedToWindows()
+    {
+        var payload = "open confirmed bytes"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var openStore = CreateOpenStore(prepared);
+        var windowsOpen = new FakeWindowsAttachmentOpenService(
+            WindowsAttachmentOpenStatus.Prepared,
+            WindowsAttachmentOpenStatus.Executed);
+        var commitCount = 0;
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Opening must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentOpenStore: openStore,
+            attachmentOpenService: windowsOpen);
+        await coordinator.RecoverAsync();
+
+        var outcome = await coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            commitPreparedJob =>
+            {
+                Assert.True(commitPreparedJob());
+                Interlocked.Increment(ref commitCount);
+                return ClientAttachmentOpenStatus.HandedToWindows;
+            });
+
+        Assert.Equal(ClientAttachmentOpenStatus.HandedToWindows, outcome.Status);
+        Assert.Equal(1, Volatile.Read(ref commitCount));
+        Assert.Equal(1, windowsOpen.PreparedCount);
+        Assert.Equal(1, windowsOpen.ExecuteCount);
+    }
+
+    [Fact]
+    public async Task OpenAsync_WhenUiCommitReturnsStale_AbortsPreparedJobWithoutExecuteAndDeletesCopy()
+    {
+        var payload = "stale open bytes"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var openStore = CreateOpenStore(prepared);
+        var windowsOpen = new FakeWindowsAttachmentOpenService(
+            WindowsAttachmentOpenStatus.Prepared,
+            WindowsAttachmentOpenStatus.Executed);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Opening must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentOpenStore: openStore,
+            attachmentOpenService: windowsOpen);
+        await coordinator.RecoverAsync();
+
+        var outcome = await coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            static _ => ClientAttachmentOpenStatus.Stale);
+
+        Assert.Equal(ClientAttachmentOpenStatus.Stale, outcome.Status);
+        await windowsOpen.Aborted.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, windowsOpen.ExecuteCount);
+        Assert.Empty(Directory.EnumerateFiles(openStore.ScopeDirectory));
+    }
+
+    [Fact]
+    public async Task OpenAsync_WhenUiClaimsHandoffWithoutCommittingPreparedJob_FailsClosed()
+    {
+        var payload = "uncommitted claimed handoff bytes"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var openStore = CreateOpenStore(prepared);
+        var windowsOpen = new FakeWindowsAttachmentOpenService(
+            WindowsAttachmentOpenStatus.Prepared,
+            WindowsAttachmentOpenStatus.Executed);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Opening must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentOpenStore: openStore,
+            attachmentOpenService: windowsOpen);
+        await coordinator.RecoverAsync();
+
+        var outcome = await coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            static _ => ClientAttachmentOpenStatus.HandedToWindows);
+
+        Assert.Equal(ClientAttachmentOpenStatus.LocalFailure, outcome.Status);
+        await windowsOpen.Aborted.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, windowsOpen.ExecuteCount);
+        Assert.Empty(Directory.EnumerateFiles(openStore.ScopeDirectory));
+    }
+
+    [Theory]
+    [InlineData((int)FakeOpenCommitProtection.Failed)]
+    [InlineData((int)FakeOpenCommitProtection.Throws)]
+    public async Task OpenAsync_WhenPreparedCommitDoesNotAcknowledge_DoesNotHandOffAndCleansCommittedLease(
+        int protectionValue)
+    {
+        var protection = (FakeOpenCommitProtection)protectionValue;
+        var payload = "unacknowledged prepared commit bytes"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var openStore = CreateOpenStore(prepared);
+        var windowsOpen = new FakeWindowsAttachmentOpenService(
+            WindowsAttachmentOpenStatus.Prepared,
+            WindowsAttachmentOpenStatus.Executed,
+            commitProtection: protection);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Opening must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentOpenStore: openStore,
+            attachmentOpenService: windowsOpen);
+        await coordinator.RecoverAsync();
+
+        var outcome = await coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            CommitOpen);
+
+        Assert.Equal(ClientAttachmentOpenStatus.LocalFailure, outcome.Status);
+        Assert.Equal(0, windowsOpen.ExecuteCount);
+        Assert.Empty(Directory.EnumerateFiles(openStore.ScopeDirectory));
+    }
+
+    [Fact]
+    public async Task OpenAsync_WhenAccessIsRevokedBeforeConfirmation_DoesNotExecuteAndDeletesCopy()
+    {
+        var payload = "open revoke before confirmation"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var blockingStore = new BlockingCacheStore(prepared.Store);
+        var openStore = CreateOpenStore(prepared);
+        var windowsOpen = new FakeWindowsAttachmentOpenService(
+            WindowsAttachmentOpenStatus.Prepared,
+            WindowsAttachmentOpenStatus.Executed);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Opening must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            cacheStore: blockingStore,
+            attachmentOpenStore: openStore,
+            attachmentOpenService: windowsOpen);
+        await coordinator.RecoverAsync();
+        blockingStore.BlockNextValidation();
+
+        var open = coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            CommitOpen);
+        await blockingStore.ValidationCompleted.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(
+            LocalCacheOperationStatus.RevokedConversation,
+            await prepared.Cache.RevokeConversationAccessAsync(prepared.Conversation.Id));
+        blockingStore.ReleaseValidation();
+
+        var outcome = await open;
+
+        Assert.Equal(ClientAttachmentOpenStatus.AccessRevoked, outcome.Status);
+        Assert.Equal(0, windowsOpen.ExecuteCount);
+        Assert.Empty(Directory.EnumerateFiles(openStore.ScopeDirectory));
+    }
+
+    [Fact]
+    public async Task OpenAsync_WhenDownloadedRecordChangesBeforeConfirmation_DoesNotExecuteAndDeletesCopy()
+    {
+        var payload = "open record invalidation"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var blockingStore = new BlockingCacheStore(prepared.Store);
+        var openStore = CreateOpenStore(prepared);
+        var windowsOpen = new FakeWindowsAttachmentOpenService(
+            WindowsAttachmentOpenStatus.Prepared,
+            WindowsAttachmentOpenStatus.Executed);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Opening must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            cacheStore: blockingStore,
+            attachmentOpenStore: openStore,
+            attachmentOpenService: windowsOpen);
+        await coordinator.RecoverAsync();
+        blockingStore.BlockNextValidation();
+
+        var open = coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            CommitOpen);
+        await blockingStore.ValidationCompleted.WaitAsync(TimeSpan.FromSeconds(5));
+        using (var connection = OpenConnection(prepared.Identity))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "UPDATE LocalAttachments SET Size = Size + 1;";
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
+
+        blockingStore.ReleaseValidation();
+        var outcome = await open;
+
+        Assert.Equal(ClientAttachmentOpenStatus.Stale, outcome.Status);
+        Assert.Equal(0, windowsOpen.ExecuteCount);
+        Assert.Empty(Directory.EnumerateFiles(openStore.ScopeDirectory));
+    }
+
+    [Fact]
+    public async Task OpenAsync_WhenSameAttachmentIsExecuting_ReturnsInProgress()
+    {
+        var payload = "concurrent open bytes"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var openStore = CreateOpenStore(prepared);
+        var windowsOpen = new FakeWindowsAttachmentOpenService(
+            WindowsAttachmentOpenStatus.Prepared,
+            WindowsAttachmentOpenStatus.Executed,
+            blockExecute: true);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Opening must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentOpenStore: openStore,
+            attachmentOpenService: windowsOpen);
+        await coordinator.RecoverAsync();
+
+        var first = coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            CommitOpen);
+        await windowsOpen.ExecuteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = await coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            CommitOpen);
+        windowsOpen.ReleaseExecute();
+
+        Assert.Equal(ClientAttachmentOpenStatus.InProgress, second.Status);
+        Assert.Equal(ClientAttachmentOpenStatus.HandedToWindows, (await first).Status);
+        Assert.Equal(1, windowsOpen.ExecuteCount);
+    }
+
+    [Theory]
+    [InlineData((int)WindowsAttachmentOpenStatus.PolicyRejected, (int)ClientAttachmentOpenStatus.PolicyRejected)]
+    [InlineData((int)WindowsAttachmentOpenStatus.Busy, (int)ClientAttachmentOpenStatus.InProgress)]
+    public async Task OpenAsync_WhenWindowsPreflightRejects_LeavesNoCopy(
+        int preparationStatusValue,
+        int expectedStatusValue)
+    {
+        var preparationStatus = (WindowsAttachmentOpenStatus)preparationStatusValue;
+        var expectedStatus = (ClientAttachmentOpenStatus)expectedStatusValue;
+        var payload = "open preflight bytes"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var openStore = CreateOpenStore(prepared);
+        var windowsOpen = new FakeWindowsAttachmentOpenService(
+            preparationStatus,
+            WindowsAttachmentOpenStatus.Executed);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Opening must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentOpenStore: openStore,
+            attachmentOpenService: windowsOpen);
+        await coordinator.RecoverAsync();
+
+        var outcome = await coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            CommitOpen);
+
+        Assert.Equal(expectedStatus, outcome.Status);
+        Assert.Equal(0, windowsOpen.ExecuteCount);
+        Assert.Empty(Directory.EnumerateFiles(openStore.ScopeDirectory));
+    }
+
+    [Theory]
+    [InlineData((int)WindowsAttachmentOpenStatus.UserCanceled, (int)ClientAttachmentOpenStatus.UserCanceled)]
+    [InlineData((int)WindowsAttachmentOpenStatus.NoAssociation, (int)ClientAttachmentOpenStatus.NoAssociation)]
+    public async Task OpenAsync_WhenCallerCancelsAfterCommit_WaitsForAndMapsWindowsResult(
+        int executionStatusValue,
+        int expectedStatusValue)
+    {
+        var executionStatus = (WindowsAttachmentOpenStatus)executionStatusValue;
+        var expectedStatus = (ClientAttachmentOpenStatus)expectedStatusValue;
+        var payload = "open canceled caller bytes"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var openStore = CreateOpenStore(prepared);
+        var windowsOpen = new FakeWindowsAttachmentOpenService(
+            WindowsAttachmentOpenStatus.Prepared,
+            executionStatus,
+            blockExecute: true);
+        using var cancellation = new CancellationTokenSource();
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Opening must not issue HTTP.")));
+        await using var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentOpenStore: openStore,
+            attachmentOpenService: windowsOpen);
+        await coordinator.RecoverAsync();
+
+        var open = coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            CommitOpen,
+            cancellation.Token);
+        await windowsOpen.ExecuteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        windowsOpen.ReleaseExecute();
+
+        Assert.Equal(expectedStatus, (await open).Status);
+        Assert.Equal(1, windowsOpen.ExecuteCount);
+    }
+
+    [Fact]
+    public async Task OpenAsync_WhenDisposedDuringCommittedExecution_RequestsPurgeAndDeletesOnlyAfterCompletion()
+    {
+        var payload = "open runtime cancellation bytes"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var openStore = CreateOpenStore(prepared);
+        var windowsOpen = new FakeWindowsAttachmentOpenService(
+            WindowsAttachmentOpenStatus.Prepared,
+            WindowsAttachmentOpenStatus.Executed,
+            blockExecute: true);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Opening must not issue HTTP.")));
+        var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentOpenStore: openStore,
+            attachmentOpenService: windowsOpen);
+        await coordinator.RecoverAsync();
+
+        var open = coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            CommitOpen);
+        await windowsOpen.ExecuteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Single(Directory.EnumerateFiles(openStore.ScopeDirectory));
+
+        await coordinator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Single(Directory.EnumerateFiles(openStore.ScopeDirectory));
+        windowsOpen.ReleaseExecute();
+
+        Assert.Equal(ClientAttachmentOpenStatus.HandedToWindows, (await open).Status);
+        Assert.Empty(Directory.EnumerateFiles(openStore.ScopeDirectory));
+    }
+
+    [Fact]
+    public async Task OpenAsync_WhenConfirmationThrowsAfterPreparedCommit_WaitsForExecuteReleaseBeforeLogoutCleanup()
+    {
+        var payload = "committed confirmation tail failure bytes"u8.ToArray();
+        var faultInjector = new DownloadedAttachmentConfirmationRollbackThrowingFaultInjector();
+        await using var prepared = await CreatePreparedAsync(payload, faultInjector: faultInjector);
+        await MarkDownloadedAsync(prepared, payload);
+        var openStore = CreateOpenStore(prepared);
+        var windowsOpen = new FakeWindowsAttachmentOpenService(
+            WindowsAttachmentOpenStatus.Prepared,
+            WindowsAttachmentOpenStatus.Executed,
+            blockExecute: true);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Opening must not issue HTTP.")));
+        var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentOpenStore: openStore,
+            attachmentOpenService: windowsOpen);
+        await coordinator.RecoverAsync();
+
+        var open = coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            CommitOpen);
+        await windowsOpen.ExecuteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await faultInjector.Called.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(faultInjector.WasCalled);
+        Assert.Equal(1, windowsOpen.ExecuteCount);
+        var logout = coordinator.DisposeAsync().AsTask();
+        Assert.False(open.IsCompleted);
+        Assert.Single(Directory.EnumerateFiles(openStore.ScopeDirectory));
+
+        windowsOpen.ReleaseExecute();
+
+        Assert.Equal(ClientAttachmentOpenStatus.HandedToWindows, (await open).Status);
+        await logout.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Empty(Directory.EnumerateFiles(openStore.ScopeDirectory));
+    }
+
+    [Fact]
+    public async Task OpenAsync_WhenPostAuthorizeTailIsBlocked_DoesNotExecuteUntilConfirmationUnwinds()
+    {
+        var payload = "blocked post-authorize confirmation tail bytes"u8.ToArray();
+        var faultInjector = new BlockingDownloadedAttachmentConfirmationRollbackFaultInjector();
+        await using var prepared = await CreatePreparedAsync(payload, faultInjector: faultInjector);
+        await MarkDownloadedAsync(prepared, payload);
+        var openStore = CreateOpenStore(prepared);
+        var windowsOpen = new FakeWindowsAttachmentOpenService(
+            WindowsAttachmentOpenStatus.Prepared,
+            WindowsAttachmentOpenStatus.Executed,
+            blockExecute: true);
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Opening must not issue HTTP.")));
+        var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentOpenStore: openStore,
+            attachmentOpenService: windowsOpen);
+        await coordinator.RecoverAsync();
+
+        var open = coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            CommitOpen);
+        await faultInjector.TailStarted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(0, windowsOpen.ExecuteCount);
+        Assert.False(open.IsCompleted);
+        faultInjector.ReleaseTail();
+        await windowsOpen.ExecuteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, windowsOpen.ExecuteCount);
+
+        var logout = coordinator.DisposeAsync().AsTask();
+        Assert.False(open.IsCompleted);
+        Assert.Single(Directory.EnumerateFiles(openStore.ScopeDirectory));
+        windowsOpen.ReleaseExecute();
+
+        Assert.Equal(ClientAttachmentOpenStatus.HandedToWindows, (await open).Status);
+        await logout.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Empty(Directory.EnumerateFiles(openStore.ScopeDirectory));
+    }
+
+    [Fact]
+    public async Task OpenAsync_WhenLogoutCancelsBlockedPolicy_RetainsCopyUntilStaWorkerReleasesIt()
+    {
+        var payload = "blocked policy cleanup bytes"u8.ToArray();
+        await using var prepared = await CreatePreparedAsync(payload);
+        await MarkDownloadedAsync(prepared, payload);
+        var openStore = CreateOpenStore(prepared);
+        var windowsOpen = new BlockingPolicyWindowsAttachmentOpenService();
+        using var httpClient = new HttpClient(new DelegateHttpHandler(
+            (_, _) => throw new InvalidOperationException("Opening must not issue HTTP.")));
+        var coordinator = CreateCoordinator(
+            prepared,
+            httpClient,
+            attachmentOpenStore: openStore,
+            attachmentOpenService: windowsOpen);
+        await coordinator.RecoverAsync();
+
+        var open = coordinator.OpenAsync(
+            prepared.Conversation.Id,
+            prepared.Attachment.Id,
+            new IntPtr(1),
+            CommitOpen);
+        await windowsOpen.PolicyCheckStarted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await coordinator.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(
+            ClientAttachmentOpenStatus.Canceled,
+            (await open.WaitAsync(TimeSpan.FromSeconds(5))).Status);
+        Assert.Single(Directory.EnumerateFiles(openStore.ScopeDirectory));
+        Assert.Equal(0, windowsOpen.ExecuteCount);
+
+        windowsOpen.ReleasePolicyCheck();
+        await windowsOpen.Released.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitForDirectoryToBeEmptyAsync(openStore.ScopeDirectory);
+
+        Assert.Equal(0, windowsOpen.ExecuteCount);
+    }
+
+    [Fact]
     public async Task LoadImageAsync_WhenDownloadedContentIsVerified_ReturnsFrozenPathlessResult()
     {
         var payload = "verified image bytes"u8.ToArray();
@@ -1493,6 +1985,11 @@ public sealed class ClientAttachmentDownloadCoordinatorTests : IDisposable
     private static ClientAttachmentRevealStatus CommitReveal() =>
         ClientAttachmentRevealStatus.Revealed;
 
+    private static ClientAttachmentOpenStatus CommitOpen(Func<bool> commitPreparedJob) =>
+        commitPreparedJob()
+            ? ClientAttachmentOpenStatus.HandedToWindows
+            : ClientAttachmentOpenStatus.LocalFailure;
+
     private static ClientAttachmentImageLoadStatus CommitImage() =>
         ClientAttachmentImageLoadStatus.Ready;
 
@@ -1513,6 +2010,20 @@ public sealed class ClientAttachmentDownloadCoordinatorTests : IDisposable
             image,
             wasDownsampled: false,
             new ClientAttachmentImageSafeSize(1, 1));
+    }
+
+    private static async Task WaitForDirectoryToBeEmptyAsync(string directory)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (Directory.EnumerateFiles(directory).Any())
+        {
+            if (DateTime.UtcNow >= deadline)
+            {
+                Assert.Empty(Directory.EnumerateFiles(directory));
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(10));
+        }
     }
 
     private async Task<Prepared> CreatePreparedAsync(
@@ -1556,7 +2067,9 @@ public sealed class ClientAttachmentDownloadCoordinatorTests : IDisposable
         IWindowsAttachmentShell? attachmentShell = null,
         ClientAttachmentImageDecodeAsync? decodeImageAsync = null,
         TimeSpan? imageDecodeTimeout = null,
-        Action<Exception>? criticalImageDecodeFailure = null) =>
+        Action<Exception>? criticalImageDecodeFailure = null,
+        ClientAttachmentOpenStore? attachmentOpenStore = null,
+        IWindowsAttachmentOpenService? attachmentOpenService = null) =>
         new(
             prepared.Cache,
             cacheStore ?? prepared.Store,
@@ -1570,7 +2083,12 @@ public sealed class ClientAttachmentDownloadCoordinatorTests : IDisposable
             attachmentShell,
             decodeImageAsync,
             imageDecodeTimeout,
-            criticalImageDecodeFailure);
+            criticalImageDecodeFailure,
+            attachmentOpenStore,
+            attachmentOpenService);
+
+    private ClientAttachmentOpenStore CreateOpenStore(Prepared prepared) =>
+        new(prepared.Identity, Path.Combine(rootDirectory, "open"));
 
     private static async Task<string> MarkDownloadedAsync(
         Prepared prepared,
@@ -1765,6 +2283,185 @@ public sealed class ClientAttachmentDownloadCoordinatorTests : IDisposable
         public void Release() => release.TrySetResult();
     }
 
+    private sealed class BlockingPolicyWindowsAttachmentOpenService : IWindowsAttachmentOpenService
+    {
+        private readonly TaskCompletionSource policyCheckStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource policyCheckRelease = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource released = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task PolicyCheckStarted => policyCheckStarted.Task;
+
+        public Task Released => released.Task;
+
+        public int ExecuteCount => 0;
+
+        public ValueTask<WindowsAttachmentOpenPreparation> PrepareAsync(
+            ClientAttachmentOpenLease managedOpenCopy,
+            IntPtr ownerWindow,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(managedOpenCopy);
+            var job = new WindowsAttachmentOpenService.OpenJob(
+                managedOpenCopy.LocalPath,
+                ownerWindow,
+                static _ => { });
+            _ = CompleteAfterPolicyCheckAsync(job);
+            return WaitForPreparationAsync(job, cancellationToken);
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        public void ReleasePolicyCheck() => policyCheckRelease.TrySetResult();
+
+        private static async ValueTask<WindowsAttachmentOpenPreparation> WaitForPreparationAsync(
+            WindowsAttachmentOpenService.OpenJob job,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                var status = await job.Staged.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+                return new WindowsAttachmentOpenPreparation(
+                    status,
+                    status == WindowsAttachmentOpenStatus.Prepared ? job : null,
+                    job.Completion.Task);
+            }
+            catch (OperationCanceledException)
+            {
+                job.Abort();
+                return new WindowsAttachmentOpenPreparation(
+                    WindowsAttachmentOpenStatus.Canceled,
+                    job: null,
+                    job.Completion.Task);
+            }
+        }
+
+        private async Task CompleteAfterPolicyCheckAsync(WindowsAttachmentOpenService.OpenJob job)
+        {
+            policyCheckStarted.TrySetResult();
+            await policyCheckRelease.Task.ConfigureAwait(false);
+            if (job.IsAborted)
+            {
+                job.CompletePreparation(WindowsAttachmentOpenStatus.Aborted);
+            }
+            else
+            {
+                job.CompletePreparation(WindowsAttachmentOpenStatus.PolicyRejected);
+            }
+
+            job.CompleteAfterRelease();
+            job.Retire();
+            released.TrySetResult();
+        }
+    }
+
+    private enum FakeOpenCommitProtection
+    {
+        Succeeds = 0,
+        Failed = 1,
+        Throws = 2,
+    }
+
+    private sealed class FakeWindowsAttachmentOpenService(
+        WindowsAttachmentOpenStatus preparationStatus,
+        WindowsAttachmentOpenStatus executionStatus,
+        bool blockExecute = false,
+        FakeOpenCommitProtection commitProtection = FakeOpenCommitProtection.Succeeds) :
+        IWindowsAttachmentOpenService
+    {
+        private readonly TaskCompletionSource executeStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource aborted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource executeRelease = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private int preparedCount;
+        private int executeCount;
+
+        public Task ExecuteStarted => executeStarted.Task;
+
+        public Task Aborted => aborted.Task;
+
+        public int PreparedCount => Volatile.Read(ref preparedCount);
+
+        public int ExecuteCount => Volatile.Read(ref executeCount);
+
+        public ValueTask<WindowsAttachmentOpenPreparation> PrepareAsync(
+            ClientAttachmentOpenLease managedOpenCopy,
+            IntPtr ownerWindow,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(managedOpenCopy);
+            cancellationToken.ThrowIfCancellationRequested();
+            Interlocked.Increment(ref preparedCount);
+            if (preparationStatus != WindowsAttachmentOpenStatus.Prepared)
+            {
+                return ValueTask.FromResult(new WindowsAttachmentOpenPreparation(
+                    preparationStatus,
+                    job: null,
+                    Task.FromResult(new WindowsAttachmentOpenResult(preparationStatus))));
+            }
+
+            var job = new WindowsAttachmentOpenService.OpenJob(
+                managedOpenCopy.LocalPath,
+                ownerWindow,
+                static _ => { });
+            Assert.True(job.CompletePreparation(WindowsAttachmentOpenStatus.Prepared));
+            _ = CompleteAsync(job);
+            return ValueTask.FromResult(new WindowsAttachmentOpenPreparation(
+                WindowsAttachmentOpenStatus.Prepared,
+                job,
+                job.Completion.Task));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+        public void ReleaseExecute() => executeRelease.TrySetResult();
+
+        private async Task CompleteAsync(WindowsAttachmentOpenService.OpenJob job)
+        {
+            var decision = await job.Decision.Task.ConfigureAwait(false);
+            if (decision != WindowsAttachmentOpenService.OpenJobDecision.Committed)
+            {
+                aborted.TrySetResult();
+                job.CompleteExecution(WindowsAttachmentOpenStatus.Aborted);
+                job.CompleteAfterRelease();
+                return;
+            }
+
+            if (commitProtection == FakeOpenCommitProtection.Failed)
+            {
+                job.CompleteForegroundProtection(succeeded: false);
+                job.CompleteExecution(WindowsAttachmentOpenStatus.ExecuteFailed);
+                job.CompleteAfterRelease();
+                return;
+            }
+
+            if (commitProtection == FakeOpenCommitProtection.Throws)
+            {
+                job.FailForegroundProtection(
+                    new InvalidOperationException("Injected foreground protection failure."));
+                job.CompleteExecution(WindowsAttachmentOpenStatus.ExecuteFailed);
+                job.CompleteAfterRelease();
+                return;
+            }
+
+            job.CompleteForegroundProtection(succeeded: true);
+            await job.ExecuteRelease.Task.ConfigureAwait(false);
+            Interlocked.Increment(ref executeCount);
+            executeStarted.TrySetResult();
+            if (blockExecute)
+            {
+                await executeRelease.Task.ConfigureAwait(false);
+            }
+
+            job.CompleteExecution(executionStatus);
+            job.CompleteAfterRelease();
+        }
+    }
+
     private sealed class AttachmentDownloadCommitThrowingFaultInjector : ILocalCacheFaultInjector
     {
         public string? ExpectedPath { get; set; }
@@ -1780,6 +2477,51 @@ public sealed class ClientAttachmentDownloadCoordinatorTests : IDisposable
             ObservedPublishedFile = ExpectedPath is not null && File.Exists(ExpectedPath);
             throw new InvalidOperationException("Injected attachment commit failure.");
         }
+    }
+
+    private sealed class DownloadedAttachmentConfirmationRollbackThrowingFaultInjector :
+        ILocalCacheFaultInjector
+    {
+        private readonly TaskCompletionSource called = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Called => called.Task;
+
+        public bool WasCalled { get; private set; }
+
+        public void BeforeRevocationTombstone(Guid conversationId)
+        {
+        }
+
+        public void BeforeDownloadedAttachmentConfirmationRollback()
+        {
+            WasCalled = true;
+            called.TrySetResult();
+            throw new InvalidOperationException("Injected post-authorize confirmation rollback failure.");
+        }
+    }
+
+    private sealed class BlockingDownloadedAttachmentConfirmationRollbackFaultInjector :
+        ILocalCacheFaultInjector
+    {
+        private readonly TaskCompletionSource tailStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource releaseTail = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task TailStarted => tailStarted.Task;
+
+        public void BeforeRevocationTombstone(Guid conversationId)
+        {
+        }
+
+        public void BeforeDownloadedAttachmentConfirmationRollback()
+        {
+            tailStarted.TrySetResult();
+            releaseTail.Task.GetAwaiter().GetResult();
+            throw new InvalidOperationException("Injected blocked post-authorize confirmation tail failure.");
+        }
+
+        public void ReleaseTail() => releaseTail.TrySetResult();
     }
 
     private sealed class BlockingCacheStore(IClientAttachmentCacheStore inner) :

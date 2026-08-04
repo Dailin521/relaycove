@@ -55,7 +55,8 @@ public sealed class MainWindowAttachmentDownloadPresentationTests
                 var button = Assert.Single(
                     FindVisualDescendants<Button>(window.MessageList),
                     candidate => ReferenceEquals(candidate.DataContext, attachment) &&
-                        !Equals(candidate.Content, "查看图片"));
+                        !Equals(candidate.Content, "查看图片") &&
+                        !Equals(candidate.Content, "打开"));
                 Assert.Equal("下载", button.Content);
                 Assert.True(button.IsEnabled);
                 Assert.Equal(
@@ -74,7 +75,8 @@ public sealed class MainWindowAttachmentDownloadPresentationTests
                 var sameButton = Assert.Single(
                     FindVisualDescendants<Button>(window.MessageList),
                     candidate => ReferenceEquals(candidate.DataContext, attachment) &&
-                        !Equals(candidate.Content, "查看图片"));
+                        !Equals(candidate.Content, "查看图片") &&
+                        !Equals(candidate.Content, "打开"));
                 Assert.Same(button, sameButton);
                 Assert.Equal("取消", button.Content);
                 Assert.True(button.IsEnabled);
@@ -119,7 +121,8 @@ public sealed class MainWindowAttachmentDownloadPresentationTests
                     Assert.Single(
                         FindVisualDescendants<Button>(window.MessageList),
                         candidate => ReferenceEquals(candidate.DataContext, attachment) &&
-                            !Equals(candidate.Content, "查看图片")));
+                            !Equals(candidate.Content, "查看图片") &&
+                            !Equals(candidate.Content, "打开")));
                 Assert.Equal("正在取消…", button.Content);
                 Assert.False(button.IsEnabled);
 
@@ -161,12 +164,20 @@ public sealed class MainWindowAttachmentDownloadPresentationTests
                     Assert.Single(
                         FindVisualDescendants<Button>(window.MessageList),
                         candidate => ReferenceEquals(candidate.DataContext, attachment) &&
-                            !Equals(candidate.Content, "查看图片")));
+                            !Equals(candidate.Content, "查看图片") &&
+                            !Equals(candidate.Content, "打开")));
                 Assert.Equal("在文件夹中显示", button.Content);
                 Assert.True(button.IsEnabled);
                 Assert.Equal(
                     "在文件夹中显示附件：安全文档.pdf",
                     AutomationProperties.GetName(button));
+                var openButton = Assert.Single(
+                    FindVisualDescendants<Button>(window.MessageList),
+                    candidate => ReferenceEquals(candidate.DataContext, attachment) &&
+                        Equals(candidate.Content, "打开"));
+                Assert.Equal(Visibility.Visible, openButton.Visibility);
+                Assert.True(openButton.IsEnabled);
+                Assert.Equal("打开附件：安全文档.pdf", AutomationProperties.GetName(openButton));
                 Assert.Equal(Visibility.Collapsed, progressBar.Visibility);
             }
             finally
@@ -369,6 +380,98 @@ public sealed class MainWindowAttachmentDownloadPresentationTests
         });
     }
 
+    [Fact]
+    public async Task AttachmentOpenOperations_WhenStateIsInvalidated_CancelAndRejectLateIdentity()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var conversationId = Guid.NewGuid();
+            var messageClientId = Guid.NewGuid();
+            var attachmentId = Guid.NewGuid();
+            var window = new MainWindow();
+            try
+            {
+                window.ApplyMessageListSnapshot(CreateSnapshot(
+                    conversationId,
+                    messageClientId,
+                    attachmentId,
+                    isDownloaded: true,
+                    revision: 1));
+                var state = GetOnlyState(window);
+                var key = CreateAttachmentViewKey(messageClientId, attachmentId);
+                var operation = CreateOpenOperation(state);
+                var operations = GetPrivateDictionary(window, "attachmentOpenOperations");
+                operations.Add(key, operation);
+
+                InvokePrivate(window, "MarkAttachmentNoLongerDownloaded", state.Context);
+
+                Assert.True(GetOperationCancellation(operation).IsCancellationRequested);
+                Assert.False(state.CanOpen);
+                Assert.False((bool)InvokePrivate(
+                    window,
+                    "IsCurrentAttachmentOpenOperation",
+                    key,
+                    state,
+                    operation)!);
+                Assert.Empty(operations);
+                DisposeOperation(operation);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData((int)ClientAttachmentOpenStatus.HandedToWindows, "已交给 Windows 打开。")]
+    [InlineData((int)ClientAttachmentOpenStatus.InProgress, "附件正在准备打开，请稍后重试。")]
+    [InlineData((int)ClientAttachmentOpenStatus.NotDownloaded, "附件尚未下载，请重新下载。")]
+    [InlineData((int)ClientAttachmentOpenStatus.AttachmentUnavailable, "附件不可用或已被移除。")]
+    [InlineData((int)ClientAttachmentOpenStatus.AccessRevoked, "已失去此会话的访问权限。")]
+    [InlineData((int)ClientAttachmentOpenStatus.Stale, "附件上下文已变化，请重试。")]
+    [InlineData((int)ClientAttachmentOpenStatus.ValidationFailed, "本地附件未通过完整性校验，请重新下载。")]
+    [InlineData((int)ClientAttachmentOpenStatus.InvalidFileName, "附件名称不满足安全打开要求。")]
+    [InlineData((int)ClientAttachmentOpenStatus.StoreFull, "安全打开空间不足，请稍后重试。")]
+    [InlineData((int)ClientAttachmentOpenStatus.PolicyRejected, "Windows 安全策略阻止了打开。")]
+    [InlineData((int)ClientAttachmentOpenStatus.UserCanceled, "已取消 Windows 打开操作。")]
+    [InlineData((int)ClientAttachmentOpenStatus.NoAssociation, "Windows 未找到可用的关联应用。")]
+    [InlineData((int)ClientAttachmentOpenStatus.LocalFailure, "无法安全打开附件，请稍后重试。")]
+    [InlineData((int)ClientAttachmentOpenStatus.Canceled, "附件打开已取消。")]
+    public async Task DescribeAttachmentOpenOutcome_WhenStatusIsReturned_UpdatesPoliteLiveTextWithoutSensitiveValues(
+        int statusValue,
+        string expectedText)
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = new MainWindow();
+            try
+            {
+                var actualText = DescribeAttachmentOpenOutcome((ClientAttachmentOpenStatus)statusValue);
+
+                Assert.Equal(expectedText, actualText);
+                SetLiveText(window.MessageComposerStatusText, actualText);
+                Assert.Equal(expectedText, window.MessageComposerStatusText.Text);
+                Assert.Equal(
+                    AutomationLiveSetting.Polite,
+                    AutomationProperties.GetLiveSetting(window.MessageComposerStatusText));
+                Assert.DoesNotMatch(@"[A-Za-z]:[\\/]", actualText);
+                Assert.DoesNotMatch(@"\\\\", actualText);
+                Assert.DoesNotMatch(@"(?i)https?://", actualText);
+                Assert.DoesNotMatch(@"(?i)\b[0-9a-f]{64}\b", actualText);
+                Assert.DoesNotMatch(
+                    @"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+                    actualText);
+                Assert.DoesNotContain("ClientAttachment", actualText, StringComparison.Ordinal);
+                Assert.DoesNotContain("AttachmentId", actualText, StringComparison.Ordinal);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
     private static ClientMessageListSnapshot CreateSnapshot(
         Guid conversationId,
         Guid messageClientId,
@@ -447,6 +550,14 @@ public sealed class MainWindowAttachmentDownloadPresentationTests
             new CancellationTokenSource()) ??
         throw new InvalidOperationException("Unable to create attachment reveal operation.");
 
+    private static object CreateOpenOperation(ClientAttachmentDownloadViewState state) =>
+        Activator.CreateInstance(
+            GetNestedMainWindowType("ClientAttachmentOpenOperation"),
+            state.Context,
+            state,
+            new CancellationTokenSource()) ??
+        throw new InvalidOperationException("Unable to create attachment open operation.");
+
     private static IDictionary GetPrivateDictionary(MainWindow window, string fieldName) =>
         GetPrivateField(fieldName).GetValue(window) as IDictionary ??
         throw new InvalidOperationException($"Expected dictionary field '{fieldName}'.");
@@ -463,6 +574,21 @@ public sealed class MainWindowAttachmentDownloadPresentationTests
             BindingFlags.Instance | BindingFlags.NonPublic) ??
             throw new InvalidOperationException($"Expected method '{methodName}'.");
         return method.Invoke(window, arguments);
+    }
+
+    private static string DescribeAttachmentOpenOutcome(ClientAttachmentOpenStatus status) =>
+        typeof(MainWindow).GetMethod(
+            "DescribeAttachmentOpenOutcome",
+            BindingFlags.Static | BindingFlags.NonPublic)?.Invoke(null, [status]) as string ??
+        throw new InvalidOperationException("Expected attachment-open status presentation.");
+
+    private static void SetLiveText(TextBlock textBlock, string value)
+    {
+        var method = typeof(MainWindow).GetMethod(
+            "SetLiveText",
+            BindingFlags.Static | BindingFlags.NonPublic) ??
+            throw new InvalidOperationException("Expected live-text presentation method.");
+        method.Invoke(null, [textBlock, value]);
     }
 
     private static void DisposeOperation(object operation)
