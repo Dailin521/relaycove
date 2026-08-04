@@ -14,9 +14,7 @@ param(
 
     [int] $Port = 0,
 
-    [switch] $KeepServerLog,
-
-    [switch] $AllowRealClientLaunch
+    [switch] $KeepServerLog
 )
 
 Set-StrictMode -Version Latest
@@ -25,12 +23,12 @@ $ErrorActionPreference = "Stop"
 # This is an internal-RC delivery smoke, not a replacement for the Client's
 # coordinator/UI tests. It starts the real Server, streams a real HTTPS
 # artifact to a client-equivalent .part file, and drives the published updater
-# executable. It deliberately stops before the successful updater handoff by
-# default: a real WPF Client reads SpecialFolder.LocalApplicationData, which
-# cannot be isolated with a process environment variable. Pass
-# -AllowRealClientLaunch only after an explicit review of the current user's
-# RelayCove profile; the one-time 2026-08-04 evidence was recorded before this
-# safety default existed. Production ownership-record cleanup stays unit-tested.
+# executable. Network delivery always uses the exact published release. The
+# final launch leg instead derives a smoke-only archive inside this run by
+# replacing the WPF executable with a self-contained probe. This prevents the
+# smoke from accessing SpecialFolder.LocalApplicationData while still driving
+# the real package-local Updater, ZIP validator, replacement, and launch path.
+# Production ownership-record cleanup stays unit-tested.
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $artifactsRoot = Join-Path $repositoryRoot "artifacts"
@@ -145,6 +143,103 @@ function Read-PackageManifestVersion {
     $manifestPath = Join-Path $PackageRoot "manifest.json"
     Assert-Condition (Test-Path -LiteralPath $manifestPath -PathType Leaf) "Package manifest is missing: $manifestPath"
     return (Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json).version
+}
+
+function New-SmokeProbeExecutable {
+    param([Parameter(Mandatory)][string] $RunRoot)
+
+    $probeRoot = Join-Path $RunRoot "launch-probe"
+    New-Item -ItemType Directory -Path $probeRoot | Out-Null
+    $projectPath = Join-Path $probeRoot "RelayCove.SmokeProbe.csproj"
+    $sourcePath = Join-Path $probeRoot "Program.cs"
+    @'
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <AssemblyName>RelayCove.Client</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+</Project>
+'@ | Set-Content -LiteralPath $projectPath -Encoding utf8NoBOM
+    @'
+using System.Text;
+using System.IO;
+using System.Threading;
+using System.Diagnostics;
+
+using var process = Process.GetCurrentProcess();
+var markerPath = Path.Combine(AppContext.BaseDirectory, "relaycove-smoke-probe.txt");
+File.WriteAllText(markerPath, $"{process.Id}|{process.StartTime.ToUniversalTime().Ticks}", new UTF8Encoding(false));
+Thread.Sleep(TimeSpan.FromSeconds(5));
+'@ | Set-Content -LiteralPath $sourcePath -Encoding utf8NoBOM
+    $publishRoot = Join-Path $probeRoot "publish"
+    Invoke-Checked dotnet publish $projectPath --configuration Release --self-contained true -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false --output $publishRoot | Out-Host
+    $probePath = Join-Path $publishRoot "RelayCove.Client.exe"
+    Assert-Condition (Test-Path -LiteralPath $probePath -PathType Leaf) "Self-contained smoke probe executable is missing."
+    Assert-Condition ((Get-Item -LiteralPath $probePath -Force).Length -gt 1MB) "Smoke probe executable is unexpectedly small."
+    return $probePath
+}
+
+function New-SmokeDerivedArchive {
+    param(
+        [Parameter(Mandatory)][string] $VerifiedArchive,
+        [Parameter(Mandatory)][string] $Version,
+        [Parameter(Mandatory)][string] $RunRoot
+    )
+
+    $probePath = New-SmokeProbeExecutable $RunRoot
+    $packageName = Get-ArchivePackageName $VerifiedArchive
+    $archivePath = Join-Path $RunRoot "derived-launch-probe.zip"
+    Copy-Item -LiteralPath $VerifiedArchive -Destination $archivePath
+    $stream = [System.IO.File]::Open($archivePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    $archive = $null
+    try {
+        $archive = [System.IO.Compression.ZipArchive]::new($stream, [System.IO.Compression.ZipArchiveMode]::Update, $false, [System.Text.UTF8Encoding]::new($false))
+        $clientEntryName = "$packageName/RelayCove.Client.exe"
+        $manifestEntryName = "$packageName/manifest.json"
+        $clientEntry = @($archive.Entries | Where-Object { $_.FullName -ceq $clientEntryName })
+        $manifestEntry = @($archive.Entries | Where-Object { $_.FullName -ceq $manifestEntryName })
+        Assert-Condition ($clientEntry.Count -eq 1 -and $manifestEntry.Count -eq 1) "Verified release archive has an invalid launch entry layout."
+        $reader = [System.IO.StreamReader]::new($manifestEntry[0].Open(), [System.Text.UTF8Encoding]::new($false, $true))
+        try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json -AsHashtable }
+        finally { $reader.Dispose() }
+        Assert-Condition ($manifest.version -eq $Version -and $manifest.packageRoot -eq $packageName) "Derived package source metadata differs from the verified release."
+        $clientRecord = @($manifest.files | Where-Object { $_.path -ceq "RelayCove.Client.exe" })
+        Assert-Condition ($clientRecord.Count -eq 1) "Derived package manifest must contain exactly one Client executable record."
+        $clientRecord[0].length = [int64](Get-Item -LiteralPath $probePath -Force).Length
+        $clientRecord[0].sha256 = (Get-FileHash -LiteralPath $probePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $manifestBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($manifest | ConvertTo-Json -Depth 10))
+        $clientEntry[0].Delete()
+        $manifestEntry[0].Delete()
+        $newClientEntry = $archive.CreateEntry($clientEntryName, [System.IO.Compression.CompressionLevel]::Optimal)
+        $newClientEntry.ExternalAttributes = 0x00000080
+        $clientStream = $newClientEntry.Open()
+        $probeStream = [System.IO.File]::OpenRead($probePath)
+        try { $probeStream.CopyTo($clientStream) }
+        finally {
+            $probeStream.Dispose()
+            $clientStream.Dispose()
+        }
+        $newManifestEntry = $archive.CreateEntry($manifestEntryName, [System.IO.Compression.CompressionLevel]::Optimal)
+        $newManifestEntry.ExternalAttributes = 0x00000080
+        $manifestStream = $newManifestEntry.Open()
+        try { $manifestStream.Write($manifestBytes, 0, $manifestBytes.Length) }
+        finally { $manifestStream.Dispose() }
+    }
+    finally {
+        if ($null -ne $archive) { $archive.Dispose() }
+        $stream.Dispose()
+    }
+
+    $size = [int64](Get-Item -LiteralPath $archivePath -Force).Length
+    $sha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-Condition ($size -gt 0 -and $sha256 -match '\A[0-9a-f]{64}\z') "Derived smoke archive identity is invalid."
+    return [pscustomobject]@{ ArchivePath = $archivePath; SizeBytes = $size; Sha256 = $sha256 }
 }
 
 function New-TlsCertificate {
@@ -412,6 +507,25 @@ function Wait-ForNewClientStart {
     throw "Updater activated the package but no new Client process was observed."
 }
 
+function Wait-ForSmokeProbeMarker {
+    param([Parameter(Mandatory)][string] $Target, [Parameter(Mandatory)][object[]] $ExpectedProcesses)
+
+    $markerPath = Join-Path $Target "relaycove-smoke-probe.txt"
+    for ($attempt = 0; $attempt -lt 120; $attempt++) {
+        if (Test-Path -LiteralPath $markerPath -PathType Leaf) {
+            Assert-Condition (((Get-Item -LiteralPath $markerPath -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) "Smoke probe marker is a reparse point."
+            $marker = Get-Content -LiteralPath $markerPath -Raw
+            Assert-Condition ($marker -match '\A([1-9][0-9]*)\|([1-9][0-9]*)\z') "Smoke probe marker has an invalid process identity."
+            $markerId = [int]$Matches[1]
+            $markerStartTicks = [int64]$Matches[2]
+            Assert-Condition (@($ExpectedProcesses | Where-Object { $_.Id -eq $markerId -and $_.StartTimeUtcTicks -eq $markerStartTicks }).Count -eq 1) "Smoke probe marker does not match the exact observed Client process identity."
+            return $markerPath
+        }
+        Start-Sleep -Milliseconds 100
+    }
+    throw "Updater activated the package but the safe smoke probe did not write its target-local marker."
+}
+
 function Wait-ForProcessAtPath {
     param([Parameter(Mandatory)][string] $ExecutablePath)
 
@@ -482,14 +596,19 @@ Assert-Condition ($gitChanges.Count -eq 0) "Refusing to publish or smoke a dirty
 Assert-Condition ($OldVersion -ne $NewVersion) "OldVersion and NewVersion must differ."
 Assert-Condition (([System.Management.Automation.PSTypeName]'System.IO.Compression.ZipFile').Type -ne $null) "System.IO.Compression.ZipFile is unavailable."
 Assert-Condition (@(Get-Process -Name "RelayCove.Client" -ErrorAction SilentlyContinue).Count -eq 0) "Refusing to run while a RelayCove.Client process already exists."
+$localAppDataRelayCove = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) "RelayCove"
+$localAppDataRelayCoveExistedBefore = Test-Path -LiteralPath $localAppDataRelayCove
 New-Item -ItemType Directory -Path $artifactsRoot -Force | Out-Null
 $runRoot = Assert-PathInsideArtifacts (Join-Path $artifactsRoot (Join-Path "update-delivery-smoke" ([Guid]::NewGuid().ToString("N")))) "Smoke run root"
 New-Item -ItemType Directory -Path $runRoot | Out-Null
 
 $server = $null
+$serverProcessId = $null
 $certificateThumbprint = $null
 $httpClient = $null
 $smokeClientProcesses = @()
+$evidence = $null
+$evidencePath = $null
 try {
     $releaseRoot = Join-Path $runRoot "releases"
     New-Item -ItemType Directory -Path $releaseRoot | Out-Null
@@ -528,6 +647,7 @@ try {
     $pfxPassword = [Guid]::NewGuid().ToString("N")
     $certificateThumbprint = New-TlsCertificate $pfxPath $pfxPassword
     $server = Start-SmokeServer $Port $manifestPath $pfxPath $pfxPassword $runRoot
+    $serverProcessId = $server.Process.Id
     $httpClient = New-SmokeHttpClient
     Wait-ForServer $httpClient $baseUri $server.Process
     $manifest = Get-HostedManifest $httpClient $baseUri
@@ -573,11 +693,10 @@ try {
     Set-Content -LiteralPath (Join-Path $unrelatedSibling "unrelated.txt") -Value "must remain" -NoNewline
     $clientExecutablePath = Join-Path $target "RelayCove.Client.exe"
     $existingClientIds = @(Get-ClientProcessIdsAtPath $clientExecutablePath)
-    if (-not $AllowRealClientLaunch) {
-        throw "Safety stop: this smoke does not launch the real WPF Client by default because it can access the current user's LocalAppData profile. Pass -AllowRealClientLaunch only after explicit profile-isolation review."
-    }
+    $derivedLaunchArchive = New-SmokeDerivedArchive $downloadedArchive $NewVersion $runRoot
+    Assert-Condition ($derivedLaunchArchive.Sha256 -ne $manifest.artifact.sha256) "Derived smoke archive must not be reported as the exact network-delivered release."
     $successWait = Start-ControlledExitProcess
-    Invoke-PackageLocalUpdater $target $downloadedArchive $manifest.artifact.sha256 ([int64]$manifest.artifact.sizeBytes) $NewVersion $OldVersion $successWait $token
+    Invoke-PackageLocalUpdater $target $derivedLaunchArchive.ArchivePath $derivedLaunchArchive.Sha256 $derivedLaunchArchive.SizeBytes $NewVersion $OldVersion $successWait $token
     Wait-ForBootstrapDirectory $bootstrapDirectory
     $markerPath = Join-Path $bootstrapDirectory ".relaycove-bootstrap-owner"
     Assert-Condition ((Get-Content -LiteralPath $markerPath -Raw) -eq ("relaycove-bootstrap-owner:" + $token)) "Bootstrap owner marker does not exactly match its token."
@@ -600,27 +719,47 @@ try {
                 $client.Dispose()
             }
         })
+    $probeMarkerPath = Wait-ForSmokeProbeMarker $target $smokeClientProcesses
     Wait-ForProcessExitAtPath (Join-Path $bootstrapDirectory "RelayCove.Updater.exe")
     Remove-ExactOwnedBootstrapDirectory $bootstrapDirectory $token
     Assert-Condition (-not (Test-Path -LiteralPath $bootstrapDirectory)) "Exact owned bootstrap directory cleanup failed."
     Assert-Condition (Test-Path -LiteralPath $unrelatedSibling -PathType Container) "Updater deleted an unrelated bootstrap-looking sibling."
     Assert-Condition (Test-Path -LiteralPath (Join-Path $unrelatedSibling "unrelated.txt") -PathType Leaf) "Updater changed an unrelated sibling directory."
 
+    Assert-Condition ((Test-Path -LiteralPath $localAppDataRelayCove) -eq $localAppDataRelayCoveExistedBefore) "Smoke changed the current user's RelayCove LocalAppData directory presence."
     $evidence = [ordered]@{
         oldVersion = $OldVersion
         newVersion = $NewVersion
         endpoint = $baseUri.AbsoluteUri
         manifestPath = $manifestPath
-        downloadedArchive = $downloadedArchive
         target = $target
         observedNewClientProcessIds = $newClientIds
         bootstrapDirectory = $bootstrapDirectory
         unrelatedSibling = $unrelatedSibling
-        notes = "Real Kestrel HTTPS, real Server hosting, client-equivalent streaming download, published package-local Updater, precise wait-process exit, exact bootstrap marker/path validation, strict smoke-owned bootstrap cleanup, unrelated sibling preservation, and observed new Client start. The Updater never kills the Client; after evidence, the harness terminates only its exact observed smoke Client PID. Production Client ownership-record cleanup is covered by Client tests because Windows LocalApplicationData cannot be safely isolated for a real WPF process."
+        networkDelivery = [ordered]@{
+            package = "exact-published-release"
+            sourceArchive = $NewArchivePath
+            downloadedArchive = $downloadedArchive
+            sizeBytes = [int64]$manifest.artifact.sizeBytes
+            sha256 = $manifest.artifact.sha256
+            notes = "Kestrel HTTPS manifest/artifact delivery and client-equivalent streaming/hash verification used this exact published release."
+        }
+        processLaunch = [ordered]@{
+            package = "derived-smoke-probe-package"
+            archive = $derivedLaunchArchive.ArchivePath
+            sizeBytes = $derivedLaunchArchive.SizeBytes
+            sha256 = $derivedLaunchArchive.Sha256
+            replacement = "RelayCove.Client.exe was replaced only in this unique artifacts run with a self-contained profile-safe probe; its inner manifest length/SHA-256 were updated before ZIP update-mode repack."
+            markerPath = $probeMarkerPath
+        }
+        localAppDataRelayCove = [ordered]@{
+            path = $localAppDataRelayCove
+            existedBefore = $localAppDataRelayCoveExistedBefore
+            existsBeforeCleanup = Test-Path -LiteralPath $localAppDataRelayCove
+        }
+        notes = "The real WPF Client is never launched. The real package-local Updater validates, stages, activates, and starts only the derived self-contained probe. The Updater never kills the Client; after evidence, the harness terminates only its exact observed probe PID/path/start-ticks."
     }
     $evidencePath = Join-Path $runRoot "evidence.json"
-    $evidence | ConvertTo-Json | Set-Content -LiteralPath $evidencePath -Encoding utf8
-    Write-Host "Update delivery smoke passed. Evidence: $evidencePath"
 }
 finally {
     if ($null -ne $httpClient) { $httpClient.Dispose() }
@@ -650,5 +789,23 @@ finally {
     }
     if ($null -ne $certificateThumbprint) {
         Remove-Item -LiteralPath ("Cert:\CurrentUser\My\" + $certificateThumbprint) -Force -ErrorAction SilentlyContinue
+    }
+    Assert-Condition ((Test-Path -LiteralPath $localAppDataRelayCove) -eq $localAppDataRelayCoveExistedBefore) "Smoke changed the current user's RelayCove LocalAppData directory presence during cleanup."
+    Assert-Condition (@(Get-Process -Name "RelayCove.Client" -ErrorAction SilentlyContinue).Count -eq 0) "A RelayCove.Client process remained after smoke cleanup."
+    if ($null -ne $serverProcessId) {
+        Assert-Condition ($null -eq (Get-Process -Id $serverProcessId -ErrorAction SilentlyContinue)) "The smoke Server process remained after cleanup."
+    }
+    if ($null -ne $certificateThumbprint) {
+        Assert-Condition (-not (Test-Path -LiteralPath ("Cert:\CurrentUser\My\" + $certificateThumbprint))) "The smoke certificate remained after cleanup."
+    }
+    if ($null -ne $evidence) {
+        $evidence.cleanup = [ordered]@{
+            relayCoveClientProcessCount = @(Get-Process -Name "RelayCove.Client" -ErrorAction SilentlyContinue).Count
+            serverProcessRemaining = $false
+            certificateRemaining = $false
+            localAppDataRelayCoveExistsAfter = Test-Path -LiteralPath $localAppDataRelayCove
+        }
+        $evidence | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $evidencePath -Encoding utf8
+        Write-Host "Update delivery smoke passed. Evidence: $evidencePath"
     }
 }
