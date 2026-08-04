@@ -6,15 +6,15 @@
 
 ```text
 ExecutionStatus: running
-CurrentMilestone: M3
-CurrentStage: 阶段 10
-ActiveTask: docs/ai/tasks/2026-08-04-stage-10-search-ui.md
-TaskStatus: completed
+CurrentMilestone: M4
+CurrentStage: M4-01 服务端 RC 发布包
+ActiveTask: docs/ai/tasks/2026-08-04-m4-server-release-package.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: f85c5442cdaa42d690eead32dffda5b20006f4df
-LatestGreenIntegrationCommit: 883e55afb8bf150b03f2d20719a215632693b09f
-NextAction: 提交 M3 证据交接并仅快进 agent/v1-integration，随后启动 M4 RC 发布自动化切片
-ClaudeCalls: 80（#1–#79 全部终态；#80 本机后台持久 Sonnet/High 只读任务运行中）
+LatestGreenIntegrationCommit: 8d8d5d26451f2e3c8aac9879fd7ed2f8affa00f2
+NextAction: 实现并验证可复现的 linux-x64 Server RC 包、migration bundle 与部署材料
+ClaudeCalls: 81（#1–#79 全部终态；#80/#81 本机后台持久 Sonnet/High 只读任务运行中）
 ClaudeCostUsd: 83.12343525 exact confirmed + 76.68 local CLI displayed（#44–#50/#74–#76）；按显示值合计约 159.80343525；另有四十一次失败/中断调用费用 unavailable
 Blocker: none
 RequiredUserGate: none
@@ -34,8 +34,8 @@ RequiredUserGate: none
 | M0 | `completed` | 同步契约、`DEC-003`、解决方案和真实 Fast/Full 验证均通过 | 已进入 M1 |
 | M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
 | M2 | `completed` | 阶段 9 附件纵向闭环与 Internal Alpha 证据包已由 `8ff8c15` 合入绿色集成分支 | 已进入 M3 |
-| M3 | `running` | 权限化搜索 API 已合入；客户端 Global/Current 搜索、Around-first 跳转和一次性高亮在 `f85c544` 完成最终验证，待交接提交仅快进集成 | 完成绿色集成并进入 M4 |
-| M4 | `pending` | 尚未开始 | RC 自动化、包与发布材料完整 |
+| M3 | `completed` | 权限化搜索 API、客户端 Global/Current 搜索、Around-first 跳转和一次性高亮已由 `8d8d5d2` 完成绿色集成，最终 Fast/Full 1,426/1,426 | 已进入 M4 |
+| M4 | `running` | M4-01 服务端 RC 发布包、migration bundle 与离线发布材料已启动 | RC 自动化、包与发布材料完整 |
 | M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
 
 里程碑顺序来自当前 v1 执行目标；每个里程碑的功能口径和最终交付标准仍由工程方案、决策记录和对应最小纵向任务冻结，本文件不预写实现细节。
@@ -174,8 +174,9 @@ RequiredUserGate: none
 | 78 | 2026-08-04 | 已下载附件的受控临时副本、MOTW 与关联应用打开 | 当前会话旧兼容 MCP 只读安全 challenge | Sonnet / High | 唯一一次调用在答案前失败：Desktop 任务只暴露旧 `consult_claude`，其内部命令强加 `$0.5` budget 后退出；无持久 job、正式答案、可靠实际模型、duration 或费用。按策略不重试，由 Microsoft 官方契约、本机探针与 Codex 独立复核替代 | `unavailable` |
 | 79 | 2026-08-04 | 搜索公共协议、权限过滤、SQLite LIKE 与结果边界 | 当前会话旧兼容 MCP 只读协议/安全 challenge | Sonnet / XHigh | 唯一一次调用在答案前失败：本机 MCP 配置已指向 0.5.0 持久工具，但当前 Desktop 任务仍只暴露旧 `consult_claude`，其内部命令再次强加 `$0.5` budget 后退出；无持久 job、正式答案、可靠实际模型、duration 或费用。按策略不重试，由仓库证据、SQLite/EF 官方契约与三路 Codex 只读调查替代 | `unavailable` |
 | 80 | 2026-08-04 | 客户端搜索撤权、迟到结果与 Around-first 导航边界 | 本机 Claude Code 2.1.221 后台持久只读 challenge | Sonnet / High | background `213daa77`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；运行中，完成后读取并由 Codex 本地裁定，不阻塞主线 | `running` |
+| 81 | 2026-08-04 | M4 服务端 RC 发布矩阵、migration bundle、systemd 与 Nginx 边界 | 本机 Claude Code 2.1.221 后台持久只读 challenge | Sonnet / High | 有效 background `6798888b`，`workspace=E:\WorkSpace\RelayCove`，工具限于 Read/Glob/Grep；运行中，完成后读取并由 Codex 本地裁定。此前两个 CLI 参数解析产生的空会话未发送模型任务并已停止，不计调用 | `running` |
 
-- 调用计数：`80`（#1–#79 全部终态；#80 运行中；#78/#79 在答案前失败且分别按单次策略不重试；#77 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构/安全/数据库/协议/可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
+- 调用计数：`81`（#1–#79 全部终态；#80/#81 运行中；#78/#79 在答案前失败且分别按单次策略不重试；#77 答案已读取并本地裁定；#55/#58/#62 已主动停止，#56/#57/#59/#60/#61/#63/#64/#65/#66/#67/#68/#69/#70/#71/#73 失败，#72 中断且恢复失败）。后续仅主代理对每项重大架构、安全、数据库、协议或可靠性决策调用一次，默认 Sonnet/High；只有调用前仍未解决的高风险争议才在该次选择 Opus/XHigh，Max 仅用于狭窄终局争议。子代理不得调用，普通代码审查由 Codex reviewer 承担，且 Claude 不替代本地验证。
 - 已确认精确费用合计：`$83.12343525`；另有 #44–#50/#74–#76 本机 Claude Code 状态显示值合计 `$76.68`（界面两位小数，未伪造更高精度），按显示值总计约 `$159.80343525`。其余四十一次未返回费用，保持 `unavailable`，不得推定为 `$0`。
 - 每次调用必须记录 `workspace_root`、实际模型、`model_mismatch` 与 `cost_usd`；调用失败或模型偏差不得冒充目标模型审查，也不得替代 Codex 固定差异与真实测试。
 
