@@ -7,13 +7,13 @@
 ```text
 ExecutionStatus: running
 CurrentMilestone: M4
-CurrentStage: M4-01 服务端 RC 发布包
-ActiveTask: docs/ai/tasks/2026-08-04-m4-server-release-package.md
-TaskStatus: completed
+CurrentStage: M4-02 Windows Client 可运行内部 RC 包
+ActiveTask: docs/ai/tasks/2026-08-04-m4-client-release-package.md
+TaskStatus: in_progress
 IntegrationBranch: agent/v1-integration
 LatestGreenCodeCommit: b13188643cfc72c9d0896fc919fe53448e1c7ea5
-LatestGreenIntegrationCommit: 8d8d5d26451f2e3c8aac9879fd7ed2f8affa00f2
-NextAction: 提交 M4-01 证据交接并仅快进 agent/v1-integration，随后启动 M4-02 win-x64 Client 可运行 RC 包
+LatestGreenIntegrationCommit: a7bade17439b4ff328338f6b2bcdba0170c49355
+NextAction: 实现并验证可复现的 win-x64 self-contained unpackaged Client 内部 RC ZIP 与真实 publish 启动 smoke
 ClaudeCalls: 81（#1–#80 全部终态；#81 本机后台持久 Sonnet/High 只读任务运行中）
 ClaudeCostUsd: 83.12343525 exact confirmed + 76.68 local CLI displayed（#44–#50/#74–#76）；按显示值合计约 159.80343525；其余未返回费用保持 unavailable
 Blocker: none
@@ -35,7 +35,7 @@ RequiredUserGate: none
 | M1 | `completed` | 会话成员、权限、文字消息、History/Around/Sync、SignalR、账户隔离本地缓存与 Windows 日常聊天 UI 已形成绿色纵向闭环 | 已进入 M2 |
 | M2 | `completed` | 阶段 9 附件纵向闭环与 Internal Alpha 证据包已由 `8ff8c15` 合入绿色集成分支 | 已进入 M3 |
 | M3 | `completed` | 权限化搜索 API、客户端 Global/Current 搜索、Around-first 跳转和一次性高亮已由 `8d8d5d2` 完成绿色集成，最终 Fast/Full 1,426/1,426 | 已进入 M4 |
-| M4 | `running` | M4-01 Linux x64 服务端 RC、migration bundle、离线验证和部署材料已绿色完成；待合入后进入 M4-02 Client RC 包 | RC 自动化、包与发布材料完整 |
+| M4 | `running` | M4-01 Linux Server RC 已由 `a7bade1` 完成绿色集成；M4-02 Windows Client 可运行内部 RC 包已启动 | RC 自动化、包与发布材料完整 |
 | M5 | `pending` | 尚未开始 | 自动验证完成；真实 Windows/VPS/双客户端 Gate 明确记录 |
 
 里程碑顺序来自当前 v1 执行目标；每个里程碑的功能口径和最终交付标准仍由工程方案、决策记录和对应最小纵向任务冻结，本文件不预写实现细节。

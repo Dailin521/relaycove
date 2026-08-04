@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-- **当前阶段：** M4-01 — Linux 服务端 RC 发布包
+- **当前阶段：** M4-02 — Windows Client 可运行内部 RC 包
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮；M4-01 可复现 Linux x64 Server RC、migration bundle、离线校验与部署材料已完成
-- **最近验证通过的状态：** M4-01 production `47c6f88/a482d35/b131886` 已通过干净双构建归档字节一致、最新离线验证器、Packaging/代理限流 20/20、Fast/Full 1,445/1,445、两路独立复核及 P1 关闭、model drift、依赖漏洞、format 与空白检查；交接完成后仅快进合入 `agent/v1-integration`
+- **最近验证通过的状态：** M4-01 production `47c6f88/a482d35/b131886` 与交接头 `a7bade17439b4ff328338f6b2bcdba0170c49355` 已通过干净双构建归档字节一致、最新离线验证器、Packaging/代理限流 20/20、Fast/Full 1,445/1,445、两路独立复核及 P1 关闭、model drift、依赖漏洞、format 与空白检查，并已仅快进合入本地/远端 `agent/v1-integration`
 - **可构建状态：** `已验证` — 当前 Full 的 Release 构建为 0 警告、0 错误
 - **自动化验证：** `已验证` — 当前最终 Fast/Full、format 与 1,445 项测试（Shared 41、Server 302、Client 1,101、Updater 1）通过；Server release Packaging 与代理限流定向 20/20。覆盖可复现 USTAR、manifest/SHA-256、Linux x64 ELF/runtime、路径/秘密排除、部署模板与 loopback 转发限流；Linux/VPS/TLS、真实 migration/restore、真实登录视觉/Narrator 与双客户端保持未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- M4-01 已在 `agent/m4-server-release-package` 完成绿色实现与交接证据，下一步仅快进合入 `agent/v1-integration` 并启动 M4-02 Windows Client 可运行 RC 包；#81 保持后台只读运行，仍不读取 VPS 配置或接触真实部署。
+- M4-01 已由 `a7bade1` 完成绿色集成且任务分支已清理。当前 `agent/m4-client-release-package` 正在交付可复现的 `win-x64` self-contained unpackaged Client 内部 RC ZIP、离线验收和真实 publish 启动 smoke；不实现 Updater/更新协议/安装器或签名。
 
 ## 已完成
 
@@ -79,7 +79,7 @@
 
 ## 下一任务
 
-仅快进合入 M4-01 后，启动 M4-02 `win-x64` Client 可运行内部 RC 包；Updater/更新协议与 CI/Release 汇总随后分片，真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
+完成 M4-02 `win-x64` Client 可运行内部 RC 包，再以稳定 Client 产物为输入分片实现 Updater/更新协议；CI/Release 汇总随后处理，真实登录视觉、VPS 与双客户端 Gate 保留到 M5。
 
 ## 阻塞项
 
