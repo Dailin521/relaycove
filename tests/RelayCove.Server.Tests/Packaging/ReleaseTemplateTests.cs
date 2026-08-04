@@ -144,9 +144,15 @@ public sealed partial class ReleaseTemplateTests
     public void DeploymentGuide_WhenInspected_MigratesExplicitReleaseBeforeAtomicSwitch()
     {
         var guide = ReadRepositoryText("docs", "deployment.md");
-        var explicitMigration = guide.IndexOf(
-            "\"$release_root/migrate/RelayCove.Migrations\"",
+        var configuredMigration = guide.IndexOf(
+            "ConnectionStrings__Default='Data Source=/var/lib/relaycove/relaycove.db;Foreign Keys=True;Default Timeout=5'",
             StringComparison.Ordinal);
+        var explicitMigration = configuredMigration < 0
+            ? -1
+            : guide.IndexOf(
+                "\"$release_root/migrate/RelayCove.Migrations\"",
+                configuredMigration,
+                StringComparison.Ordinal);
         var atomicSwitch = guide.IndexOf(
             "mv -Tf /opt/relaycove/current.next /opt/relaycove/current",
             StringComparison.Ordinal);
@@ -155,6 +161,9 @@ public sealed partial class ReleaseTemplateTests
             StringComparison.Ordinal);
 
         Assert.True(explicitMigration >= 0, "The guide must invoke the new release's explicit migration bundle.");
+        Assert.True(
+            configuredMigration >= 0 && configuredMigration < explicitMigration,
+            "The migration host must receive its required default connection string before the bundle starts.");
         Assert.True(atomicSwitch > explicitMigration, "The active link must change only after migration succeeds.");
         Assert.True(serviceStart > atomicSwitch, "The service must start only after the atomic active-link switch.");
         Assert.DoesNotContain("/opt/relaycove/current/migrate/", guide, StringComparison.Ordinal);

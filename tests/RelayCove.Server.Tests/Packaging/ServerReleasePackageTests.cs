@@ -95,6 +95,7 @@ public sealed partial class ServerReleasePackageTests
         AssertPackageEntries(fileRecords, packageName);
         AssertManifest(manifestText, fileRecords, packageName, version);
         AssertStagedProductionConfiguration(fileRecords, version);
+        AssertSelfContainedRuntimeConfiguration(fileRecords);
         var packageRoot = System.IO.Path.Combine(releaseDirectory, packageName);
         foreach (var relativePath in new[]
         {
@@ -200,6 +201,9 @@ public sealed partial class ServerReleasePackageTests
             string sha256;
             if (relativePath.Equals(
                     "deploy/appsettings.Production.example.json",
+                    StringComparison.Ordinal) ||
+                relativePath.Equals(
+                    "app/RelayCove.Server.runtimeconfig.json",
                     StringComparison.Ordinal))
             {
                 using var content = new MemoryStream();
@@ -263,6 +267,23 @@ public sealed partial class ServerReleasePackageTests
                 UnixFileMode.None,
                 pair.Value.Mode & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite));
         }
+    }
+
+    private static void AssertSelfContainedRuntimeConfiguration(
+        IReadOnlyDictionary<string, ArchiveFileRecord> files)
+    {
+        var runtimeConfig = files["app/RelayCove.Server.runtimeconfig.json"].TextContent;
+        Assert.False(string.IsNullOrWhiteSpace(runtimeConfig));
+        using var document = JsonDocument.Parse(runtimeConfig);
+        var runtimeOptions = GetProperty(document.RootElement, "runtimeOptions");
+        Assert.False(runtimeOptions.TryGetProperty("framework", out _));
+        Assert.False(runtimeOptions.TryGetProperty("frameworks", out _));
+        var includedFrameworks = GetProperty(runtimeOptions, "includedFrameworks")
+            .EnumerateArray()
+            .Select(item => GetProperty(item, "name").GetString())
+            .ToArray();
+        Assert.Contains("Microsoft.NETCore.App", includedFrameworks);
+        Assert.Contains("Microsoft.AspNetCore.App", includedFrameworks);
     }
 
     private static void AssertManifest(

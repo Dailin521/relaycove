@@ -131,7 +131,9 @@ sudo touch "$backup_staging/BACKUP.COMPLETE"
 sudo mv -T "$backup_staging" "$backup_root"
 
 release_root=/opt/relaycove/releases/<version>/RelayCove.Server-<version>-linux-x64
-sudo -H -u relaycove "$release_root/migrate/RelayCove.Migrations" \
+sudo -H -u relaycove env \
+  ConnectionStrings__Default='Data Source=/var/lib/relaycove/relaycove.db;Foreign Keys=True;Default Timeout=5' \
+  "$release_root/migrate/RelayCove.Migrations" \
   --connection 'Data Source=/var/lib/relaycove/relaycove.db;Foreign Keys=True;Default Timeout=5'
 
 # Switch the active release only after a successful migration. The temporary link

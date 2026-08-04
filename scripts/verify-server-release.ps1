@@ -261,6 +261,7 @@ function Read-Archive {
 
             if ($entryName -eq "$PackageName/manifest.json" -or
                 $entryName -eq "$PackageName/app/appsettings.json" -or
+                $entryName -eq "$PackageName/app/RelayCove.Server.runtimeconfig.json" -or
                 $entryName.StartsWith("$PackageName/deploy/", [System.StringComparison]::Ordinal)) {
                 if ($entry.Length -gt $maximumTextEntryBytes) {
                     throw "Archive text entry '$entryName' exceeds $maximumTextEntryBytes bytes."
@@ -606,6 +607,16 @@ function Get-ReleaseSummary {
         throw "Packaged application settings contain authentication or bootstrap credentials."
     }
     Assert-NoSensitiveConfiguration $applicationSettings
+    $runtimeConfiguration = $archive.TextEntries["$packageName/app/RelayCove.Server.runtimeconfig.json"] |
+        ConvertFrom-Json -AsHashtable
+    $runtimeOptions = $runtimeConfiguration.runtimeOptions
+    $includedFrameworkNames = @($runtimeOptions.includedFrameworks | ForEach-Object { $_.name })
+    if ($runtimeOptions.ContainsKey("framework") -or
+        $runtimeOptions.ContainsKey("frameworks") -or
+        $includedFrameworkNames -notcontains "Microsoft.NETCore.App" -or
+        $includedFrameworkNames -notcontains "Microsoft.AspNetCore.App") {
+        throw "Server runtimeconfig.json is not self-contained."
+    }
     Assert-DeployMaterials $archive.TextEntries $packageName $RequestedVersion
 
     $manifest = $archive.ManifestJson | ConvertFrom-Json -AsHashtable

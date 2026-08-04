@@ -620,6 +620,7 @@ try {
             "build", $serverProject,
             "--configuration", "Release",
             "--runtime", $runtimeIdentifier,
+            "--self-contained", "true",
             "--artifacts-path", $dotnetArtifactsPath,
             "--no-restore"
         ) + $commonProperties
