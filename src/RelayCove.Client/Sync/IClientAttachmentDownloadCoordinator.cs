@@ -1,5 +1,7 @@
 namespace RelayCove.Client.Sync;
 
+using RelayCove.Client.Attachments;
+
 internal interface IClientAttachmentDownloadCoordinator : IAsyncDisposable
 {
     Task<ClientAttachmentCacheRecoveryStatus> RecoverAsync(
@@ -15,5 +17,12 @@ internal interface IClientAttachmentDownloadCoordinator : IAsyncDisposable
         Guid conversationId,
         Guid attachmentId,
         ClientAttachmentRevealCommit commit,
+        CancellationToken cancellationToken = default);
+
+    Task<ClientAttachmentImageLoadOutcome> LoadImageAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        ClientAttachmentImageRendition rendition,
+        ClientAttachmentImageCommit commit,
         CancellationToken cancellationToken = default);
 }

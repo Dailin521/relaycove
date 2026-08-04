@@ -65,6 +65,7 @@ internal sealed class ClientAttachmentCacheStore : IClientAttachmentCacheStore
     {
         private readonly FileStream stream;
         private readonly string fullPath;
+        private readonly SemaphoreSlim contentGate = new(1, 1);
         private int disposed;
 
         internal ValidatedFile(
@@ -93,6 +94,30 @@ internal sealed class ClientAttachmentCacheStore : IClientAttachmentCacheStore
             }
         }
 
+        internal async Task<T> ReadContentAsync<T>(
+            Func<Stream, CancellationToken, Task<T>> reader,
+            CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(reader);
+            ObjectDisposedException.ThrowIf(
+                Volatile.Read(ref disposed) != 0,
+                this);
+            await contentGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                ObjectDisposedException.ThrowIf(
+                    Volatile.Read(ref disposed) != 0,
+                    this);
+                stream.Seek(0, SeekOrigin.Begin);
+                using var content = new ValidatedContentStream(stream);
+                return await reader(content, cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                contentGate.Release();
+            }
+        }
+
         public void Dispose()
         {
             if (Interlocked.Exchange(ref disposed, 1) == 0)
@@ -103,6 +128,126 @@ internal sealed class ClientAttachmentCacheStore : IClientAttachmentCacheStore
 
         public override string ToString() =>
             $"{nameof(ValidatedFile)} {{ FullPath = [REDACTED] }}";
+
+        private sealed class ValidatedContentStream(Stream inner) : Stream
+        {
+            private int disposed;
+
+            public override bool CanRead => Volatile.Read(ref disposed) == 0 && inner.CanRead;
+
+            public override bool CanSeek => Volatile.Read(ref disposed) == 0 && inner.CanSeek;
+
+            public override bool CanWrite => false;
+
+            public override long Length
+            {
+                get
+                {
+                    ThrowIfDisposed();
+                    return inner.Length;
+                }
+            }
+
+            public override long Position
+            {
+                get
+                {
+                    ThrowIfDisposed();
+                    return inner.Position;
+                }
+                set
+                {
+                    ThrowIfDisposed();
+                    inner.Position = value;
+                }
+            }
+
+            public override void Flush()
+            {
+                ThrowIfDisposed();
+            }
+
+            public override Task FlushAsync(CancellationToken cancellationToken)
+            {
+                ThrowIfDisposed();
+                cancellationToken.ThrowIfCancellationRequested();
+                return Task.CompletedTask;
+            }
+
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                ThrowIfDisposed();
+                return inner.Read(buffer, offset, count);
+            }
+
+            public override int Read(Span<byte> buffer)
+            {
+                ThrowIfDisposed();
+                return inner.Read(buffer);
+            }
+
+            public override Task<int> ReadAsync(
+                byte[] buffer,
+                int offset,
+                int count,
+                CancellationToken cancellationToken)
+            {
+                ThrowIfDisposed();
+                return inner.ReadAsync(buffer, offset, count, cancellationToken);
+            }
+
+            public override ValueTask<int> ReadAsync(
+                Memory<byte> buffer,
+                CancellationToken cancellationToken = default)
+            {
+                ThrowIfDisposed();
+                return inner.ReadAsync(buffer, cancellationToken);
+            }
+
+            public override int ReadByte()
+            {
+                ThrowIfDisposed();
+                return inner.ReadByte();
+            }
+
+            public override long Seek(long offset, SeekOrigin origin)
+            {
+                ThrowIfDisposed();
+                return inner.Seek(offset, origin);
+            }
+
+            public override void SetLength(long value) =>
+                throw new NotSupportedException("Validated attachment content is read-only.");
+
+            public override void Write(byte[] buffer, int offset, int count) =>
+                throw new NotSupportedException("Validated attachment content is read-only.");
+
+            public override void Write(ReadOnlySpan<byte> buffer) =>
+                throw new NotSupportedException("Validated attachment content is read-only.");
+
+            public override Task WriteAsync(
+                byte[] buffer,
+                int offset,
+                int count,
+                CancellationToken cancellationToken) =>
+                Task.FromException(
+                    new NotSupportedException("Validated attachment content is read-only."));
+
+            public override ValueTask WriteAsync(
+                ReadOnlyMemory<byte> buffer,
+                CancellationToken cancellationToken = default) =>
+                ValueTask.FromException(
+                    new NotSupportedException("Validated attachment content is read-only."));
+
+            protected override void Dispose(bool disposing)
+            {
+                Interlocked.Exchange(ref disposed, 1);
+                base.Dispose(disposing);
+            }
+
+            private void ThrowIfDisposed() =>
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+        }
     }
 
     public async Task<ClientAttachmentCacheStoreStagingOutcome> CreateStagingAsync(

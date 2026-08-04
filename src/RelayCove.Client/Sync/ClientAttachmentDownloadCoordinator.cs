@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.IO;
+using System.Security.Cryptography;
 using Microsoft.Extensions.Logging;
+using RelayCove.Client.Attachments;
 using RelayCove.Client.Storage;
 
 namespace RelayCove.Client.Sync;
@@ -8,6 +10,10 @@ namespace RelayCove.Client.Sync;
 internal sealed class ClientAttachmentDownloadCoordinator :
     IClientAttachmentDownloadCoordinator
 {
+    private static readonly TimeSpan ImageProcessingWaitTimeout = TimeSpan.FromSeconds(10);
+    private static readonly ConcurrentDictionary<string, AttachmentImageScopeState>
+        ProcessImageScopeStates = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Guid coordinatorInstanceId = Guid.NewGuid();
     private readonly AccountScopedLocalCache localCache;
     private readonly IClientAttachmentCacheStore cacheStore;
     private readonly ClientAttachmentDownloadHttpTransport transport;
@@ -21,8 +27,15 @@ internal sealed class ClientAttachmentDownloadCoordinator :
     private readonly ConcurrentDictionary<
         AttachmentFlightKey,
         AttachmentRevealFlight> activeReveals = new();
+    private readonly ConcurrentDictionary<
+        AttachmentImageFlightKey,
+        AttachmentImageFlight> activeImages;
     private readonly ConcurrentDictionary<Guid, byte> pendingConversationPurges = new();
     private readonly SemaphoreSlim recoveryGate = new(1, 1);
+    private readonly SemaphoreSlim imageProcessingGate;
+    private readonly ClientAttachmentImageDecodeAsync decodeImageAsync;
+    private readonly Action<Exception> criticalImageDecodeFailure;
+    private readonly TimeSpan imageDecodeTimeout;
     private int recoveryCompleted;
     private int disposed;
 
@@ -32,17 +45,297 @@ internal sealed class ClientAttachmentDownloadCoordinator :
         ClientAttachmentDownloadHttpTransport transport,
         ILogger<ClientAttachmentDownloadCoordinator> logger,
         Func<Guid, CancellationToken, Task>? conversationRevokedAsync = null,
-        IWindowsAttachmentShell? attachmentShell = null)
+        IWindowsAttachmentShell? attachmentShell = null,
+        ClientAttachmentImageDecodeAsync? decodeImageAsync = null,
+        TimeSpan? imageDecodeTimeout = null,
+        Action<Exception>? criticalImageDecodeFailure = null)
     {
         this.localCache = localCache ?? throw new ArgumentNullException(nameof(localCache));
         this.cacheStore = cacheStore ?? throw new ArgumentNullException(nameof(cacheStore));
         this.transport = transport ?? throw new ArgumentNullException(nameof(transport));
         this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         this.attachmentShell = attachmentShell ?? new WindowsAttachmentShell();
+        this.decodeImageAsync = decodeImageAsync ?? ClientAttachmentImageDecoder.DecodeAsync;
+        this.criticalImageDecodeFailure = criticalImageDecodeFailure ??
+            FailFastOnCriticalImageDecodeFailure;
+        var imageScopeState = ProcessImageScopeStates.GetOrAdd(
+            this.localCache.Identity.DatabasePath,
+            static _ => new AttachmentImageScopeState());
+        activeImages = imageScopeState.ActiveImages;
+        imageProcessingGate = imageScopeState.ProcessingGate;
+        this.imageDecodeTimeout = imageDecodeTimeout ?? TimeSpan.FromSeconds(10);
+        if (this.imageDecodeTimeout <= TimeSpan.Zero ||
+            this.imageDecodeTimeout > TimeSpan.FromMinutes(1))
+        {
+            throw new ArgumentOutOfRangeException(nameof(imageDecodeTimeout));
+        }
         this.conversationRevokedAsync = conversationRevokedAsync ??
             (static (_, _) => Task.CompletedTask);
         localCache.AttachmentDownloadCancellationRequested += CancelConversationDownloads;
         localCache.AttachmentCachePurged += PurgeConversationCacheAsync;
+    }
+
+    public async Task<ClientAttachmentImageLoadOutcome> LoadImageAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        ClientAttachmentImageRendition rendition,
+        ClientAttachmentImageCommit commit,
+        CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ValidateGuid(conversationId, nameof(conversationId));
+        ValidateGuid(attachmentId, nameof(attachmentId));
+        if (!Enum.IsDefined(rendition))
+        {
+            throw new ArgumentOutOfRangeException(nameof(rendition));
+        }
+
+        ArgumentNullException.ThrowIfNull(commit);
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            lifetimeCancellation.Token);
+        var flightKey = new AttachmentImageFlightKey(
+            conversationId,
+            attachmentId,
+            rendition);
+        var flight = new AttachmentImageFlight(coordinatorInstanceId, linkedCancellation);
+        if (!activeImages.TryAdd(flightKey, flight))
+        {
+            return ClientAttachmentImageLoadOutcome.Failure(
+                ClientAttachmentImageLoadStatus.InProgress);
+        }
+
+        var token = linkedCancellation.Token;
+        using var cancellationBarrier = token.UnsafeRegister(
+            static state =>
+            {
+                var activeImage = (AttachmentImageFlight)state!;
+                lock (activeImage.CommitGate)
+                {
+                }
+            },
+            flight);
+        var enteredProcessingGate = false;
+        var imageFlightDetached = false;
+        try
+        {
+            var read = await localCache
+                .ReadDownloadedAttachmentAsync(conversationId, attachmentId, token)
+                .ConfigureAwait(false);
+            if (read.Status != LocalCacheOperationStatus.Ready)
+            {
+                return ClientAttachmentImageLoadOutcome.Failure(
+                    MapLocalImageStatus(read.Status));
+            }
+
+            if (read.Result != LocalDownloadedAttachmentReadResult.Downloaded ||
+                read.Record is null)
+            {
+                return ClientAttachmentImageLoadOutcome.Failure(
+                    read.Result == LocalDownloadedAttachmentReadResult.AttachmentUnavailable
+                        ? ClientAttachmentImageLoadStatus.AttachmentUnavailable
+                        : ClientAttachmentImageLoadStatus.NotDownloaded);
+            }
+
+            var record = read.Record;
+            if (!record.Attachment.ContentType.StartsWith(
+                    "image/",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return ClientAttachmentImageLoadOutcome.Failure(
+                    ClientAttachmentImageLoadStatus.UnsupportedFormat);
+            }
+
+            if (record.Attachment.Size > ClientAttachmentImageDecodePolicy.MaximumInputBytes)
+            {
+                return ClientAttachmentImageLoadOutcome.Failure(
+                    ClientAttachmentImageLoadStatus.SourceTooLarge);
+            }
+
+            if (!await imageProcessingGate
+                    .WaitAsync(ImageProcessingWaitTimeout, token)
+                    .ConfigureAwait(false))
+            {
+                return ClientAttachmentImageLoadOutcome.Failure(
+                    ClientAttachmentImageLoadStatus.TimedOut);
+            }
+
+            enteredProcessingGate = true;
+            AttachmentImageDecodeInput? decodeInput = null;
+            Task<ClientAttachmentImageDecodeResult>? decodeTask = null;
+            ClientAttachmentImageDecodeResult decoded;
+            flight.SetPinsCacheFile(pinsCacheFile: true);
+            try
+            {
+                var resolution = await cacheStore
+                    .ValidateAndResolveAsync(
+                        record.LocalPath!,
+                        CreateKeyFromRecord(record),
+                        record.Attachment.Size,
+                        token)
+                    .ConfigureAwait(false);
+                using var file = resolution.File;
+                if (resolution.Status != ClientAttachmentCacheStoreStatus.Ready || file is null)
+                {
+                    return ClientAttachmentImageLoadOutcome.Failure(
+                        resolution.Status is ClientAttachmentCacheStoreStatus.NotFound or
+                            ClientAttachmentCacheStoreStatus.InvalidRelativePath or
+                            ClientAttachmentCacheStoreStatus.ValidationFailed
+                            ? ClientAttachmentImageLoadStatus.ValidationFailed
+                            : ClientAttachmentImageLoadStatus.LocalCacheFailure);
+                }
+
+                decodeInput = await CopyValidatedImageContentAsync(
+                        file,
+                        record.Attachment.Size,
+                        token)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                flight.SetPinsCacheFile(pinsCacheFile: false);
+                await RetryPendingPurgeIfQuiescentAsync(conversationId).ConfigureAwait(false);
+            }
+
+            try
+            {
+                decodeTask = decodeImageAsync(decodeInput.Stream, rendition, token);
+                try
+                {
+                    decoded = await decodeTask
+                        .WaitAsync(imageDecodeTimeout, token)
+                        .ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    flight.Cancel();
+                    imageFlightDetached = true;
+                    enteredProcessingGate = false;
+                    _ = ObserveDetachedImageDecodeAsync(
+                        flightKey,
+                        flight,
+                        decodeTask,
+                        decodeInput,
+                        conversationId);
+                    decodeInput = null;
+                    return ClientAttachmentImageLoadOutcome.Failure(
+                        ClientAttachmentImageLoadStatus.TimedOut);
+                }
+                catch (OperationCanceledException) when (!decodeTask.IsCompleted)
+                {
+                    imageFlightDetached = true;
+                    enteredProcessingGate = false;
+                    _ = ObserveDetachedImageDecodeAsync(
+                        flightKey,
+                        flight,
+                        decodeTask,
+                        decodeInput,
+                        conversationId);
+                    decodeInput = null;
+                    throw;
+                }
+            }
+            finally
+            {
+                if (!imageFlightDetached)
+                {
+                    decodeInput?.Dispose();
+                }
+            }
+
+            if (decoded.Status != ClientAttachmentImageDecodeStatus.Success ||
+                decoded.Image is null ||
+                !decoded.Image.IsFrozen ||
+                decoded.SafeSize is null)
+            {
+                return ClientAttachmentImageLoadOutcome.Failure(
+                    MapDecodeStatus(decoded.Status));
+            }
+
+            var committedStatus = ClientAttachmentImageLoadStatus.LocalCacheFailure;
+            var confirmation = await localCache
+                .ConfirmDownloadedAttachmentAsync(
+                    record,
+                    () =>
+                    {
+                        lock (flight.CommitGate)
+                        {
+                            if (token.IsCancellationRequested)
+                            {
+                                committedStatus = MapCancellationImageStatus(conversationId);
+                                return;
+                            }
+
+                            var accessStatus = localCache.GetConversationAccessStatus(
+                                conversationId);
+                            if (accessStatus != LocalCacheOperationStatus.Ready)
+                            {
+                                committedStatus = MapLocalImageStatus(accessStatus);
+                                return;
+                            }
+
+                            committedStatus = commit();
+                        }
+                    },
+                    token)
+                .ConfigureAwait(false);
+            if (confirmation.Status != LocalCacheOperationStatus.Ready)
+            {
+                return ClientAttachmentImageLoadOutcome.Failure(
+                    MapLocalImageStatus(confirmation.Status));
+            }
+
+            if (confirmation.Result != LocalDownloadedAttachmentConfirmationResult.Confirmed)
+            {
+                return ClientAttachmentImageLoadOutcome.Failure(
+                    confirmation.Result switch
+                    {
+                        LocalDownloadedAttachmentConfirmationResult.AttachmentUnavailable =>
+                            ClientAttachmentImageLoadStatus.AttachmentUnavailable,
+                        LocalDownloadedAttachmentConfirmationResult.NotDownloaded =>
+                            ClientAttachmentImageLoadStatus.NotDownloaded,
+                        _ => ClientAttachmentImageLoadStatus.Stale,
+                    });
+            }
+
+            return committedStatus == ClientAttachmentImageLoadStatus.Ready
+                ? ClientAttachmentImageLoadOutcome.Ready(decoded)
+                : ClientAttachmentImageLoadOutcome.Failure(committedStatus);
+        }
+        catch (OperationCanceledException)
+        {
+            return ClientAttachmentImageLoadOutcome.Failure(
+                MapCancellationImageStatus(conversationId));
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientAttachmentImageLoadOutcome.Failure(
+                ClientAttachmentImageLoadStatus.Canceled);
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            logger.LogWarning(
+                "Loading a downloaded attachment image failed; errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientAttachmentImageLoadOutcome.Failure(
+                ClientAttachmentImageLoadStatus.LocalCacheFailure);
+        }
+        finally
+        {
+            if (enteredProcessingGate)
+            {
+                imageProcessingGate.Release();
+            }
+
+            if (!imageFlightDetached &&
+                activeImages.TryGetValue(flightKey, out var activeImage) &&
+                ReferenceEquals(activeImage, flight))
+            {
+                activeImages.TryRemove(flightKey, out _);
+            }
+
+            await RetryPendingPurgeIfQuiescentAsync(conversationId).ConfigureAwait(false);
+        }
     }
 
     public async Task<ClientAttachmentRevealOutcome> RevealInFolderAsync(
@@ -413,6 +706,23 @@ internal sealed class ClientAttachmentDownloadCoordinator :
                 }
             }
 
+            foreach (var image in activeImages.Values)
+            {
+                if (image.OwnerId != coordinatorInstanceId)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    image.Cancellation.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // A completed image flight may dispose concurrently with shutdown.
+                }
+            }
+
             lifetimeCancellation.Dispose();
             recoveryGate.Dispose();
         }
@@ -765,6 +1075,23 @@ internal sealed class ClientAttachmentDownloadCoordinator :
                 // Completion may race a durable revocation notification.
             }
         }
+
+        foreach (var image in activeImages)
+        {
+            if (image.Key.ConversationId != conversationId)
+            {
+                continue;
+            }
+
+            try
+            {
+                image.Value.Cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Completion may race a durable revocation notification.
+            }
+        }
     }
 
     private async Task PurgeConversationCacheAsync(Guid conversationId)
@@ -786,7 +1113,10 @@ internal sealed class ClientAttachmentDownloadCoordinator :
     {
         if (!pendingConversationPurges.ContainsKey(conversationId) ||
             activeFlights.Keys.Any(key => key.ConversationId == conversationId) ||
-            activeReveals.Keys.Any(key => key.ConversationId == conversationId))
+            activeReveals.Keys.Any(key => key.ConversationId == conversationId) ||
+            activeImages.Any(image =>
+                image.Key.ConversationId == conversationId &&
+                image.Value.PinsCacheFile))
         {
             return;
         }
@@ -814,6 +1144,97 @@ internal sealed class ClientAttachmentDownloadCoordinator :
                 "A quiescent revoked-conversation attachment cache purge retry failed; " +
                 "errorType={ErrorType}.",
                 exception.GetType().Name);
+        }
+    }
+
+    private static async Task<AttachmentImageDecodeInput> CopyValidatedImageContentAsync(
+        ClientAttachmentCacheStore.ValidatedFile file,
+        long expectedLength,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        if (expectedLength is < 1 or > ClientAttachmentImageDecodePolicy.MaximumInputBytes)
+        {
+            throw new InvalidDataException(
+                "The validated image length is outside the preview input budget.");
+        }
+
+        return await file
+            .ReadContentAsync(
+                async (content, readCancellation) =>
+                {
+                    if (content.Length != expectedLength)
+                    {
+                        throw new InvalidDataException(
+                            "The validated image content length changed unexpectedly.");
+                    }
+
+                    var bytes = GC.AllocateUninitializedArray<byte>(checked((int)expectedLength));
+                    try
+                    {
+                        await content
+                            .ReadExactlyAsync(bytes.AsMemory(), readCancellation)
+                            .ConfigureAwait(false);
+                        if (content.ReadByte() != -1)
+                        {
+                            throw new InvalidDataException(
+                                "The validated image content exceeded its expected length.");
+                        }
+
+                        return new AttachmentImageDecodeInput(bytes);
+                    }
+                    catch
+                    {
+                        CryptographicOperations.ZeroMemory(bytes);
+                        throw;
+                    }
+                },
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private async Task ObserveDetachedImageDecodeAsync(
+        AttachmentImageFlightKey flightKey,
+        AttachmentImageFlight flight,
+        Task<ClientAttachmentImageDecodeResult> decodeTask,
+        AttachmentImageDecodeInput decodeInput,
+        Guid conversationId)
+    {
+        Exception? criticalFailure = null;
+        try
+        {
+            _ = await decodeTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            logger.LogWarning(
+                "A detached attachment image decoder completed with an error; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+        }
+        catch (Exception exception)
+        {
+            criticalFailure = exception;
+        }
+        finally
+        {
+            decodeInput.Dispose();
+            imageProcessingGate.Release();
+            if (activeImages.TryGetValue(flightKey, out var activeImage) &&
+                ReferenceEquals(activeImage, flight))
+            {
+                activeImages.TryRemove(flightKey, out _);
+            }
+
+            await RetryPendingPurgeIfQuiescentAsync(conversationId).ConfigureAwait(false);
+        }
+
+        if (criticalFailure is not null)
+        {
+            criticalImageDecodeFailure(criticalFailure);
         }
     }
 
@@ -846,6 +1267,51 @@ internal sealed class ClientAttachmentDownloadCoordinator :
             return ClientAttachmentRevealStatus.Canceled;
         }
     }
+
+    private ClientAttachmentImageLoadStatus MapCancellationImageStatus(Guid conversationId)
+    {
+        try
+        {
+            return localCache.GetConversationAccessStatus(conversationId) ==
+                LocalCacheOperationStatus.RevokedConversation
+                    ? ClientAttachmentImageLoadStatus.AccessRevoked
+                    : ClientAttachmentImageLoadStatus.Canceled;
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientAttachmentImageLoadStatus.Canceled;
+        }
+    }
+
+    private static ClientAttachmentImageLoadStatus MapLocalImageStatus(
+        LocalCacheOperationStatus status) =>
+        status switch
+        {
+            LocalCacheOperationStatus.RevokedConversation =>
+                ClientAttachmentImageLoadStatus.AccessRevoked,
+            LocalCacheOperationStatus.UnknownConversation =>
+                ClientAttachmentImageLoadStatus.AttachmentUnavailable,
+            LocalCacheOperationStatus.TransientFailure =>
+                ClientAttachmentImageLoadStatus.TransientFailure,
+            LocalCacheOperationStatus.Conflict => ClientAttachmentImageLoadStatus.Stale,
+            _ => ClientAttachmentImageLoadStatus.LocalCacheFailure,
+        };
+
+    private static ClientAttachmentImageLoadStatus MapDecodeStatus(
+        ClientAttachmentImageDecodeStatus status) =>
+        status switch
+        {
+            ClientAttachmentImageDecodeStatus.InvalidInput =>
+                ClientAttachmentImageLoadStatus.ValidationFailed,
+            ClientAttachmentImageDecodeStatus.UnsupportedFormat or
+                ClientAttachmentImageDecodeStatus.UnsupportedCodec =>
+                ClientAttachmentImageLoadStatus.UnsupportedFormat,
+            ClientAttachmentImageDecodeStatus.SourceTooLarge =>
+                ClientAttachmentImageLoadStatus.SourceTooLarge,
+            ClientAttachmentImageDecodeStatus.OutputTooLarge =>
+                ClientAttachmentImageLoadStatus.OutputTooLarge,
+            _ => ClientAttachmentImageLoadStatus.DecodeFailed,
+        };
 
     private static ClientAttachmentRevealStatus MapLocalRevealStatus(
         LocalCacheOperationStatus status) =>
@@ -925,9 +1391,22 @@ internal sealed class ClientAttachmentDownloadCoordinator :
     private void ThrowIfDisposed() =>
         ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
 
+    private static bool IsCriticalException(Exception exception) =>
+        exception is OutOfMemoryException or StackOverflowException or AccessViolationException;
+
+    private static void FailFastOnCriticalImageDecodeFailure(Exception exception) =>
+        Environment.FailFast(
+            "A detached attachment image decoder encountered a critical process failure.",
+            exception);
+
     private readonly record struct AttachmentFlightKey(
         Guid ConversationId,
         Guid AttachmentId);
+
+    private readonly record struct AttachmentImageFlightKey(
+        Guid ConversationId,
+        Guid AttachmentId,
+        ClientAttachmentImageRendition Rendition);
 
     private sealed class AttachmentRevealFlight(
         CancellationTokenSource cancellation)
@@ -935,5 +1414,75 @@ internal sealed class ClientAttachmentDownloadCoordinator :
         public object CommitGate { get; } = new();
 
         public CancellationTokenSource Cancellation { get; } = cancellation;
+    }
+
+    private sealed class AttachmentImageScopeState
+    {
+        public ConcurrentDictionary<AttachmentImageFlightKey, AttachmentImageFlight>
+            ActiveImages
+        { get; } = new();
+
+        public SemaphoreSlim ProcessingGate { get; } = new(2, 2);
+    }
+
+    private sealed class AttachmentImageFlight(
+        Guid ownerId,
+        CancellationTokenSource cancellation)
+    {
+        private int pinsCacheFile;
+
+        public Guid OwnerId { get; } = ownerId;
+
+        public object CommitGate { get; } = new();
+
+        public CancellationTokenSource Cancellation { get; } = cancellation;
+
+        public bool PinsCacheFile => Volatile.Read(ref pinsCacheFile) != 0;
+
+        public void SetPinsCacheFile(bool pinsCacheFile) =>
+            Volatile.Write(ref this.pinsCacheFile, pinsCacheFile ? 1 : 0);
+
+        public void Cancel()
+        {
+            try
+            {
+                Cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+    }
+
+    private sealed class AttachmentImageDecodeInput : IDisposable
+    {
+        private byte[]? bytes;
+
+        internal AttachmentImageDecodeInput(byte[] bytes)
+        {
+            ArgumentNullException.ThrowIfNull(bytes);
+            this.bytes = bytes;
+            Stream = new MemoryStream(
+                bytes,
+                index: 0,
+                count: bytes.Length,
+                writable: false,
+                publiclyVisible: false);
+        }
+
+        internal MemoryStream Stream { get; }
+
+        public void Dispose()
+        {
+            Stream.Dispose();
+            var ownedBytes = Interlocked.Exchange(ref bytes, null);
+            if (ownedBytes is not null)
+            {
+                CryptographicOperations.ZeroMemory(ownedBytes);
+            }
+        }
+
+        public override string ToString() =>
+            $"{nameof(AttachmentImageDecodeInput)} {{ Content = [REDACTED] }}";
     }
 }

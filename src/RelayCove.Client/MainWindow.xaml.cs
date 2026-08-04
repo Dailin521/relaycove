@@ -20,6 +20,11 @@ namespace RelayCove.Client;
 
 public partial class MainWindow : Window
 {
+    private const int MaximumAttachmentThumbnailInProgressRetries = 15;
+    private static readonly TimeSpan AttachmentThumbnailRetryMinimumDelay =
+        TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan AttachmentThumbnailRetryMaximumDelay =
+        TimeSpan.FromSeconds(1);
     private ClientAccountShellCoordinator? accountShell;
     private Guid? pendingConversationSelectionId;
     private long lastConversationRevision;
@@ -42,6 +47,11 @@ public partial class MainWindow : Window
     private readonly Dictionary<
         ClientAttachmentViewKey,
         ClientAttachmentRevealOperation> attachmentRevealOperations = [];
+    private readonly Dictionary<
+        ClientAttachmentViewKey,
+        ClientAttachmentImageOperation> attachmentThumbnailOperations = [];
+    private ClientAttachmentImageViewerOperation? attachmentImageViewerOperation;
+    private IInputElement? attachmentImageViewerRestoreFocus;
     private long mentionSearchVersion;
     private long attachmentSubmissionVersion;
     private long attachmentDownloadContextVersion;
@@ -273,6 +283,11 @@ public partial class MainWindow : Window
         applyingMessageSnapshot = true;
         try
         {
+            // Visual materialization can synchronously raise Loaded and
+            // DataContextChanged while ItemsSource is assigned. Publish the
+            // reconciled snapshot first so those handlers resolve the new
+            // attachment identity instead of the previous snapshot.
+            displayedMessageSnapshot = snapshot;
             if (!previousItems.SequenceEqual(snapshot.Messages))
             {
                 MessageList.ItemsSource = snapshot.Messages;
@@ -327,7 +342,6 @@ public partial class MainWindow : Window
             NewMessageIndicatorButton.Visibility = decision.ShowNewMessageIndicator
                 ? Visibility.Visible
                 : Visibility.Collapsed;
-            displayedMessageSnapshot = snapshot;
         }
         finally
         {
@@ -1270,6 +1284,399 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void OnAttachmentThumbnailLoaded(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Image
+            {
+                DataContext: ClientMessageAttachmentPresentation
+                {
+                    ImageState: { } state,
+                },
+            })
+        {
+            return;
+        }
+
+        await StartAttachmentThumbnailAsync(state);
+    }
+
+    private void OnAttachmentThumbnailUnloaded(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is System.Windows.Controls.Image
+            {
+                DataContext: ClientMessageAttachmentPresentation
+                {
+                    ImageState: { } state,
+                },
+            })
+        {
+            CancelAttachmentThumbnailForRecycle(state);
+        }
+    }
+
+    private void OnAttachmentThumbnailDataContextChanged(
+        object sender,
+        DependencyPropertyChangedEventArgs e)
+    {
+        if (e.OldValue is ClientMessageAttachmentPresentation
+            {
+                ImageState: { } oldState,
+            })
+        {
+            CancelAttachmentThumbnailForRecycle(oldState);
+        }
+
+        if (sender is System.Windows.Controls.Image { IsLoaded: true } &&
+            e.NewValue is ClientMessageAttachmentPresentation
+            {
+                ImageState: { } newState,
+            })
+        {
+            _ = StartAttachmentThumbnailAsync(newState);
+        }
+    }
+
+    private async void OnAttachmentImageViewClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button
+            {
+                DataContext: ClientMessageAttachmentPresentation
+                {
+                    ImageState: { CanView: true } state,
+                },
+            } button ||
+            accountShell is null ||
+            !TryResolveCurrentAttachment(state, out _, out _))
+        {
+            return;
+        }
+
+        CloseAttachmentImageViewer(restoreFocus: false);
+        var operation = new ClientAttachmentImageViewerOperation(
+            state.Context,
+            state,
+            new CancellationTokenSource());
+        attachmentImageViewerOperation = operation;
+        attachmentImageViewerRestoreFocus = button;
+        AttachmentImageViewerTitleText.Text = state.DisplayName;
+        AttachmentImageViewerImage.Source = null;
+        AttachmentImageViewerStatusText.Text = "正在加载受限图片预览…";
+        AttachmentImageViewerOverlay.Visibility = Visibility.Visible;
+        CloseAttachmentImageViewerButton.Focus();
+
+        try
+        {
+            var outcome = await accountShell.LoadAttachmentImageAsync(
+                state.Context.AttachmentId,
+                ClientAttachmentImageRendition.Viewer,
+                operation.Cancellation.Token);
+            if (!IsCurrentAttachmentImageViewerOperation(operation))
+            {
+                return;
+            }
+
+            if (outcome.Status == ClientAttachmentImageLoadStatus.Ready &&
+                outcome.Image is { IsFrozen: true } image)
+            {
+                AttachmentImageViewerImage.Source = image;
+                AttachmentImageViewerStatusText.Text = outcome.WasDownsampled
+                    ? "受限预览：图片已按 2560 像素与 25 MiB 安全上限缩放。"
+                    : "图片预览已加载；显示仍受 25 MiB 安全上限保护。";
+            }
+            else
+            {
+                AttachmentImageViewerImage.Source = null;
+                AttachmentImageViewerStatusText.Text = DescribeAttachmentImageOutcome(
+                    outcome.Status);
+            }
+
+            if (outcome.Status is ClientAttachmentImageLoadStatus.NotDownloaded or
+                ClientAttachmentImageLoadStatus.AttachmentUnavailable or
+                ClientAttachmentImageLoadStatus.ValidationFailed)
+            {
+                MarkAttachmentNoLongerDownloaded(state.Context);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            if (IsCurrentAttachmentImageViewerOperation(operation))
+            {
+                AttachmentImageViewerImage.Source = null;
+                AttachmentImageViewerStatusText.Text = "图片预览已取消。";
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            if (IsCurrentAttachmentImageViewerOperation(operation))
+            {
+                AttachmentImageViewerImage.Source = null;
+                AttachmentImageViewerStatusText.Text = "账户已结束，无法查看图片。";
+            }
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            Debug.WriteLine(
+                $"Attachment image viewer presentation failed: {exception.GetType().Name}.");
+            if (IsCurrentAttachmentImageViewerOperation(operation))
+            {
+                AttachmentImageViewerImage.Source = null;
+                AttachmentImageViewerStatusText.Text = "无法加载图片预览，请稍后重试。";
+            }
+        }
+        finally
+        {
+            // Keep the viewer identity alive after a successful load so a later
+            // snapshot change, revocation, or download-state loss can still close
+            // the already-rendered image. Close/replacement owns disposal while
+            // this operation remains current.
+            if (!ReferenceEquals(attachmentImageViewerOperation, operation))
+            {
+                operation.Dispose();
+            }
+        }
+    }
+
+    private void OnCloseAttachmentImageViewerClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        CloseAttachmentImageViewer(restoreFocus: true);
+    }
+
+    private void OnMainWindowPreviewKeyDown(
+        object sender,
+        System.Windows.Input.KeyEventArgs e)
+    {
+        _ = sender;
+        if (e.Key != Key.Escape || AttachmentImageViewerOverlay.Visibility != Visibility.Visible)
+        {
+            return;
+        }
+
+        CloseAttachmentImageViewer(restoreFocus: true);
+        e.Handled = true;
+    }
+
+    private async Task StartAttachmentThumbnailAsync(ClientAttachmentImageViewState state)
+    {
+        var shell = accountShell;
+        if (shell is null ||
+            !TryResolveCurrentAttachment(state, out _, out _) ||
+            !state.TryBeginLoad())
+        {
+            return;
+        }
+
+        var key = ClientAttachmentViewKey.From(state.Context);
+        if (attachmentThumbnailOperations.Remove(key, out var previousOperation))
+        {
+            previousOperation.Cancel();
+            previousOperation.Dispose();
+        }
+
+        var operation = new ClientAttachmentImageOperation(
+            state.Context,
+            state,
+            new CancellationTokenSource());
+        attachmentThumbnailOperations.Add(key, operation);
+        try
+        {
+            var retryDelay = AttachmentThumbnailRetryMinimumDelay;
+            var inProgressRetries = 0;
+            ClientAttachmentImageLoadOutcome outcome;
+            while (true)
+            {
+                outcome = await shell.LoadAttachmentImageAsync(
+                    state.Context.AttachmentId,
+                    ClientAttachmentImageRendition.Thumbnail,
+                    operation.Cancellation.Token);
+                if (!IsCurrentAttachmentThumbnailOperation(key, state, operation))
+                {
+                    return;
+                }
+
+                if (outcome.Status != ClientAttachmentImageLoadStatus.InProgress)
+                {
+                    break;
+                }
+
+                if (++inProgressRetries >= MaximumAttachmentThumbnailInProgressRetries)
+                {
+                    outcome = ClientAttachmentImageLoadOutcome.Failure(
+                        ClientAttachmentImageLoadStatus.TimedOut);
+                    break;
+                }
+
+                await Task.Delay(retryDelay, operation.Cancellation.Token);
+                retryDelay = TimeSpan.FromMilliseconds(Math.Min(
+                    AttachmentThumbnailRetryMaximumDelay.TotalMilliseconds,
+                    retryDelay.TotalMilliseconds * 2));
+            }
+
+            if (outcome.Status == ClientAttachmentImageLoadStatus.Ready &&
+                outcome.Image is { IsFrozen: true } image)
+            {
+                _ = state.TryApplyLoaded(image);
+            }
+            else
+            {
+                _ = state.TryApplyFailure(DescribeAttachmentImageOutcome(outcome.Status));
+            }
+
+            if (outcome.Status is ClientAttachmentImageLoadStatus.NotDownloaded or
+                ClientAttachmentImageLoadStatus.AttachmentUnavailable or
+                ClientAttachmentImageLoadStatus.ValidationFailed)
+            {
+                MarkAttachmentNoLongerDownloaded(state.Context);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            if (IsCurrentAttachmentThumbnailOperation(key, state, operation))
+            {
+                _ = state.TryApplyFailure("图片缩略图加载已取消。");
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            if (IsCurrentAttachmentThumbnailOperation(key, state, operation))
+            {
+                _ = state.TryApplyFailure("账户已结束，无法加载图片缩略图。");
+            }
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            Debug.WriteLine(
+                $"Attachment thumbnail presentation failed: {exception.GetType().Name}.");
+            if (IsCurrentAttachmentThumbnailOperation(key, state, operation))
+            {
+                _ = state.TryApplyFailure("无法加载图片缩略图，请稍后重试。");
+            }
+        }
+        finally
+        {
+            CompleteAttachmentThumbnailOperation(key, operation);
+        }
+    }
+
+    private static string DescribeAttachmentImageOutcome(
+        ClientAttachmentImageLoadStatus status) =>
+        status switch
+        {
+            ClientAttachmentImageLoadStatus.Ready => "图片预览已加载。",
+            ClientAttachmentImageLoadStatus.InProgress => "图片正在其他任务中加载。",
+            ClientAttachmentImageLoadStatus.NotDownloaded => "图片尚未下载，请重新下载。",
+            ClientAttachmentImageLoadStatus.AttachmentUnavailable => "图片不可用或已被移除。",
+            ClientAttachmentImageLoadStatus.AccessRevoked => "已失去此会话的访问权限。",
+            ClientAttachmentImageLoadStatus.Stale => "图片上下文已变化，请重试。",
+            ClientAttachmentImageLoadStatus.ValidationFailed =>
+                "本地图片未通过完整性校验，请重新下载。",
+            ClientAttachmentImageLoadStatus.UnsupportedFormat =>
+                "此图片格式不在安全预览白名单中。",
+            ClientAttachmentImageLoadStatus.SourceTooLarge =>
+                "图片原始尺寸超过安全预览上限。",
+            ClientAttachmentImageLoadStatus.OutputTooLarge =>
+                "图片解码结果超过安全内存上限。",
+            ClientAttachmentImageLoadStatus.DecodeFailed => "图片内容无法安全解码。",
+            ClientAttachmentImageLoadStatus.TimedOut =>
+                "图片解码超过 10 秒安全时限，已停止等待。",
+            ClientAttachmentImageLoadStatus.TransientFailure =>
+                "本地状态暂时繁忙，请稍后重试。",
+            ClientAttachmentImageLoadStatus.LocalCacheFailure => "本地图片缓存不可用。",
+            _ => "图片预览已取消。",
+        };
+
+    private void CancelAttachmentThumbnailForRecycle(ClientAttachmentImageViewState state)
+    {
+        var key = ClientAttachmentViewKey.From(state.Context);
+        if (attachmentThumbnailOperations.Remove(key, out var operation))
+        {
+            operation.Cancel();
+            operation.Dispose();
+        }
+
+        if (attachmentImageViewerOperation is { } viewerOperation &&
+            ReferenceEquals(viewerOperation.State, state))
+        {
+            CloseAttachmentImageViewer(restoreFocus: false);
+        }
+
+        state.ClearForRecycle();
+    }
+
+    private bool IsCurrentAttachmentThumbnailOperation(
+        ClientAttachmentViewKey key,
+        ClientAttachmentImageViewState state,
+        ClientAttachmentImageOperation operation) =>
+        attachmentThumbnailOperations.TryGetValue(key, out var activeOperation) &&
+        ReferenceEquals(activeOperation, operation) &&
+        ReferenceEquals(operation.State, state) &&
+        ReferenceEquals(operation.Context, state.Context) &&
+        TryResolveCurrentAttachment(state, out _, out _);
+
+    private void CompleteAttachmentThumbnailOperation(
+        ClientAttachmentViewKey key,
+        ClientAttachmentImageOperation operation)
+    {
+        if (attachmentThumbnailOperations.TryGetValue(key, out var activeOperation) &&
+            ReferenceEquals(activeOperation, operation))
+        {
+            attachmentThumbnailOperations.Remove(key);
+        }
+
+        operation.Dispose();
+    }
+
+    private bool IsCurrentAttachmentImageViewerOperation(
+        ClientAttachmentImageViewerOperation operation) =>
+        ReferenceEquals(attachmentImageViewerOperation, operation) &&
+        AttachmentImageViewerOverlay.Visibility == Visibility.Visible &&
+        ReferenceEquals(operation.Context, operation.State.Context) &&
+        TryResolveCurrentAttachment(operation.State, out _, out _);
+
+    private void CloseAttachmentImageViewer(bool restoreFocus)
+    {
+        var viewerOwnedKeyboardFocus = AttachmentImageViewerOverlay.IsKeyboardFocusWithin;
+        var operation = attachmentImageViewerOperation;
+        attachmentImageViewerOperation = null;
+        if (operation is not null)
+        {
+            operation.Cancel();
+            operation.Dispose();
+        }
+
+        AttachmentImageViewerImage.Source = null;
+        AttachmentImageViewerTitleText.Text = string.Empty;
+        AttachmentImageViewerStatusText.Text = string.Empty;
+        AttachmentImageViewerOverlay.Visibility = Visibility.Collapsed;
+        var restoreTarget = attachmentImageViewerRestoreFocus;
+        attachmentImageViewerRestoreFocus = null;
+        if (!restoreFocus && !viewerOwnedKeyboardFocus)
+        {
+            return;
+        }
+
+        if (restoreFocus &&
+            restoreTarget is UIElement { IsVisible: true, IsEnabled: true } element &&
+            element.Focus())
+        {
+            return;
+        }
+
+        if (MessageList is { IsVisible: true, IsEnabled: true } && MessageList.Focus())
+        {
+            return;
+        }
+
+        if (MessageComposerTextBox is { IsVisible: true, IsEnabled: true })
+        {
+            MessageComposerTextBox.Focus();
+        }
+    }
+
     private async Task StartAttachmentDownloadAsync(
         ClientMessageAttachmentPresentation attachment,
         ClientAttachmentDownloadViewState state)
@@ -1418,7 +1825,7 @@ public partial class MainWindow : Window
                 ClientAttachmentRevealStatus.AttachmentUnavailable or
                 ClientAttachmentRevealStatus.ValidationFailed)
             {
-                state.SynchronizePersistedDownloaded(isDownloaded: false);
+                MarkAttachmentNoLongerDownloaded(state.Context);
             }
 
             SetLiveText(
@@ -1542,12 +1949,25 @@ public partial class MainWindow : Window
                 // flight was still active. Let a later persisted projection correct it.
                 entry.PersistedDownloaded = true;
                 entry.PendingPersistedDownloaded = null;
+                SynchronizeAttachmentImageEligibility(
+                    entry,
+                    isEligible: currentAttachment.IsImage);
+                _ = StartAttachmentThumbnailAsync(entry.ImageState);
             }
             else if (entry.PendingPersistedDownloaded is { } pendingDownloaded)
             {
                 entry.PendingPersistedDownloaded = null;
                 entry.PersistedDownloaded = pendingDownloaded;
                 _ = state.SynchronizePersistedDownloaded(pendingDownloaded);
+            }
+
+            if (outcome.Status is not (ClientAttachmentDownloadStatus.Completed or
+                    ClientAttachmentDownloadStatus.AlreadyDownloaded))
+            {
+                SynchronizeAttachmentImageEligibility(
+                    entry,
+                    currentAttachment.IsImage &&
+                    state.Phase == ClientAttachmentDownloadPhase.Downloaded);
             }
 
             RaiseAttachmentDownloadLiveRegion(state);
@@ -2330,7 +2750,10 @@ public partial class MainWindow : Window
             if (attachmentDownloadConversationId.HasValue ||
                 attachmentDownloadStates.Count != 0 ||
                 attachmentDownloadOperations.Count != 0 ||
-                attachmentRevealOperations.Count != 0)
+                attachmentRevealOperations.Count != 0 ||
+                attachmentThumbnailOperations.Count != 0 ||
+                attachmentImageViewerOperation is not null ||
+                AttachmentImageViewerOverlay.Visibility == Visibility.Visible)
             {
                 ResetAttachmentDownloadContext(conversationId: null);
             }
@@ -2373,6 +2796,10 @@ public partial class MainWindow : Window
                             context,
                             attachment.DisplayName,
                             attachment.IsDownloaded),
+                        new ClientAttachmentImageViewState(
+                            context,
+                            attachment.DisplayName,
+                            attachment.IsImage && attachment.IsDownloaded),
                         attachment.IsDownloaded);
                     attachmentDownloadStates.Add(key, entry);
                 }
@@ -2395,7 +2822,16 @@ public partial class MainWindow : Window
                     }
                 }
 
-                attachments.Add(attachment with { DownloadState = entry.State });
+                SynchronizeAttachmentImageEligibility(
+                    entry,
+                    attachment.IsImage &&
+                    entry.State.Phase == ClientAttachmentDownloadPhase.Downloaded);
+
+                attachments.Add(attachment with
+                {
+                    DownloadState = entry.State,
+                    ImageState = entry.ImageState,
+                });
             }
 
             messages.Add(message with { Attachments = attachments.AsReadOnly() });
@@ -2413,6 +2849,18 @@ public partial class MainWindow : Window
             if (attachmentRevealOperations.Remove(removedKey, out var revealOperation))
             {
                 revealOperation.Cancel();
+            }
+
+            if (attachmentThumbnailOperations.Remove(removedKey, out var imageOperation))
+            {
+                imageOperation.Cancel();
+                imageOperation.Dispose();
+            }
+
+            if (attachmentImageViewerOperation is { } viewerOperation &&
+                ClientAttachmentViewKey.From(viewerOperation.Context) == removedKey)
+            {
+                CloseAttachmentImageViewer(restoreFocus: false);
             }
 
             attachmentDownloadStates.Remove(removedKey);
@@ -2445,6 +2893,68 @@ public partial class MainWindow : Window
         return attachment is not null &&
             attachment.MessageClientId == state.Context.MessageClientId &&
             ReferenceEquals(attachment.DownloadState, state);
+    }
+
+    private bool TryResolveCurrentAttachment(
+        ClientAttachmentImageViewState state,
+        out ClientMessageListSnapshot snapshot,
+        out ClientMessageAttachmentPresentation attachment)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        snapshot = displayedMessageSnapshot ?? ClientMessageListSnapshot.Initial;
+        attachment = null!;
+        if (snapshot.Status != ClientMessageListStatus.Ready ||
+            snapshot.ConversationId is not { } conversationId ||
+            conversationId != attachmentDownloadConversationId ||
+            conversationId != state.Context.ConversationId ||
+            state.Context.ContextVersion != attachmentDownloadContextVersion)
+        {
+            return false;
+        }
+
+        var message = snapshot.Messages.FirstOrDefault(candidate =>
+            candidate.ClientMessageId == state.Context.MessageClientId);
+        attachment = message?.Attachments.FirstOrDefault(candidate =>
+            candidate.AttachmentId == state.Context.AttachmentId)!;
+        return attachment is not null &&
+            attachment.MessageClientId == state.Context.MessageClientId &&
+            ReferenceEquals(attachment.ImageState, state);
+    }
+
+    private void SynchronizeAttachmentImageEligibility(
+        ClientAttachmentDownloadStateEntry entry,
+        bool isEligible)
+    {
+        if (!isEligible && entry.ImageState.IsEligible)
+        {
+            CancelAttachmentThumbnailForRecycle(entry.ImageState);
+            if (attachmentImageViewerOperation is { } operation &&
+                ReferenceEquals(operation.State, entry.ImageState))
+            {
+                CloseAttachmentImageViewer(restoreFocus: false);
+            }
+        }
+
+        entry.ImageState.SynchronizeEligibility(isEligible);
+    }
+
+    private void MarkAttachmentNoLongerDownloaded(ClientAttachmentDownloadContext context)
+    {
+        var key = ClientAttachmentViewKey.From(context);
+        if (!attachmentDownloadStates.TryGetValue(key, out var entry) ||
+            !ReferenceEquals(entry.State.Context, context) ||
+            !ReferenceEquals(entry.ImageState.Context, context))
+        {
+            return;
+        }
+
+        entry.PersistedDownloaded = false;
+        entry.PendingPersistedDownloaded = null;
+        _ = entry.State.SynchronizePersistedDownloaded(isDownloaded: false);
+        SynchronizeAttachmentImageEligibility(entry, isEligible: false);
+        SetLiveText(
+            MessageComposerStatusText,
+            "本地图片状态已失效，请重新下载后再预览。");
     }
 
     private bool IsCurrentAttachmentRevealOperation(
@@ -2486,6 +2996,14 @@ public partial class MainWindow : Window
         }
 
         attachmentRevealOperations.Clear();
+        foreach (var operation in attachmentThumbnailOperations.Values)
+        {
+            operation.Cancel();
+            operation.Dispose();
+        }
+
+        attachmentThumbnailOperations.Clear();
+        CloseAttachmentImageViewer(restoreFocus: false);
         attachmentDownloadStates.Clear();
     }
 
@@ -2529,9 +3047,12 @@ public partial class MainWindow : Window
 
     private sealed class ClientAttachmentDownloadStateEntry(
         ClientAttachmentDownloadViewState state,
+        ClientAttachmentImageViewState imageState,
         bool persistedDownloaded)
     {
         public ClientAttachmentDownloadViewState State { get; } = state;
+
+        public ClientAttachmentImageViewState ImageState { get; } = imageState;
 
         public bool PersistedDownloaded { get; set; } = persistedDownloaded;
 
@@ -2579,6 +3100,78 @@ public partial class MainWindow : Window
             throw new ArgumentNullException(nameof(context));
 
         public ClientAttachmentDownloadViewState State { get; } = state ??
+            throw new ArgumentNullException(nameof(state));
+
+        public CancellationTokenSource Cancellation { get; } = cancellation ??
+            throw new ArgumentNullException(nameof(cancellation));
+
+        public void Cancel()
+        {
+            try
+            {
+                Cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                Cancellation.Dispose();
+            }
+        }
+    }
+
+    private sealed class ClientAttachmentImageOperation(
+        ClientAttachmentDownloadContext context,
+        ClientAttachmentImageViewState state,
+        CancellationTokenSource cancellation) : IDisposable
+    {
+        private int disposed;
+
+        public ClientAttachmentDownloadContext Context { get; } = context ??
+            throw new ArgumentNullException(nameof(context));
+
+        public ClientAttachmentImageViewState State { get; } = state ??
+            throw new ArgumentNullException(nameof(state));
+
+        public CancellationTokenSource Cancellation { get; } = cancellation ??
+            throw new ArgumentNullException(nameof(cancellation));
+
+        public void Cancel()
+        {
+            try
+            {
+                Cancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                Cancellation.Dispose();
+            }
+        }
+    }
+
+    private sealed class ClientAttachmentImageViewerOperation(
+        ClientAttachmentDownloadContext context,
+        ClientAttachmentImageViewState state,
+        CancellationTokenSource cancellation) : IDisposable
+    {
+        private int disposed;
+
+        public ClientAttachmentDownloadContext Context { get; } = context ??
+            throw new ArgumentNullException(nameof(context));
+
+        public ClientAttachmentImageViewState State { get; } = state ??
             throw new ArgumentNullException(nameof(state));
 
         public CancellationTokenSource Cancellation { get; } = cancellation ??

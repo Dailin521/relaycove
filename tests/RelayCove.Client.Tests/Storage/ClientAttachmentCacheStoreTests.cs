@@ -88,6 +88,62 @@ public sealed class ClientAttachmentCacheStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task ValidatedFile_ReadContentAsync_ProvidesPathlessReadOnlyPinnedContent()
+    {
+        var store = CreateStore();
+        var bytes = "pathless validated content"u8.ToArray();
+        var key = CreateKey(bytes);
+        var published = await WriteAndPublishAsync(store, key, bytes);
+        var fullPath = Path.Combine(store.ScopeDirectory, published.RelativePath!);
+        var resolved = await store.ValidateAndResolveAsync(
+            published.RelativePath!,
+            key,
+            bytes.LongLength);
+        using var file = Assert.IsType<ClientAttachmentCacheStore.ValidatedFile>(resolved.File);
+
+        var read = await file.ReadContentAsync(
+            async (content, cancellationToken) =>
+            {
+                Assert.False(content is FileStream);
+                Assert.True(content.CanRead);
+                Assert.True(content.CanSeek);
+                Assert.False(content.CanWrite);
+                Assert.DoesNotContain(
+                    fullPath,
+                    content.ToString() ?? string.Empty,
+                    StringComparison.OrdinalIgnoreCase);
+                await Assert.ThrowsAsync<NotSupportedException>(() =>
+                    content.WriteAsync(new byte[] { 1 }, cancellationToken).AsTask());
+                using var copy = new MemoryStream();
+                await content.CopyToAsync(copy, cancellationToken);
+                content.Dispose();
+                return copy.ToArray();
+            });
+
+        Assert.Equal(bytes, read);
+        await Assert.ThrowsAsync<IOException>(() => File.WriteAllBytesAsync(fullPath, bytes));
+    }
+
+    [Fact]
+    public async Task ValidatedFile_ReadContentAsync_AfterCapabilityDisposal_Throws()
+    {
+        var store = CreateStore();
+        var bytes = "disposed validated content"u8.ToArray();
+        var key = CreateKey(bytes);
+        var published = await WriteAndPublishAsync(store, key, bytes);
+        var resolved = await store.ValidateAndResolveAsync(
+            published.RelativePath!,
+            key,
+            bytes.LongLength);
+        var file = Assert.IsType<ClientAttachmentCacheStore.ValidatedFile>(resolved.File);
+        file.Dispose();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() =>
+            file.ReadContentAsync(
+                static (_, _) => Task.FromResult(true)));
+    }
+
+    [Fact]
     public void ValidatedFile_WhenTokenIsNotStoreOwned_CannotBeForged()
     {
         Assert.Throws<InvalidOperationException>(() =>

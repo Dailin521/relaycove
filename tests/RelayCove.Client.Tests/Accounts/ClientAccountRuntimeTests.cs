@@ -7,6 +7,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RelayCove.Client.Accounts;
+using RelayCove.Client.Attachments;
 using RelayCove.Client.Auth;
 using RelayCove.Client.Notifications;
 using RelayCove.Client.Realtime;
@@ -364,6 +365,100 @@ public sealed class ClientAccountRuntimeTests
 
         shellRelease.TrySetResult();
         Assert.Equal(ClientAttachmentRevealStatus.Revealed, (await reveal).Status);
+    }
+
+    [Fact]
+    public async Task LoadAttachmentImageAsync_WhenCoordinatorIsAvailable_ForwardsExactIdentityRenditionAndCommit()
+    {
+        using var directory = new TemporaryDirectory();
+        var expectedConversationId = Guid.NewGuid();
+        var expectedAttachmentId = Guid.NewGuid();
+        Guid? actualConversationId = null;
+        Guid? actualAttachmentId = null;
+        ClientAttachmentImageRendition? actualRendition = null;
+        var attachmentCoordinator = new FakeAttachmentDownloadCoordinator
+        {
+            ImageLoadAction = (conversationId, attachmentId, rendition, commit, _) =>
+            {
+                actualConversationId = conversationId;
+                actualAttachmentId = attachmentId;
+                actualRendition = rendition;
+                return Task.FromResult(ClientAttachmentImageLoadOutcome.Failure(
+                    commit() == ClientAttachmentImageLoadStatus.Ready
+                        ? ClientAttachmentImageLoadStatus.UnsupportedFormat
+                        : ClientAttachmentImageLoadStatus.Stale));
+            },
+        };
+        var runtime = CreateRuntime(
+            directory.Path,
+            CreateSession(),
+            new FakeRealtimeConnection(),
+            new FakeSyncCoordinator(),
+            attachmentDownloadCoordinator: attachmentCoordinator);
+
+        var outcome = await runtime.LoadAttachmentImageAsync(
+            expectedConversationId,
+            expectedAttachmentId,
+            ClientAttachmentImageRendition.Viewer,
+            () => ClientAttachmentImageLoadStatus.Ready);
+
+        Assert.Equal(ClientAttachmentImageLoadStatus.UnsupportedFormat, outcome.Status);
+        Assert.Equal(expectedConversationId, actualConversationId);
+        Assert.Equal(expectedAttachmentId, actualAttachmentId);
+        Assert.Equal(ClientAttachmentImageRendition.Viewer, actualRendition);
+        await runtime.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task DisposeAsync_WhenImageLoadIsInFlight_CancelsCoordinatorBeforeCacheDisposal()
+    {
+        using var directory = new TemporaryDirectory();
+        var imageStarted = NewSignal();
+        var imageCanceled = NewSignal();
+        var cacheDisposed = false;
+        var attachmentCoordinator = new FakeAttachmentDownloadCoordinator
+        {
+            ImageLoadAction = async (_, _, _, _, cancellationToken) =>
+            {
+                imageStarted.TrySetResult();
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    imageCanceled.TrySetResult();
+                    throw;
+                }
+
+                throw new InvalidOperationException("The cancellation path must throw.");
+            },
+        };
+        var runtime = CreateRuntime(
+            directory.Path,
+            CreateSession(),
+            new FakeRealtimeConnection(),
+            new FakeSyncCoordinator(),
+            cache: new RecordingAsyncDisposable(() =>
+            {
+                Assert.True(imageCanceled.Task.IsCompleted);
+                cacheDisposed = true;
+                return ValueTask.CompletedTask;
+            }),
+            attachmentDownloadCoordinator: attachmentCoordinator);
+
+        var imageLoad = runtime.LoadAttachmentImageAsync(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            ClientAttachmentImageRendition.Thumbnail,
+            () => ClientAttachmentImageLoadStatus.Ready);
+        await imageStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await runtime.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => imageLoad);
+        Assert.True(cacheDisposed);
+        Assert.True(attachmentCoordinator.IsDisposeCompleted);
     }
 
     [Fact]
@@ -1782,6 +1877,15 @@ public sealed class ClientAccountRuntimeTests
             init;
         }
 
+        public Func<Guid, Guid, ClientAttachmentImageRendition,
+            ClientAttachmentImageCommit, CancellationToken,
+            Task<ClientAttachmentImageLoadOutcome>>?
+            ImageLoadAction
+        {
+            get;
+            init;
+        }
+
         public bool IsDisposeCompleted { get; private set; }
 
         public Task<ClientAttachmentCacheRecoveryStatus> RecoverAsync(
@@ -1804,6 +1908,21 @@ public sealed class ClientAccountRuntimeTests
             RevealAction?.Invoke(conversationId, attachmentId, commit, cancellationToken) ??
             Task.FromResult(ClientAttachmentRevealOutcome.FromStatus(
                 ClientAttachmentRevealStatus.LocalCacheFailure));
+
+        public Task<ClientAttachmentImageLoadOutcome> LoadImageAsync(
+            Guid conversationId,
+            Guid attachmentId,
+            ClientAttachmentImageRendition rendition,
+            ClientAttachmentImageCommit commit,
+            CancellationToken cancellationToken = default) =>
+            ImageLoadAction?.Invoke(
+                conversationId,
+                attachmentId,
+                rendition,
+                commit,
+                cancellationToken) ??
+            Task.FromResult(ClientAttachmentImageLoadOutcome.Failure(
+                ClientAttachmentImageLoadStatus.LocalCacheFailure));
 
         public ValueTask DisposeAsync()
         {

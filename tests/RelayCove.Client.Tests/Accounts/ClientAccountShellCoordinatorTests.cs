@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RelayCove.Client.Accounts;
 using RelayCove.Client.Activation;
+using RelayCove.Client.Attachments;
 using RelayCove.Client.Auth;
 using RelayCove.Client.Notifications;
 using RelayCove.Client.Storage;
@@ -1991,6 +1992,307 @@ public sealed class ClientAccountShellCoordinatorTests
     }
 
     [Fact]
+    public async Task LoadAttachmentImageAsync_WhenImageIsInExactReadySelection_ForwardsIdentityAndRendition()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var attachmentId = Guid.NewGuid();
+        var attachment = new AttachmentDto(
+            attachmentId,
+            "photo.png",
+            "image/png",
+            3,
+            $"/api/attachments/{attachmentId:D}/download",
+            ThumbnailUrl: null);
+        var message = CreateMessage(10, conversationId) with
+        {
+            Type = MessageType.File,
+            Content = null,
+            Attachments = [attachment],
+        };
+        Guid? capturedConversationId = null;
+        Guid? capturedAttachmentId = null;
+        ClientAttachmentImageRendition? capturedRendition = null;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [message],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            AttachmentImageLoadAction = (conversation, requestedAttachment, rendition, commit, _) =>
+            {
+                capturedConversationId = conversation;
+                capturedAttachmentId = requestedAttachment;
+                capturedRendition = rendition;
+                return Task.FromResult(ClientAttachmentImageLoadOutcome.Failure(
+                    commit() == ClientAttachmentImageLoadStatus.Ready
+                        ? ClientAttachmentImageLoadStatus.UnsupportedFormat
+                        : ClientAttachmentImageLoadStatus.Stale));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        var outcome = await coordinator.LoadAttachmentImageAsync(
+            attachmentId,
+            ClientAttachmentImageRendition.Viewer);
+
+        Assert.Equal(ClientAttachmentImageLoadStatus.UnsupportedFormat, outcome.Status);
+        Assert.Equal(conversationId, capturedConversationId);
+        Assert.Equal(attachmentId, capturedAttachmentId);
+        Assert.Equal(ClientAttachmentImageRendition.Viewer, capturedRendition);
+    }
+
+    [Fact]
+    public async Task LoadAttachmentImageAsync_WhenRuntimeThrowsCriticalFailure_Propagates()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var attachmentId = Guid.NewGuid();
+        var attachment = new AttachmentDto(
+            attachmentId,
+            "critical.png",
+            "image/png",
+            3,
+            $"/api/attachments/{attachmentId:D}/download",
+            ThumbnailUrl: null);
+        var message = CreateMessage(10, conversationId) with
+        {
+            Type = MessageType.File,
+            Content = null,
+            Attachments = [attachment],
+        };
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [message],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            AttachmentImageLoadAction = (_, _, _, _, _) =>
+                Task.FromException<ClientAttachmentImageLoadOutcome>(
+                    new OutOfMemoryException("Injected critical image failure.")),
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        await Assert.ThrowsAsync<OutOfMemoryException>(() =>
+            coordinator.LoadAttachmentImageAsync(
+                attachmentId,
+                ClientAttachmentImageRendition.Thumbnail));
+    }
+
+    [Fact]
+    public async Task LoadAttachmentImageAsync_WhenAttachmentIsNotImage_DoesNotCallRuntime()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var attachmentId = Guid.NewGuid();
+        var attachment = new AttachmentDto(
+            attachmentId,
+            "document.pdf",
+            "application/pdf",
+            3,
+            $"/api/attachments/{attachmentId:D}/download",
+            ThumbnailUrl: null);
+        var message = CreateMessage(10, conversationId) with
+        {
+            Type = MessageType.File,
+            Content = null,
+            Attachments = [attachment],
+        };
+        var calls = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [message],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            AttachmentImageLoadAction = (_, _, _, _, _) =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromResult(ClientAttachmentImageLoadOutcome.Failure(
+                    ClientAttachmentImageLoadStatus.UnsupportedFormat));
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        var outcome = await coordinator.LoadAttachmentImageAsync(
+            attachmentId,
+            ClientAttachmentImageRendition.Thumbnail);
+
+        Assert.Equal(ClientAttachmentImageLoadStatus.AttachmentUnavailable, outcome.Status);
+        Assert.Equal(0, Volatile.Read(ref calls));
+    }
+
+    [Fact]
+    public async Task LoadAttachmentImageAsync_WhenSelectionChangesBeforeCommit_ReturnsStaleAndRejectsOldImage()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var attachmentId = Guid.NewGuid();
+        var attachment = new AttachmentDto(
+            attachmentId,
+            "selection-race.png",
+            "image/png",
+            3,
+            $"/api/attachments/{attachmentId:D}/download",
+            ThumbnailUrl: null);
+        var message = CreateMessage(10, conversationId) with
+        {
+            Type = MessageType.File,
+            Content = null,
+            Attachments = [attachment],
+        };
+        var commitReady = NewSignal();
+        var commitRelease = NewSignal();
+        var acceptedOldImage = 0;
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [message],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            AttachmentImageLoadAction = async (_, _, _, commit, _) =>
+            {
+                commitReady.TrySetResult();
+                await commitRelease.Task;
+                var status = commit();
+                if (status == ClientAttachmentImageLoadStatus.Ready)
+                {
+                    Interlocked.Increment(ref acceptedOldImage);
+                }
+
+                return ClientAttachmentImageLoadOutcome.Failure(status);
+            },
+        };
+        using var router = CreateRouter();
+        await using var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        var imageLoad = coordinator.LoadAttachmentImageAsync(
+            attachmentId,
+            ClientAttachmentImageRendition.Thumbnail);
+        await commitReady.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        coordinator.SelectConversation(conversationId: null);
+        commitRelease.TrySetResult();
+        var outcome = await imageLoad;
+
+        Assert.Equal(ClientAttachmentImageLoadStatus.Stale, outcome.Status);
+        Assert.Equal(0, Volatile.Read(ref acceptedOldImage));
+    }
+
+    [Fact]
+    public async Task LoadAttachmentImageAsync_WhenCoordinatorLifecycleEndsBeforeCommit_ReturnsCanceled()
+    {
+        var session = CreateSession();
+        var conversationId = Guid.NewGuid();
+        var attachmentId = Guid.NewGuid();
+        var attachment = new AttachmentDto(
+            attachmentId,
+            "lifecycle.png",
+            "image/png",
+            3,
+            $"/api/attachments/{attachmentId:D}/download",
+            ThumbnailUrl: null);
+        var message = CreateMessage(10, conversationId) with
+        {
+            Type = MessageType.File,
+            Content = null,
+            Attachments = [attachment],
+        };
+        var imageStarted = NewSignal();
+        var runtime = new FakeRuntime(session)
+        {
+            ConversationListOutcome = CreateConversationListOutcome(conversationId, 0),
+            MessagePageReadAction = (id, _, _, _) => Task.FromResult(
+                new LocalMessagePageReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    id,
+                    [message],
+                    NextBeforeMessageId: null,
+                    HasMoreBefore: false)),
+            AttachmentImageLoadAction = async (_, _, _, _, cancellationToken) =>
+            {
+                imageStarted.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                throw new InvalidOperationException("The cancellation path must throw.");
+            },
+        };
+        using var router = CreateRouter();
+        var coordinator = CreateCoordinator(
+            Authenticated(session),
+            new FakeRuntimeFactory { Runtime = runtime },
+            router);
+        await coordinator.LoginAsync(ServerBaseUri.AbsoluteUri, "shell-user", "secret");
+        await WaitUntilAsync(() => coordinator.ConversationList.Status ==
+            LocalCacheOperationStatus.Ready);
+        coordinator.SelectConversation(conversationId);
+        await WaitUntilAsync(() => coordinator.MessageList.Status ==
+            ClientMessageListStatus.Ready);
+
+        var imageLoad = coordinator.LoadAttachmentImageAsync(
+            attachmentId,
+            ClientAttachmentImageRendition.Thumbnail);
+        await imageStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await coordinator.DisposeAsync();
+
+        var outcome = await imageLoad;
+        Assert.Equal(ClientAttachmentImageLoadStatus.Canceled, outcome.Status);
+    }
+
+    [Fact]
     public async Task SendTextMessageAsync_WhenReplyAndMentionsAreValid_ForwardsCanonicalPayload()
     {
         var session = CreateSession();
@@ -3009,6 +3311,15 @@ public sealed class ClientAccountShellCoordinatorTests
             set;
         }
 
+        public Func<Guid, Guid, ClientAttachmentImageRendition,
+            ClientAttachmentImageCommit, CancellationToken,
+            Task<ClientAttachmentImageLoadOutcome>>?
+            AttachmentImageLoadAction
+        {
+            get;
+            set;
+        }
+
         public Func<Guid, long, CancellationToken, Task<LocalCacheOperationStatus>>?
             MarkRenderedAction
         {
@@ -3190,6 +3501,21 @@ public sealed class ClientAccountShellCoordinatorTests
                 cancellationToken) ??
             Task.FromResult(ClientAttachmentRevealOutcome.FromStatus(
                 ClientAttachmentRevealStatus.ShellUnavailable));
+
+        public Task<ClientAttachmentImageLoadOutcome> LoadAttachmentImageAsync(
+            Guid conversationId,
+            Guid attachmentId,
+            ClientAttachmentImageRendition rendition,
+            ClientAttachmentImageCommit commit,
+            CancellationToken cancellationToken = default) =>
+            AttachmentImageLoadAction?.Invoke(
+                conversationId,
+                attachmentId,
+                rendition,
+                commit,
+                cancellationToken) ??
+            Task.FromResult(ClientAttachmentImageLoadOutcome.Failure(
+                ClientAttachmentImageLoadStatus.LocalCacheFailure));
 
         public Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(
             Guid conversationId,

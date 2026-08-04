@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using RelayCove.Client.Attachments;
 using RelayCove.Client.Auth;
 using RelayCove.Client.Notifications;
 using RelayCove.Client.Storage;
@@ -294,6 +295,27 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
                     token,
                     progress),
             cancellationToken);
+
+    public Task<ClientAttachmentImageLoadOutcome> LoadAttachmentImageAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        ClientAttachmentImageRendition rendition,
+        ClientAttachmentImageCommit commit,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(commit);
+        return TrackRuntimeOperation(
+            token => attachmentDownloadCoordinator is null
+                ? Task.FromResult(ClientAttachmentImageLoadOutcome.Failure(
+                    ClientAttachmentImageLoadStatus.LocalCacheFailure))
+                : attachmentDownloadCoordinator.LoadImageAsync(
+                    conversationId,
+                    attachmentId,
+                    rendition,
+                    commit,
+                    token),
+            cancellationToken);
+    }
 
     public Task<ClientAttachmentRevealOutcome> RevealAttachmentInFolderAsync(
         Guid conversationId,
@@ -746,13 +768,13 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
 
         if (startup is not null)
         {
-            await CaptureFailureAsync(() => new ValueTask(startup), failures)
+            await CaptureFlightFailureAsync(startup, failures)
                 .ConfigureAwait(false);
         }
 
         foreach (var explicitOperation in explicitOperations)
         {
-            await CaptureFailureAsync(() => new ValueTask(explicitOperation), failures)
+            await CaptureFlightFailureAsync(explicitOperation, failures)
                 .ConfigureAwait(false);
         }
 
@@ -800,6 +822,26 @@ internal sealed class ClientAccountRuntime : IClientAccountRuntime
         try
         {
             await operation().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            failures.Add(exception);
+        }
+    }
+
+    private static async Task CaptureFlightFailureAsync(
+        Task operation,
+        ICollection<Exception> failures)
+    {
+        try
+        {
+            await operation.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Termination has already canceled the runtime lifetime token.
+            // A tracked startup or explicit operation acknowledging that token
+            // is expected convergence, not a cleanup failure.
         }
         catch (Exception exception)
         {

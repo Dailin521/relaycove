@@ -1,3 +1,4 @@
+using RelayCove.Client.Attachments;
 using RelayCove.Client.Auth;
 using RelayCove.Client.Notifications;
 using RelayCove.Client.Storage;
@@ -80,6 +81,13 @@ internal interface IClientAccountRuntime : IAsyncDisposable
         Guid conversationId,
         Guid attachmentId,
         ClientAttachmentRevealCommit commit,
+        CancellationToken cancellationToken = default);
+
+    Task<ClientAttachmentImageLoadOutcome> LoadAttachmentImageAsync(
+        Guid conversationId,
+        Guid attachmentId,
+        ClientAttachmentImageRendition rendition,
+        ClientAttachmentImageCommit commit,
         CancellationToken cancellationToken = default);
 
     Task<LocalCacheOperationStatus> MarkConversationRenderedThroughAsync(

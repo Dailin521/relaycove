@@ -8,7 +8,8 @@
         MinWidth="820"
         WindowStartupLocation="CenterScreen"
         Background="#FFF4F7FB"
-        FontFamily="Segoe UI">
+        FontFamily="Segoe UI"
+        PreviewKeyDown="OnMainWindowPreviewKeyDown">
     <Window.Resources>
         <Style TargetType="Button">
             <Setter Property="Padding" Value="18,9" />
@@ -462,6 +463,7 @@
                                                                             <RowDefinition Height="Auto" />
                                                                             <RowDefinition Height="Auto" />
                                                                             <RowDefinition Height="Auto" />
+                                                                            <RowDefinition Height="Auto" />
                                                                         </Grid.RowDefinitions>
                                                                         <Grid.ColumnDefinitions>
                                                                             <ColumnDefinition Width="*" />
@@ -512,6 +514,73 @@
                                                                                 </Style>
                                                                             </ProgressBar.Style>
                                                                         </ProgressBar>
+                                                                        <Grid Grid.Row="3"
+                                                                              Grid.ColumnSpan="2"
+                                                                              Margin="0,8,0,0"
+                                                                              HorizontalAlignment="Left">
+                                                                            <Grid.Style>
+                                                                                <Style TargetType="Grid">
+                                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                                    <Style.Triggers>
+                                                                                        <DataTrigger Binding="{Binding ImageState.ShowPreview}" Value="True">
+                                                                                            <Setter Property="Visibility" Value="Visible" />
+                                                                                        </DataTrigger>
+                                                                                    </Style.Triggers>
+                                                                                </Style>
+                                                                            </Grid.Style>
+                                                                            <Grid.RowDefinitions>
+                                                                                <RowDefinition Height="Auto" />
+                                                                                <RowDefinition Height="Auto" />
+                                                                            </Grid.RowDefinitions>
+                                                                            <Border Grid.Row="0"
+                                                                                    MaxWidth="320"
+                                                                                    MaxHeight="180"
+                                                                                    Background="#FFE8F1F8"
+                                                                                    BorderBrush="#FFD7E2ED"
+                                                                                    BorderThickness="1"
+                                                                                    CornerRadius="4">
+                                                                                <Grid>
+                                                                                    <Image Source="{Binding ImageState.Thumbnail}"
+                                                                                           MaxWidth="320"
+                                                                                           MaxHeight="180"
+                                                                                           Stretch="Uniform"
+                                                                                           Loaded="OnAttachmentThumbnailLoaded"
+                                                                                           Unloaded="OnAttachmentThumbnailUnloaded"
+                                                                                           DataContextChanged="OnAttachmentThumbnailDataContextChanged"
+                                                                                           AutomationProperties.Name="{Binding ImageState.AutomationName}" />
+                                                                                    <TextBlock Margin="10"
+                                                                                               HorizontalAlignment="Center"
+                                                                                               VerticalAlignment="Center"
+                                                                                               Text="{Binding ImageState.StatusText}"
+                                                                                               TextWrapping="Wrap"
+                                                                                               TextAlignment="Center"
+                                                                                               Foreground="#FF52708C"
+                                                                                               FontSize="11"
+                                                                                               AutomationProperties.LiveSetting="Polite"
+                                                                                               IsHitTestVisible="False">
+                                                                                        <TextBlock.Style>
+                                                                                            <Style TargetType="TextBlock">
+                                                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                                                <Style.Triggers>
+                                                                                                    <DataTrigger Binding="{Binding ImageState.Thumbnail}" Value="{x:Null}">
+                                                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                                                    </DataTrigger>
+                                                                                                </Style.Triggers>
+                                                                                            </Style>
+                                                                                        </TextBlock.Style>
+                                                                                    </TextBlock>
+                                                                                </Grid>
+                                                                            </Border>
+                                                                            <Button Grid.Row="1"
+                                                                                    Margin="0,6,0,0"
+                                                                                    Padding="9,3"
+                                                                                    HorizontalAlignment="Left"
+                                                                                    VerticalAlignment="Bottom"
+                                                                                    Content="查看图片"
+                                                                                    IsEnabled="{Binding ImageState.CanView}"
+                                                                                    AutomationProperties.Name="{Binding ImageState.AutomationName}"
+                                                                                    Click="OnAttachmentImageViewClicked" />
+                                                                        </Grid>
                                                                     </Grid>
                                                                 </Border>
                                                             </DataTemplate>
@@ -1026,6 +1095,69 @@
                          AutomationProperties.Name="账户操作进行中"
                          IsIndeterminate="True"
                          Visibility="Collapsed" />
+        </Grid>
+        <Grid x:Name="AttachmentImageViewerOverlay"
+              Grid.ColumnSpan="2"
+              Panel.ZIndex="100"
+              Visibility="Collapsed"
+              Background="#CC0F1D2B"
+              Focusable="True"
+              KeyboardNavigation.TabNavigation="Cycle"
+              AutomationProperties.Name="图片查看器"
+              AutomationProperties.LiveSetting="Polite">
+            <Border MaxWidth="980"
+                    MaxHeight="720"
+                    Margin="36"
+                    Padding="18"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="#FF10243E"
+                    BorderBrush="#FF52708C"
+                    BorderThickness="1"
+                    CornerRadius="8">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="AttachmentImageViewerTitleText"
+                               Foreground="White"
+                               FontSize="16"
+                               FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis"
+                               AutomationProperties.Name="图片查看器标题" />
+                    <Button x:Name="CloseAttachmentImageViewerButton"
+                            Grid.Column="1"
+                            Margin="12,0,0,0"
+                            Padding="10,4"
+                            Content="关闭"
+                            AutomationProperties.Name="关闭图片查看器"
+                            Click="OnCloseAttachmentImageViewerClicked" />
+                    <Image x:Name="AttachmentImageViewerImage"
+                           Grid.Row="1"
+                           Grid.ColumnSpan="2"
+                           MaxWidth="920"
+                           MaxHeight="620"
+                           Margin="0,14,0,12"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Stretch="Uniform"
+                           AutomationProperties.Name="当前图片预览" />
+                    <TextBlock x:Name="AttachmentImageViewerStatusText"
+                               Grid.Row="2"
+                               Grid.ColumnSpan="2"
+                               Foreground="#FFD7E2ED"
+                               FontSize="11"
+                               Text="受限预览：图片已按安全显示上限处理。"
+                               TextWrapping="Wrap"
+                               AutomationProperties.LiveSetting="Polite" />
+                </Grid>
+            </Border>
         </Grid>
     </Grid>
 </Window>

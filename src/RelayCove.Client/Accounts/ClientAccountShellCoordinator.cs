@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using RelayCove.Client.Activation;
+using RelayCove.Client.Attachments;
 using RelayCove.Client.Auth;
 using RelayCove.Client.Mentions;
 using RelayCove.Client.Storage;
@@ -761,6 +762,107 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
                 exception.GetType().Name);
             return ClientAttachmentRevealOutcome.FromStatus(
                 ClientAttachmentRevealStatus.LocalCacheFailure);
+        }
+    }
+
+    public async Task<ClientAttachmentImageLoadOutcome> LoadAttachmentImageAsync(
+        Guid attachmentId,
+        ClientAttachmentImageRendition rendition,
+        CancellationToken cancellationToken = default)
+    {
+        if (attachmentId == Guid.Empty || !Enum.IsDefined(rendition))
+        {
+            return ClientAttachmentImageLoadOutcome.Failure(
+                ClientAttachmentImageLoadStatus.AttachmentUnavailable);
+        }
+
+        IClientAccountRuntime? activeRuntime;
+        MessageSelection? selection;
+        lock (stateGate)
+        {
+            selection = messageSelection;
+            if (selection is null ||
+                !IsCurrentMessageSelectionLocked(selection) ||
+                messageList.Status != ClientMessageListStatus.Ready ||
+                !SelectionContainsImageAttachment(selection, attachmentId))
+            {
+                return ClientAttachmentImageLoadOutcome.Failure(
+                    ClientAttachmentImageLoadStatus.AttachmentUnavailable);
+            }
+
+            activeRuntime = runtime;
+        }
+
+        if (activeRuntime is null)
+        {
+            return ClientAttachmentImageLoadOutcome.Failure(
+                ClientAttachmentImageLoadStatus.AttachmentUnavailable);
+        }
+
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            selection.Token,
+            lifetimeCancellation.Token);
+        ClientAttachmentImageLoadStatus CommitImage()
+        {
+            lock (stateGate)
+            {
+                if (!ReferenceEquals(runtime, activeRuntime) ||
+                    !IsCurrentMessageSelectionLocked(selection) ||
+                    messageList.Status != ClientMessageListStatus.Ready ||
+                    !SelectionContainsImageAttachment(selection, attachmentId))
+                {
+                    return ClientAttachmentImageLoadStatus.Stale;
+                }
+
+                return linkedCancellation.IsCancellationRequested
+                    ? ClientAttachmentImageLoadStatus.Canceled
+                    : ClientAttachmentImageLoadStatus.Ready;
+            }
+        }
+
+        try
+        {
+            var outcome = await activeRuntime
+                .LoadAttachmentImageAsync(
+                    selection.ConversationId,
+                    attachmentId,
+                    rendition,
+                    CommitImage,
+                    linkedCancellation.Token)
+                .ConfigureAwait(false);
+            lock (stateGate)
+            {
+                if (!ReferenceEquals(runtime, activeRuntime) ||
+                    !IsCurrentMessageSelectionLocked(selection) ||
+                    messageList.Status != ClientMessageListStatus.Ready ||
+                    !SelectionContainsImageAttachment(selection, attachmentId))
+                {
+                    return ClientAttachmentImageLoadOutcome.Failure(
+                        ClientAttachmentImageLoadStatus.Stale);
+                }
+            }
+
+            return outcome;
+        }
+        catch (OperationCanceledException)
+        {
+            return ClientAttachmentImageLoadOutcome.Failure(
+                ClientAttachmentImageLoadStatus.Canceled);
+        }
+        catch (ObjectDisposedException)
+        {
+            return ClientAttachmentImageLoadOutcome.Failure(
+                ClientAttachmentImageLoadStatus.Canceled);
+        }
+        catch (Exception exception) when (!IsCriticalException(exception))
+        {
+            logger.LogWarning(
+                "Loading an attachment image through the active account failed; " +
+                "errorType={ErrorType}.",
+                exception.GetType().Name);
+            return ClientAttachmentImageLoadOutcome.Failure(
+                ClientAttachmentImageLoadStatus.LocalCacheFailure);
         }
     }
 
@@ -1861,6 +1963,16 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         selection.Messages.Values.Any(message =>
             message.Attachments.Any(attachment => attachment.Id == attachmentId));
 
+    private static bool SelectionContainsImageAttachment(
+        MessageSelection selection,
+        Guid attachmentId) =>
+        selection.Messages.Values.Any(message =>
+            message.Attachments.Any(attachment =>
+                attachment.Id == attachmentId &&
+                attachment.ContentType.StartsWith(
+                    "image/",
+                    StringComparison.OrdinalIgnoreCase)));
+
     private static void TryResolveNewMessageBoundaryFromHistoryLocked(
         MessageSelection selection,
         ClientMessageHistoryPageOutcome outcome)
@@ -2696,6 +2808,9 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         ObjectDisposedException.ThrowIf(
             Volatile.Read(ref disposeStarted) != 0,
             this);
+
+    private static bool IsCriticalException(Exception exception) =>
+        exception is OutOfMemoryException or StackOverflowException or AccessViolationException;
 
     private static string GetDeviceName() => Environment.MachineName;
 

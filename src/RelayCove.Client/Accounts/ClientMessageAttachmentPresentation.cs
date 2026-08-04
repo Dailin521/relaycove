@@ -12,10 +12,12 @@ internal sealed record ClientMessageAttachmentPresentation(
 {
     public ClientAttachmentDownloadViewState? DownloadState { get; init; }
 
+    public ClientAttachmentImageViewState? ImageState { get; init; }
+
     public override string ToString() =>
         $"{nameof(ClientMessageAttachmentPresentation)} {{ MessageClientId = [REDACTED], " +
         "AttachmentId = [REDACTED], " +
         "DisplayName = [REDACTED], DisplaySize = [REDACTED], " +
         $"IsImage = {IsImage}, IsDownloaded = {IsDownloaded}, " +
-        "DownloadState = [REDACTED] }";
+        "DownloadState = [REDACTED], ImageState = [REDACTED] }";
 }
