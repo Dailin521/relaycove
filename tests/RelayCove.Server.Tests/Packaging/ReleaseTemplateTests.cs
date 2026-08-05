@@ -97,6 +97,12 @@ public sealed partial class ReleaseTemplateTests
         var maximumFileBytes = GetRequiredProperty(root, "Uploads", "MaximumFileBytes").GetInt64();
         var updateManifestPath = GetRequiredProperty(root, "Update", "ManifestPath").GetString();
         var bootstrapEnabled = GetRequiredProperty(root, "BootstrapAdmin", "Enabled").GetBoolean();
+        var pathBase = GetRequiredProperty(root, "RelayCove", "PathBase").GetString();
+        var dataProtectionKeysPath = GetRequiredProperty(
+            root,
+            "RelayCove",
+            "WebAdmin",
+            "DataProtectionKeysPath").GetString();
 
         Assert.Equal(
             "Data Source=/var/lib/relaycove/relaycove.db;Foreign Keys=True;Default Timeout=5",
@@ -104,10 +110,11 @@ public sealed partial class ReleaseTemplateTests
         Assert.StartsWith("/var/lib/relaycove/", uploadsPath, StringComparison.Ordinal);
         Assert.InRange(maximumFileBytes, MinimumMaximumFileBytes, AbsoluteMaximumFileBytes);
         Assert.Equal("/var/lib/relaycove/updates/manifest.json", updateManifestPath);
+        Assert.Equal(string.Empty, pathBase);
+        Assert.Equal("/var/lib/relaycove/data-protection-keys", dataProtectionKeysPath);
         Assert.False(bootstrapEnabled);
         Assert.False(TryGetProperty(root, out _, "Authentication", "SigningKey"));
         Assert.False(TryGetProperty(root, out _, "BootstrapAdmin", "Password"));
-        Assert.False(root.TryGetProperty("RelayCove", out _));
     }
 
     [Fact]

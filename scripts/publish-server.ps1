@@ -210,11 +210,14 @@ function Assert-ProductionConfiguration {
 
     if (-not $Configuration.ContainsKey("ConnectionStrings") -or
         -not $Configuration.ContainsKey("Storage") -or
+        -not $Configuration.ContainsKey("RelayCove") -or
         -not $Configuration.ContainsKey("Uploads") -or
         -not $Configuration.ContainsKey("Authentication") -or
         -not $Configuration.ContainsKey("BootstrapAdmin") -or
         $Configuration.ConnectionStrings.Default -ne "Data Source=/var/lib/relaycove/relaycove.db;Foreign Keys=True;Default Timeout=5" -or
         $Configuration.Storage.UploadsPath -ne "/var/lib/relaycove/uploads" -or
+        $Configuration.RelayCove.PathBase -ne "" -or
+        $Configuration.RelayCove.WebAdmin.DataProtectionKeysPath -ne "/var/lib/relaycove/data-protection-keys" -or
         $Configuration.Uploads.MaximumFileBytes -ne 104857600 -or
         $Configuration.BootstrapAdmin.Enabled -ne $false -or
         $Configuration.BootstrapAdmin.ContainsKey("Password") -or

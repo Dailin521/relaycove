@@ -129,6 +129,13 @@ public sealed class RelayCoveWebApplicationFactory : WebApplicationFactory<Progr
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         var connectionString = CreateConnectionString();
+        foreach (var pair in configurationOverrides)
+        {
+            if (pair.Value is not null)
+            {
+                builder.UseSetting(pair.Key, pair.Value);
+            }
+        }
         Dictionary<string, string?> settings = new(StringComparer.Ordinal)
         {
             ["ConnectionStrings:Default"] = connectionString,

@@ -714,3 +714,15 @@
 - **理由：** 双层只读更新根把普通服务入侵与客户端供应链分开；完整 staging/校验/隔离使备份和恢复拥有可观察提交点。复用受控 TLS 子路径避免把 DNS 控制变成内部初版阻塞，且现有 Client/SignalR 已支持反向代理基路径。
 - **影响：** 部署模板和操作文档增加安全边界与回归，不改变 API、数据库、消息协议或依赖。服务进程不能自行发布更新；运维必须以 root 按 ZIP-first/manifest-last 顺序执行。代码签名、公开分发信任、多节点备份和自动恢复仍不属于内部 RC。
 - **来源：** `DEC-054/055/056`；`docs/ai/tasks/2026-08-04-stage-13-vps-windows-gate.md`；production `2cd7376/e200da6`；ReleaseTemplateTests 8/8、WSL 空状态备份恢复、最终 Full 1,593/1,593、model drift、八项目漏洞审计、format/空白检查；安全与运维两路 Codex 最终复审均 `PASS`。Claude #85 MCP 0.5 持久 Sonnet/High challenge 实际 `claude-sonnet-5`、`659250 ms`、`$1.70721165`，指出的 updates 写权限、半成品备份、恢复删除和发布命令缺口均已修正，真机 systemd 验证纳入 M5 Gate。
+
+### DEC-059：管理员交互迁移到 Server 内置 Razor Pages 与独立 Cookie 会话
+
+- **状态：** 已接受
+- **日期：** 2026-08-05
+- **背景：** `DEC-057` 已完成全部管理业务与 Windows overlay，但 owner 实际使用后确认运维入口更适合跟随每台 Server，由浏览器直接维护，而不是要求管理员先安装并运行聊天客户端。真实部署位于 `/relaycove/` HTTPS 子路径；直接增加静态 SPA 并在浏览器保存桌面 bearer/refresh token 会扩大 XSS 与凭据暴露面，直接把 Cookie 加入默认认证又会让现有 API/Hub 的授权边界含混。
+- **决策：** 管理交互改为同一 ASP.NET Core Server 内置的薄 Razor Pages，不增加 Node、SPA、聊天 Web 端、新管理 API、数据库表或前端依赖。页面直接复用 `AdminUserService`、会话/成员服务、状态与上传设置服务，并保留写提交后的账户/会话撤权发布。Windows overlay 在网页完成真实部署与功能对等验证前保留，之后才在独立切片删除。
+- **决策：** 网页只使用专属 Cookie scheme；桌面/API/SignalR 继续显式 JWT Bearer-only。Cookie 为 HttpOnly、Secure、SameSite Strict，并限制在当前 PathBase 下的 `/admin`；所有写 handler 使用 ASP.NET Core antiforgery，网页登录复用认证限流且不签发、不暴露、不持久化 access/refresh token。Cookie principal 只携带用户 ID 与 `AccessTokenVersion`，每次页面请求重新查询数据库，禁用、退役、改密、版本递增或管理员身份失效立即拒绝旧会话；失败消息不区分用户名、密码或角色。
+- **决策：** Server 以受校验的 `RelayCove:PathBase` 消费反向代理保留的外部前缀；Nginx 子路径代理不得用会剥离 URI 的尾斜线。Razor 生成的链接、登录/退出重定向、表单 action 与 Cookie Path 必须在 `/relaycove/admin/` 下闭合。Cookie Data Protection keys 持久化到仅服务账号可写的 `/var/lib/relaycove/data-protection-keys`，使正常重启不强制退出，同时不进入发布包或公开目录。
+- **理由：** 对个人/小团队，自带网页管理面能从任意受信浏览器维护对应服务器，符合实际运维习惯；Server-rendered 页面以最少新增代码获得 CSRF 与 Cookie 防护，且避免维护第二套业务规则或前端工具链。scheme 隔离、数据库逐请求复核和 PathBase 明确化把便利性限制在不削弱现有桌面认证与反向代理边界的范围内。
+- **影响：** 工程方案第 17 节与“禁止 Web 端”的旧表述被此决定部分替代：仅允许管理网页，聊天仍只在 Windows Client。Server/发布配置新增 Razor Pages、网页 Cookie、PathBase 与 Data Protection state；公共 API、消息协议和数据库不变。生产升级必须同步调整 Nginx 为保留 `/relaycove` 前缀并验证登录、CSRF、Cookie Path、SignalR 与既有更新下载；网页实测前旧 Windows 管理入口仍是回退路径。
+- **来源：** owner 2026-08-05 产品方向；`DEC-057/058`；`docs/ai/tasks/2026-08-05-stage-15-web-admin.md`；Claude Second Brain 持久任务 `66f6eb48-5be7-4bf9-b16e-70a3bd925afe`，Sonnet/High challenge，建议 Razor Pages、独立 Cookie、antiforgery、scheme 隔离、PathBase 与数据库实时撤权；最终代码、自动化、独立 Codex 复核与 VPS 证据在任务完成时补记。

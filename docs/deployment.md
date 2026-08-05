@@ -4,7 +4,7 @@ This guide installs one RelayCove Server instance on Linux x64 from an M4 releas
 
 ## Status and boundaries
 
-- `已验证`：the Server reads `ConnectionStrings:Default`, `Storage:UploadsPath`, `Uploads:MaximumFileBytes`, `Authentication:*`, and `BootstrapAdmin:*`; it does not automatically run EF migrations at startup.
+- `已验证`：the Server reads `ConnectionStrings:Default`, `Storage:UploadsPath`, `Uploads:MaximumFileBytes`, `Authentication:*`, `BootstrapAdmin:*`, `RelayCove:PathBase`, and `RelayCove:WebAdmin:DataProtectionKeysPath`; it does not automatically run EF migrations at startup.
 - `已验证`：the upload endpoint has an absolute request limit of 100 MiB plus 64 KiB multipart overhead (102,464 KiB). `Uploads:MaximumFileBytes` remains an application-level file limit and must not exceed 100 MiB.
 - `未验证`：Linux x64 execution, systemd hardening, Nginx/TLS behaviour, certificate renewal, firewalling, backup/restore, VPS sizing, real-client login, and dual-client recovery. Perform those M5 checks in the intended environment; do not treat Windows offline package validation as a Linux deployment test.
 - `未验证`：this release slice does not package the WPF client, updater, installer, update manifest, GitHub Release, or a production deployment.
@@ -18,6 +18,7 @@ The following commands require an administrator account. They are examples for a
 ```sh
 sudo useradd --system --user-group --home-dir /var/lib/relaycove --shell /usr/sbin/nologin relaycove
 sudo install -d -o relaycove -g relaycove -m 0700 /var/lib/relaycove
+sudo install -d -o relaycove -g relaycove -m 0700 /var/lib/relaycove/data-protection-keys
 sudo install -d -o root -g relaycove -m 0750 /var/lib/relaycove/updates
 sudo install -d -o root -g root -m 0755 /opt/relaycove/releases /etc/relaycove
 sudo install -d -o root -g root -m 0755 /var/www/certbot
@@ -62,6 +63,8 @@ The release scripts own the archive format and migration-bundle filename. Before
 
 Copy `deploy/appsettings.Production.example.json` from the new version's explicit release path to its `app/appsettings.Production.json`, then replace `REPLACE_WITH_PACKAGE_VERSION` and `chat.example.com`. Keep `Update:ManifestPath` at the supplied writable state path, `/var/lib/relaycove/updates/manifest.json`; do not put the live update manifest in the immutable release tree. This application loads production settings from its content root, so placing this file only in `/etc/relaycove` has no effect. Keep the release tree root-owned and only update this file as part of an intentional release configuration change.
 
+Keep `RelayCove:WebAdmin:DataProtectionKeysPath` at the supplied service-owned state directory so encrypted administrator cookies survive a normal service restart. For a root deployment, leave `RelayCove:PathBase` empty. For a subpath deployment, set one normalized value such as `/relaycove` (leading slash, no trailing slash) and make Nginx preserve that prefix when proxying; generated login redirects, forms, and the restricted administrator cookie path then remain below `/relaycove/admin/`.
+
 ```sh
 set -eu
 
@@ -102,6 +105,8 @@ sudo systemctl enable relaycove.service
 ```
 
 The Nginx template uses a standard HTTP-to-HTTPS redirect, explicit TLS certificate paths, a loopback upstream, and WebSocket upgrade headers only where needed for `/hubs/chat`. It disables the access log for that location because SignalR WebSocket/SSE requests can carry `access_token` in the query string; do not re-enable a request-target log there. Its `map` directive must be included from Nginx's `http {}` context, as is normal for `conf.d`; do not paste it inside a `server {}` block. The Server accepts one forwarded hop only from loopback, so authentication rate limits remain partitioned by the real client address without trusting public `X-Forwarded-*` input.
+
+For a configured subpath, prefix both application locations (for example `/relaycove/hubs/chat` and `/relaycove/`) and use `proxy_pass http://relaycove_server;` without a trailing URI slash. That form preserves `/relaycove` for ASP.NET Core `PathBase`; a trailing slash would strip it and break page redirects, form actions, and cookie scoping. Add an exact `/relaycove` to `/relaycove/` redirect, run `nginx -t`, and verify both the administrator login page and SignalR negotiate before reloading production traffic.
 
 ## First migration and start
 
