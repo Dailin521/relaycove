@@ -5,6 +5,7 @@ namespace RelayCove.Client.Desktop;
 
 internal sealed class WindowsFormsClientTrayIcon : IClientTrayIcon
 {
+    private readonly Drawing.Icon applicationIcon;
     private readonly Forms.NotifyIcon notifyIcon;
     private readonly Forms.ContextMenuStrip contextMenu;
     private readonly Forms.ToolStripMenuItem unreadItem;
@@ -15,6 +16,7 @@ internal sealed class WindowsFormsClientTrayIcon : IClientTrayIcon
 
     public WindowsFormsClientTrayIcon()
     {
+        applicationIcon = LoadApplicationIcon();
         unreadItem = new Forms.ToolStripMenuItem { Enabled = false };
         connectionItem = new Forms.ToolStripMenuItem { Enabled = false };
         openItem = new Forms.ToolStripMenuItem("Open RelayCove");
@@ -34,7 +36,7 @@ internal sealed class WindowsFormsClientTrayIcon : IClientTrayIcon
         notifyIcon = new Forms.NotifyIcon
         {
             ContextMenuStrip = contextMenu,
-            Icon = Drawing.SystemIcons.Application,
+            Icon = applicationIcon,
             Visible = false,
         };
         notifyIcon.DoubleClick += OnOpenClicked;
@@ -73,7 +75,34 @@ internal sealed class WindowsFormsClientTrayIcon : IClientTrayIcon
         exitItem.Click -= OnExitClicked;
         notifyIcon.Visible = false;
         notifyIcon.Dispose();
+        applicationIcon.Dispose();
         contextMenu.Dispose();
+    }
+
+    private static Drawing.Icon LoadApplicationIcon()
+    {
+        var executablePath = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(executablePath))
+        {
+            try
+            {
+                var icon = Drawing.Icon.ExtractAssociatedIcon(executablePath);
+                if (icon is not null)
+                {
+                    return icon;
+                }
+            }
+            catch (Exception exception) when (
+                exception is ArgumentException or
+                System.IO.IOException or
+                UnauthorizedAccessException or
+                System.Runtime.InteropServices.ExternalException)
+            {
+                // A cosmetic icon failure must not prevent the client from starting.
+            }
+        }
+
+        return (Drawing.Icon)Drawing.SystemIcons.Application.Clone();
     }
 
     private void OnOpenClicked(object? sender, EventArgs e)
