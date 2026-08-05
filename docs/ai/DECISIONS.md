@@ -726,3 +726,13 @@
 - **理由：** 对个人/小团队，自带网页管理面能从任意受信浏览器维护对应服务器，符合实际运维习惯；Server-rendered 页面以最少新增代码获得 CSRF 与 Cookie 防护，且避免维护第二套业务规则或前端工具链。scheme 隔离、数据库逐请求复核和 PathBase 明确化把便利性限制在不削弱现有桌面认证与反向代理边界的范围内。
 - **影响：** 工程方案第 17 节与“禁止 Web 端”的旧表述被此决定部分替代：仅允许管理网页，聊天仍只在 Windows Client。Server/发布配置新增 Razor Pages、网页 Cookie、PathBase 与 Data Protection state；公共 API、消息协议和数据库不变。生产升级必须同步调整 Nginx 为保留 `/relaycove` 前缀并验证登录、CSRF、Cookie Path、SignalR 与既有更新下载；网页实测前旧 Windows 管理入口仍是回退路径。
 - **来源：** owner 2026-08-05 产品方向；`DEC-057/058`；`docs/ai/tasks/2026-08-05-stage-15-web-admin.md`；Claude Second Brain 持久任务 `66f6eb48-5be7-4bf9-b16e-70a3bd925afe`，Sonnet/High challenge，建议 Razor Pages、独立 Cookie、antiforgery、scheme 隔离、PathBase 与数据库实时撤权；最终代码、自动化、独立 Codex 复核与 VPS 证据在任务完成时补记。
+
+### DEC-060：内部账号最短长度放宽为两个 ASCII 字符
+
+- **状态：** 已接受
+- **日期：** 2026-08-05
+- **背景：** owner 需要创建精确账号 `lq`；既有 `DEC-005` 的 3–64 字符下限会在网页校验与 SQLite CHECK 两层拒绝该账号。两字符账号对当前个人/小团队部署有明确用途，且不改变密码、唯一键、令牌或授权边界。
+- **决策：** 用户名范围调整为 2–64 个既有允许的 ASCII 字符，仍必须至少包含一个 ASCII 字母或数字，并继续使用 invariant-uppercase `NormalizedUserName` 唯一查找。服务端 normalizer、SQLite 两条 CHECK 与客户端提及校验同步调整；通过新 migration 重建约束，不改写历史 migration。
+- **理由：** 放宽一位即可满足真实账号需求，同时保留原字符集、大小写无关唯一性、15 字符密码策略及所有动态授权规则。单字符账号继续拒绝，避免过度放宽。
+- **影响：** 修正 `DEC-005` 的最短长度前提；旧数据无变化，新版 Server migration 后可创建并登录两字符账号，新版 Client 可识别其提及 token。数据库迁移必须先停服备份并显式应用。创建两字符账号后，旧 migration 的 3 字符 CHECK 无法接纳该行，因此生产回滚必须恢复迁移前完整备份，不能把 schema Down 当作回滚路径。
+- **来源：** owner 2026-08-05 账号创建要求；`src/RelayCove.Server/Services/UserNameNormalizer.cs`、`src/RelayCove.Server/Data/RelayCoveDbContext.cs`、`src/RelayCove.Client/Mentions/ClientMentionPolicy.cs`；真实 SQLite 迁移与网页创建用户回归；独立 Codex 审查发现并要求补齐数据库 CHECK。

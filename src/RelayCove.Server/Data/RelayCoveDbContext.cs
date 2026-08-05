@@ -57,8 +57,8 @@ public sealed class RelayCoveDbContext(DbContextOptions<RelayCoveDbContext> opti
         entity.ToTable("Users", table =>
         {
             table.HasCheckConstraint("CK_Users_Id_Format", GuidTextCheck("Id"));
-            table.HasCheckConstraint("CK_Users_UserName_Format", "length(\"UserName\") BETWEEN 3 AND 64 AND \"UserName\" NOT GLOB '*[^A-Za-z0-9._-]*' AND \"UserName\" GLOB '*[A-Za-z0-9]*'");
-            table.HasCheckConstraint("CK_Users_NormalizedUserName_Format", "length(\"NormalizedUserName\") BETWEEN 3 AND 64 AND \"NormalizedUserName\" NOT GLOB '*[^A-Z0-9._-]*' AND \"NormalizedUserName\" GLOB '*[A-Z0-9]*' AND upper(\"NormalizedUserName\") = \"NormalizedUserName\"");
+            table.HasCheckConstraint("CK_Users_UserName_Format", $"length(\"UserName\") BETWEEN {UserNameNormalizer.MinimumLength} AND {UserNameNormalizer.MaximumLength} AND \"UserName\" NOT GLOB '*[^A-Za-z0-9._-]*' AND \"UserName\" GLOB '*[A-Za-z0-9]*'");
+            table.HasCheckConstraint("CK_Users_NormalizedUserName_Format", $"length(\"NormalizedUserName\") BETWEEN {UserNameNormalizer.MinimumLength} AND {UserNameNormalizer.MaximumLength} AND \"NormalizedUserName\" NOT GLOB '*[^A-Z0-9._-]*' AND \"NormalizedUserName\" GLOB '*[A-Z0-9]*' AND upper(\"NormalizedUserName\") = \"NormalizedUserName\"");
             table.HasCheckConstraint("CK_Users_NameNormalization", "upper(\"UserName\") = \"NormalizedUserName\"");
             table.HasCheckConstraint("CK_Users_DisplayName_Length", "length(\"DisplayName\") BETWEEN 1 AND 100");
             table.HasCheckConstraint("CK_Users_PasswordHash_NotEmpty", "length(\"PasswordHash\") > 0");

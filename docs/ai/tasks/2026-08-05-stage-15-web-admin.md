@@ -93,6 +93,7 @@ git diff --check
 
 - 决策：网页登录不产生 access/refresh token；浏览器 Cookie 和桌面 JWT 使用不同 scheme，服务端业务与数据库协议不变。
 - 已知限制：登录限流应用于整个登录 Razor Page，因此 GET 登录页也占用同一 IP 的登录额度；10 次/分钟默认值对约 20 人内部使用可接受。
+- 已知限制：为 owner 的精确账号 `lq`，`DEC-060` 将用户名下限放宽到 2 并新增 SQLite CHECK migration；创建两字符账号后的生产回滚必须恢复迁移前完整备份，不能执行旧 3 字符约束的 schema Down。
 
 ### 下一步
 

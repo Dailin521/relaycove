@@ -1133,7 +1133,7 @@ ExpiresAt                  TEXT NOT NULL
 RevokedAt                  TEXT NULL
 ```
 
-v1 登录名限制为 3–64 个 ASCII 字母、数字、点、下划线或连字符；`UserName` 保留原始大小写，所有写入通过同一实体方法同步生成 invariant-uppercase `NormalizedUserName`，登录查找和唯一约束只使用后者。Unicode 姓名使用 `DisplayName`，不把 ICU/NLS 相关大小写规则带入身份键。
+v1 登录名限制为 2–64 个 ASCII 字母、数字、点、下划线或连字符；`UserName` 保留原始大小写，所有写入通过同一实体方法同步生成 invariant-uppercase `NormalizedUserName`，登录查找和唯一约束只使用后者。Unicode 姓名使用 `DisplayName`，不把 ICU/NLS 相关大小写规则带入身份键。
 
 服务端 GUID 以小写标准 `D` 文本保存；时间以固定 `yyyy-MM-ddTHH:mm:ss.fffZ` UTC 文本保存并拒绝非 UTC 写入。refresh token 原始值由 32 字节 CSPRNG 产生，表中只保存 `Base64Url(SHA-256(raw bytes))` 的 43 字符哈希；不得保存明文 token。密码使用 ASP.NET Core 版本化 `PasswordHasher` 格式，不自定义低层 PBKDF2 存储协议。
 

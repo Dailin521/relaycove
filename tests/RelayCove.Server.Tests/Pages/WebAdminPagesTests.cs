@@ -238,7 +238,7 @@ public sealed class WebAdminPagesTests
         var token = await GetAntiforgeryTokenAsync(client, "/admin");
         using (var createdUser = await PostFormAsync(client, "/admin?handler=CreateUser", token, new Dictionary<string, string>
         {
-            ["userName"] = "created-from-browser",
+            ["userName"] = "lq",
             ["displayName"] = "页面创建用户",
             ["password"] = Password,
             ["isAdmin"] = "false",
@@ -272,7 +272,7 @@ public sealed class WebAdminPagesTests
             .Where(conversation => conversation.Name == "member browser channel")
             .Select(conversation => conversation.Id)
             .SingleAsync();
-        Assert.True(await dbContext.Users.AnyAsync(user => user.UserName == "created-from-browser"));
+        Assert.True(await dbContext.Users.AnyAsync(user => user.UserName == "lq"));
         var settings = scope.ServiceProvider.GetRequiredService<UploadSettingsService>();
         Assert.Equal(2L * 1024 * 1024, await settings.GetEffectiveMaximumFileBytesAsync(CancellationToken.None));
 
@@ -289,7 +289,7 @@ public sealed class WebAdminPagesTests
         token = await GetAntiforgeryTokenAsync(client, "/admin");
         using (var duplicateUser = await PostFormAsync(client, "/admin?handler=CreateUser", token, new Dictionary<string, string>
         {
-            ["userName"] = "created-from-browser",
+            ["userName"] = "lq",
             ["displayName"] = "重复用户",
             ["password"] = Password,
             ["isAdmin"] = "false",

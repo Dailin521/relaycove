@@ -8,6 +8,7 @@ public sealed class UserNameNormalizerTests
     private readonly UserNameNormalizer normalizer = new();
 
     [Theory]
+    [InlineData("lq", "LQ")]
     [InlineData("Alice", "ALICE")]
     [InlineData("team.member-01", "TEAM.MEMBER-01")]
     [InlineData("ABC_def", "ABC_DEF")]
@@ -22,7 +23,7 @@ public sealed class UserNameNormalizerTests
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    [InlineData("ab")]
+    [InlineData("a")]
     [InlineData("---")]
     [InlineData("alice smith")]
     [InlineData("管理员")]

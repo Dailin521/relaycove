@@ -17,6 +17,43 @@ public sealed class RelayCoveDbContextTests
     private readonly RefreshTokenHasher refreshTokenHasher = new();
 
     [Fact]
+    public async Task Migration_WhenTwoCharacterUserNamesAreEnabled_PreservesUsersAndEnforcesNewMinimum()
+    {
+        var databasePath = CreateDatabasePath();
+        try
+        {
+            await using var context = CreateContext(databasePath);
+            var migrator = context.GetService<IMigrator>();
+            await migrator.MigrateAsync("20260804141903_AddAdministratorOperationsStorage");
+            var retainedUser = CreateUser(Guid.NewGuid(), "sam");
+            context.Add(retainedUser);
+            await context.SaveChangesAsync();
+
+            await context.Database.MigrateAsync();
+            context.ChangeTracker.Clear();
+
+            Assert.Equal("sam", (await context.Users.AsNoTracking().SingleAsync()).UserName);
+
+            context.Add(CreateUser(Guid.NewGuid(), "lq"));
+            await context.SaveChangesAsync();
+
+            var oneCharacterException = await Assert.ThrowsAsync<SqliteException>(() =>
+                context.Database.ExecuteSqlInterpolatedAsync($"""
+                    INSERT INTO Users (Id, UserName, NormalizedUserName, DisplayName, AvatarAttachmentId, PasswordHash, IsAdmin, IsDisabled, CreatedAt, UpdatedAt, LastLoginAt, LastOnlineAt)
+                    VALUES ({Guid.NewGuid().ToString("D").ToLowerInvariant()}, {"a"}, {"A"}, {"a"}, NULL, {"password-hash"}, 0, 0, {"2026-08-03T04:00:00.000Z"}, {"2026-08-03T04:00:00.000Z"}, NULL, NULL);
+                    """));
+
+            Assert.Equal(19, oneCharacterException.SqliteErrorCode);
+            Assert.Equal(275, oneCharacterException.SqliteExtendedErrorCode);
+            Assert.Equal(["lq", "sam"], await context.Users.AsNoTracking().OrderBy(user => user.UserName).Select(user => user.UserName).ToArrayAsync());
+        }
+        finally
+        {
+            DeleteDatabaseFiles(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task Migration_WhenAppliedAndRolledBack_HasExpectedSchemaWithoutModelDrift()
     {
         var databasePath = CreateDatabasePath();

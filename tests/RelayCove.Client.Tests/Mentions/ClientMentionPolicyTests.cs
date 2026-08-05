@@ -5,6 +5,7 @@ namespace RelayCove.Client.Tests.Mentions;
 public sealed class ClientMentionPolicyTests
 {
     [Theory]
+    [InlineData("@lq", "lq", true)]
     [InlineData("@Alice", "alice", true)]
     [InlineData("hello @Alice!", "ALICE", true)]
     [InlineData("(@alice_1)", "alice_1", true)]
@@ -19,6 +20,12 @@ public sealed class ClientMentionPolicyTests
         string userName,
         bool expected) =>
         Assert.Equal(expected, ClientMentionPolicy.ContainsToken(content, userName));
+
+    [Theory]
+    [InlineData("lq", true)]
+    [InlineData("a", false)]
+    public void IsValidUserName_WhenLengthVaries_ReturnsExpected(string userName, bool expected) =>
+        Assert.Equal(expected, ClientMentionPolicy.IsValidUserName(userName));
 
     [Theory]
     [InlineData("", 0, 0, "Alice", "@Alice ", 7)]

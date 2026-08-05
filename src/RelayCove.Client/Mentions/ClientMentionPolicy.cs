@@ -6,7 +6,7 @@ internal static class ClientMentionPolicy
 {
     public const int MaximumQueryLength = 64;
     public const int MaximumMentionCount = 20;
-    public const int MinimumUserNameLength = 3;
+    public const int MinimumUserNameLength = 2;
     public const int MaximumUserNameLength = 64;
 
     public static bool IsValidQuery(string? query) =>

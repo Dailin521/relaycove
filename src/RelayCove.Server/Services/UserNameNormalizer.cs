@@ -2,7 +2,7 @@ namespace RelayCove.Server.Services;
 
 public sealed class UserNameNormalizer
 {
-    public const int MinimumLength = 3;
+    public const int MinimumLength = 2;
     public const int MaximumLength = 64;
 
     public string Normalize(string userName)
