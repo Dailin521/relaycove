@@ -6,9 +6,9 @@
 
 - **当前阶段：** M5-02 已完成 — 个人/小团队内部 RC 初版可运行；严格双 Windows UI 全矩阵作为 owner 接受的已知限制
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮；M4-01 可复现 Linux x64 Server RC、M4-02 可复现 Windows Client 自包含 ZIP、M4-03 共享更新协议、确定性清单、外部自举 Updater 与真实 rc.6→rc.11 替换恢复，以及 M4-04 Server exact 托管、Client 检查/下载、optional/mandatory UI 和显式 Exit→Updater 交接均已完成
-- **最近验证通过的状态：** stage-13 production `9375477` 已完成部署加固、自包含 Linux Server、Linux checksum 与反向代理 path-base 更新下载；最终 Full 1,598 项、发布/更新定向 28 项及独立安全复核通过。Server rc.15 与 Client rc.14 已在批准的 HTTPS 子路径完成真实部署、恢复演练、登录/实时 UI 与更新 Gate
+- **最近验证通过的状态：** stage-15 production `827f04a` 已完成 Server 网页管理、两字符账号兼容与 SQLite migration；最终 Full 1,613 项、发布包校验及独立安全/迁移复核通过。Server rc.17 与 Client rc.14 已在批准的 HTTPS 子路径运行，网页后台、`lq`/`dal` 普通账号、重启会话保持与既有更新/Hub 边界均完成真实验证
 - **可构建状态：** `已验证` — Fast、Full 与 Release 构建均为 0 警告、0 错误
-- **自动化验证：** `已验证` — stage-15 最终 Full、format 与 1,608 项测试（Shared 69、Server 350、Client 1,151、Updater 38）通过；Release 0 警告/0 错误，既有 migration/model 与协议未变化。覆盖网页管理 Cookie/JWT 隔离、CSRF、限流、实时撤权、PathBase、管理写操作和既有全部 RC 闭环
+- **自动化验证：** `已验证` — stage-15 最终 Full、format 与 1,613 项测试（Shared 69、Server 352、Client 1,154、Updater 38）通过；Release 0 警告/0 错误。覆盖网页管理 Cookie/JWT 隔离、CSRF、限流、实时撤权、PathBase、管理写操作、两字符账号 migration 与既有全部 RC 闭环
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
 - **最近 Claude 调用：** #85 已通过 MCP 0.5 持久任务完成 M5 更新供应链与备份恢复边界的唯一一次 Sonnet/High 只读挑战；其高风险意见均已由 `e200da6` 修正，两路 Codex 与本机验证复核通过，剩余要求进入 VPS 实测
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- stage-15 的 Server 内置 `/admin/` Razor Pages、浏览器专属 Cookie/CSRF、JWT scheme 隔离、`/relaycove/` PathBase、生产密钥持久化与 1,608 项 Full 已完成，独立安全复审无 P0–P2；正在发布香港 VPS。网页实测前保留 Windows 管理入口。
+- 无阻塞开发切片。stage-15 已完成并部署；Windows 管理入口暂作为回退保留，等待 owner 实际使用网页后台后再决定是否移除。
 
 ## 已完成
 
@@ -83,10 +83,12 @@
 - Windows 内最小管理面、账号逻辑退役与 HTTP/SignalR token 代际、频道软删除、状态和持久上传上限（`DEC-057`）
 - Nginx token 日志隔离、root-only 更新发布、完整可恢复备份和受控 HTTPS 子路径部署边界（`DEC-058`）
 - Server rc.15 / Client rc.14 exact 产物、真实 VPS/TLS/systemd、受控备份恢复、公网更新完整性、真实 WPF 登录/实时接收与 optional/mandatory→Updater 升级 Gate；内部 RC 初版按 owner 指令接受未执行严格双 Windows UI 全矩阵的限制
+- Server 内置 `/relaycove/admin/` 中文管理面、独立 Cookie/CSRF/JWT 隔离、生产 PathBase 与持久密钥；rc.17 已在香港 VPS 完成真实管理员登录、管理写入、重启会话保持及 `lq`/`dal` 普通账号登录验证
+- 用户名下限按 `DEC-060` 从 3 放宽到 2，SQLite CHECK migration、客户端提及规则、旧库数据保留、单字符拒绝与回滚备份边界均已验证
 
 ## 下一任务
 
-完成 stage-15 自动化、安全复核与香港 VPS 网页实测；通过后以独立小切片移除 Windows 管理入口。公开 main/Tag/Release 与严格第二 Windows UI 矩阵继续作为可选后续。
+owner 可直接使用网页后台；确认稳定后可用独立小切片移除 Windows 管理入口。公开 main/Tag/Release 与严格第二 Windows UI 矩阵继续作为可选后续。
 
 ## 阻塞项
 
