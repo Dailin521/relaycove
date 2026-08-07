@@ -126,6 +126,39 @@ public sealed class MainWindowAttachmentImagePresentationTests
     }
 
     [Fact]
+    public async Task ApplyMessageListSnapshot_WhenImageIsNotDownloaded_ExposesAutomaticPreviewSlot()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateVisibleWindow();
+            try
+            {
+                window.ApplyMessageListSnapshot(CreateSnapshot(
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    isImage: true,
+                    isDownloaded: false,
+                    revision: 1));
+                Layout(window);
+
+                var attachment = GetOnlyAttachment(window);
+                var state = Assert.IsType<ClientAttachmentImageViewState>(attachment.ImageState);
+                Assert.True(state.IsEligible);
+                Assert.True(state.ShowPreview);
+                Assert.Equal(ClientAttachmentDownloadPhase.Idle, attachment.DownloadState?.Phase);
+                Assert.Contains(
+                    FindVisualDescendants<System.Windows.Controls.Image>(window.MessageList),
+                    candidate => ReferenceEquals(candidate.DataContext, attachment));
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public async Task AttachmentThumbnailOperations_WhenConversationMovesAtoBtoA_CancelOldAndRejectLateResult()
     {
         await RunOnStaAsync(() =>

@@ -88,6 +88,8 @@ public partial class MainWindow : Window
     private readonly Dictionary<
         ClientAttachmentViewKey,
         ClientAttachmentImageOperation> attachmentThumbnailOperations = [];
+    private readonly HashSet<string> collapsedConversationGroups =
+        new(StringComparer.Ordinal);
     private ClientAttachmentImageViewerOperation? attachmentImageViewerOperation;
     private IInputElement? attachmentImageViewerRestoreFocus;
     private IReadOnlyList<ClientSearchResultPresentation> messageSearchResults =
@@ -453,6 +455,44 @@ public partial class MainWindow : Window
 
         accountShell?.SelectConversation(SelectedConversationId);
         UpdateMessageSearchState();
+    }
+
+    private void OnConversationGroupExpanderLoaded(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not Expander { Tag: string groupName } expander)
+        {
+            return;
+        }
+
+        expander.IsExpanded = !collapsedConversationGroups.Contains(groupName);
+        AutomationProperties.SetName(
+            expander,
+            $"{groupName}{(expander.IsExpanded ? "，已展开" : "，已折叠")}分组");
+    }
+
+    private void OnConversationGroupExpanded(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not Expander { Tag: string groupName } expander)
+        {
+            return;
+        }
+
+        collapsedConversationGroups.Remove(groupName);
+        AutomationProperties.SetName(expander, $"{groupName}，已展开分组");
+    }
+
+    private void OnConversationGroupCollapsed(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not Expander { Tag: string groupName } expander)
+        {
+            return;
+        }
+
+        collapsedConversationGroups.Add(groupName);
+        AutomationProperties.SetName(expander, $"{groupName}，已折叠分组");
     }
 
     internal void ShowAuthorizedNotificationTarget(
@@ -948,6 +988,7 @@ public partial class MainWindow : Window
             Type: ConversationType.PrivateChannel,
             CanManageMembers: true,
         };
+        var isDirect = channelParticipants?.Type == ConversationType.Direct;
         var filter = ChannelMemberSearchTextBox.Text.Trim();
         var participants = channelParticipants?.Participants
             .Where(user => MatchesChannelMemberFilter(user, filter))
@@ -961,6 +1002,9 @@ public partial class MainWindow : Window
                 CanRemove: canManage && user.UserId != currentUserId))
             .ToArray() ?? [];
         ChannelParticipantList.ItemsSource = participants;
+        ChannelUserDirectorySection.Visibility = isDirect
+            ? Visibility.Collapsed
+            : Visibility.Visible;
         ChannelUserDirectoryList.ItemsSource = channelUserDirectory
             .Where(user => MatchesChannelMemberFilter(user, filter))
             .Select(user => new ChannelUserPresentation(
@@ -978,14 +1022,19 @@ public partial class MainWindow : Window
             ChannelCurrentHeadingText,
             channelParticipants is null
                 ? "当前会话成员"
-                : $"当前会话成员（{channelParticipants.Participants.Count}）");
+                : isDirect
+                    ? $"私聊成员（{channelParticipants.Participants.Count}）"
+                    : $"当前会话成员（{channelParticipants.Participants.Count}）");
+        ChannelPanelSubtitleText.Text = isDirect
+            ? "显示此私聊的全部参与成员"
+            : "查看成员并管理私有频道";
         SetLiveText(
             ChannelMemberHelpText,
             channelParticipants switch
             {
                 null => "选择会话后显示成员。",
                 { Type: ConversationType.PublicChannel } => "公开频道显示全部正常成员。",
-                { Type: ConversationType.Direct } => "私聊显示双方成员。",
+                { Type: ConversationType.Direct } => "私聊显示全部参与成员。",
                 { CanManageMembers: true } => "你可以从左侧拉人，或从这里移除成员。",
                 _ => "私有频道只有频道管理员可以增删成员。",
             });
@@ -2870,14 +2919,15 @@ public partial class MainWindow : Window
             {
                 DataContext: ClientMessageAttachmentPresentation
                 {
+                    DownloadState: { } downloadState,
                     ImageState: { } state,
-                },
+                } attachment,
             })
         {
             return;
         }
 
-        await StartAttachmentThumbnailAsync(state);
+        await StartAttachmentPreviewAsync(attachment, downloadState, state);
     }
 
     private void OnAttachmentThumbnailUnloaded(object sender, RoutedEventArgs e)
@@ -2910,10 +2960,11 @@ public partial class MainWindow : Window
         if (sender is System.Windows.Controls.Image { IsLoaded: true } &&
             e.NewValue is ClientMessageAttachmentPresentation
             {
+                DownloadState: { } downloadState,
                 ImageState: { } newState,
-            })
+            } attachment)
         {
-            _ = StartAttachmentThumbnailAsync(newState);
+            _ = StartAttachmentPreviewAsync(attachment, downloadState, newState);
         }
     }
 
@@ -3166,6 +3217,32 @@ public partial class MainWindow : Window
         {
             CompleteAttachmentThumbnailOperation(key, operation);
         }
+    }
+
+    private async Task StartAttachmentPreviewAsync(
+        ClientMessageAttachmentPresentation attachment,
+        ClientAttachmentDownloadViewState downloadState,
+        ClientAttachmentImageViewState imageState)
+    {
+        ArgumentNullException.ThrowIfNull(attachment);
+        ArgumentNullException.ThrowIfNull(downloadState);
+        ArgumentNullException.ThrowIfNull(imageState);
+
+        if (!attachment.IsImage || !imageState.IsEligible)
+        {
+            return;
+        }
+
+        if (downloadState.Phase != ClientAttachmentDownloadPhase.Downloaded)
+        {
+            await StartAttachmentDownloadAsync(attachment, downloadState);
+            if (downloadState.Phase != ClientAttachmentDownloadPhase.Downloaded)
+            {
+                return;
+            }
+        }
+
+        await StartAttachmentThumbnailAsync(imageState);
     }
 
     private static string DescribeAttachmentImageOutcome(
@@ -3673,8 +3750,7 @@ public partial class MainWindow : Window
             {
                 SynchronizeAttachmentImageEligibility(
                     entry,
-                    currentAttachment.IsImage &&
-                    state.Phase == ClientAttachmentDownloadPhase.Downloaded);
+                    currentAttachment.IsImage);
             }
 
             RaiseAttachmentDownloadLiveRegion(state);
@@ -4530,7 +4606,7 @@ public partial class MainWindow : Window
                         new ClientAttachmentImageViewState(
                             context,
                             attachment.DisplayName,
-                            attachment.IsImage && attachment.IsDownloaded),
+                            attachment.IsImage),
                         attachment.IsDownloaded);
                     attachmentDownloadStates.Add(key, entry);
                 }
@@ -4560,8 +4636,7 @@ public partial class MainWindow : Window
 
                 SynchronizeAttachmentImageEligibility(
                     entry,
-                    attachment.IsImage &&
-                    entry.State.Phase == ClientAttachmentDownloadPhase.Downloaded);
+                    attachment.IsImage);
 
                 attachments.Add(attachment with
                 {
@@ -4693,7 +4768,13 @@ public partial class MainWindow : Window
         entry.PendingPersistedDownloaded = null;
         _ = entry.State.SynchronizePersistedDownloaded(isDownloaded: false);
         CancelAttachmentOpenForNoLongerDownloaded(entry.State);
-        SynchronizeAttachmentImageEligibility(entry, isEligible: false);
+        CancelAttachmentThumbnailForRecycle(entry.ImageState);
+        var isImage = TryResolveCurrentAttachment(
+            entry.ImageState,
+            out _,
+            out var currentAttachment) && currentAttachment.IsImage;
+        SynchronizeAttachmentImageEligibility(entry, isEligible: isImage);
+        entry.ImageState.ClearForRecycle();
         SetLiveText(
             MessageComposerStatusText,
             "本地附件状态已失效，请重新下载后再打开或预览。");
@@ -4740,6 +4821,12 @@ public partial class MainWindow : Window
         if (attachmentOpenOperations.Remove(key, out var operation))
         {
             operation.Cancel();
+        }
+
+        if (attachmentImageViewerOperation is { } viewerOperation &&
+            ReferenceEquals(viewerOperation.State.Context, state.Context))
+        {
+            CloseAttachmentImageViewer(restoreFocus: false);
         }
     }
 

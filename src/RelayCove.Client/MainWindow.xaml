@@ -279,6 +279,29 @@
                                      SelectionChanged="OnConversationSelectionChanged">
                                 <ListBox.GroupStyle>
                                     <GroupStyle>
+                                        <GroupStyle.ContainerStyle>
+                                            <Style TargetType="{x:Type GroupItem}">
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="{x:Type GroupItem}">
+                                                            <Expander x:Name="ConversationGroupExpander"
+                                                                      Tag="{Binding Name}"
+                                                                      IsExpanded="True"
+                                                                      BorderThickness="0"
+                                                                      Loaded="OnConversationGroupExpanderLoaded"
+                                                                      Expanded="OnConversationGroupExpanded"
+                                                                      Collapsed="OnConversationGroupCollapsed">
+                                                                <Expander.Header>
+                                                                    <ContentPresenter Content="{Binding}"
+                                                                                      ContentTemplate="{Binding RelativeSource={RelativeSource TemplatedParent}, Path=HeaderTemplate}" />
+                                                                </Expander.Header>
+                                                                <ItemsPresenter />
+                                                            </Expander>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </GroupStyle.ContainerStyle>
                                         <GroupStyle.HeaderTemplate>
                                             <DataTemplate>
                                                 <Grid Margin="6,12,4,5">
@@ -1572,7 +1595,8 @@
                                    FontSize="20"
                                    FontWeight="SemiBold"
                                    Foreground="{StaticResource TextPrimaryBrush}" />
-                        <TextBlock Margin="0,4,0,0"
+                        <TextBlock x:Name="ChannelPanelSubtitleText"
+                                   Margin="0,4,0,0"
                                    Text="查看成员并管理私有频道"
                                    Foreground="{StaticResource TextSecondaryBrush}"
                                    FontSize="12" />
@@ -1597,7 +1621,7 @@
                                  AutomationProperties.Name="搜索频道成员"
                                  ToolTip="按昵称或账号搜索"
                                  TextChanged="OnChannelMemberSearchTextChanged" />
-                        <StackPanel Grid.Row="1">
+                        <StackPanel x:Name="ChannelUserDirectorySection" Grid.Row="1">
                             <Expander x:Name="CreateChannelExpander" Header="创建频道">
                             <StackPanel Margin="0,8,0,0">
                             <TextBox x:Name="ChannelNameInput"
