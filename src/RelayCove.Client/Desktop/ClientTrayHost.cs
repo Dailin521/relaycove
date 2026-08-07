@@ -98,6 +98,41 @@ internal sealed class ClientTrayHost : IDisposable
         TryDispatch(UpdateStatusOnUi);
     }
 
+    public bool TryShowNotification(string title, string message)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(title);
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        lock (stateGate)
+        {
+            if (disposed || !started)
+            {
+                return false;
+            }
+        }
+
+        return TryDispatch(() =>
+        {
+            lock (stateGate)
+            {
+                if (disposed || !started)
+                {
+                    return;
+                }
+            }
+
+            try
+            {
+                trayIcon.ShowNotification(title, message);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    "Showing a Windows tray notification failed; errorType={ErrorType}.",
+                    exception.GetType().Name);
+            }
+        });
+    }
+
     public void Dispose()
     {
         lock (stateGate)

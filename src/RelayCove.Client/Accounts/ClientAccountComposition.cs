@@ -50,7 +50,9 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
         string localAppDataRoot,
         ClientNotificationActivationRouter activationRouter,
         IClientNotificationAttention notificationAttention,
-        ILoggerFactory loggerFactory)
+        ILoggerFactory loggerFactory,
+        IClientNotificationPlatform? notificationPlatform = null,
+        Func<ClientNotificationSettingsSnapshot>? notificationSettingsProvider = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(localAppDataRoot);
         if (!Path.IsPathFullyQualified(localAppDataRoot))
@@ -88,6 +90,8 @@ internal sealed class ClientAccountComposition : IAsyncDisposable
                 accountDataRootDirectory: accountRoot,
                 loggerFactory: loggerFactory,
                 createRealtimeConnection: null,
+                notificationPlatform: notificationPlatform,
+                notificationSettingsProvider: notificationSettingsProvider,
                 notificationAttention: notificationAttention,
                 attachmentUploadHttpClient: attachmentUploadHttpClient,
                 attachmentCacheRootDirectory: attachmentCacheRoot,

@@ -9,4 +9,6 @@ internal interface IClientTrayIcon : IDisposable
     void Show(ClientTrayDisplay display);
 
     void Update(ClientTrayDisplay display);
+
+    void ShowNotification(string title, string message);
 }

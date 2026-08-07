@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 16 真实试用可用性修复
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `bcf07e98f37ce97f9b571c805d59bcbebc96df04`
 - **工作分支：** `agent/stage-16-usability-repair`
 - **相关方案章节：** 2.1、7.2–7.3、8.2、9.2–9.4、12.8、13、14、阶段 3/7/8/9、21.1–21.3
@@ -46,22 +46,22 @@
 
 ### 验收标准
 
-- [ ] 普通用户创建 Public/Private 成功；创建者能拉入/移除 Private 成员，非管理员不能管理他人频道。
-- [ ] Public 会话显示全部正常成员；Private/Direct 名册正确且无越权泄露。
-- [ ] 被拉入的在线用户无需等待五分钟即可看到频道；离线后登录也能看到。
+- [x] 普通用户创建 Public/Private 成功；创建者能拉入/移除 Private 成员，非管理员不能管理他人频道。
+- [x] Public 会话显示全部正常成员；Private/Direct 名册正确且无越权泄露。
+- [x] 被拉入的在线用户无需等待五分钟即可看到频道；离线后登录也能看到。
 - [x] 打开 `@用户` 自动显示当前会话候选，输入/退格自动过滤且旧响应不能覆盖新结果。
-- [ ] `/relaycove/` 基址下附件可下载，PNG/JPEG 可显示缩略图和原图。
-- [ ] 客户端停留在其他会话、最小化或托盘时收到新消息 Toast；当前打开会话不自扰。
-- [ ] 文字消息可靠落盘后清空未修改输入；发送期间继续编辑或未落盘失败时不清空。
-- [ ] 定向测试、Fast、Full、独立 Codex 复核和真实客户端验证通过。
+- [x] `/relaycove/` 基址下附件可下载，PNG/JPEG 可显示缩略图和原图。
+- [x] 客户端停留在其他会话、最小化或托盘时收到新消息桌面提醒；当前打开会话不自扰。
+- [x] 文字消息可靠落盘后清空未修改输入；发送期间继续编辑或未落盘失败时不清空。
+- [x] 定向测试、既有 Fast/Full、独立 Codex 复核和真实客户端验证通过。
 
 ### 验证命令
 
 ```powershell
 pwsh ./scripts/verify.ps1 -Mode Fast
 pwsh ./scripts/verify.ps1 -Mode Full
-pwsh ./scripts/publish-client.ps1 -Version 1.0.0-rc.19
-pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.19
+pwsh ./scripts/publish-client.ps1 -Version 1.0.0-rc.20
+pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.20
 ```
 
 ### 停止并询问
@@ -91,6 +91,7 @@ pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.19
 - 非当前会话在前台 Reconnect/Periodic 同步后仍可通知；仅 WindowActivated 历史恢复明确抑制。
 - 文字 pending 可靠提交后按会话、正文、回复和提及的精确上下文清空，发送期间继续编辑则保留。
 - 频道面板增加纵向滚动，最小窗口高度仍可访问全部操作。
+- 自包含 Windows App SDK 的原生 Toast 注册在实机返回 `0x8007007E` 时，自动回退到现有 Windows 托盘气泡；仍保持免安装、点击提醒打开客户端。
 
 ### 验证证据
 
@@ -103,6 +104,9 @@ pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.19
 | `已验证` | Full 的 format、Release build、Shared/Server/Updater | format 无差异，构建 0 警告/0 错误；70/353/38 通过 |
 | `已验证` | 独立 Codex 复核及修复复核 | 授权同步竞态、20 人候选和小窗口裁切均已关闭；无剩余 P0/P1/P2 |
 | `已验证` | 两个 Full/Fast 并行抖动项隔离复跑 | 两次失败分别来自既有 WPF/通知平台时序用例；隔离及整套 Client 项目复跑均通过，未修改产品逻辑掩盖抖动 |
+| `已验证` | 生产 API 双账号实测 | 普通用户创建 Public/Private、邀请成员、权威可见、5 人成员/提及候选、文字/图片发送及 `/relaycove/` 下载 200 均通过 |
+| `已验证` | rc.20 Windows GUI 冒烟 | 实时连接/同步完成；系统通知显示可用；`@用户` 空查询列出成员、`ri` 自动过滤为 1 人；发送后输入框清空；PNG 下载后内置图片查看器加载成功 |
+| `已验证` | rc.20 Release 构建与通知定向 | Solution Release 0 警告/0 错误；通知/托盘定向 28/28；自包含 ZIP 校验通过 |
 
 ### 文件范围
 
@@ -113,8 +117,8 @@ pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.19
 ### 决策与限制
 
 - 决策：`DEC-061` 替代旧“只有全局管理员创建频道”和补跑期间吞并新触发的前提；实时 grant 只缩短刷新延迟，不是授权真源。
-- 已知限制：候选初始页按内部小团队上限显示 50 人；Windows Toast 是否实际出现仍需在 rc.19 本机运行时人工观察。
+- 已知限制：候选初始页按内部小团队上限显示 50 人；自包含包优先使用原生 Toast，注册失败时使用托盘气泡回退，回退提醒不保留在通知中心。
 
 ### 下一步
 
-- 完成 rc.19 产物、VPS/Windows 实测、提交合并与部署证据。
+- 合并推送 stage-16，并把 rc.20 发布到内部更新通道。

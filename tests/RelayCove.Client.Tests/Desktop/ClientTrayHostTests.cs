@@ -103,6 +103,19 @@ public sealed class ClientTrayHostTests
     }
 
     [Fact]
+    public void TryShowNotification_WhenStarted_DispatchesToTrayIcon()
+    {
+        var icon = new RecordingTrayIcon();
+        using var host = CreateHost(icon);
+        Assert.True(host.TryStart());
+
+        var accepted = host.TryShowNotification("RelayCove", "新消息");
+
+        Assert.True(accepted);
+        Assert.Equal(("RelayCove", "新消息"), Assert.Single(icon.Notifications));
+    }
+
+    [Fact]
     public void Dispose_WhenCallbacksArrive_IgnoresThemAndDisposesIconOnce()
     {
         var icon = new RecordingTrayIcon();
@@ -153,6 +166,8 @@ public sealed class ClientTrayHostTests
 
         public List<ClientTrayDisplay> Updated { get; } = [];
 
+        public List<(string Title, string Message)> Notifications { get; } = [];
+
         public int DisposeCount => Volatile.Read(ref disposeCount);
 
         public void Show(ClientTrayDisplay display)
@@ -166,6 +181,9 @@ public sealed class ClientTrayHostTests
         }
 
         public void Update(ClientTrayDisplay display) => Updated.Add(display);
+
+        public void ShowNotification(string title, string message) =>
+            Notifications.Add((title, message));
 
         public void Dispose() => Interlocked.Increment(ref disposeCount);
 

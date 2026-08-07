@@ -40,6 +40,7 @@ internal sealed class WindowsFormsClientTrayIcon : IClientTrayIcon
             Visible = false,
         };
         notifyIcon.DoubleClick += OnOpenClicked;
+        notifyIcon.BalloonTipClicked += OnOpenClicked;
     }
 
     public event Action? OpenRequested;
@@ -62,6 +63,16 @@ internal sealed class WindowsFormsClientTrayIcon : IClientTrayIcon
         connectionItem.Text = display.ConnectionText;
     }
 
+    public void ShowNotification(string title, string message)
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        notifyIcon.ShowBalloonTip(
+            timeout: 5000,
+            tipTitle: title,
+            tipText: message,
+            tipIcon: Forms.ToolTipIcon.Info);
+    }
+
     public void Dispose()
     {
         if (disposed)
@@ -71,6 +82,7 @@ internal sealed class WindowsFormsClientTrayIcon : IClientTrayIcon
 
         disposed = true;
         notifyIcon.DoubleClick -= OnOpenClicked;
+        notifyIcon.BalloonTipClicked -= OnOpenClicked;
         openItem.Click -= OnOpenClicked;
         exitItem.Click -= OnExitClicked;
         notifyIcon.Visible = false;

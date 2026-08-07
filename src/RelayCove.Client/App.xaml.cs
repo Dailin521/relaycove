@@ -138,6 +138,8 @@ public partial class App : System.Windows.Application
             notificationHost = CreateNotificationHost();
             notificationRegistrationReady = await RunNotificationHostStartAsync(
                 notificationHost);
+            notificationRegistrationReady = notificationRegistrationReady == true ||
+                trayHost?.IsAvailable == true;
             if (MainWindow is MainWindow window)
             {
                 window.SetNotificationAvailability(notificationRegistrationReady);
@@ -246,11 +248,28 @@ public partial class App : System.Windows.Application
     private ClientAccountComposition CreateAccountComposition()
     {
         var localAppDataRoot = GetLocalApplicationDataRoot();
+        var nativePlatform = new WindowsClientNotificationPlatform(
+            WindowsAppSdkNotificationManager.Shared,
+            loggerFactory!.CreateLogger<WindowsClientNotificationPlatform>());
+        var trayPlatform = new WindowsTrayNotificationPlatform(() => trayHost);
+        var notificationPlatform = new FallbackClientNotificationPlatform(
+            nativePlatform,
+            trayPlatform);
         return ClientAccountComposition.Create(
             localAppDataRoot,
             notificationActivationRouter!,
             notificationAttention!,
-            loggerFactory!);
+            loggerFactory!,
+            notificationPlatform,
+            () =>
+            {
+                var native = nativePlatform.GetSettingsSnapshot();
+                return native.PlatformAvailability ==
+                    ClientNotificationPlatformAvailability.Available ||
+                    trayPlatform.IsAvailable
+                    ? ClientNotificationSettingsSnapshot.Enabled
+                    : native;
+            });
     }
 
     private ClientUpdateCoordinator CreateUpdateCoordinator()
