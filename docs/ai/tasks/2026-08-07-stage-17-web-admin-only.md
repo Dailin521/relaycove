@@ -3,9 +3,10 @@
 ## 任务定义
 
 - **任务名称：** 阶段 17 管理员入口统一到网页后台
-- **状态：** `实现完成，发布验证中`
+- **状态：** `已完成`
 - **目标版本：** `1.0.0-rc.22`
 - **基准提交：** `c6a35a71e53589a7a401320086ecb1576b345542`
+- **完成提交：** `bc3475fcacc166dd6ee3ab7a8a0153a14fed0ddc`
 - **工作分支：** `agent/stage-17-web-admin-only`
 - **相关方案章节：** 7.2–7.3、阶段 11、阶段 15、阶段 16
 
@@ -83,4 +84,5 @@ pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.22
 - `已验证`：Release 解决方案构建 0 警告、0 错误；`ClientAdminCoordinatorTests|ClientAccountShellCoordinatorTests` 定向测试 92/92 通过；`git diff --check` 通过。
 - `已验证`：静态检查未发现 `OpenAdminButton`、`AdminOverlay` 或其控件/事件残留引用。
 - `未验证`：根据 owner 指令禁止使用 Windows 应用控制能力，本轮不执行 UI Automation 冒烟；发布包的编译启动校验仍由发布脚本完成。
-- `待完成`：rc.22 自包含包构建、校验与内部更新通道发布。
+- `已验证`：rc.22 自包含 ZIP 已从干净 `bc3475f` 生成并通过发布校验；大小 `165,840,990` 字节，SHA-256 为 `61480ccc448ca83f6b2305f27917d99a6cb026581b109daa1bdfaf3a4cb6edc3`。
+- `已验证`：VPS 端上传后重算 SHA-256 与本地一致，先原子切换 ZIP、最后原子切换 manifest；公网清单已为 rc.22，Range GET 返回 `206` 和精确总长度，网页后台未登录访问仍 `302` 跳转登录页。
