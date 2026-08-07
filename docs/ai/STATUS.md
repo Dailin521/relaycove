@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 无阻塞开发切片。stage-16 已合并到 `main`，rc.21 已发布到 VPS 内部更新通道。
+- stage-17 / rc.22 已建立开发分支与任务记录：Windows 全局管理员入口将统一迁移到既有网页后台；聊天与普通频道成员管理保持不变。尚未开始代码修改。
 
 ## 已完成
 
@@ -88,7 +88,7 @@
 
 ## 下一任务
 
-owner 可直接使用网页后台；确认稳定后可用独立小切片移除 Windows 管理入口。公开 main/Tag/Release 与严格第二 Windows UI 矩阵继续作为可选后续。
+执行 `docs/ai/tasks/2026-08-07-stage-17-web-admin-only.md`，目标客户端版本 rc.22。公开 Tag/Release 与严格第二 Windows UI 矩阵继续作为可选后续。
 
 ## 阻塞项
 
