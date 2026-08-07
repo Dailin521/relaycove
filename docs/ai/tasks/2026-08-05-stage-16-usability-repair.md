@@ -60,8 +60,8 @@
 ```powershell
 pwsh ./scripts/verify.ps1 -Mode Fast
 pwsh ./scripts/verify.ps1 -Mode Full
-pwsh ./scripts/publish-client.ps1 -Version 1.0.0-rc.20
-pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.20
+pwsh ./scripts/publish-client.ps1 -Version 1.0.0-rc.21
+pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.21
 ```
 
 ### 停止并询问
@@ -106,7 +106,7 @@ pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.20
 | `已验证` | 两个 Full/Fast 并行抖动项隔离复跑 | 两次失败分别来自既有 WPF/通知平台时序用例；隔离及整套 Client 项目复跑均通过，未修改产品逻辑掩盖抖动 |
 | `已验证` | 生产 API 双账号实测 | 普通用户创建 Public/Private、邀请成员、权威可见、5 人成员/提及候选、文字/图片发送及 `/relaycove/` 下载 200 均通过 |
 | `已验证` | rc.20 Windows GUI 冒烟 | 实时连接/同步完成；系统通知显示可用；`@用户` 空查询列出成员、`ri` 自动过滤为 1 人；发送后输入框清空；PNG 下载后内置图片查看器加载成功 |
-| `已验证` | rc.20 Release 构建与通知定向 | Solution Release 0 警告/0 错误；通知/托盘定向 28/28；自包含 ZIP 校验通过 |
+| `已验证` | rc.21 Release 构建与通知定向 | Solution Release 0 警告/0 错误；通知/托盘定向 28/28；干净 HEAD 自包含 ZIP 校验通过 |
 
 ### 文件范围
 
@@ -121,4 +121,4 @@ pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.20
 
 ### 下一步
 
-- 合并推送 stage-16，并把 rc.20 发布到内部更新通道。
+- 合并推送 stage-16，并把 rc.21 发布到内部更新通道。
