@@ -182,6 +182,175 @@ public sealed class ClientMessageListPresenterTests
     }
 
     [Fact]
+    public void Present_WhenAdjacentSameSenderIsWithinFiveMinutes_MergesConfirmedAndPendingReplies()
+    {
+        var conversationId = Guid.NewGuid();
+        var senderId = Guid.NewGuid();
+        var first = CreateMessage(
+            10,
+            conversationId,
+            senderId,
+            "Sender",
+            "first",
+            replyToMessageId: null) with
+        {
+            CreatedAt = DateTimeOffset.Parse("2026-08-03T10:00:00Z"),
+        };
+        var confirmedReply = CreateMessage(
+            11,
+            conversationId,
+            senderId,
+            "Sender",
+            "confirmed reply",
+            replyToMessageId: 10) with
+        {
+            CreatedAt = DateTimeOffset.Parse("2026-08-03T10:05:00Z"),
+        };
+        var pendingReply = CreatePending(
+            1,
+            conversationId,
+            MessageSendStatus.Sending,
+            "pending reply",
+            replyToMessageId: 10) with
+        {
+            SenderId = senderId,
+            CreatedAt = DateTimeOffset.Parse("2026-08-03T10:06:00Z"),
+        };
+
+        var items = ClientMessageListPresenter.Present(
+            [confirmedReply, first],
+            [pendingReply],
+            currentUserId: Guid.NewGuid());
+
+        Assert.False(items[0].IsMergedWithPrevious);
+        Assert.True(items[1].IsMergedWithPrevious);
+        Assert.True(items[2].IsMergedWithPrevious);
+        Assert.True(items[1].HasReply);
+        Assert.True(items[2].HasReply);
+        Assert.False(items[1].ShowDateSeparator);
+        Assert.False(items[2].ShowDateSeparator);
+    }
+
+    [Fact]
+    public void Present_WhenMergeGapExceedsFiveMinutes_DoesNotMerge()
+    {
+        var conversationId = Guid.NewGuid();
+        var senderId = Guid.NewGuid();
+        var first = CreateMessage(
+            10,
+            conversationId,
+            senderId,
+            "Sender",
+            "first",
+            replyToMessageId: null) with
+        {
+            CreatedAt = DateTimeOffset.Parse("2026-08-03T10:00:00Z"),
+        };
+        var afterLimit = CreateMessage(
+            11,
+            conversationId,
+            senderId,
+            "Sender",
+            "after limit",
+            replyToMessageId: null) with
+        {
+            CreatedAt = DateTimeOffset.Parse("2026-08-03T10:05:01Z"),
+        };
+
+        var items = ClientMessageListPresenter.Present(
+            [afterLimit, first],
+            currentUserId: Guid.NewGuid());
+
+        Assert.All(items, item => Assert.False(item.IsMergedWithPrevious));
+    }
+
+    [Fact]
+    public void Present_WhenSenderOrCurrentLineSeparatorChanges_DoesNotMerge()
+    {
+        var conversationId = Guid.NewGuid();
+        var firstSenderId = Guid.NewGuid();
+        var secondSenderId = Guid.NewGuid();
+        var first = CreateMessage(
+            10,
+            conversationId,
+            firstSenderId,
+            "Same display name",
+            "first",
+            replyToMessageId: null) with
+        {
+            CreatedAt = DateTimeOffset.Parse("2026-08-03T10:00:00Z"),
+        };
+        var sameDisplayNameDifferentSender = CreateMessage(
+            11,
+            conversationId,
+            secondSenderId,
+            "Same display name",
+            "different sender",
+            replyToMessageId: null) with
+        {
+            CreatedAt = DateTimeOffset.Parse("2026-08-03T10:01:00Z"),
+        };
+        var separatorTarget = CreateMessage(
+            12,
+            conversationId,
+            secondSenderId,
+            "Same display name",
+            "new messages",
+            replyToMessageId: null) with
+        {
+            CreatedAt = DateTimeOffset.Parse("2026-08-03T10:02:00Z"),
+        };
+
+        var items = ClientMessageListPresenter.Present(
+            [separatorTarget, sameDisplayNameDifferentSender, first],
+            Array.Empty<LocalPendingMessage>(),
+            currentUserId: Guid.NewGuid(),
+            newMessageSeparatorBeforeMessageId: separatorTarget.Id);
+
+        Assert.False(items[1].IsMergedWithPrevious);
+        Assert.True(items[2].ShowNewMessageSeparator);
+        Assert.False(items[2].IsMergedWithPrevious);
+    }
+
+    [Fact]
+    public void Present_WhenAdjacentSameSenderCrossesLocalDate_DoesNotMerge()
+    {
+        var conversationId = Guid.NewGuid();
+        var senderId = Guid.NewGuid();
+        var localDateTime = new DateTime(2026, 8, 3, 23, 59, 0, DateTimeKind.Unspecified);
+        var firstLocal = new DateTimeOffset(
+            localDateTime,
+            TimeZoneInfo.Local.GetUtcOffset(localDateTime));
+        var first = CreateMessage(
+            10,
+            conversationId,
+            senderId,
+            "Sender",
+            "first",
+            replyToMessageId: null) with
+        {
+            CreatedAt = firstLocal,
+        };
+        var nextLocalDate = CreateMessage(
+            11,
+            conversationId,
+            senderId,
+            "Sender",
+            "next date",
+            replyToMessageId: null) with
+        {
+            CreatedAt = firstLocal.AddMinutes(2),
+        };
+
+        var items = ClientMessageListPresenter.Present(
+            [nextLocalDate, first],
+            currentUserId: Guid.NewGuid());
+
+        Assert.True(items[1].ShowDateSeparator);
+        Assert.False(items[1].IsMergedWithPrevious);
+    }
+
+    [Fact]
     public void Present_WhenConfirmedAndPendingContainLinks_ExposesRedactedSafeLinks()
     {
         var conversationId = Guid.NewGuid();

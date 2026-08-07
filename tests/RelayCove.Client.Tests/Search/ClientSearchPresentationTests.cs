@@ -258,9 +258,9 @@ public sealed class ClientSearchPresentationTests
                 Assert.Null(window.MessageSearchResultList.ItemsSource);
                 Assert.Empty(window.MessageSearchResultList.Items);
                 Assert.Null(GetSearchHighlightLease(window));
-                Assert.Equal(Colors.White,
+                Assert.Equal(Color.FromArgb(0, 0, 0, 0),
                     Assert.IsType<SolidColorBrush>(targetCard.Background).Color);
-                Assert.Equal(new Thickness(1), targetCard.BorderThickness);
+                Assert.Equal(new Thickness(0), targetCard.BorderThickness);
 
                 var replacement = ClientSearchResultPresentation.Create(CreateResult(
                     snippet: "失效完成后写入的新结果",
@@ -321,20 +321,20 @@ public sealed class ClientSearchPresentationTests
                     targetMessageId + 1);
 
                 Assert.Null(GetSearchHighlightLease(window));
-                Assert.Equal(Colors.White,
+                Assert.Equal(Color.FromArgb(0, 0, 0, 0),
                     Assert.IsType<SolidColorBrush>(targetCard.Background).Color);
-                Assert.Equal(Color.FromRgb(0xE5, 0xEB, 0xF2),
+                Assert.Equal(Color.FromArgb(0, 0, 0, 0),
                     Assert.IsType<SolidColorBrush>(targetCard.BorderBrush).Color);
-                Assert.Equal(new Thickness(1), targetCard.BorderThickness);
+                Assert.Equal(new Thickness(0), targetCard.BorderThickness);
 
                 targetCard.ClearValue(FrameworkElement.DataContextProperty);
                 window.ApplyMessageListSnapshot(targetSnapshot with { Revision = 2 });
                 Layout(window);
 
                 Assert.Null(GetSearchHighlightLease(window));
-                Assert.Equal(Colors.White,
+                Assert.Equal(Color.FromArgb(0, 0, 0, 0),
                     Assert.IsType<SolidColorBrush>(targetCard.Background).Color);
-                Assert.Equal(new Thickness(1), targetCard.BorderThickness);
+                Assert.Equal(new Thickness(0), targetCard.BorderThickness);
             }
             finally
             {
@@ -377,11 +377,11 @@ public sealed class ClientSearchPresentationTests
                 PumpDispatcher(window.Dispatcher, TimeSpan.FromMilliseconds(2500));
 
                 Assert.Null(GetSearchHighlightLease(window));
-                Assert.Equal(Colors.White,
+                Assert.Equal(Color.FromArgb(0, 0, 0, 0),
                     Assert.IsType<SolidColorBrush>(targetCard.Background).Color);
-                Assert.Equal(Color.FromRgb(0xE5, 0xEB, 0xF2),
+                Assert.Equal(Color.FromArgb(0, 0, 0, 0),
                     Assert.IsType<SolidColorBrush>(targetCard.BorderBrush).Color);
-                Assert.Equal(new Thickness(1), targetCard.BorderThickness);
+                Assert.Equal(new Thickness(0), targetCard.BorderThickness);
             }
             finally
             {

@@ -3224,7 +3224,7 @@ public sealed class ClientAccountShellCoordinatorTests
         Assert.True(presentation.IsBusy);
         Assert.False(presentation.CanRetry);
         Assert.True(presentation.CanLogout);
-        Assert.Equal("实时连接：重连中", presentation.ConnectionLabel);
+        Assert.Equal("重连中", presentation.ConnectionLabel);
     }
 
     [Fact]

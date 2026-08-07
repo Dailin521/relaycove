@@ -1,10 +1,12 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -39,9 +41,9 @@ public partial class MainWindow : Window
     private static readonly SolidColorBrush SearchHighlightBorder =
         CreateFrozenBrush(0xE5, 0x9A, 0x13);
     private static readonly SolidColorBrush MessageCardBackground =
-        CreateFrozenBrush(0xFF, 0xFF, 0xFF);
+        CreateFrozenBrush(0x00, 0x00, 0x00, 0x00);
     private static readonly SolidColorBrush MessageCardBorder =
-        CreateFrozenBrush(0xE5, 0xEB, 0xF2);
+        CreateFrozenBrush(0x00, 0x00, 0x00, 0x00);
     private readonly IReadOnlyList<ClientSearchScopeOption> messageSearchScopeOptions =
     [
         new(ClientSearchScope.Global, "全部会话"),
@@ -354,6 +356,24 @@ public partial class MainWindow : Window
         AccountPanel.Visibility = presentation.ShowLogin
             ? Visibility.Collapsed
             : Visibility.Visible;
+        LoginBrandPanel.Visibility = presentation.ShowLogin
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        LoginBrandColumn.Width = presentation.ShowLogin
+            ? new GridLength(270)
+            : new GridLength(0);
+        MainContentPanel.Margin = presentation.ShowLogin
+            ? new Thickness(42, 34, 42, 34)
+            : new Thickness(16);
+        HeadingText.Visibility = presentation.ShowLogin
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        DetailText.Visibility = presentation.ShowLogin
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        MainWorkspace.Margin = presentation.ShowLogin
+            ? new Thickness(0, 30, 0, 24)
+            : new Thickness(0, 0, 0, 10);
         BusyIndicator.Visibility = presentation.IsBusy
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -384,7 +404,15 @@ public partial class MainWindow : Window
         suppressSelectionRequest = true;
         try
         {
-            ConversationList.ItemsSource = items;
+            var groupedItems = CollectionViewSource.GetDefaultView(items);
+            groupedItems.GroupDescriptions.Clear();
+            var groupDescription = new PropertyGroupDescription(
+                nameof(ClientConversationListItemPresentation.GroupTitle));
+            groupDescription.GroupNames.Add("公开频道");
+            groupDescription.GroupNames.Add("私有频道");
+            groupDescription.GroupNames.Add("私聊");
+            groupedItems.GroupDescriptions.Add(groupDescription);
+            ConversationList.ItemsSource = groupedItems;
             ConversationList.IsEnabled = outcome.Status == LocalCacheOperationStatus.Ready;
             ConversationEmptyText.Visibility = items.Count == 0
                 ? Visibility.Visible
@@ -651,7 +679,20 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (sender is System.Windows.Controls.Button
+            {
+                DataContext: CollectionViewGroup { Name: string groupTitle },
+            })
+        {
+            ChannelTypeComboBox.SelectedItem = groupTitle == "私有频道"
+                ? ConversationType.PrivateChannel
+                : ConversationType.PublicChannel;
+            CreateChannelExpander.IsExpanded = true;
+        }
+
         ChannelOverlay.Visibility = Visibility.Visible;
+        UpdateMemberDrawerLayout();
+        ChannelMemberSearchTextBox.Clear();
         UpdateChannelPanelState();
         await LoadChannelUserDirectoryAsync();
         if (SelectedConversationId is { } conversationId)
@@ -725,6 +766,20 @@ public partial class MainWindow : Window
         _ = sender;
         _ = e;
         UpdateChannelPanelState();
+    }
+
+    private void OnChannelMemberSearchTextChanged(object sender, TextChangedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        ApplyChannelParticipantPresentation();
+    }
+
+    private void OnToggleAccountDiagnosticsClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        AccountDiagnosticsExpander.IsExpanded = !AccountDiagnosticsExpander.IsExpanded;
     }
 
     private async void OnInviteChannelMemberClicked(object sender, RoutedEventArgs e)
@@ -893,19 +948,27 @@ public partial class MainWindow : Window
             Type: ConversationType.PrivateChannel,
             CanManageMembers: true,
         };
-        ChannelParticipantList.ItemsSource = channelParticipants?.Participants
+        var filter = ChannelMemberSearchTextBox.Text.Trim();
+        var participants = channelParticipants?.Participants
+            .Where(user => MatchesChannelMemberFilter(user, filter))
             .Select(user => new ChannelUserPresentation(
                 user.UserId,
                 user.UserName,
                 user.DisplayName,
+                GetAvatarText(user.DisplayName, user.UserName),
+                canManage && user.UserId == currentUserId ? "可管理成员" : "频道成员",
                 CanInvite: false,
                 CanRemove: canManage && user.UserId != currentUserId))
             .ToArray() ?? [];
+        ChannelParticipantList.ItemsSource = participants;
         ChannelUserDirectoryList.ItemsSource = channelUserDirectory
+            .Where(user => MatchesChannelMemberFilter(user, filter))
             .Select(user => new ChannelUserPresentation(
                 user.UserId,
                 user.UserName,
                 user.DisplayName,
+                GetAvatarText(user.DisplayName, user.UserName),
+                participantIds.Contains(user.UserId) ? "已在频道" : "可添加",
                 CanInvite: canManage &&
                     user.UserId != currentUserId &&
                     !participantIds.Contains(user.UserId),
@@ -929,6 +992,21 @@ public partial class MainWindow : Window
         UpdateChannelPanelState();
     }
 
+    private static bool MatchesChannelMemberFilter(
+        UserDirectoryEntryDto user,
+        string filter) =>
+        filter.Length == 0 ||
+        user.DisplayName.Contains(filter, StringComparison.CurrentCultureIgnoreCase) ||
+        user.UserName.Contains(filter, StringComparison.OrdinalIgnoreCase);
+
+    private static string GetAvatarText(string displayName, string userName)
+    {
+        var source = (string.IsNullOrWhiteSpace(displayName) ? userName : displayName).Trim();
+        return source.Length == 0
+            ? "?"
+            : StringInfo.GetNextTextElement(source).ToUpperInvariant();
+    }
+
     private void UpdateChannelPanelState()
     {
         if (CreateChannelButton is null)
@@ -950,6 +1028,7 @@ public partial class MainWindow : Window
     private void CloseChannelPanel(bool clearPresentation)
     {
         ChannelOverlay.Visibility = Visibility.Collapsed;
+        UpdateMemberDrawerLayout();
         if (!clearPresentation)
         {
             return;
@@ -963,6 +1042,31 @@ public partial class MainWindow : Window
         ChannelUserDirectoryList.ItemsSource = null;
         SetLiveText(ConversationMembersSummaryText, "成员：请选择会话");
         SetLiveText(ChannelLiveRegionText, string.Empty);
+    }
+
+    private void OnMainWindowSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        _ = sender;
+        if (e.NewSize.Width < 1400 && ChannelOverlay.Visibility == Visibility.Visible)
+        {
+            CloseChannelPanel(clearPresentation: false);
+            return;
+        }
+
+        UpdateMemberDrawerLayout();
+    }
+
+    private void UpdateMemberDrawerLayout()
+    {
+        if (ConversationChatPanel is null)
+        {
+            return;
+        }
+
+        ConversationChatPanel.Margin = ChannelOverlay.Visibility == Visibility.Visible &&
+            ActualWidth >= 1400
+            ? new Thickness(0, 0, 372, 0)
+            : new Thickness(0);
     }
 
     private static string DescribeAdminStatus(ClientAdminRequestStatus status) => status switch
@@ -1723,7 +1827,7 @@ public partial class MainWindow : Window
         {
             card.Background = MessageCardBackground;
             card.BorderBrush = MessageCardBorder;
-            card.BorderThickness = new Thickness(1);
+            card.BorderThickness = new Thickness(0);
         }
 
         searchHighlightLease = null;
@@ -4945,6 +5049,18 @@ public partial class MainWindow : Window
         return brush;
     }
 
+    private static SolidColorBrush CreateFrozenBrush(
+        byte alpha,
+        byte red,
+        byte green,
+        byte blue)
+    {
+        var brush = new SolidColorBrush(
+            System.Windows.Media.Color.FromArgb(alpha, red, green, blue));
+        brush.Freeze();
+        return brush;
+    }
+
     private static T? FindVisualChild<T>(DependencyObject parent)
         where T : DependencyObject
     {
@@ -4988,6 +5104,8 @@ public partial class MainWindow : Window
         Guid UserId,
         string UserName,
         string DisplayName,
+        string AvatarText,
+        string RoleLabel,
         bool CanInvite,
         bool CanRemove);
 }

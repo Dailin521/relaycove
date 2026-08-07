@@ -45,17 +45,17 @@ internal static class ClientConversationListPresenter
     }
 
     private static ClientConversationListItemPresentation Present(
-        LocalConversationListItem item) =>
-        new(
+        LocalConversationListItem item)
+    {
+        var (group, groupTitle, typeIcon, typeLabel) = DescribeType(item.Type);
+        return new(
             item.Id,
+            group,
+            groupTitle,
+            typeIcon,
             GetAvatarText(item.Name),
             item.Name,
-            item.Type switch
-            {
-                ConversationType.PublicChannel => "频道",
-                ConversationType.PrivateChannel => "私密频道",
-                _ => "私聊",
-            },
+            typeLabel,
             DescribePreview(item),
             item.LastMessageCreatedAt?.ToLocalTime().ToString(
                 "MM-dd HH:mm",
@@ -65,6 +65,29 @@ internal static class ClientConversationListPresenter
                 : item.UnreadCount.ToString(CultureInfo.InvariantCulture),
             item.UnreadCount > 0,
             item.IsMuted ? "已静音" : string.Empty);
+    }
+
+    private static (ClientConversationGroup Group, string GroupTitle, string TypeIcon,
+        string TypeLabel) DescribeType(ConversationType type) =>
+        type switch
+        {
+            ConversationType.PublicChannel => (
+                ClientConversationGroup.Public,
+                "公开频道",
+                "#",
+                "频道"),
+            ConversationType.PrivateChannel => (
+                ClientConversationGroup.Private,
+                "私有频道",
+                "🔒",
+                "私密频道"),
+            ConversationType.Direct => (
+                ClientConversationGroup.Direct,
+                "私聊",
+                "@",
+                "私聊"),
+            _ => throw new ArgumentOutOfRangeException(nameof(type), type, null),
+        };
 
     private static string GetAvatarText(string name)
     {

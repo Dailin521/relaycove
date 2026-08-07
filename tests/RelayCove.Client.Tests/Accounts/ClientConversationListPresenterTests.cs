@@ -56,6 +56,60 @@ public sealed class ClientConversationListPresenterTests
     }
 
     [Fact]
+    public void Present_WhenConversationTypesVary_ProjectsStableGroupsIconsAndSourceOrder()
+    {
+        var publicId = Guid.NewGuid();
+        var privateId = Guid.NewGuid();
+        var directId = Guid.NewGuid();
+        var presentation = ClientConversationListPresenter.Present(
+            new LocalConversationListReadOutcome(
+                LocalCacheOperationStatus.Ready,
+                [
+                    CreateItem(MessageType.Text, "direct") with
+                    {
+                        Id = directId,
+                        Type = ConversationType.Direct,
+                    },
+                    CreateItem(MessageType.Text, "public") with
+                    {
+                        Id = publicId,
+                        Type = ConversationType.PublicChannel,
+                    },
+                    CreateItem(MessageType.Text, "private") with
+                    {
+                        Id = privateId,
+                        Type = ConversationType.PrivateChannel,
+                    },
+                ],
+                TotalUnreadCount: 0,
+                Revision: 1));
+
+        Assert.Collection(
+            presentation,
+            direct =>
+            {
+                Assert.Equal(directId, direct.Id);
+                Assert.Equal(ClientConversationGroup.Direct, direct.Group);
+                Assert.Equal("私聊", direct.GroupTitle);
+                Assert.Equal("@", direct.TypeIcon);
+            },
+            @public =>
+            {
+                Assert.Equal(publicId, @public.Id);
+                Assert.Equal(ClientConversationGroup.Public, @public.Group);
+                Assert.Equal("公开频道", @public.GroupTitle);
+                Assert.Equal("#", @public.TypeIcon);
+            },
+            @private =>
+            {
+                Assert.Equal(privateId, @private.Id);
+                Assert.Equal(ClientConversationGroup.Private, @private.Group);
+                Assert.Equal("私有频道", @private.GroupTitle);
+                Assert.Equal("🔒", @private.TypeIcon);
+            });
+    }
+
+    [Fact]
     public void ResolveSelection_WhenPendingTargetIsMissingFromReadyList_ExpiresAndRestoresPrevious()
     {
         var previousId = Guid.NewGuid();

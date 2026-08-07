@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-- **当前阶段：** stage-17 已完成 — Windows 全局管理员入口已移除，管理统一使用服务器网页后台，rc.22 已发布并验证
+- **当前阶段：** stage-18 进行中 — rc.23 Windows 客户端 UI 重构；stage-17 的网页管理员入口收敛和 rc.22 发布已完成
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮；M4-01 可复现 Linux x64 Server RC、M4-02 可复现 Windows Client 自包含 ZIP、M4-03 共享更新协议、确定性清单、外部自举 Updater 与真实 rc.6→rc.11 替换恢复，以及 M4-04 Server exact 托管、Client 检查/下载、optional/mandatory UI 和显式 Exit→Updater 交接均已完成
-- **最近验证通过的状态：** stage-17 已移除 Windows 全局管理员按钮与 Overlay，保留普通聊天、频道创建和私有成员管理；Release 构建 0 警告/0 错误，定向测试 92/92 通过，独立 Codex 复核无阻断问题。干净 `bc3475f` 的 rc.22 自包含包校验通过并已发布；VPS 与本地 SHA-256 一致，公网 manifest 和 Range GET 已验证
+- **最近验证通过的状态：** stage-18 已完成客户端三栏视觉切片、分组频道栏、无气泡消息流、底部输入区、右侧成员抽屉、短状态表达和 WPF 内置快照；Full/Release 0 警告/0 错误，1,634 项测试通过。rc.23 尚未打包、推送、合并或发布，等待 UI 确认；逐成员频道角色字段因现有协议缺失保持能力标签
 - **可构建状态：** `已验证` — Fast、Full 与 Release 构建均为 0 警告、0 错误
 - **自动化验证：** `已验证` — stage-15 最终 Full、format 与 1,613 项测试（Shared 69、Server 352、Client 1,154、Updater 38）通过；Release 0 警告/0 错误。覆盖网页管理 Cookie/JWT 隔离、CSRF、限流、实时撤权、PathBase、管理写操作、两字符账号 migration 与既有全部 RC 闭环
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 无。
+- rc.23 UI 快照确认，以及确认后构建、推送、合并和内部更新发布
 
 ## 已完成
 

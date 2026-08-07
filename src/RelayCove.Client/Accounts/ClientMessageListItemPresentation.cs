@@ -11,6 +11,7 @@ internal sealed record ClientMessageListItemPresentation(
     string DateSeparatorLabel,
     bool ShowDateSeparator,
     bool ShowNewMessageSeparator,
+    bool IsMergedWithPrevious,
     bool IsOwnMessage,
     MessageSendStatus SendStatus,
     string SendStatusLabel,
@@ -34,6 +35,7 @@ internal sealed record ClientMessageListItemPresentation(
         "Timestamp = [REDACTED], DateSeparatorLabel = [REDACTED], " +
         $"ShowDateSeparator = {ShowDateSeparator}, " +
         $"ShowNewMessageSeparator = {ShowNewMessageSeparator}, " +
+        $"IsMergedWithPrevious = {IsMergedWithPrevious}, " +
         $"IsOwnMessage = {IsOwnMessage}, " +
         $"SendStatus = {SendStatus}, CanRetry = {CanRetry}, " +
         "ReplyToMessageId = [REDACTED], ReplySenderLabel = [REDACTED], " +

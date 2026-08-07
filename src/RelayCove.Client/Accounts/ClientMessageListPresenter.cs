@@ -7,6 +7,8 @@ namespace RelayCove.Client.Accounts;
 
 internal static class ClientMessageListPresenter
 {
+    private static readonly TimeSpan MaximumMergeInterval = TimeSpan.FromMinutes(5);
+
     public static IReadOnlyList<ClientMessageListItemPresentation> Present(
         IEnumerable<MessageDto> messages,
         Guid currentUserId) =>
@@ -45,6 +47,8 @@ internal static class ClientMessageListPresenter
         var messagesById = confirmedMessages.ToDictionary(message => message.Id);
         var items = new List<ClientMessageListItemPresentation>();
         DateTime? previousLocalDate = null;
+        DateTimeOffset? previousCreatedAt = null;
+        Guid? previousSenderId = null;
         foreach (var message in confirmedMessages)
         {
             var content = PresentContent(message);
@@ -53,7 +57,10 @@ internal static class ClientMessageListPresenter
             AppendWithDateSeparator(
                 items,
                 ref previousLocalDate,
+                ref previousCreatedAt,
+                ref previousSenderId,
                 message.CreatedAt,
+                message.SenderId,
                 new ClientMessageListItemPresentation(
                 ServerMessageId: message.Id,
                 message.ClientMessageId,
@@ -67,6 +74,7 @@ internal static class ClientMessageListPresenter
                 ShowNewMessageSeparator:
                     newMessageSeparatorBeforeMessageId == message.Id &&
                     message.SenderId != currentUserId,
+                IsMergedWithPrevious: false,
                 message.SenderId == currentUserId,
                 MessageSendStatus.Sent,
                 SendStatusLabel: string.Empty,
@@ -95,7 +103,10 @@ internal static class ClientMessageListPresenter
             AppendWithDateSeparator(
                 items,
                 ref previousLocalDate,
+                ref previousCreatedAt,
+                ref previousSenderId,
                 message.CreatedAt,
+                message.SenderId,
                 new ClientMessageListItemPresentation(
                 ServerMessageId: null,
                 message.ClientMessageId,
@@ -107,6 +118,7 @@ internal static class ClientMessageListPresenter
                 DateSeparatorLabel: string.Empty,
                 ShowDateSeparator: false,
                 ShowNewMessageSeparator: false,
+                IsMergedWithPrevious: false,
                 message.SenderId == currentUserId,
                 message.SendStatus,
                 message.SendStatus == MessageSendStatus.Failed ? "发送失败" : "发送中…",
@@ -132,19 +144,33 @@ internal static class ClientMessageListPresenter
     private static void AppendWithDateSeparator(
         ICollection<ClientMessageListItemPresentation> items,
         ref DateTime? previousLocalDate,
+        ref DateTimeOffset? previousCreatedAt,
+        ref Guid? previousSenderId,
         DateTimeOffset createdAt,
+        Guid senderId,
         ClientMessageListItemPresentation item)
     {
         var localCreatedAt = createdAt.ToLocalTime();
         var localDate = localCreatedAt.Date;
+        var showDateSeparator = previousLocalDate != localDate;
+        var isMergedWithPrevious =
+            previousSenderId == senderId &&
+            previousCreatedAt is { } previousCreated &&
+            createdAt >= previousCreated &&
+            createdAt - previousCreated <= MaximumMergeInterval &&
+            !showDateSeparator &&
+            !item.ShowNewMessageSeparator;
         items.Add(item with
         {
             DateSeparatorLabel = localCreatedAt.ToString(
                 "yyyy-MM-dd",
                 CultureInfo.CurrentCulture),
-            ShowDateSeparator = previousLocalDate != localDate,
+            ShowDateSeparator = showDateSeparator,
+            IsMergedWithPrevious = isMergedWithPrevious,
         });
         previousLocalDate = localDate;
+        previousCreatedAt = createdAt;
+        previousSenderId = senderId;
     }
 
     private static string ReplySenderLabel(

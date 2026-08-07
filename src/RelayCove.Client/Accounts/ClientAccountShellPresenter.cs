@@ -119,22 +119,22 @@ internal static class ClientAccountShellPresenter
 
     private static string DescribeConnection(ConnectionState state) => state switch
     {
-        ConnectionState.Connected => "实时连接：已连接",
-        ConnectionState.Connecting => "实时连接：连接中",
-        ConnectionState.Reconnecting => "实时连接：重连中",
-        _ => "实时连接：未连接",
+        ConnectionState.Connected => "已连接",
+        ConnectionState.Connecting => "连接中",
+        ConnectionState.Reconnecting => "重连中",
+        _ => "未连接",
     };
 
     private static string DescribeSync(ClientSyncRunStatus? status) => status switch
     {
-        ClientSyncRunStatus.Completed => "同步：已完成",
-        ClientSyncRunStatus.AuthenticationRequired => "同步：需要重新登录",
-        ClientSyncRunStatus.TransientFailure => "同步：暂时失败",
-        ClientSyncRunStatus.ProtocolError => "同步：协议错误",
-        ClientSyncRunStatus.CursorInvalid => "同步：需要重建",
-        ClientSyncRunStatus.LocalCacheFailure => "同步：本地缓存错误",
-        ClientSyncRunStatus.RemoteFailure => "同步：远端失败",
-        ClientSyncRunStatus.Canceled => "同步：已取消",
-        _ => "同步：尚未完成",
+        ClientSyncRunStatus.Completed => string.Empty,
+        ClientSyncRunStatus.AuthenticationRequired => "需要重新登录",
+        ClientSyncRunStatus.TransientFailure => "同步暂时失败",
+        ClientSyncRunStatus.ProtocolError => "同步协议错误",
+        ClientSyncRunStatus.CursorInvalid => "同步需要重建",
+        ClientSyncRunStatus.LocalCacheFailure => "本地缓存错误",
+        ClientSyncRunStatus.RemoteFailure => "远端同步失败",
+        ClientSyncRunStatus.Canceled => "同步已取消",
+        _ => "正在同步",
     };
 }
