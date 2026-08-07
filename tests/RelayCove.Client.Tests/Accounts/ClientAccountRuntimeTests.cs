@@ -1040,6 +1040,25 @@ public sealed class ClientAccountRuntimeTests
     }
 
     [Fact]
+    public async Task RealtimeSink_WhenConversationAccessIsGranted_RequestsAuthoritativeSync()
+    {
+        var inner = new RecordingRealtimeSink();
+        var sync = new FakeSyncCoordinator();
+        var requestor = new ClientAccountSyncRequestor(
+            sync,
+            NullLogger<ClientAccountSyncRequestor>.Instance);
+        var sink = new ClientAccountRealtimeEventSink(inner, requestor);
+
+        await sink.OnConversationAccessGrantedAsync(
+            Guid.NewGuid(),
+            CancellationToken.None);
+        await WaitUntilAsync(() => sync.Reasons.Count == 1);
+
+        Assert.Equal([SyncReason.Reconnect], sync.Reasons);
+        await sync.DisposeAsync();
+    }
+
+    [Fact]
     public async Task RealtimeSink_WhenConversationIsUnknown_RejectsMessageAndRequestsSyncWithoutWaiting()
     {
         using var directory = new TemporaryDirectory();

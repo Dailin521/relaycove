@@ -113,6 +113,10 @@ internal interface IClientAccountRuntime : IAsyncDisposable
     Task<ClientAccountRuntimeStartOutcome> StartAsync(
         CancellationToken cancellationToken = default);
 
+    Task<ClientSyncRunOutcome> TriggerSyncAsync(
+        SyncReason reason,
+        CancellationToken cancellationToken = default);
+
     Task<ClientSyncRunOutcome> RetryRealtimeAsync(
         CancellationToken cancellationToken = default);
 

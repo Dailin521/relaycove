@@ -43,7 +43,7 @@ public sealed class ClientNotificationRoundCoordinatorTests : IDisposable
 
     [Theory]
     [InlineData(false, 4)]
-    [InlineData(true, 1)]
+    [InlineData(true, 4)]
     public async Task CompletedReconnect_AppliesForegroundPolicyAndRecovery(
         bool foreground,
         int expectedMode)
@@ -70,9 +70,7 @@ public sealed class ClientNotificationRoundCoordinatorTests : IDisposable
 
         var dispatch = Assert.Single(sink.Dispatches);
         Assert.Equal((ClientNotificationDispatchMode)expectedMode, dispatch.Mode);
-        Assert.Equal(
-            foreground ? [10L, 20L] : [1L, 10L, 20L],
-            dispatch.MessageIds.Order().ToArray());
+        Assert.Equal([1L, 10L, 20L], dispatch.MessageIds.Order().ToArray());
     }
 
     [Fact]

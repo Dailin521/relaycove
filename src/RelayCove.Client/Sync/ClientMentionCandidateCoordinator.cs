@@ -8,7 +8,7 @@ namespace RelayCove.Client.Sync;
 
 internal sealed class ClientMentionCandidateCoordinator : IAsyncDisposable
 {
-    public const int DefaultLimit = 20;
+    public const int DefaultLimit = 50;
     public const int MaximumLimit = 50;
     private readonly AccountScopedLocalCache localCache;
     private readonly ClientMentionCandidateHttpTransport transport;

@@ -62,7 +62,6 @@ public sealed class ClientMentionCandidateCoordinatorTests : IDisposable
 
     [Theory]
     [InlineData(null, 20)]
-    [InlineData("", 20)]
     [InlineData("bad query", 20)]
     [InlineData("prefix", 0)]
     [InlineData("prefix", 51)]
@@ -86,6 +85,26 @@ public sealed class ClientMentionCandidateCoordinatorTests : IDisposable
 
         Assert.Equal(ClientMentionCandidateStatus.ValidationFailed, outcome.Status);
         Assert.Equal(0, Volatile.Read(ref requestCount));
+    }
+
+    [Fact]
+    public async Task SearchAsync_WhenQueryIsEmpty_RequestsBoundedAllMemberPage()
+    {
+        await using var prepared = await CreatePreparedAsync();
+        using var httpClient = new HttpClient(new DelegateHttpHandler((request, _) =>
+        {
+            Assert.Equal("query=&limit=50", request.RequestUri!.Query.TrimStart('?'));
+            return Task.FromResult(Ok(new MentionCandidateListResponse(
+                prepared.Conversation.Id,
+                [new MentionCandidateDto(Guid.NewGuid(), "alice", "Alice")],
+                HasMore: false)));
+        }));
+        await using var coordinator = CreateCoordinator(prepared, httpClient);
+
+        var outcome = await coordinator.SearchAsync(prepared.Conversation.Id, string.Empty);
+
+        Assert.Equal(ClientMentionCandidateStatus.Completed, outcome.Status);
+        Assert.Single(outcome.Candidates);
     }
 
     [Theory]

@@ -85,7 +85,12 @@ internal sealed class ClientAttachmentDownloadHttpTransport
                         ClientAttachmentDownloadHttpStatus.AuthenticationRequired);
                 }
 
-                var requestUri = new Uri(serverBaseUri, attachment.DownloadUrl);
+                // Attachment metadata is deliberately root-shaped for protocol stability,
+                // but the configured server URI may include a reverse-proxy PathBase.
+                // Resolve the validated route relative to that base instead of dropping it.
+                var requestUri = new Uri(
+                    serverBaseUri,
+                    attachment.DownloadUrl.TrimStart('/'));
                 using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
                 request.Headers.Authorization = authorization;
                 using var response = await httpClient.SendAsync(

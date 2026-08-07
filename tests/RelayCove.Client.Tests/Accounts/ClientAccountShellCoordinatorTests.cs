@@ -4450,6 +4450,17 @@ public sealed class ClientAccountShellCoordinatorTests
             return StartAction?.Invoke(cancellationToken) ?? Task.FromResult(StartOutcome);
         }
 
+        public Task<ClientSyncRunOutcome> TriggerSyncAsync(
+            SyncReason reason,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new ClientSyncRunOutcome(
+                ClientSyncRunStatus.Completed,
+                reason,
+                RoundsExecuted: 1));
+        }
+
         public Task<ClientSyncRunOutcome> RetryRealtimeAsync(
             CancellationToken cancellationToken = default)
         {

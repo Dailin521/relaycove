@@ -695,13 +695,14 @@ POST   /api/conversations
 PUT    /api/conversations/{id}
 DELETE /api/conversations/{id}
 GET    /api/conversations/{id}/members
+GET    /api/conversations/{id}/participants
 POST   /api/conversations/{id}/members
 DELETE /api/conversations/{id}/members/{userId}
 ```
 
-阶段 3 冻结 `POST /api/conversations` 为判别请求：Public/Private 传 `Type + Name`，只允许数据库当前全局管理员创建，且创建者成为会话内 Administrator；Direct 传 `Type=Direct + ParticipantUserId`，任意正常认证用户可创建或获取，canonical pair 新建返回 201、已存在或恢复返回 200。私有成员 POST 是 201/200 幂等 upsert，DELETE 不存在成员仍为 204；写事务内必须复核全局管理员或当前会话 Administrator。全局管理员的成员管理覆盖不自动授予私有内容读取权。
+阶段 16 按真实小团队使用修正 `POST /api/conversations`：Public/Private 传 `Type + Name`，任意数据库当前正常用户都可创建，且创建者成为会话内 Administrator；Direct 传 `Type=Direct + ParticipantUserId`，任意正常认证用户可创建或获取，canonical pair 新建返回 201、已存在或恢复返回 200。私有成员 POST 是 201/200 幂等 upsert，DELETE 不存在成员仍为 204；写事务内必须复核全局管理员或当前会话 Administrator。全局管理员的成员管理覆盖不自动授予私有内容读取权。
 
-`GET /api/conversations` 必须在单个权威查询中返回非分页完整集合和 `Complete=true`；Public 对全部正常认证用户隐式可见，Private/Direct 仅当前成员可见，Direct 名称按另一参与者昵称派生。未知、删除或不可访问会话统一返回 `403 ConversationAccessRevoked`；错误会话类型的成员操作返回 `409 ConversationTypeConflict`。Public 不提供伪造成员清单，Direct 成员不可变。
+`GET /api/conversations` 必须在单个权威查询中返回非分页完整集合和 `Complete=true`；Public 对全部正常认证用户隐式可见，Private/Direct 仅当前成员可见，Direct 名称按另一参与者昵称派生。未知、删除或不可访问会话统一返回 `403 ConversationAccessRevoked`；错误会话类型的成员操作返回 `409 ConversationTypeConflict`。`/members` 仍只表达真实成员关系，Public 不伪造 `JoinedAt`、Role 或已读水位；普通聊天页统一使用 `/participants`，Public 投影全部正常用户，Private/Direct 投影真实成员，并只返回安全的用户 ID、用户名与显示名。`GET /api/users` 为正常认证用户提供同一最小字段的当前正常用户目录；Direct 成员不可变。
 
 ### 消息接口
 
@@ -1068,6 +1069,7 @@ public sealed record SyncResponse(
 ```text
 NewMessage(MessageDto message)
 ConversationUpdated(ConversationDto conversation)
+ConversationAccessGranted(Guid conversationId)
 ConversationAccessRevoked(Guid conversationId)
 UserPresenceChanged(UserPresenceDto presence)
 ForceLogout(string reason)
@@ -1094,7 +1096,7 @@ SignalR 连接重建不会保留组成员关系。每次重连都必须重新执
 
 客户端实时入口使用与服务端一致的 `Microsoft.AspNetCore.SignalR.Client 10.0.10`。连接 URI 只能由无 user-info、query、fragment 的绝对 HTTP(S) 服务端基址组合固定相对路径 `hubs/chat`；`AccessTokenProvider` 每次从当前认证会话读取最新 access token，不把 token 固化在连接对象、状态或日志中。客户端显式启动时报告 Connecting→Connected；初始连接失败报告 ServerUnavailable 并把异常返回调用者。已建立连接使用 SignalR 默认 0/2/10/30 秒自动重连并报告 Reconnecting→Connected，默认次数耗尽或非主动 Closed 报告 ServerUnavailable，主动 Stop/Dispose 报告 Disconnected；后续账户/同步 orchestrator 可显式再次启动，不在连接层隐藏无限重试。
 
-`NewMessage`、`ConversationAccessRevoked` 和连接状态进入同一个进程内串行 sink。连接回调只按接收顺序排队，单消费者执行下一层处理；撤权回调完成前不得处理随后到达的消息。sink 异常必须记录不含 token、正文、显示名或用户名的元数据并允许队列继续，安全性的 fail-closed deny-set/tombstone 由下一层在处理撤权时先更新。连接层不直接访问 WPF Dispatcher、本地数据库、通知或 UI，具体适配器自行切回 UI 线程。
+`NewMessage`、`ConversationAccessGranted`、`ConversationAccessRevoked` 和连接状态进入同一个进程内串行 sink。连接回调只按接收顺序排队，单消费者执行下一层处理；撤权回调完成前不得处理随后到达的消息。grant 事件只携带会话 ID，并且只用于请求一次权威会话同步，不能直接授予本地访问或展示内容；事件丢失和离线场景由后续 `Complete=true` 对账收敛。sink 异常必须记录不含 token、正文、显示名或用户名的元数据并允许队列继续，安全性的 fail-closed deny-set/tombstone 由下一层在处理撤权时先更新。连接层不直接访问 WPF Dispatcher、本地数据库、通知或 UI，具体适配器自行切回 UI 线程。
 
 ---
 
@@ -1394,7 +1396,7 @@ public sealed record SyncResponse(
 - 写本地数据库前先验证完整响应不变量。每页消息合并、会话预览、未读派生状态和 `LastSyncCursor=NextCursor` 必须在一个本地事务提交；任一非重复错误、协议错误或数据冲突使整页回滚，不得跳过坏消息后推进游标。
 - 页面请求或本地提交失败时保留最后已提交游标。网络中断、超时、`429` 和可重试 `5xx` 用指数退避加抖动，以同一 `(cursor, SnapshotUpperBound)` 重试；`401` 只刷新一次令牌再重试同一页；`400` 或响应不变量错误停止并记录协议错误；`409 SyncCursorInvalid` 阻塞当前账户作用域并要求受控重建，不得清除 pending 或自动归零。
 - 放弃轮次后，下一触发从最后已提交游标获取新上界；崩溃后丢失仅存在内存中的上界是安全的。循环到 `HasMore=false` 才是完整同步轮次，批量 Toast、声音和闪烁只能在相应本地提交之后执行。
-- `Startup`、`Reconnect`、`WindowActivated`、`Periodic` 是 `SyncReason`。每个账户作用域只允许一个同步循环；运行中触发合并原因并只设置一次 pending rerun，当前轮结束后至多立即补跑一次。补跑时若窗口已激活取 `WindowActivated`，否则仍处启动恢复取 `Startup`，否则有重连触发取 `Reconnect`，其余取 `Periodic`。登出或切换账户必须取消旧循环。
+- `Startup`、`Reconnect`、`WindowActivated`、`Periodic` 是 `SyncReason`。每个账户作用域只允许一个同步循环；运行中触发合并原因并只设置一次 pending rerun，单个 flight 当前轮结束后至多立即补跑一次。补跑期间的新触发不得静默丢弃，而是合并为一个后继 single-flight；每个 flight 仍最多两轮且绝不并行。补跑或后继 flight 若窗口已激活取 `WindowActivated`，否则仍处启动恢复取 `Startup`，否则有重连触发取 `Reconnect`，其余取 `Periodic`。登出或切换账户必须取消旧循环。
 - 每轮先获取权威会话列表并应用成员新增/撤权、静音和 `LastReadMessageId`，再拉消息页。第一版列表在一个服务端只读事务返回非分页全集并标记 `Complete=true`；只有响应校验和本地对账事务成功后，客户端才可依据缺失推断撤权。未来若分页，必须先引入所有页共享的固定 `MembershipSnapshotToken`，且仅完整快照返回 `Complete=true`；普通实时分页结果不得触发清理。
 
 ## 12.6 未读处理
@@ -1428,6 +1430,7 @@ public sealed record SyncResponse(
 
 - 用户加入或重新加入私有频道后，只要当前仍是成员，就可经 History/Search 查看全部历史；历史只在打开或定位时懒加载，不全量回填，不增加 `JoinedAtMessageId` 等可见性水位，也不回退全局同步游标。
 - 添加成员、读取该会话当前 `MAX(Messages.Id)`（无消息为 `0`）并写入 `ConversationMembers.LastReadMessageId` 必须处于同一服务端写事务。该值只是不产生加入前未读与通知的基线。重复添加当前有效成员是幂等 no-op，不得重置边界；移除后重新加入才写新加入时间与新基线。
+- 新建 Public/Private 或真实添加私有成员提交后，服务端按当前权威可见用户与 token 代际尽力发送 `ConversationAccessGranted(Guid conversationId)`。客户端只把它当作立即执行权威会话刷新的一次提示；数据库当前权限、HTTP 查询和完整对账仍是授权真源，发布失败不回滚写入，离线用户在登录或周期同步时收敛。
 - 私有频道 Sync 排除 `MessageId <= LastReadMessageId`，所以加入前历史只经 History/Search 返回；客户端也防御性地把任何来源带回的旧消息标记为已读且通知已处理。加入后的消息按普通规则处理。
 - `ConversationAccessRevoked(Guid conversationId)` 是尽力实时事件，不是授权真源。删除成员后，History、Search、附件、发送和后续 Sync 从撤权提交起按当前成员关系拒绝访问；相关 HTTP 请求返回带稳定错误码 `ConversationAccessRevoked` 的 `403`。每轮 Sync 前的权威会话全集对账覆盖事件丢失和离线场景；普通、无法归因撤权的 `403` 不触发破坏性清理。
 - 私有成员 DELETE 的权威事务必须返回内部“是否真实删除”事实。只有实际删除并提交的请求向目标 user ID 的全部现有连接尝试一次 `ConversationAccessRevoked`；重复/并发删除仍可幂等返回 204，但不得重复推送。目标即使在提交后被禁用，也不因活跃用户过滤而丢掉对既有连接的清理信号；投递失败不回滚撤权、不改变 204、不在请求内重试。
@@ -1476,11 +1479,10 @@ public sealed record SyncResponse(
 | --- | --- |
 | `Startup` | 有候选时只发一条 `Summary` |
 | `WindowActivated` | `None`；仅更新未读并把本轮候选标记为已处理 |
-| `Reconnect` / `Periodic`，窗口在前台 | Round 使用 `None`；Recovery 保留 |
-| `Reconnect` / `Periodic`，窗口不在前台且候选数 `1..10` | `PerMessage` |
-| `Reconnect` / `Periodic`，窗口不在前台且候选数 `>10` | 一条 `Summary` |
+| `Reconnect` / `Periodic`，过滤后候选数 `1..10` | `PerMessage` |
+| `Reconnect` / `Periodic`，过滤后候选数 `>10` | 一条 `Summary` |
 
-阈值只统计过滤掉本人、已读、静音、免打扰和当前前台会话后的实际候选。同步一轮即使提交多条 Toast，声音和任务栏闪烁最多各触发一次；同步轮次外的 Realtime 单条消息按单条处理。
+阈值只统计过滤掉本人、已读、静音、免打扰和当前前台会话后的实际候选。主窗口在前台不会抑制其他会话的通知；只有明确的 `WindowActivated` 历史恢复轮次使用 `None`，当前打开会话仍由候选过滤避免自扰。同步一轮即使提交多条 Toast，声音和任务栏闪烁最多各触发一次；同步轮次外的 Realtime 单条消息按单条处理。
 
 ## 13.5 Windows Toast 身份与激活目标
 
@@ -2053,9 +2055,9 @@ dotnet build 通过
 
 1. 创建 Conversations 表；
 2. 创建 ConversationMembers 表；
-3. 管理员创建公共频道；
-4. 管理员创建私有频道；
-5. 管理员管理私有频道成员；
+3. 正常用户创建公共频道；
+4. 正常用户创建私有频道并成为频道管理员；
+5. 全局管理员或私有频道管理员管理私有频道成员；
 6. 获取当前用户会话列表；
 7. 创建或获取一对一私聊；
 8. 在添加成员事务中初始化 `LastReadMessageId`；
@@ -2233,6 +2235,9 @@ Realtime、Sync 与恢复扫描不会并行重复提交同一候选
 14. 一键回到最新消息；
 15. 有新消息提示；
 16. 发送失败重试。
+17. 会话页展示成员，普通用户可创建频道并管理自己创建的私有频道；
+18. 打开 `@用户` 即列出当前会话候选，输入字符自动筛选，无需再次点击搜索；
+19. 文字消息可靠落盘后清空未被继续编辑的输入内容。
 
 验收：
 

@@ -102,6 +102,18 @@ public sealed class MentionCandidateEndpointTests(
             [firstName, secondName],
             all.Candidates.Select(candidate => candidate.UserName));
 
+        using var allMembersResponse = await actorClient.GetAsync(
+            $"/api/conversations/{conversation.Id:D}/mention-candidates?query=&limit=50");
+        Assert.Equal(HttpStatusCode.OK, allMembersResponse.StatusCode);
+        var allMembers = (await allMembersResponse.Content
+            .ReadFromJsonAsync<MentionCandidateListResponse>())!;
+        Assert.Contains(allMembers.Candidates, candidate => candidate.UserId == actorId);
+        Assert.Contains(allMembers.Candidates, candidate => candidate.UserId == firstId);
+        Assert.Contains(allMembers.Candidates, candidate => candidate.UserId == secondId);
+        Assert.DoesNotContain(
+            allMembers.Candidates,
+            candidate => string.Equals(candidate.UserName, disabledName, StringComparison.Ordinal));
+
         using var emptyResponse = await actorClient.GetAsync(
             $"/api/conversations/{conversation.Id:D}/mention-candidates" +
             "?query=no_such_candidate_prefix&limit=20");

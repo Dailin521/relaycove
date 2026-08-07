@@ -334,14 +334,14 @@ public sealed class ConversationCommandService(
         await using var transaction = await dbContext.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
             cancellationToken);
-        var actorIsAdministrator = await dbContext.Users.AnyAsync(
-            user => user.Id == actorUserId && !user.IsDisabled && user.RetiredAt == null && user.IsAdmin,
+        var actorIsActive = await dbContext.Users.AnyAsync(
+            user => user.Id == actorUserId && !user.IsDisabled && user.RetiredAt == null,
             cancellationToken);
-        if (!actorIsAdministrator)
+        if (!actorIsActive)
         {
             await transaction.RollbackAsync(cancellationToken);
             logger.LogWarning(
-                "User {ActorUserId} failed the in-transaction channel creation administrator recheck.",
+                "User {ActorUserId} failed the in-transaction channel creation active-user recheck.",
                 actorUserId);
             return new ConversationOperationResult<ConversationDto>(ConversationOperationStatus.AccessDenied);
         }
@@ -374,7 +374,7 @@ public sealed class ConversationCommandService(
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         logger.LogInformation(
-            "Administrator {ActorUserId} created conversation {ConversationId}; type={ConversationType}.",
+            "User {ActorUserId} created conversation {ConversationId}; type={ConversationType}.",
             actorUserId,
             conversation.Id,
             type);

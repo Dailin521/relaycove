@@ -501,7 +501,7 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
     }
 
     [Fact]
-    public async Task ClientSync_WhenTriggersOverlap_RunsOneFlightAndAtMostOnePriorityRerun()
+    public async Task ClientSync_WhenTriggersOverlap_RunsOneFlightAndOnePriorityRerun()
     {
         var identity = CreateIdentity();
         var conversation = CreateConversation("Single flight");
@@ -541,16 +541,13 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
         Assert.Same(startup, windowActivated);
         firstRelease.TrySetResult();
         await rerunEntered.Task;
-        var duringRerun = coordinator.TriggerAsync(SyncReason.Periodic);
-        Assert.Same(startup, duringRerun);
         rerunRelease.TrySetResult();
 
         var outcomes = await Task.WhenAll(
             startup,
             periodic,
             reconnect,
-            windowActivated,
-            duringRerun);
+            windowActivated);
 
         Assert.All(outcomes, outcome =>
         {
@@ -559,6 +556,72 @@ public sealed class ClientSyncCoordinatorTests : IDisposable
             Assert.Equal(2, outcome.RoundsExecuted);
         });
         Assert.Equal(4, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task ClientSync_WhenTriggerArrivesDuringRerun_SchedulesBoundedSuccessorFlight()
+    {
+        var identity = CreateIdentity();
+        var conversation = CreateConversation("Successor flight");
+        var firstEntered = NewSignal();
+        var firstRelease = NewSignal();
+        var rerunEntered = NewSignal();
+        var rerunRelease = NewSignal();
+        var successorEntered = NewSignal();
+        var successorRelease = NewSignal();
+        var successorSyncEntered = NewSignal();
+        var handler = new ScriptedHttpHandler();
+        handler.Enqueue(async (_, cancellationToken) =>
+        {
+            firstEntered.TrySetResult();
+            await firstRelease.Task.WaitAsync(cancellationToken);
+            return Ok(new ConversationListResponse([conversation], Complete: true));
+        });
+        handler.EnqueueResponse(Ok(new SyncResponse([], 0, 0, HasMore: false)));
+        handler.Enqueue(async (_, cancellationToken) =>
+        {
+            rerunEntered.TrySetResult();
+            await rerunRelease.Task.WaitAsync(cancellationToken);
+            return Ok(new ConversationListResponse([conversation], Complete: true));
+        });
+        handler.EnqueueResponse(Ok(new SyncResponse([], 0, 0, HasMore: false)));
+        handler.Enqueue(async (_, cancellationToken) =>
+        {
+            successorEntered.TrySetResult();
+            await successorRelease.Task.WaitAsync(cancellationToken);
+            return Ok(new ConversationListResponse([conversation], Complete: true));
+        });
+        handler.Enqueue((_, _) =>
+        {
+            successorSyncEntered.TrySetResult();
+            return Task.FromResult(Ok(new SyncResponse([], 0, 0, HasMore: false)));
+        });
+        await using var cache = await CreateCacheAsync(identity);
+        await using var coordinator = CreateCoordinator(
+            identity,
+            handler,
+            new RecordingAuthenticationSession("token"),
+            cache);
+
+        var startup = coordinator.TriggerAsync(SyncReason.Startup);
+        await firstEntered.Task;
+        var initialRerun = coordinator.TriggerAsync(SyncReason.Periodic);
+        firstRelease.TrySetResult();
+        await rerunEntered.Task;
+        var duringRerun = coordinator.TriggerAsync(SyncReason.Reconnect);
+        Assert.Same(startup, initialRerun);
+        Assert.Same(startup, duringRerun);
+        rerunRelease.TrySetResult();
+
+        await successorEntered.Task;
+        var initialOutcome = await startup;
+        successorRelease.TrySetResult();
+        await successorSyncEntered.Task;
+
+        Assert.Equal(ClientSyncRunStatus.Completed, initialOutcome.Status);
+        Assert.Equal(SyncReason.Periodic, initialOutcome.Reason);
+        Assert.Equal(2, initialOutcome.RoundsExecuted);
+        Assert.Equal(6, handler.Requests.Count);
     }
 
     [Fact]

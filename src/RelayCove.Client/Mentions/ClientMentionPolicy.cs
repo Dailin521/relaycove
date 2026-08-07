@@ -10,7 +10,7 @@ internal static class ClientMentionPolicy
     public const int MaximumUserNameLength = 64;
 
     public static bool IsValidQuery(string? query) =>
-        query is { Length: >= 1 and <= MaximumQueryLength } &&
+        query is { Length: <= MaximumQueryLength } &&
         query.All(IsUserNameCharacter);
 
     public static bool IsValidUserName(string? userName) =>

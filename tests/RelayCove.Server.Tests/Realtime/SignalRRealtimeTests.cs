@@ -109,9 +109,11 @@ public sealed class SignalRRealtimeTests : IClassFixture<RelayCoveWebApplication
             "SignalR hidden groups");
         var directConversation = await CreateDirectAsync(adminClient, memberId);
         var received = new ConcurrentQueue<MessageDto>();
+        var accessGrants = new ConcurrentQueue<Guid>();
 
         await using var connection = CreateHubConnection(factory, memberLogin.AccessToken);
         connection.On<MessageDto>(nameof(IChatClient.NewMessage), received.Enqueue);
+        connection.On<Guid>(nameof(IChatClient.ConversationAccessGranted), accessGrants.Enqueue);
         var initialConnectionLogOffset = factory.LogMessages.Count;
         await connection.StartAsync();
         await WaitForGroupJoinAsync(initialConnectionLogOffset, memberId);
@@ -146,6 +148,7 @@ public sealed class SignalRRealtimeTests : IClassFixture<RelayCoveWebApplication
             ConversationType.PrivateChannel,
             "SignalR reconnect groups");
         await UpsertMemberAsync(adminClient, joinedAfterConnection.Id, memberId);
+        await WaitUntilAsync(() => accessGrants.Contains(joinedAfterConnection.Id));
         var beforeReconnectProbe = CreateSyntheticMessage(
             joinedAfterConnection.Id,
             memberId,

@@ -201,6 +201,39 @@ internal sealed class ClientAccountShellCoordinator : IAsyncDisposable
         }
     }
 
+    public async Task<ClientSyncRunOutcome?> RefreshConversationsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        IClientAccountRuntime? activeRuntime;
+        lock (stateGate)
+        {
+            activeRuntime = runtime;
+        }
+
+        if (activeRuntime is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var outcome = await activeRuntime
+                .TriggerSyncAsync(SyncReason.WindowActivated, cancellationToken)
+                .ConfigureAwait(false);
+            if (outcome.Status == ClientSyncRunStatus.AuthenticationRequired)
+            {
+                await EndAuthenticationRequiredSessionAsync(activeRuntime)
+                    .ConfigureAwait(false);
+            }
+
+            return outcome;
+        }
+        catch (Exception exception) when (exception is OperationCanceledException or ObjectDisposedException)
+        {
+            return null;
+        }
+    }
+
     public async Task LogoutAsync(CancellationToken cancellationToken = default)
     {
         using var linkedCancellation = CreateLinkedCancellation(cancellationToken);

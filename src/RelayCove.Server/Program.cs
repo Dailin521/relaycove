@@ -81,6 +81,7 @@ builder.Services.AddScoped<AdminUserService>();
 builder.Services.AddScoped<AdminOperationsService>();
 builder.Services.AddScoped<ConversationCommandService>();
 builder.Services.AddScoped<ConversationQueryService>();
+builder.Services.AddScoped<UserDirectoryQueryService>();
 builder.Services.AddScoped<MentionCandidateQueryService>();
 builder.Services.AddScoped<SearchQueryService>();
 builder.Services.AddScoped<MessageCommandService>();
@@ -95,9 +96,13 @@ builder.Services.AddScoped<UploadSettingsService>();
 builder.Services.AddSingleton<ServerRuntimeMetrics>();
 builder.Services.AddSingleton<UpdateHostingService>();
 builder.Services.AddScoped<NewMessagePublisher>();
+builder.Services.AddScoped<ConversationAccessGrantedPublisher>();
 builder.Services.AddScoped<ConversationAccessRevokedPublisher>();
 builder.Services.AddScoped<AccountAccessRevokedPublisher>();
 builder.Services.AddSingleton<INewMessageTransport, SignalRNewMessageTransport>();
+builder.Services.AddSingleton<
+    IConversationAccessGrantedTransport,
+    SignalRConversationAccessGrantedTransport>();
 builder.Services.AddSingleton<
     IConversationAccessRevokedTransport,
     SignalRConversationAccessRevokedTransport>();
@@ -211,6 +216,7 @@ app.UseAuthorization();
 app.MapAuthenticationEndpoints();
 app.MapAdminUserEndpoints();
 app.MapAdminOperationsEndpoints();
+app.MapUserEndpoints();
 app.MapConversationEndpoints();
 app.MapSearchEndpoints();
 app.MapMessageEndpoints();

@@ -27,7 +27,9 @@ public sealed class ClientAttachmentDownloadHttpTransportTests
         using var httpClient = new HttpClient(new DelegateHttpHandler((request, _) =>
         {
             Assert.Equal(HttpMethod.Get, request.Method);
-            Assert.Equal(new Uri(ServerBaseUri, attachment.DownloadUrl), request.RequestUri);
+            Assert.Equal(
+                new Uri(ServerBaseUri, attachment.DownloadUrl.TrimStart('/')),
+                request.RequestUri);
             Assert.Equal("access-token", request.Headers.Authorization!.Parameter);
             Assert.Null(request.Headers.Range);
             return Task.FromResult(Ok(payload, attachment, "image/png"));

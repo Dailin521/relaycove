@@ -1,5 +1,6 @@
 using System.Text.Json;
 using RelayCove.Shared.Conversations;
+using RelayCove.Shared.Users;
 
 namespace RelayCove.Shared.Tests.Conversations;
 
@@ -130,5 +131,32 @@ public sealed class ConversationContractTests
             WebJson);
         Assert.Equal(response.ConversationId, roundTripped!.ConversationId);
         Assert.Equal(member, Assert.Single(roundTripped.Members));
+    }
+
+    [Fact]
+    public void ConversationParticipantContracts_WhenRoundTripped_ExposeOnlySafeDirectoryShape()
+    {
+        var participant = new UserDirectoryEntryDto(
+            Guid.Parse("51ed2e34-e6e1-40b6-a74f-9e3c41410355"),
+            "alice",
+            "Alice");
+        var response = new ConversationParticipantListResponse(
+            Guid.Parse("d324a362-c6cf-434d-bd6a-e5f221d6a4b3"),
+            ConversationType.PrivateChannel,
+            CanManageMembers: true,
+            [participant]);
+
+        var json = JsonSerializer.Serialize(response, WebJson);
+        using var document = JsonDocument.Parse(json);
+        var roundTripped = JsonSerializer.Deserialize<ConversationParticipantListResponse>(
+            json,
+            WebJson);
+
+        Assert.Equal(
+            ["conversationId", "type", "canManageMembers", "participants"],
+            document.RootElement.EnumerateObject().Select(property => property.Name));
+        Assert.Equal(participant, Assert.Single(roundTripped!.Participants));
+        Assert.DoesNotContain("alice", response.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("alice", participant.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 }

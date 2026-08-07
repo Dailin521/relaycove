@@ -12,7 +12,7 @@ public sealed class MentionCandidateQueryValidator
         if (!IsValidQuery(query))
         {
             errors["query"] =
-                [$"The query must contain 1 to {MaximumQueryLength} user-name characters."];
+                [$"The query must contain 0 to {MaximumQueryLength} user-name characters."];
         }
 
         if (limit is < 1 or > MaximumLimit)
@@ -25,7 +25,7 @@ public sealed class MentionCandidateQueryValidator
 
     public static bool IsValidQuery(string? query)
     {
-        if (query is null || query.Length is < 1 or > MaximumQueryLength)
+        if (query is null || query.Length > MaximumQueryLength)
         {
             return false;
         }

@@ -736,3 +736,15 @@
 - **理由：** 放宽一位即可满足真实账号需求，同时保留原字符集、大小写无关唯一性、15 字符密码策略及所有动态授权规则。单字符账号继续拒绝，避免过度放宽。
 - **影响：** 修正 `DEC-005` 的最短长度前提；旧数据无变化，新版 Server migration 后可创建并登录两字符账号，新版 Client 可识别其提及 token。数据库迁移必须先停服备份并显式应用。创建两字符账号后，旧 migration 的 3 字符 CHECK 无法接纳该行，因此生产回滚必须恢复迁移前完整备份，不能把 schema Down 当作回滚路径。
 - **来源：** owner 2026-08-05 账号创建要求；`src/RelayCove.Server/Services/UserNameNormalizer.cs`、`src/RelayCove.Server/Data/RelayCoveDbContext.cs`、`src/RelayCove.Client/Mentions/ClientMentionPolicy.cs`；真实 SQLite 迁移与网页创建用户回归；独立 Codex 审查发现并要求补齐数据库 CHECK。
+
+### DEC-061：日常频道自助、最小成员目录与授权后权威刷新
+
+- **状态：** 已接受
+- **日期：** 2026-08-05
+- **背景：** owner 的双账号真实试用表明，旧“只有全局管理员创建频道”、Public 不提供可展示成员、普通客户端没有拉人入口的边界不适合个人/小团队日常协作。私有成员新增只有五分钟周期对账兜底，也不能满足被邀请者及时看到频道；与此同时，直接把实时事件当成授权或复用含管理员字段的后台用户响应会扩大数据与权限边界。
+- **决策：** 数据库当前正常用户均可创建 Public/Private，创建者仍写入会话内 `Administrator`；Private 只允许全局管理员或当前会话 Administrator 增删成员，全局管理员的管理覆盖仍不授予私有内容读取权。新增认证用户目录只返回当前正常用户的 ID、用户名和显示名；新增 participant 投影供聊天页展示，Public 返回全部正常用户，Private/Direct 返回真实成员。既有 `/members` 继续表达带角色、水位和加入时间的真实成员关系，不为 Public 伪造记录。
+- **决策：** Public/Private 新建和真实私有成员新增提交后，服务端按数据库当前可见用户与 `AccessTokenVersion` 代际组尽力发送 `ConversationAccessGranted(Guid conversationId)`。事件不携带内容、成员或角色，客户端收到后只请求一次现有 `Complete=true` 权威会话同步；不得因事件直接登记、解封或展示会话。为避免事件恰逢既有补跑第二轮而被旧 `DEC-021` 上限吞掉，第二轮期间的新触发合并为一个后继 single-flight；每个 flight 仍最多两轮且全程不并行。发布失败不回滚已提交写入，离线、丢事件和撤权竞态继续由 HTTP 当前授权、完整对账及既有 tombstone/deny-set 收敛。
+- **决策：** 普通聊天页始终展示当前会话成员并提供频道/成员面板；所有正常用户可创建公开或私有频道，只有有权者看到可执行的私有成员增删。`@用户` 面板打开即以空前缀列出当前会话候选，输入变化经短防抖自动查询并以版本/取消门丢弃迟到结果，不再要求再次点击搜索。附件下载把协议返回的 `/api/...` 当作相对于已规范化 Server base 的应用路径，保留反向代理 PathBase；Reconnect/Periodic 在窗口前台也允许其他会话进入通知过滤，只有 WindowActivated 历史恢复明确抑制；文字 pending 确认落盘后，仅在会话、正文、回复和提及上下文都未变化时清空输入。
+- **理由：** 该设计把普通成员实际需要的自助能力放到聊天路径，同时保留私有内容授权、最小字段暴露、当前 token 代际和权威同步作为安全真源。最小 grant 只缩短可见性延迟，不另造第二套会话状态；PathBase、通知与输入清理修复直接对应实机故障，不引入新依赖、数据库迁移或复杂角色系统。
+- **影响：** `DEC-009/040/041` 中“仅全局管理员创建频道”“不开全局用户目录”的旧产品前提，以及 `DEC-021` 中“补跑期间触发直接并入且不形成后继 flight”的可靠性取舍，被本决定针对小团队场景替代；Public `/members` 的真实关系契约不变，聊天使用新的 `/participants`。Server/Shared/Client 增加目录、participant 与 grant 协议及普通频道 UI；生产必须同步升级 Server 与 Client。复杂角色、邀请审批、组织目录、在线状态和 Web 聊天仍不在内部 RC 范围。
+- **来源：** owner 2026-08-05 双账号实测反馈；`docs/ai/tasks/2026-08-05-stage-16-usability-repair.md`；最终代码、自动化、独立 Codex/Claude 复核、rc.19 产物与 VPS/Windows 验证证据在任务完成时补记。

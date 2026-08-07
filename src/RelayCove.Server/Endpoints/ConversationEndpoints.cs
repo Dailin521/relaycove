@@ -19,6 +19,7 @@ public static class ConversationEndpoints
         group.MapPut("/{conversationId:guid}", UpdateAsync);
         group.MapDelete("/{conversationId:guid}", DeleteAsync);
         group.MapGet("/{conversationId:guid}/members", ListMembersAsync);
+        group.MapGet("/{conversationId:guid}/participants", ListParticipantsAsync);
         group.MapGet(
             "/{conversationId:guid}/mention-candidates",
             ListMentionCandidatesAsync);
@@ -63,6 +64,7 @@ public static class ConversationEndpoints
         HttpContext context,
         ConversationRequestValidator validator,
         ConversationCommandService commandService,
+        ConversationAccessGrantedPublisher accessGrantedPublisher,
         CancellationToken cancellationToken)
     {
         if (!TryGetActorUserId(context, out var actorUserId))
@@ -77,6 +79,11 @@ public static class ConversationEndpoints
         }
 
         var result = await commandService.CreateAsync(actorUserId, request!, cancellationToken);
+        if (result.Status == ConversationOperationStatus.Created && result.Value is not null)
+        {
+            await accessGrantedPublisher.TryPublishAsync(result.Value.Id);
+        }
+
         return result.Status switch
         {
             ConversationOperationStatus.Created => Results.Created(
@@ -99,6 +106,26 @@ public static class ConversationEndpoints
         }
 
         var result = await queryService.ListMembersAsync(actorUserId, conversationId, cancellationToken);
+        return result.Status == ConversationOperationStatus.Success
+            ? Results.Ok(result.Value)
+            : ConversationError(context, result.Status);
+    }
+
+    private static async Task<IResult> ListParticipantsAsync(
+        Guid conversationId,
+        HttpContext context,
+        ConversationQueryService queryService,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetActorUserId(context, out var actorUserId))
+        {
+            return AuthenticationRequired(context);
+        }
+
+        var result = await queryService.ListParticipantsAsync(
+            actorUserId,
+            conversationId,
+            cancellationToken);
         return result.Status == ConversationOperationStatus.Success
             ? Results.Ok(result.Value)
             : ConversationError(context, result.Status);
@@ -199,6 +226,7 @@ public static class ConversationEndpoints
         HttpContext context,
         ConversationRequestValidator validator,
         ConversationCommandService commandService,
+        ConversationAccessGrantedPublisher accessGrantedPublisher,
         CancellationToken cancellationToken)
     {
         if (!TryGetActorUserId(context, out var actorUserId))
@@ -217,6 +245,11 @@ public static class ConversationEndpoints
             conversationId,
             request!,
             cancellationToken);
+        if (result.Status == ConversationOperationStatus.Created)
+        {
+            await accessGrantedPublisher.TryPublishAsync(conversationId);
+        }
+
         return result.Status switch
         {
             ConversationOperationStatus.Created => Results.Created(

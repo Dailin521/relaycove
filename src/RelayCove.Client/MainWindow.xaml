@@ -335,6 +335,7 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel>
                                     <TextBlock x:Name="ConversationHeadingText"
@@ -349,10 +350,28 @@
                                                AutomationProperties.LiveSetting="Polite"
                                                Foreground="#FF718396"
                                                TextWrapping="Wrap" />
+                                    <TextBlock x:Name="ConversationMembersSummaryText"
+                                               Margin="0,4,0,0"
+                                               Text="成员：请选择会话"
+                                               AutomationProperties.LiveSetting="Polite"
+                                               Foreground="#FF52708C"
+                                               FontSize="12"
+                                               TextWrapping="Wrap"
+                                               TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
-                                <Button x:Name="OpenSearchButton"
+                                <Button x:Name="OpenChannelPanelButton"
                                         Grid.Column="1"
                                         Margin="16,0,0,0"
+                                        MinHeight="32"
+                                        Padding="14,5"
+                                        VerticalAlignment="Top"
+                                        IsEnabled="False"
+                                        AutomationProperties.Name="打开频道和成员面板"
+                                        Content="频道与成员"
+                                        Click="OnOpenChannelPanelClicked" />
+                                <Button x:Name="OpenSearchButton"
+                                        Grid.Column="2"
+                                        Margin="8,0,0,0"
                                         MinHeight="32"
                                         Padding="14,5"
                                         VerticalAlignment="Top"
@@ -910,7 +929,7 @@
                                         </Grid>
                                         <TextBlock x:Name="MentionSearchStatusText"
                                                    Margin="1,5,0,0"
-                                                   Text="输入 1–64 位用户名字符前缀后显式搜索。"
+                                                   Text="打开后自动列出成员；输入用户名字符会即时筛选。"
                                                    AutomationProperties.LiveSetting="Polite"
                                                    Foreground="#FF718396"
                                                    FontSize="11"
@@ -1303,6 +1322,158 @@
                          AutomationProperties.Name="账户操作进行中"
                          IsIndeterminate="True"
                          Visibility="Collapsed" />
+        </Grid>
+        <Grid x:Name="ChannelOverlay"
+              Grid.ColumnSpan="2"
+              Panel.ZIndex="140"
+              Visibility="Collapsed"
+              Background="#D910243E"
+              Focusable="True"
+              KeyboardNavigation.TabNavigation="Cycle"
+              AutomationProperties.Name="频道与成员面板">
+            <Border MaxWidth="900"
+                    MaxHeight="700"
+                    Margin="30"
+                    Padding="24"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="White"
+                    BorderBrush="#FF1677D2"
+                    BorderThickness="2"
+                    CornerRadius="12">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled"
+                              CanContentScroll="False">
+                    <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="频道与成员"
+                                   FontSize="24"
+                                   FontWeight="SemiBold"
+                                   Foreground="#FF17263A" />
+                        <TextBlock Margin="0,4,0,0"
+                                   Text="所有成员都能创建频道；私有频道创建者可以拉人。"
+                                   Foreground="#FF718396" />
+                    </StackPanel>
+                    <Button x:Name="CloseChannelPanelButton"
+                            Grid.Column="1"
+                            Content="关闭"
+                            AutomationProperties.Name="关闭频道与成员面板"
+                            Click="OnCloseChannelPanelClicked" />
+                    <Grid Grid.Row="1" Grid.ColumnSpan="2" Margin="0,18,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="280" />
+                            <ColumnDefinition Width="18" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel>
+                            <TextBlock Text="创建频道" FontWeight="SemiBold" />
+                            <TextBox x:Name="ChannelNameInput"
+                                     Margin="0,7,0,7"
+                                     MaxLength="100"
+                                     AutomationProperties.Name="新频道名称"
+                                     ToolTip="输入频道名称"
+                                     TextChanged="OnChannelNameTextChanged" />
+                            <ComboBox x:Name="ChannelTypeComboBox"
+                                      MinHeight="36"
+                                      AutomationProperties.Name="新频道类型" />
+                            <Button x:Name="CreateChannelButton"
+                                    Margin="0,9,0,0"
+                                    HorizontalAlignment="Left"
+                                    Content="创建频道"
+                                    Click="OnCreateChannelClicked" />
+                            <TextBlock Margin="0,22,0,0"
+                                       Text="团队成员目录"
+                                       FontWeight="SemiBold" />
+                            <TextBlock Margin="0,3,0,6"
+                                       Text="在私有频道中点击“拉入”。"
+                                       Foreground="#FF718396"
+                                       FontSize="11" />
+                            <ListBox x:Name="ChannelUserDirectoryList"
+                                     Height="260"
+                                     AutomationProperties.Name="团队成员目录">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="4,3">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding UserName, StringFormat=@{0}}"
+                                                           Foreground="#FF718396"
+                                                           FontSize="11" />
+                                            </StackPanel>
+                                            <Button Grid.Column="1"
+                                                    MinWidth="52"
+                                                    Padding="8,2"
+                                                    Content="拉入"
+                                                    IsEnabled="{Binding CanInvite}"
+                                                    Click="OnInviteChannelMemberClicked" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock x:Name="ChannelCurrentHeadingText"
+                                       Text="当前会话成员"
+                                       FontSize="18"
+                                       FontWeight="SemiBold" />
+                            <TextBlock x:Name="ChannelMemberHelpText"
+                                       Margin="0,4,0,8"
+                                       Text="选择会话后显示成员。"
+                                       Foreground="#FF718396"
+                                       TextWrapping="Wrap" />
+                            <ListBox x:Name="ChannelParticipantList"
+                                     Height="430"
+                                     AutomationProperties.Name="当前会话成员列表">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="6,5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                                <TextBlock Text="{Binding UserName, StringFormat=@{0}}"
+                                                           Foreground="#FF718396"
+                                                           FontSize="11" />
+                                            </StackPanel>
+                                            <Button Grid.Column="1"
+                                                    MinWidth="52"
+                                                    Padding="8,2"
+                                                    Content="移除"
+                                                    IsEnabled="{Binding CanRemove}"
+                                                    Click="OnRemoveChannelMemberClicked" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock x:Name="ChannelLiveRegionText"
+                               Grid.Row="2"
+                               Grid.ColumnSpan="2"
+                               Margin="0,14,0,0"
+                               Text="准备就绪。"
+                               Foreground="#FF1677D2"
+                               TextWrapping="Wrap"
+                               AutomationProperties.Name="频道操作状态"
+                               AutomationProperties.LiveSetting="Assertive" />
+                    </Grid>
+                </ScrollViewer>
+            </Border>
         </Grid>
         <Grid x:Name="AttachmentImageViewerOverlay"
               Grid.ColumnSpan="2"

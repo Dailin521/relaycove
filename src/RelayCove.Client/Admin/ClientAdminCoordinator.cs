@@ -4,6 +4,7 @@ using RelayCove.Client.Auth;
 using RelayCove.Shared.Admin;
 using RelayCove.Shared.Auth;
 using RelayCove.Shared.Conversations;
+using RelayCove.Shared.Users;
 
 namespace RelayCove.Client.Admin;
 
@@ -32,6 +33,8 @@ internal sealed class ClientAdminCoordinator : IAsyncDisposable
     public event Func<Task>? AuthenticationRequired;
 
     public ClientAdminSnapshot Snapshot => Volatile.Read(ref snapshot);
+
+    public Guid CurrentUserId => userId;
 
     public async Task<bool> ProbeAsync(CancellationToken cancellationToken = default)
     {
@@ -134,6 +137,67 @@ internal sealed class ClientAdminCoordinator : IAsyncDisposable
 
     public Task<ClientAdminRequestStatus> SaveUploadLimitAsync(long maximumFileBytes, CancellationToken cancellationToken = default) =>
         MutateAsync(HttpMethod.Put, "api/admin/settings/upload", new UpdateUploadSettingsRequest(maximumFileBytes), cancellationToken);
+
+    public Task<ClientAdminRequestResult<ConversationDto>> CreateConversationForChatAsync(
+        CreateConversationRequest request,
+        CancellationToken cancellationToken = default) =>
+        RunAuthenticatedAsync(
+            token => transport.SendAsync<CreateConversationRequest, ConversationDto>(
+                HttpMethod.Post,
+                "api/conversations",
+                request,
+                token),
+            cancellationToken);
+
+    public Task<ClientAdminRequestResult<IReadOnlyList<UserDirectoryEntryDto>>> GetUserDirectoryAsync(
+        CancellationToken cancellationToken = default) =>
+        RunAuthenticatedAsync(
+            token => transport.GetAsync<IReadOnlyList<UserDirectoryEntryDto>>(
+                "api/users",
+                token),
+            cancellationToken);
+
+    public Task<ClientAdminRequestResult<ConversationParticipantListResponse>> GetConversationParticipantsAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken = default) =>
+        conversationId == Guid.Empty
+            ? Task.FromResult(ClientAdminRequestResult<ConversationParticipantListResponse>.Failure(
+                ClientAdminRequestStatus.ValidationFailed))
+            : RunAuthenticatedAsync(
+                token => transport.GetAsync<ConversationParticipantListResponse>(
+                    $"api/conversations/{conversationId:D}/participants",
+                    token),
+                cancellationToken);
+
+    public Task<ClientAdminRequestResult<ConversationMemberDto>> UpsertConversationMemberForChatAsync(
+        Guid conversationId,
+        UpsertConversationMemberRequest request,
+        CancellationToken cancellationToken = default) =>
+        conversationId == Guid.Empty
+            ? Task.FromResult(ClientAdminRequestResult<ConversationMemberDto>.Failure(
+                ClientAdminRequestStatus.ValidationFailed))
+            : RunAuthenticatedAsync(
+                token => transport.SendAsync<UpsertConversationMemberRequest, ConversationMemberDto>(
+                    HttpMethod.Post,
+                    $"api/conversations/{conversationId:D}/members",
+                    request,
+                    token),
+                cancellationToken);
+
+    public Task<ClientAdminRequestResult<bool>> RemoveConversationMemberForChatAsync(
+        Guid conversationId,
+        Guid targetUserId,
+        CancellationToken cancellationToken = default) =>
+        conversationId == Guid.Empty || targetUserId == Guid.Empty
+            ? Task.FromResult(ClientAdminRequestResult<bool>.Failure(
+                ClientAdminRequestStatus.ValidationFailed))
+            : RunAuthenticatedAsync(
+                token => transport.SendNoContentAsync<object>(
+                    HttpMethod.Delete,
+                    $"api/conversations/{conversationId:D}/members/{targetUserId:D}",
+                    null,
+                    token),
+                cancellationToken);
 
     public Task<ClientAdminRequestStatus> LoadPrivateMembersAsync(
         Guid channelId,
@@ -272,6 +336,49 @@ internal sealed class ClientAdminCoordinator : IAsyncDisposable
             }
 
             return ClientAdminRequestStatus.Canceled;
+        }
+        finally
+        {
+            if (enteredGate)
+            {
+                operationGate.Release();
+            }
+        }
+    }
+
+    private async Task<ClientAdminRequestResult<T>> RunAuthenticatedAsync<T>(
+        Func<CancellationToken, Task<ClientAdminRequestResult<T>>> operation,
+        CancellationToken cancellationToken)
+    {
+        if (Volatile.Read(ref disposed) != 0)
+        {
+            return ClientAdminRequestResult<T>.Failure(ClientAdminRequestStatus.Canceled);
+        }
+
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            lifetimeCancellation.Token);
+        var enteredGate = false;
+        try
+        {
+            await operationGate.WaitAsync(linkedCancellation.Token).ConfigureAwait(false);
+            enteredGate = true;
+            if (Volatile.Read(ref disposed) != 0)
+            {
+                return ClientAdminRequestResult<T>.Failure(ClientAdminRequestStatus.Canceled);
+            }
+
+            var result = await operation(linkedCancellation.Token).ConfigureAwait(false);
+            if (result.Status == ClientAdminRequestStatus.AuthenticationRequired)
+            {
+                await NotifyAuthenticationRequiredAsync().ConfigureAwait(false);
+            }
+
+            return result;
+        }
+        catch (OperationCanceledException)
+        {
+            return ClientAdminRequestResult<T>.Failure(ClientAdminRequestStatus.Canceled);
         }
         finally
         {

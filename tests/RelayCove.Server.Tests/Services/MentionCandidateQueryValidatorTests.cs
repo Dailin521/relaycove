@@ -7,6 +7,7 @@ public sealed class MentionCandidateQueryValidatorTests
     private readonly MentionCandidateQueryValidator validator = new();
 
     [Theory]
+    [InlineData("")]
     [InlineData("a")]
     [InlineData("Alice_1")]
     [InlineData("team.member-01")]
@@ -18,7 +19,6 @@ public sealed class MentionCandidateQueryValidatorTests
 
     [Theory]
     [InlineData(null)]
-    [InlineData("")]
     [InlineData("alice smith")]
     [InlineData("用户")]
     [InlineData("ali%ce")]

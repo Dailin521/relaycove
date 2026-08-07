@@ -7,6 +7,7 @@ using RelayCove.Client.Auth;
 using RelayCove.Shared.Admin;
 using RelayCove.Shared.Auth;
 using RelayCove.Shared.Conversations;
+using RelayCove.Shared.Users;
 
 namespace RelayCove.Client.Tests.Admin;
 
@@ -127,6 +128,67 @@ public sealed class ClientAdminCoordinatorTests
 
         Assert.Equal(ClientAdminRequestStatus.Canceled, await refresh.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(ClientAdminSnapshot.Hidden, coordinator.Snapshot);
+    }
+
+    [Fact]
+    public async Task ChatOperations_WhenCurrentUserIsNotGlobalAdmin_RemainAvailable()
+    {
+        var conversationId = Guid.Parse("80e11ae9-c823-4fdc-93c1-4081c0925de6");
+        var teammateId = Guid.Parse("7b4d79fb-9dca-40cd-a12c-275265f3fe0c");
+        var directoryEntry = new UserDirectoryEntryDto(teammateId, "teammate", "Team Mate");
+        var conversation = new ConversationDto(
+            conversationId,
+            ConversationType.PrivateChannel,
+            "Private",
+            null,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow,
+            0,
+            0,
+            0);
+        using var client = new HttpClient(new DelegateHandler((request, _) =>
+        {
+            return request.RequestUri!.AbsolutePath switch
+            {
+                "/api/auth/me" => Task.FromResult(Json(
+                    HttpStatusCode.OK,
+                    new CurrentUserResponse(UserId, "normal", "Normal", false))),
+                "/api/users" => Task.FromResult(Json(
+                    HttpStatusCode.OK,
+                    new[] { directoryEntry })),
+                "/api/conversations" when request.Method == HttpMethod.Post =>
+                    Task.FromResult(Json(HttpStatusCode.Created, conversation)),
+                var path when path == $"/api/conversations/{conversationId:D}/participants" =>
+                    Task.FromResult(Json(
+                        HttpStatusCode.OK,
+                        new ConversationParticipantListResponse(
+                            conversationId,
+                            ConversationType.PrivateChannel,
+                            CanManageMembers: true,
+                            [directoryEntry]))),
+                _ => throw new InvalidOperationException(
+                    $"Unexpected request: {request.Method} {request.RequestUri.AbsolutePath}"),
+            };
+        }));
+        await using var session = CreateSession(client);
+        await using var coordinator = new ClientAdminCoordinator(
+            client,
+            session,
+            NullLogger<ClientAdminCoordinator>.Instance);
+        Assert.False(await coordinator.ProbeAsync());
+
+        var directory = await coordinator.GetUserDirectoryAsync();
+        var created = await coordinator.CreateConversationForChatAsync(
+            new CreateConversationRequest(ConversationType.PrivateChannel, "Private"));
+        var participants = await coordinator.GetConversationParticipantsAsync(conversationId);
+
+        Assert.Equal(ClientAdminRequestStatus.Completed, directory.Status);
+        Assert.Equal(directoryEntry, Assert.Single(directory.Value!));
+        Assert.Equal(ClientAdminRequestStatus.Completed, created.Status);
+        Assert.Equal(conversationId, created.Value!.Id);
+        Assert.Equal(ClientAdminRequestStatus.Completed, participants.Status);
+        Assert.True(participants.Value!.CanManageMembers);
+        Assert.False(coordinator.Snapshot.IsAdmin);
     }
 
     [Fact]

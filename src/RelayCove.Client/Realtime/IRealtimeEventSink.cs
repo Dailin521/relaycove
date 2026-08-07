@@ -13,6 +13,10 @@ public interface IRealtimeEventSink
         MessageDto message,
         CancellationToken cancellationToken);
 
+    Task OnConversationAccessGrantedAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken) => Task.CompletedTask;
+
     Task OnConversationAccessRevokedAsync(
         Guid conversationId,
         CancellationToken cancellationToken);

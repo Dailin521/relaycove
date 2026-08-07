@@ -66,6 +66,18 @@ internal sealed class ClientAccountRealtimeEventSink : IRealtimeEventSink
         CancellationToken cancellationToken) =>
         inner.OnNewMessageAsync(message, cancellationToken);
 
+    public Task OnConversationAccessGrantedAsync(
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        if (conversationId != Guid.Empty)
+        {
+            syncRequestor.Request(SyncReason.Reconnect);
+        }
+
+        return inner.OnConversationAccessGrantedAsync(conversationId, cancellationToken);
+    }
+
     public Task OnConversationAccessRevokedAsync(
         Guid conversationId,
         CancellationToken cancellationToken) =>

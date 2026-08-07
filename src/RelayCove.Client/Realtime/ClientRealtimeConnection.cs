@@ -12,6 +12,7 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
 {
     private const string HubPath = "hubs/chat";
     private const string NewMessageMethod = "NewMessage";
+    private const string AccessGrantedMethod = "ConversationAccessGranted";
     private const string AccessRevokedMethod = "ConversationAccessRevoked";
     private const string AccountAccessRevokedMethod = "AccountAccessRevoked";
     private static readonly AsyncLocal<ClientRealtimeConnection?> CurrentDispatcher = new();
@@ -69,6 +70,7 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
         subscriptions =
         [
             hubConnection.On<MessageDto>(NewMessageMethod, OnNewMessageAsync),
+            hubConnection.On<Guid>(AccessGrantedMethod, OnAccessGrantedAsync),
             hubConnection.On<Guid>(AccessRevokedMethod, OnAccessRevokedAsync),
             hubConnection.On<AccountAccessRevokedEvent>(
                 AccountAccessRevokedMethod,
@@ -234,6 +236,9 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
     private Task OnNewMessageAsync(MessageDto message) =>
         EnqueueAsync(RealtimeEvent.ForMessage(message));
 
+    private Task OnAccessGrantedAsync(Guid conversationId) =>
+        EnqueueAsync(RealtimeEvent.ForAccessGranted(conversationId));
+
     private Task OnAccessRevokedAsync(Guid conversationId) =>
         EnqueueAsync(RealtimeEvent.ForAccessRevoked(conversationId));
 
@@ -311,6 +316,11 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
                     case RealtimeEventKind.NewMessage:
                         await sink.OnNewMessageAsync(
                             realtimeEvent.Message!,
+                            dispatchCancellation.Token);
+                        break;
+                    case RealtimeEventKind.ConversationAccessGranted:
+                        await sink.OnConversationAccessGrantedAsync(
+                            realtimeEvent.ConversationId,
                             dispatchCancellation.Token);
                         break;
                     case RealtimeEventKind.ConversationAccessRevoked:
@@ -404,6 +414,7 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
     {
         ConnectionState,
         NewMessage,
+        ConversationAccessGranted,
         ConversationAccessRevoked,
         AccountAccessRevoked,
     }
@@ -431,6 +442,15 @@ public sealed class ClientRealtimeConnection : IClientAccountRealtimeConnection
                 ConnectionState.Disconnected,
                 message,
                 message.ConversationId,
+                AccountAccessRevoked: null,
+                Completion: null!);
+
+        public static RealtimeEvent ForAccessGranted(Guid conversationId) =>
+            new(
+                RealtimeEventKind.ConversationAccessGranted,
+                ConnectionState.Disconnected,
+                Message: null,
+                conversationId,
                 AccountAccessRevoked: null,
                 Completion: null!);
 

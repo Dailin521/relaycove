@@ -61,6 +61,13 @@ public sealed class ClientRealtimeConnectionTests
         AssertMessageEqual(firstMessage, receivedMessage);
 
         await host.HubContext.Clients.All.SendAsync(
+            "ConversationAccessGranted",
+            firstMessage.ConversationId);
+        Assert.Equal(
+            firstMessage.ConversationId,
+            await sink.AccessGrantReceived.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        await host.HubContext.Clients.All.SendAsync(
             "ConversationAccessRevoked",
             firstMessage.ConversationId);
         await sink.RevocationStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -421,6 +428,9 @@ public sealed class ClientRealtimeConnectionTests
 
         public ConcurrentQueue<MessageDto> Messages { get; } = [];
 
+        public TaskCompletionSource<Guid> AccessGrantReceived { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public TaskCompletionSource<AccountAccessRevokedEvent> AccountRevocationReceived { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -437,6 +447,14 @@ public sealed class ClientRealtimeConnectionTests
             CancellationToken cancellationToken)
         {
             Messages.Enqueue(message);
+            return Task.CompletedTask;
+        }
+
+        public virtual Task OnConversationAccessGrantedAsync(
+            Guid conversationId,
+            CancellationToken cancellationToken)
+        {
+            AccessGrantReceived.TrySetResult(conversationId);
             return Task.CompletedTask;
         }
 

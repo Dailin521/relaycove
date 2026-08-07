@@ -7,6 +7,8 @@ public interface IChatClient
 {
     Task NewMessage(MessageDto message);
 
+    Task ConversationAccessGranted(Guid conversationId);
+
     Task ConversationAccessRevoked(Guid conversationId);
 
     Task AccountAccessRevoked(AccountAccessRevokedEvent accountAccessRevoked);

@@ -20,7 +20,6 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
     private readonly CancellationTokenSource lifetimeCancellation = new();
     private Task<ClientSyncRunOutcome>? activeFlight;
     private int pendingReasonMask;
-    private bool rerunActive;
     private bool startupRecovery = true;
     private bool cursorInvalid;
     private int disposed;
@@ -138,12 +137,11 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
             if (activeFlight is null)
             {
                 pendingReasonMask = 0;
-                rerunActive = false;
                 newFlight = new TaskCompletionSource<ClientSyncRunOutcome>(
                     TaskCreationOptions.RunContinuationsAsynchronously);
                 activeFlight = newFlight.Task;
             }
-            else if (!rerunActive)
+            else
             {
                 pendingReasonMask |= ReasonMask(reason);
             }
@@ -213,7 +211,6 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
                 {
                     rerunReason = SelectPendingReason();
                     pendingReasonMask = 0;
-                    rerunActive = true;
                 }
                 else
                 {
@@ -244,6 +241,8 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
             finalStatus = ClientSyncRunStatus.LocalCacheFailure;
         }
 
+        TaskCompletionSource<ClientSyncRunOutcome>? successorCompletion = null;
+        SyncReason? successorReason = null;
         lock (stateGate)
         {
             if (finalStatus == ClientSyncRunStatus.Completed)
@@ -251,9 +250,31 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
                 startupRecovery = false;
             }
 
-            CompleteFlight(
-                completion,
-                new ClientSyncRunOutcome(finalStatus, finalReason, roundsExecuted));
+            var outcome = new ClientSyncRunOutcome(
+                finalStatus,
+                finalReason,
+                roundsExecuted);
+            if (CanRerun(finalStatus) &&
+                pendingReasonMask != 0 &&
+                !cursorInvalid &&
+                !lifetimeCancellation.IsCancellationRequested)
+            {
+                successorReason = SelectPendingReason();
+                pendingReasonMask = 0;
+                successorCompletion = new TaskCompletionSource<ClientSyncRunOutcome>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                activeFlight = successorCompletion.Task;
+                completion.TrySetResult(outcome);
+            }
+            else
+            {
+                CompleteFlight(completion, outcome);
+            }
+        }
+
+        if (successorCompletion is not null)
+        {
+            _ = ExecuteFlightAsync(successorReason!.Value, successorCompletion);
         }
     }
 
@@ -262,7 +283,6 @@ public sealed class ClientSyncCoordinator : IClientAccountSyncCoordinator
         ClientSyncRunOutcome outcome)
     {
         pendingReasonMask = 0;
-        rerunActive = false;
         activeFlight = null;
         completion.TrySetResult(outcome);
     }

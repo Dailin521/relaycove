@@ -22,6 +22,7 @@ using RelayCove.Client.Updates;
 using RelayCove.Shared.Admin;
 using RelayCove.Shared.Conversations;
 using RelayCove.Shared.Messages;
+using RelayCove.Shared.Users;
 
 namespace RelayCove.Client;
 
@@ -93,6 +94,8 @@ public partial class MainWindow : Window
     private CancellationTokenSource? messageSearchCancellationSource;
     private CancellationTokenSource? searchNavigationCancellationSource;
     private CancellationTokenSource? adminMemberSelectionCancellationSource;
+    private CancellationTokenSource? mentionSearchCancellationSource;
+    private CancellationTokenSource? channelParticipantCancellationSource;
     private SearchHighlightLease? searchHighlightLease;
     private DispatcherTimer? searchHighlightTimer;
     private long mentionSearchVersion;
@@ -101,16 +104,21 @@ public partial class MainWindow : Window
     private long attachmentSubmissionVersion;
     private long attachmentDownloadContextVersion;
     private Guid? attachmentDownloadConversationId;
+    private ConversationParticipantListResponse? channelParticipants;
+    private IReadOnlyList<UserDirectoryEntryDto> channelUserDirectory =
+        Array.Empty<UserDirectoryEntryDto>();
     private bool composerContextReady;
     private bool suppressSelectionRequest;
     private bool applyingMessageSnapshot;
     private bool composerAvailable;
     private bool composerSubmissionRunning;
     private bool mentionSearchRunning;
+    private bool suppressMentionSearchInputChanges;
     private bool messageSearchRunning;
     private bool searchNavigationRunning;
     private bool suppressMessageSearchInputChanges;
     private bool attachmentInputRunning;
+    private bool channelOperationRunning;
     private CancellationTokenSource? attachmentInputCancellationSource;
     private int lastAnnouncedAttachmentIndex;
     private int lastAnnouncedAttachmentProgressBucket = -1;
@@ -126,6 +134,12 @@ public partial class MainWindow : Window
             ConversationType.PrivateChannel,
         };
         AdminChannelTypeComboBox.SelectedIndex = 0;
+        ChannelTypeComboBox.ItemsSource = new[]
+        {
+            ConversationType.PublicChannel,
+            ConversationType.PrivateChannel,
+        };
+        ChannelTypeComboBox.SelectedIndex = 0;
         UpdateMessageSearchState();
     }
 
@@ -308,6 +322,7 @@ public partial class MainWindow : Window
 
         ResetAttachmentDownloadContext(conversationId: null);
         InvalidateMessageSearchFromUi(closePanel: true, clearKeyword: true);
+        CloseChannelPanel(clearPresentation: true);
         if (accountShell is not null)
         {
             accountShell.SearchResultsInvalidated -= OnSearchResultsInvalidated;
@@ -326,6 +341,7 @@ public partial class MainWindow : Window
             ClearComposerReply();
             UpdateComposerState();
             ClearMessageSearchPresentation(closePanel: true, clearKeyword: true);
+            CloseChannelPanel(clearPresentation: true);
         }
 
         var presentation = ClientAccountShellPresenter.Present(snapshot);
@@ -356,6 +372,7 @@ public partial class MainWindow : Window
         RetryButton.IsEnabled = presentation.CanRetry;
         LogoutButton.IsEnabled = presentation.CanLogout;
         OpenSearchButton.IsEnabled = snapshot.HasActiveAccount && !presentation.IsBusy;
+        OpenChannelPanelButton.IsEnabled = snapshot.HasActiveAccount && !presentation.IsBusy;
         ApplyAdminAvailability(snapshot.IsAdmin && snapshot.HasActiveAccount);
         CheckForUpdatesButton.IsEnabled = checkForUpdates is not null &&
             snapshot.ServerBaseUri is not null && !mandatoryUpdateGate;
@@ -631,6 +648,330 @@ public partial class MainWindow : Window
         SetLiveText(
             SidebarNotificationText,
             ClientAccountShellPresenter.DescribeNotificationAvailability(isAvailable));
+    }
+
+    private async void OnOpenChannelPanelClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (accountShell?.AdminCoordinator is null || !accountShell.Snapshot.HasActiveAccount)
+        {
+            SetLiveText(ChannelLiveRegionText, "请先登录后再管理频道。");
+            return;
+        }
+
+        ChannelOverlay.Visibility = Visibility.Visible;
+        UpdateChannelPanelState();
+        await LoadChannelUserDirectoryAsync();
+        if (SelectedConversationId is { } conversationId)
+        {
+            await LoadConversationParticipantsAsync(conversationId);
+        }
+
+        ChannelNameInput.Focus();
+    }
+
+    private void OnCloseChannelPanelClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        CloseChannelPanel(clearPresentation: false);
+        OpenChannelPanelButton.Focus();
+    }
+
+    private async void OnCreateChannelClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        var coordinator = accountShell?.AdminCoordinator;
+        if (coordinator is null ||
+            ChannelTypeComboBox.SelectedItem is not ConversationType type ||
+            channelOperationRunning)
+        {
+            return;
+        }
+
+        channelOperationRunning = true;
+        UpdateChannelPanelState();
+        SetLiveText(ChannelLiveRegionText, "正在创建频道…");
+        try
+        {
+            var result = await coordinator.CreateConversationForChatAsync(
+                new CreateConversationRequest(type, ChannelNameInput.Text));
+            if (result.Status != ClientAdminRequestStatus.Completed || result.Value is null)
+            {
+                SetLiveText(
+                    ChannelLiveRegionText,
+                    $"创建失败：{DescribeAdminStatus(result.Status)}。");
+                return;
+            }
+
+            var created = result.Value;
+            ChannelNameInput.Clear();
+            pendingConversationSelectionId = created.Id;
+            SetLiveText(
+                ChannelLiveRegionText,
+                type == ConversationType.PrivateChannel
+                    ? "私有频道已创建；正在同步，随后可从左侧目录拉入成员。"
+                    : "公开频道已创建；所有正常成员会自动看到它。");
+            if (accountShell is not null)
+            {
+                await accountShell.RefreshConversationsAsync();
+            }
+
+            SelectSearchConversation(created.Id);
+            await LoadConversationParticipantsAsync(created.Id);
+        }
+        finally
+        {
+            channelOperationRunning = false;
+            UpdateChannelPanelState();
+        }
+    }
+
+    private void OnChannelNameTextChanged(object sender, TextChangedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        UpdateChannelPanelState();
+    }
+
+    private async void OnInviteChannelMemberClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button { DataContext: ChannelUserPresentation user } ||
+            !user.CanInvite ||
+            channelParticipants is not
+            {
+                Type: ConversationType.PrivateChannel,
+                CanManageMembers: true,
+            } participants ||
+            accountShell?.AdminCoordinator is not { } coordinator ||
+            channelOperationRunning)
+        {
+            return;
+        }
+
+        channelOperationRunning = true;
+        UpdateChannelPanelState();
+        SetLiveText(ChannelLiveRegionText, $"正在把 {user.DisplayName} 拉入私有频道…");
+        try
+        {
+            var result = await coordinator.UpsertConversationMemberForChatAsync(
+                participants.ConversationId,
+                new UpsertConversationMemberRequest(
+                    user.UserId,
+                    ConversationMemberRole.Member));
+            SetLiveText(
+                ChannelLiveRegionText,
+                result.Status == ClientAdminRequestStatus.Completed
+                    ? $"已拉入 {user.DisplayName}；对方在线时会立即同步显示频道。"
+                    : $"拉入失败：{DescribeAdminStatus(result.Status)}。");
+            if (result.Status == ClientAdminRequestStatus.Completed)
+            {
+                await LoadConversationParticipantsAsync(participants.ConversationId);
+            }
+        }
+        finally
+        {
+            channelOperationRunning = false;
+            UpdateChannelPanelState();
+        }
+    }
+
+    private async void OnRemoveChannelMemberClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button { DataContext: ChannelUserPresentation user } ||
+            !user.CanRemove ||
+            channelParticipants is not
+            {
+                Type: ConversationType.PrivateChannel,
+                CanManageMembers: true,
+            } participants ||
+            accountShell?.AdminCoordinator is not { } coordinator ||
+            channelOperationRunning)
+        {
+            return;
+        }
+
+        channelOperationRunning = true;
+        UpdateChannelPanelState();
+        SetLiveText(ChannelLiveRegionText, $"正在移除 {user.DisplayName}…");
+        try
+        {
+            var result = await coordinator.RemoveConversationMemberForChatAsync(
+                participants.ConversationId,
+                user.UserId);
+            SetLiveText(
+                ChannelLiveRegionText,
+                result.Status == ClientAdminRequestStatus.Completed
+                    ? $"已移除 {user.DisplayName}。"
+                    : $"移除失败：{DescribeAdminStatus(result.Status)}。");
+            if (result.Status == ClientAdminRequestStatus.Completed)
+            {
+                await LoadConversationParticipantsAsync(participants.ConversationId);
+            }
+        }
+        finally
+        {
+            channelOperationRunning = false;
+            UpdateChannelPanelState();
+        }
+    }
+
+    private async Task LoadChannelUserDirectoryAsync()
+    {
+        var coordinator = accountShell?.AdminCoordinator;
+        if (coordinator is null)
+        {
+            return;
+        }
+
+        var result = await coordinator.GetUserDirectoryAsync();
+        if (!ReferenceEquals(accountShell?.AdminCoordinator, coordinator))
+        {
+            return;
+        }
+
+        if (result.Status == ClientAdminRequestStatus.Completed && result.Value is not null)
+        {
+            channelUserDirectory = result.Value;
+            ApplyChannelParticipantPresentation();
+        }
+        else if (ChannelOverlay.Visibility == Visibility.Visible)
+        {
+            SetLiveText(
+                ChannelLiveRegionText,
+                $"团队成员目录加载失败：{DescribeAdminStatus(result.Status)}。");
+        }
+    }
+
+    private async Task LoadConversationParticipantsAsync(Guid conversationId)
+    {
+        var coordinator = accountShell?.AdminCoordinator;
+        if (coordinator is null || conversationId == Guid.Empty)
+        {
+            return;
+        }
+
+        channelParticipantCancellationSource?.Cancel();
+        using var cancellationSource = new CancellationTokenSource();
+        channelParticipantCancellationSource = cancellationSource;
+        SetLiveText(ConversationMembersSummaryText, "成员：正在加载…");
+        var result = await coordinator.GetConversationParticipantsAsync(
+            conversationId,
+            cancellationSource.Token);
+        if (cancellationSource.IsCancellationRequested ||
+            !ReferenceEquals(channelParticipantCancellationSource, cancellationSource) ||
+            SelectedConversationId != conversationId ||
+            !ReferenceEquals(accountShell?.AdminCoordinator, coordinator))
+        {
+            return;
+        }
+
+        channelParticipantCancellationSource = null;
+        if (result.Status == ClientAdminRequestStatus.Completed && result.Value is not null)
+        {
+            channelParticipants = result.Value;
+            SetLiveText(
+                ConversationMembersSummaryText,
+                result.Value.Participants.Count == 0
+                    ? "成员：暂无正常成员"
+                    : $"成员（{result.Value.Participants.Count}）：" +
+                      string.Join("、", result.Value.Participants.Select(user => user.DisplayName)));
+            ApplyChannelParticipantPresentation();
+        }
+        else
+        {
+            channelParticipants = null;
+            SetLiveText(ConversationMembersSummaryText, "成员：暂时无法加载");
+            ApplyChannelParticipantPresentation();
+        }
+    }
+
+    private void ApplyChannelParticipantPresentation()
+    {
+        var coordinator = accountShell?.AdminCoordinator;
+        var currentUserId = coordinator?.CurrentUserId ?? Guid.Empty;
+        var participantIds = channelParticipants?.Participants
+            .Select(user => user.UserId)
+            .ToHashSet() ?? [];
+        var canManage = channelParticipants is
+        {
+            Type: ConversationType.PrivateChannel,
+            CanManageMembers: true,
+        };
+        ChannelParticipantList.ItemsSource = channelParticipants?.Participants
+            .Select(user => new ChannelUserPresentation(
+                user.UserId,
+                user.UserName,
+                user.DisplayName,
+                CanInvite: false,
+                CanRemove: canManage && user.UserId != currentUserId))
+            .ToArray() ?? [];
+        ChannelUserDirectoryList.ItemsSource = channelUserDirectory
+            .Select(user => new ChannelUserPresentation(
+                user.UserId,
+                user.UserName,
+                user.DisplayName,
+                CanInvite: canManage &&
+                    user.UserId != currentUserId &&
+                    !participantIds.Contains(user.UserId),
+                CanRemove: false))
+            .ToArray();
+        SetLiveText(
+            ChannelCurrentHeadingText,
+            channelParticipants is null
+                ? "当前会话成员"
+                : $"当前会话成员（{channelParticipants.Participants.Count}）");
+        SetLiveText(
+            ChannelMemberHelpText,
+            channelParticipants switch
+            {
+                null => "选择会话后显示成员。",
+                { Type: ConversationType.PublicChannel } => "公开频道显示全部正常成员。",
+                { Type: ConversationType.Direct } => "私聊显示双方成员。",
+                { CanManageMembers: true } => "你可以从左侧拉人，或从这里移除成员。",
+                _ => "私有频道只有频道管理员可以增删成员。",
+            });
+        UpdateChannelPanelState();
+    }
+
+    private void UpdateChannelPanelState()
+    {
+        if (CreateChannelButton is null)
+        {
+            return;
+        }
+
+        var available = accountShell?.Snapshot.HasActiveAccount == true &&
+            accountShell.AdminCoordinator is not null;
+        ChannelNameInput.IsEnabled = available && !channelOperationRunning;
+        ChannelTypeComboBox.IsEnabled = available && !channelOperationRunning;
+        CreateChannelButton.IsEnabled = available &&
+            !channelOperationRunning &&
+            !string.IsNullOrWhiteSpace(ChannelNameInput.Text);
+        ChannelParticipantList.IsEnabled = !channelOperationRunning;
+        ChannelUserDirectoryList.IsEnabled = !channelOperationRunning;
+    }
+
+    private void CloseChannelPanel(bool clearPresentation)
+    {
+        ChannelOverlay.Visibility = Visibility.Collapsed;
+        if (!clearPresentation)
+        {
+            return;
+        }
+
+        channelParticipantCancellationSource?.Cancel();
+        channelParticipantCancellationSource = null;
+        channelParticipants = null;
+        channelUserDirectory = Array.Empty<UserDirectoryEntryDto>();
+        ChannelParticipantList.ItemsSource = null;
+        ChannelUserDirectoryList.ItemsSource = null;
+        SetLiveText(ConversationMembersSummaryText, "成员：请选择会话");
+        SetLiveText(ChannelLiveRegionText, string.Empty);
     }
 
     private void ApplyAdminAvailability(bool isAdmin)
@@ -2376,7 +2717,7 @@ public partial class MainWindow : Window
         MessageComposerTextBox.Focus();
     }
 
-    private void OnMentionPickerClicked(object sender, RoutedEventArgs e)
+    private async void OnMentionPickerClicked(object sender, RoutedEventArgs e)
     {
         _ = sender;
         _ = e;
@@ -2391,6 +2732,11 @@ public partial class MainWindow : Window
         if (MentionPickerPanel.Visibility == Visibility.Visible)
         {
             MentionSearchTextBox.Focus();
+            await SearchMentionCandidatesAsync(debounce: false);
+        }
+        else
+        {
+            CancelMentionSearch();
         }
 
         UpdateComposerState();
@@ -2400,15 +2746,21 @@ public partial class MainWindow : Window
     {
         _ = sender;
         _ = e;
+        CancelMentionSearch();
         MentionPickerPanel.Visibility = Visibility.Collapsed;
         MessageComposerTextBox.Focus();
     }
 
-    private void OnMentionSearchTextChanged(object sender, TextChangedEventArgs e)
+    private async void OnMentionSearchTextChanged(object sender, TextChangedEventArgs e)
     {
         _ = sender;
         _ = e;
         UpdateComposerState();
+        if (!suppressMentionSearchInputChanges &&
+            MentionPickerPanel.Visibility == Visibility.Visible)
+        {
+            await SearchMentionCandidatesAsync(debounce: true);
+        }
     }
 
     private async void OnMentionSearchPreviewKeyDown(
@@ -2422,41 +2774,54 @@ public partial class MainWindow : Window
         }
 
         e.Handled = true;
-        await SearchMentionCandidatesAsync();
+        await SearchMentionCandidatesAsync(debounce: false);
     }
 
     private async void OnMentionSearchClicked(object sender, RoutedEventArgs e)
     {
         _ = sender;
         _ = e;
-        await SearchMentionCandidatesAsync();
+        await SearchMentionCandidatesAsync(debounce: false);
     }
 
-    private async Task SearchMentionCandidatesAsync()
+    private async Task SearchMentionCandidatesAsync(bool debounce)
     {
         var query = MentionSearchTextBox.Text;
         var conversationId = composerContextConversationId;
         if (accountShell is null ||
-            mentionSearchRunning ||
             !composerAvailable ||
             !conversationId.HasValue ||
             !ClientMentionPolicy.IsValidQuery(query))
         {
             SetLiveText(
                 MentionSearchStatusText,
-                "请输入 1–64 位 ASCII 字母、数字、点、下划线或连字符前缀。");
+                "请输入 0–64 位 ASCII 字母、数字、点、下划线或连字符前缀。");
             UpdateComposerState();
             return;
         }
 
+        mentionSearchCancellationSource?.Cancel();
+        using var cancellationSource = new CancellationTokenSource();
+        mentionSearchCancellationSource = cancellationSource;
         var searchVersion = ++mentionSearchVersion;
         mentionSearchRunning = true;
         MentionCandidateList.ItemsSource = null;
-        SetLiveText(MentionSearchStatusText, "正在搜索当前会话候选…");
+        SetLiveText(
+            MentionSearchStatusText,
+            query.Length == 0
+                ? "正在加载当前会话全部成员…"
+                : "正在自动筛选当前会话成员…");
         UpdateComposerState();
         try
         {
-            var outcome = await accountShell.SearchMentionCandidatesAsync(query);
+            if (debounce)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(120), cancellationSource.Token);
+            }
+
+            var outcome = await accountShell.SearchMentionCandidatesAsync(
+                query,
+                cancellationToken: cancellationSource.Token);
             if (searchVersion != mentionSearchVersion ||
                 !composerAvailable ||
                 composerContextConversationId != conversationId)
@@ -2470,10 +2835,12 @@ public partial class MainWindow : Window
                 SetLiveText(
                     MentionSearchStatusText,
                     outcome.Candidates.Count == 0
-                        ? "当前会话没有匹配候选。"
+                        ? "当前会话没有匹配成员。"
                         : outcome.HasMore
                             ? $"显示前 {outcome.Candidates.Count} 个候选，请继续缩小前缀。"
-                            : $"找到 {outcome.Candidates.Count} 个候选。");
+                            : query.Length == 0
+                                ? $"已列出 {outcome.Candidates.Count} 个成员。"
+                                : $"找到 {outcome.Candidates.Count} 个成员。");
             }
             else
             {
@@ -2483,10 +2850,6 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
-            if (searchVersion == mentionSearchVersion)
-            {
-                SetLiveText(MentionSearchStatusText, "候选搜索已取消。");
-            }
         }
         catch (ObjectDisposedException)
         {
@@ -2500,9 +2863,24 @@ public partial class MainWindow : Window
             if (searchVersion == mentionSearchVersion)
             {
                 mentionSearchRunning = false;
+                if (ReferenceEquals(mentionSearchCancellationSource, cancellationSource))
+                {
+                    mentionSearchCancellationSource = null;
+                }
+
                 UpdateComposerState();
             }
         }
+    }
+
+    private void CancelMentionSearch()
+    {
+        mentionSearchVersion++;
+        mentionSearchRunning = false;
+        var cancellationSource = mentionSearchCancellationSource;
+        mentionSearchCancellationSource = null;
+        cancellationSource?.Cancel();
+        UpdateComposerState();
     }
 
     private void OnMentionCandidateClicked(object sender, RoutedEventArgs e)
@@ -3648,7 +4026,6 @@ public partial class MainWindow : Window
             return;
         }
 
-        var submittedContextVersion = composerContextVersion;
         if (submittedReplyToMessageId.HasValue &&
             composerReplyConversationId != submittedConversationId)
         {
@@ -3675,15 +4052,14 @@ public partial class MainWindow : Window
                     composerMentions.Keys.ToArray(),
                     out var currentMentionUserIds) &&
                 currentMentionUserIds.SequenceEqual(submittedMentionUserIds);
-            if (outcome.PendingCommitted &&
-                displayedMessageSnapshot?.ConversationId == submittedConversationId &&
-                composerContextVersion == submittedContextVersion &&
-                replyContextUnchanged &&
-                mentionContextUnchanged &&
-                string.Equals(
-                    MessageComposerTextBox.Text,
+            if (ClientTextComposerContextPolicy.ShouldClearCommittedDraft(
+                    outcome.PendingCommitted,
+                    submittedConversationId,
+                    displayedMessageSnapshot?.ConversationId,
                     submittedContent,
-                    StringComparison.Ordinal))
+                    MessageComposerTextBox.Text,
+                    replyContextUnchanged,
+                    mentionContextUnchanged))
             {
                 MessageComposerTextBox.Clear();
                 ClearComposerMentions(closePicker: true);
@@ -3892,7 +4268,6 @@ public partial class MainWindow : Window
             !attachmentInputRunning &&
             !hasAttachments;
         MentionSearchTextBox.IsEnabled = composerAvailable &&
-            !mentionSearchRunning &&
             !attachmentInputRunning &&
             !hasAttachments;
         MentionSearchButton.IsEnabled = composerAvailable &&
@@ -4238,6 +4613,17 @@ public partial class MainWindow : Window
             selected is null
                 ? "选择左侧真实会话以查看消息。"
                 : $"已选择{selected.TypeLabel}；正在读取账户隔离的真实消息。");
+        if (selected is null)
+        {
+            channelParticipantCancellationSource?.Cancel();
+            channelParticipants = null;
+            SetLiveText(ConversationMembersSummaryText, "成员：请选择会话");
+            ApplyChannelParticipantPresentation();
+        }
+        else
+        {
+            _ = LoadConversationParticipantsAsync(selected.Id);
+        }
     }
 
     private void ReconcileComposerReply(ClientMessageListSnapshot snapshot)
@@ -4306,16 +4692,23 @@ public partial class MainWindow : Window
     private void ClearComposerMentions(bool closePicker)
     {
         var hadSelectedMentions = composerMentions.Count != 0;
-        mentionSearchVersion++;
-        mentionSearchRunning = false;
+        CancelMentionSearch();
         composerMentions.Clear();
         MentionCandidateList.ItemsSource = null;
         SelectedMentionList.ItemsSource = null;
-        MentionSearchTextBox.Clear();
+        suppressMentionSearchInputChanges = true;
+        try
+        {
+            MentionSearchTextBox.Clear();
+        }
+        finally
+        {
+            suppressMentionSearchInputChanges = false;
+        }
         SetLiveText(SelectedMentionHeadingText, "已选 0/20");
         SetLiveText(
             MentionSearchStatusText,
-            "输入 1–64 位用户名字符前缀后显式搜索。");
+            "打开后自动列出成员；输入用户名字符会即时筛选。");
         if (closePicker)
         {
             MentionPickerPanel.Visibility = Visibility.Collapsed;
@@ -4958,4 +5351,11 @@ public partial class MainWindow : Window
             }
         }
     }
+
+    private sealed record ChannelUserPresentation(
+        Guid UserId,
+        string UserName,
+        string DisplayName,
+        bool CanInvite,
+        bool CanRemove);
 }

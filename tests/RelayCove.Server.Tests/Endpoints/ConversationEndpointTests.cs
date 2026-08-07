@@ -11,6 +11,7 @@ using RelayCove.Server.Tests.Infrastructure;
 using RelayCove.Shared.Auth;
 using RelayCove.Shared.Conversations;
 using RelayCove.Shared.Errors;
+using RelayCove.Shared.Users;
 
 namespace RelayCove.Server.Tests.Endpoints;
 
@@ -44,19 +45,19 @@ public sealed class ConversationEndpointTests(
     }
 
     [Fact]
-    public async Task ChannelCreation_WhenActorIsCurrentAdministrator_CreatesVisibleAuthoritativeChannels()
+    public async Task ChannelCreation_WhenActorsAreActive_CreatesVisibleAuthoritativeChannels()
     {
         var adminUserName = CreateUserName("channel-admin");
         var normalUserName = CreateUserName("channel-normal");
         var adminId = await factory.CreateUserAsync(adminUserName, ExistingPassword, isAdmin: true);
-        await factory.CreateUserAsync(normalUserName, ExistingPassword);
+        var normalId = await factory.CreateUserAsync(normalUserName, ExistingPassword);
         using var adminClient = await CreateAuthenticatedClientAsync(adminUserName);
         using var normalClient = await CreateAuthenticatedClientAsync(normalUserName);
 
-        using var deniedResponse = await normalClient.PostAsJsonAsync(
-            "/api/conversations",
-            new CreateConversationRequest(ConversationType.PublicChannel, "Denied"));
-        await AssertErrorAsync(deniedResponse, HttpStatusCode.Forbidden, ApiErrorCodes.AccessDenied);
+        var normalCreatedConversation = await CreateChannelAsync(
+            normalClient,
+            ConversationType.PublicChannel,
+            $"Normal public {Guid.NewGuid():N}");
 
         var publicConversation = await CreateChannelAsync(
             adminClient,
@@ -83,6 +84,7 @@ public sealed class ConversationEndpointTests(
         Assert.Contains(adminList.Conversations, conversation => conversation.Id == publicConversation.Id);
         Assert.Contains(adminList.Conversations, conversation => conversation.Id == privateConversation.Id);
         Assert.Contains(normalList.Conversations, conversation => conversation.Id == publicConversation.Id);
+        Assert.Contains(normalList.Conversations, conversation => conversation.Id == normalCreatedConversation.Id);
         Assert.DoesNotContain(normalList.Conversations, conversation => conversation.Id == privateConversation.Id);
         Assert.True(adminList.Conversations.Single(conversation =>
             conversation.Id == publicConversation.Id).IsMuted);
@@ -109,6 +111,11 @@ public sealed class ConversationEndpointTests(
             Assert.Equal(ConversationMemberRole.Administrator, member.Role);
             Assert.Equal(0, member.LastReadMessageId);
         });
+        var normalCreatorMembership = await dbContext.ConversationMembers.AsNoTracking()
+            .SingleAsync(member =>
+                member.UserId == normalId &&
+                member.ConversationId == normalCreatedConversation.Id);
+        Assert.Equal(ConversationMemberRole.Administrator, normalCreatorMembership.Role);
     }
 
     [Fact]
@@ -321,6 +328,96 @@ public sealed class ConversationEndpointTests(
     }
 
     [Fact]
+    public async Task ParticipantAndUserDirectory_WhenReadByNormalUsers_ReturnSafeCurrentMembership()
+    {
+        var creatorName = CreateUserName("participant-creator");
+        var memberName = CreateUserName("participant-member");
+        var outsiderName = CreateUserName("participant-outsider");
+        var creatorId = await factory.CreateUserAsync(creatorName, ExistingPassword);
+        var memberId = await factory.CreateUserAsync(memberName, ExistingPassword);
+        var outsiderId = await factory.CreateUserAsync(outsiderName, ExistingPassword);
+        var disabledId = await factory.CreateUserAsync(
+            CreateUserName("participant-disabled"),
+            ExistingPassword,
+            isDisabled: true);
+        using var creatorClient = await CreateAuthenticatedClientAsync(creatorName);
+        using var memberClient = await CreateAuthenticatedClientAsync(memberName);
+        using var outsiderClient = await CreateAuthenticatedClientAsync(outsiderName);
+
+        var publicConversation = await CreateChannelAsync(
+            creatorClient,
+            ConversationType.PublicChannel,
+            $"Public participants {Guid.NewGuid():N}");
+        using (var publicResponse = await outsiderClient.GetAsync(
+                   $"/api/conversations/{publicConversation.Id:D}/participants"))
+        {
+            Assert.Equal(HttpStatusCode.OK, publicResponse.StatusCode);
+            var participants = await publicResponse.Content
+                .ReadFromJsonAsync<ConversationParticipantListResponse>();
+            Assert.NotNull(participants);
+            Assert.Equal(ConversationType.PublicChannel, participants.Type);
+            Assert.False(participants.CanManageMembers);
+            Assert.Contains(participants.Participants, user => user.UserId == creatorId);
+            Assert.Contains(participants.Participants, user => user.UserId == memberId);
+            Assert.Contains(participants.Participants, user => user.UserId == outsiderId);
+            Assert.DoesNotContain(participants.Participants, user => user.UserId == disabledId);
+        }
+
+        using (var directoryResponse = await memberClient.GetAsync("/api/users"))
+        {
+            Assert.Equal(HttpStatusCode.OK, directoryResponse.StatusCode);
+            var directory = await directoryResponse.Content
+                .ReadFromJsonAsync<IReadOnlyList<UserDirectoryEntryDto>>();
+            Assert.NotNull(directory);
+            Assert.Contains(directory, user => user.UserId == creatorId);
+            Assert.Contains(directory, user => user.UserId == memberId);
+            Assert.Contains(directory, user => user.UserId == outsiderId);
+            Assert.DoesNotContain(directory, user => user.UserId == disabledId);
+        }
+
+        var privateConversation = await CreateChannelAsync(
+            creatorClient,
+            ConversationType.PrivateChannel,
+            $"Private participants {Guid.NewGuid():N}");
+        using (var add = await creatorClient.PostAsJsonAsync(
+                   $"/api/conversations/{privateConversation.Id:D}/members",
+                   new UpsertConversationMemberRequest(
+                       memberId,
+                       ConversationMemberRole.Member)))
+        {
+            Assert.Equal(HttpStatusCode.Created, add.StatusCode);
+        }
+
+        using (var creatorParticipantsResponse = await creatorClient.GetAsync(
+                   $"/api/conversations/{privateConversation.Id:D}/participants"))
+        {
+            var participants = await creatorParticipantsResponse.Content
+                .ReadFromJsonAsync<ConversationParticipantListResponse>();
+            Assert.NotNull(participants);
+            Assert.True(participants.CanManageMembers);
+            Assert.Equal(
+                new[] { creatorId, memberId }.Order(),
+                participants.Participants.Select(user => user.UserId).Order());
+        }
+
+        using (var memberParticipantsResponse = await memberClient.GetAsync(
+                   $"/api/conversations/{privateConversation.Id:D}/participants"))
+        {
+            var participants = await memberParticipantsResponse.Content
+                .ReadFromJsonAsync<ConversationParticipantListResponse>();
+            Assert.NotNull(participants);
+            Assert.False(participants.CanManageMembers);
+        }
+
+        using var denied = await outsiderClient.GetAsync(
+            $"/api/conversations/{privateConversation.Id:D}/participants");
+        await AssertErrorAsync(
+            denied,
+            HttpStatusCode.Forbidden,
+            ApiErrorCodes.ConversationAccessRevoked);
+    }
+
+    [Fact]
     public async Task MemberOperations_WhenConversationTypeOrInputIsWrong_ReturnStableErrors()
     {
         var adminName = CreateUserName("type-admin");
@@ -412,7 +509,7 @@ public sealed class ConversationEndpointTests(
     }
 
     [Fact]
-    public async Task ChannelCreation_WhenJwtAdministratorWasDemoted_RechecksDatabaseInsideWriteTransaction()
+    public async Task ChannelCreation_WhenJwtAdministratorWasDemoted_RemainsAllowedAsActiveUser()
     {
         var adminName = CreateUserName("demoted-admin");
         var adminId = await factory.CreateUserAsync(adminName, ExistingPassword, isAdmin: true);
@@ -427,8 +524,17 @@ public sealed class ConversationEndpointTests(
 
         using var response = await client.PostAsJsonAsync(
             "/api/conversations",
-            new CreateConversationRequest(ConversationType.PrivateChannel, "Should not exist"));
-        await AssertErrorAsync(response, HttpStatusCode.Forbidden, ApiErrorCodes.AccessDenied);
+            new CreateConversationRequest(ConversationType.PrivateChannel, "Active member channel"));
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var conversation = await response.Content.ReadFromJsonAsync<ConversationDto>();
+        Assert.NotNull(conversation);
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyContext = verifyScope.ServiceProvider.GetRequiredService<RelayCoveDbContext>();
+        var membership = await verifyContext.ConversationMembers.AsNoTracking()
+            .SingleAsync(member =>
+                member.UserId == adminId &&
+                member.ConversationId == conversation.Id);
+        Assert.Equal(ConversationMemberRole.Administrator, membership.Role);
     }
 
     [Fact]

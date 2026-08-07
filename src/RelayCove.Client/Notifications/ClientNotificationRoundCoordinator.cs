@@ -226,7 +226,7 @@ internal sealed class ClientNotificationRoundCoordinator :
             return;
         }
 
-        if (token.Reason == SyncReason.WindowActivated || activity.IsMainWindowForeground)
+        if (token.Reason == SyncReason.WindowActivated)
         {
             await DispatchAndObserveAsync(
                     roundIds.ToArray(),

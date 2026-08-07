@@ -55,12 +55,13 @@ public sealed class ClientMentionPolicyTests
     }
 
     [Theory]
-    [InlineData("bad query")]
-    [InlineData("%")]
-    [InlineData("@")]
-    [InlineData("")]
-    public void IsValidQuery_WhenUnsupported_ReturnsFalse(string query) =>
-        Assert.False(ClientMentionPolicy.IsValidQuery(query));
+    [InlineData("", true)]
+    [InlineData("alice", true)]
+    [InlineData("bad query", false)]
+    [InlineData("%", false)]
+    [InlineData("@", false)]
+    public void IsValidQuery_WhenInputVaries_ReturnsExpected(string query, bool expected) =>
+        Assert.Equal(expected, ClientMentionPolicy.IsValidQuery(query));
 
     [Fact]
     public void TryCanonicalizeUserIds_WhenValid_SortsWithoutMutatingInput()

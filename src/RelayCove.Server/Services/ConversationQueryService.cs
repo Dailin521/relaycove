@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using RelayCove.Server.Data;
 using RelayCove.Server.Data.Entities;
 using RelayCove.Shared.Conversations;
+using RelayCove.Shared.Users;
 
 namespace RelayCove.Server.Services;
 
@@ -144,6 +145,67 @@ public sealed class ConversationQueryService(
         return new ConversationOperationResult<ConversationMemberListResponse>(
             ConversationOperationStatus.Success,
             new ConversationMemberListResponse(conversationId, members));
+    }
+
+    public async Task<ConversationOperationResult<ConversationParticipantListResponse>> ListParticipantsAsync(
+        Guid actorUserId,
+        Guid conversationId,
+        CancellationToken cancellationToken)
+    {
+        if (actorUserId == Guid.Empty || conversationId == Guid.Empty)
+        {
+            return new ConversationOperationResult<ConversationParticipantListResponse>(
+                ConversationOperationStatus.AccessRevoked);
+        }
+
+        var context = await (
+                from conversation in ConversationAccessQuery.VisibleTo(dbContext, actorUserId)
+                where conversation.Id == conversationId
+                from actor in dbContext.Users.AsNoTracking()
+                where actor.Id == actorUserId && !actor.IsDisabled && actor.RetiredAt == null
+                select new
+                {
+                    conversation.Type,
+                    CanManageMembers = conversation.Type == ConversationType.PrivateChannel &&
+                        (actor.IsAdmin || conversation.Members.Any(member =>
+                            member.UserId == actorUserId &&
+                            member.Role == ConversationMemberRole.Administrator)),
+                })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (context is null)
+        {
+            logger.LogInformation(
+                "Conversation participant list read by {ActorUserId} for {ConversationId} was denied.",
+                actorUserId,
+                conversationId);
+            return new ConversationOperationResult<ConversationParticipantListResponse>(
+                ConversationOperationStatus.AccessRevoked);
+        }
+
+        IQueryable<User> participantUsers = dbContext.Users.AsNoTracking()
+            .Where(user => !user.IsDisabled && user.RetiredAt == null);
+        if (context.Type != ConversationType.PublicChannel)
+        {
+            participantUsers = participantUsers.Where(user =>
+                user.ConversationMemberships.Any(member =>
+                    member.ConversationId == conversationId));
+        }
+
+        var participants = await participantUsers
+            .OrderBy(user => user.NormalizedUserName)
+            .ThenBy(user => user.Id)
+            .Select(user => new UserDirectoryEntryDto(
+                user.Id,
+                user.UserName,
+                user.DisplayName))
+            .ToArrayAsync(cancellationToken);
+        return new ConversationOperationResult<ConversationParticipantListResponse>(
+            ConversationOperationStatus.Success,
+            new ConversationParticipantListResponse(
+                conversationId,
+                context.Type,
+                context.CanManageMembers,
+                Array.AsReadOnly(participants)));
     }
 
     private IQueryable<Conversation> BuildVisibleConversations(
