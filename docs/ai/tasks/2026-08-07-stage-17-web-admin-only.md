@@ -3,7 +3,7 @@
 ## 任务定义
 
 - **任务名称：** 阶段 17 管理员入口统一到网页后台
-- **状态：** `待开始`
+- **状态：** `实现完成，发布验证中`
 - **目标版本：** `1.0.0-rc.22`
 - **基准提交：** `c6a35a71e53589a7a401320086ecb1576b345542`
 - **工作分支：** `agent/stage-17-web-admin-only`
@@ -18,6 +18,7 @@ Windows 客户端只保留聊天和个人使用功能，不再显示全局管理
 - `已验证`：网页后台 `https://hklight.2000521.xyz/relaycove/admin/` 已部署，未登录访问返回 302 到登录页。
 - `已验证`：Windows 客户端仍包含管理员按钮、完整管理 Overlay、`ClientAdminCoordinator` 及对应测试。
 - `已验证`：普通用户频道创建和私有频道成员管理属于聊天功能，不依赖全局管理员 Overlay，必须保留。
+- `已验证`：`ClientAdminCoordinator` 同时承载普通聊天的频道创建、用户目录、参与者查询和私有成员管理；因此保留该协调器的实例与聊天复用方法，仅移除全局管理 Overlay 专用 UI 与调用链。
 - `已验证`：`main` 与 `origin/main` 一致，线上内部更新通道为 rc.21。
 
 ### 假设
@@ -28,7 +29,7 @@ Windows 客户端只保留聊天和个人使用功能，不再显示全局管理
 
 - 必须实现：
   - 移除 Windows 客户端全局“管理员”按钮和管理员 Overlay。
-  - 停止在客户端账户组合中创建全局管理员协调器。
+  - 停止创建和调用仅服务全局管理员 Overlay 的管理入口链路；保留为普通聊天频道/成员操作复用的协调能力。
   - 删除仅服务于该 Overlay 的死代码和对应失效测试。
   - 保留普通频道创建、私有频道成员管理、管理员身份登录和全部服务器管理 API。
   - 管理员用户在客户端仍可正常聊天；管理操作统一使用网页后台。
@@ -77,4 +78,9 @@ pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.22
 
 ## 任务结果
 
-待实现。
+- `已验证`：已移除 Windows 客户端全局“管理员”按钮、完整 `AdminOverlay` 及其 XAML code-behind 专用事件和状态逻辑。
+- `已验证`：保留聊天、普通用户频道创建、用户目录、参与者显示和私有频道成员管理链路。
+- `已验证`：Release 解决方案构建 0 警告、0 错误；`ClientAdminCoordinatorTests|ClientAccountShellCoordinatorTests` 定向测试 92/92 通过；`git diff --check` 通过。
+- `已验证`：静态检查未发现 `OpenAdminButton`、`AdminOverlay` 或其控件/事件残留引用。
+- `未验证`：根据 owner 指令禁止使用 Windows 应用控制能力，本轮不执行 UI Automation 冒烟；发布包的编译启动校验仍由发布脚本完成。
+- `待完成`：rc.22 自包含包构建、校验与内部更新通道发布。

@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-- **当前阶段：** M5-03 已完成 — 日常聊天可用性修复与 rc.21 Windows 客户端已完成实机验证
+- **当前阶段：** stage-17 发布验证中 — Windows 全局管理员入口已移除，管理统一使用服务器网页后台
 - **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮；M4-01 可复现 Linux x64 Server RC、M4-02 可复现 Windows Client 自包含 ZIP、M4-03 共享更新协议、确定性清单、外部自举 Updater 与真实 rc.6→rc.11 替换恢复，以及 M4-04 Server exact 托管、Client 检查/下载、optional/mandatory UI 和显式 Exit→Updater 交接均已完成
 - **最近验证通过的状态：** stage-16 已完成普通用户频道/成员、实时授权刷新、自动提及候选、PathBase 图片下载预览、非当前会话提醒与发送后清空；生产 API 双账号与同提交 rc.20 Windows GUI 已真实验证，干净 HEAD rc.21 发布包校验通过。自包含包原生 Toast 注册失败时自动使用 Windows 托盘气泡，保持免安装可用
 - **可构建状态：** `已验证` — Fast、Full 与 Release 构建均为 0 警告、0 错误
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- stage-17 / rc.22 已建立开发分支与任务记录：Windows 全局管理员入口将统一迁移到既有网页后台；聊天与普通频道成员管理保持不变。尚未开始代码修改。
+- stage-17 / rc.22 代码已完成：Windows 全局管理员按钮与 Overlay 已移除；管理员仍可在客户端聊天，普通用户频道创建和私有成员管理保持可用；全局管理统一使用 `/relaycove/admin/` 网页后台。Release 构建与 92 项定向测试通过，待打包发布。
 
 ## 已完成
 
@@ -85,10 +85,11 @@
 - Server rc.15 / Client rc.14 exact 产物、真实 VPS/TLS/systemd、受控备份恢复、公网更新完整性、真实 WPF 登录/实时接收与 optional/mandatory→Updater 升级 Gate；内部 RC 初版按 owner 指令接受未执行严格双 Windows UI 全矩阵的限制
 - Server 内置 `/relaycove/admin/` 中文管理面、独立 Cookie/CSRF/JWT 隔离、生产 PathBase 与持久密钥；rc.17 已在香港 VPS 完成真实管理员登录、管理写入、重启会话保持及 `lq`/`dal` 普通账号登录验证
 - 用户名下限按 `DEC-060` 从 3 放宽到 2，SQLite CHECK migration、客户端提及规则、旧库数据保留、单字符拒绝与回滚备份边界均已验证
+- Windows 客户端全局管理入口已收敛至服务器内置 `/relaycove/admin/` 网页后台；保留聊天复用的频道创建、用户目录与私有成员管理协调能力
 
 ## 下一任务
 
-执行 `docs/ai/tasks/2026-08-07-stage-17-web-admin-only.md`，目标客户端版本 rc.22。公开 Tag/Release 与严格第二 Windows UI 矩阵继续作为可选后续。
+完成 rc.22 自包含包校验与内部更新通道发布；之后根据实际使用反馈确定下一个可用性切片。
 
 ## 阻塞项
 

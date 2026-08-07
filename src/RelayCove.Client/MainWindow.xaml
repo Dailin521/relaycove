@@ -106,14 +106,6 @@
                             Content="检查更新"
                             AutomationProperties.Name="检查更新"
                             Click="OnCheckForUpdatesClicked" />
-                    <Button x:Name="OpenAdminButton"
-                            Margin="0,8,0,0"
-                            Padding="10,5"
-                            HorizontalAlignment="Left"
-                            Content="管理员"
-                            Visibility="Collapsed"
-                            AutomationProperties.Name="打开管理员控制面"
-                            Click="OnOpenAdminClicked" />
                     <TextBlock x:Name="UpdateStatusText"
                                Margin="0,8,0,0"
                                AutomationProperties.LiveSetting="Polite"
@@ -1610,59 +1602,6 @@
                                 Click="OnExitForMandatoryUpdateClicked" />
                     </WrapPanel>
                 </StackPanel>
-            </Border>
-        </Grid>
-        <Grid x:Name="AdminOverlay"
-              Grid.ColumnSpan="2"
-              Panel.ZIndex="150"
-              Visibility="Collapsed"
-              Background="#D910243E"
-              Focusable="True"
-              KeyboardNavigation.TabNavigation="Cycle"
-              AutomationProperties.Name="管理员控制面">
-            <Border MaxWidth="960" MaxHeight="760" Margin="28" Padding="24"
-                    HorizontalAlignment="Center" VerticalAlignment="Center" Background="White"
-                    BorderBrush="#FF1677D2" BorderThickness="2" CornerRadius="12">
-                <Grid>
-                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <TextBlock Text="管理员控制面" FontSize="24" FontWeight="SemiBold" Foreground="#FF17263A" />
-                    <Button x:Name="CloseAdminButton" Grid.Column="1" Content="关闭" AutomationProperties.Name="关闭管理员控制面" Click="OnCloseAdminClicked" />
-                    <Grid Grid.Row="1" Grid.ColumnSpan="2" Margin="0,16,0,0">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                        <StackPanel>
-                            <TextBlock Text="用户" FontWeight="SemiBold" />
-                            <ListBox x:Name="AdminUserList" Height="155" Margin="0,6,0,8" AutomationProperties.Name="管理员用户列表">
-                                <ListBox.ItemTemplate><DataTemplate><TextBlock TextWrapping="Wrap"><Run Text="{Binding DisplayName}"/><Run Text="（"/><Run Text="{Binding UserName}"/><Run Text="） "/><Run Text="{Binding IsAdmin, StringFormat=管理员: {0}}"/><Run Text=" "/><Run Text="{Binding IsDisabled, StringFormat=禁用: {0}}"/><Run Text=" "/><Run Text="{Binding RetiredAt, StringFormat=退役: {0}}"/></TextBlock></DataTemplate></ListBox.ItemTemplate>
-                            </ListBox>
-                            <TextBox x:Name="AdminUserNameInput" Margin="0,3" AutomationProperties.Name="新用户名" ToolTip="用户名" />
-                            <TextBox x:Name="AdminDisplayNameInput" Margin="0,3" AutomationProperties.Name="新显示名" ToolTip="显示名" />
-                            <PasswordBox x:Name="AdminPasswordInput" Margin="0,3" AutomationProperties.Name="新用户密码" />
-                            <CheckBox x:Name="AdminIsAdminCheckBox" Margin="0,4" Content="设为管理员" AutomationProperties.Name="新用户是管理员" />
-                            <WrapPanel Margin="0,5,0,0"><Button Content="创建用户" Click="OnCreateAdminUserClicked"/><Button Margin="6,0,0,0" Content="禁用/恢复" Click="OnToggleAdminUserClicked"/><Button Margin="6,0,0,0" Content="退役" Click="OnRetireAdminUserClicked"/></WrapPanel>
-                            <PasswordBox x:Name="AdminResetPasswordInput" Margin="0,8,0,3" AutomationProperties.Name="重置密码" />
-                            <Button Content="重置选中用户密码" HorizontalAlignment="Left" Click="OnResetAdminPasswordClicked" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="2">
-                            <TextBlock Text="频道与服务器" FontWeight="SemiBold" />
-                            <ListBox x:Name="AdminChannelList" Height="105" Margin="0,6,0,8" AutomationProperties.Name="管理员频道列表" SelectionChanged="OnAdminChannelSelectionChanged">
-                                <ListBox.ItemTemplate><DataTemplate><TextBlock><Run Text="{Binding Name}"/><Run Text="（"/><Run Text="{Binding Type}"/><Run Text="）"/></TextBlock></DataTemplate></ListBox.ItemTemplate>
-                            </ListBox>
-                            <TextBlock Text="私有频道成员" FontWeight="SemiBold" />
-                            <ListBox x:Name="AdminMemberList" Height="76" Margin="0,4,0,6" AutomationProperties.Name="私有频道成员列表">
-                                <ListBox.ItemTemplate><DataTemplate><TextBlock TextWrapping="Wrap"><Run Text="{Binding DisplayName}"/><Run Text="（"/><Run Text="{Binding UserName}"/><Run Text="） "/><Run Text="{Binding Role}"/></TextBlock></DataTemplate></ListBox.ItemTemplate>
-                            </ListBox>
-                            <TextBox x:Name="AdminChannelNameInput" Margin="0,3" AutomationProperties.Name="频道名称" />
-                            <ComboBox x:Name="AdminChannelTypeComboBox" Margin="0,3" AutomationProperties.Name="频道类型" />
-                            <WrapPanel Margin="0,5,0,0"><Button Content="创建频道" Click="OnCreateAdminChannelClicked"/><Button Margin="6,0,0,0" Content="改名" Click="OnRenameAdminChannelClicked"/><Button Margin="6,0,0,0" Content="删除" Click="OnDeleteAdminChannelClicked"/></WrapPanel>
-                            <WrapPanel Margin="0,8,0,0"><Button Content="加入选中用户到私有频道" Click="OnAddPrivateMemberClicked"/><Button Margin="6,0,0,0" Content="移除成员" Click="OnRemovePrivateMemberClicked"/></WrapPanel>
-                            <TextBox x:Name="AdminUploadLimitInput" Margin="0,10,0,3" AutomationProperties.Name="附件上限字节" />
-                            <Button Content="保存附件上限" HorizontalAlignment="Left" Click="OnSaveAdminUploadLimitClicked" />
-                            <TextBlock x:Name="AdminStatusText" Margin="0,12,0,0" TextWrapping="Wrap" AutomationProperties.Name="管理员状态" AutomationProperties.LiveSetting="Polite" />
-                        </StackPanel>
-                    </Grid>
-                    <TextBlock x:Name="AdminLiveRegionText" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,14,0,0" Foreground="#FF1677D2" TextWrapping="Wrap" AutomationProperties.Name="管理员操作状态" AutomationProperties.LiveSetting="Assertive" />
-                </Grid>
             </Border>
         </Grid>
     </Grid>
