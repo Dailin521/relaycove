@@ -74,6 +74,33 @@ public sealed class ClientUpdateHandoffTests
     }
 
     [Fact]
+    public async Task MandatoryGate_WhenReleaseNotesAreAtMaximumLength_KeepsActionsReachableAtMinimumWindowSize()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateVisibleWindow();
+            try
+            {
+                window.Width = 900;
+                window.Height = 520;
+                window.ApplyUpdateState(CreateMandatoryState(new string('x', 8192)));
+                window.UpdateLayout();
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+
+                AssertWithinBounds(root, window.RetryMandatoryUpdateButton);
+                AssertWithinBounds(root, window.DownloadMandatoryUpdateButton);
+                AssertWithinBounds(root, window.ExitMandatoryUpdateButton);
+                Assert.True(window.MandatoryUpdateDetailText.ActualHeight > 0);
+                Assert.True(window.MandatoryUpdateNotesScrollViewer.ActualHeight < 300);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public void CompareAndDeleteBootstrapRecord_WhenCleanupTokenIsStale_PreservesNewRecord()
     {
         var root = Path.Combine(
@@ -244,7 +271,7 @@ public sealed class ClientUpdateHandoffTests
         return directory;
     }
 
-    private static ClientUpdateState CreateMandatoryState()
+    private static ClientUpdateState CreateMandatoryState(string releaseNotes = "Required fixes.")
     {
         var manifest = new UpdateManifestDto(
             SchemaVersion: UpdateConstants.SchemaVersion,
@@ -257,7 +284,7 @@ public sealed class ClientUpdateHandoffTests
                 Url: "https://updates.example.test/RelayCove-1.0.1-rc.1.zip",
                 SizeBytes: 123,
                 Sha256: new string('a', 64)),
-            ReleaseNotes: "Required fixes.");
+            ReleaseNotes: releaseNotes);
         return new ClientUpdateState(
             ClientUpdatePhase.MandatoryAvailable,
             CurrentVersion: "1.0.0",
@@ -287,5 +314,16 @@ public sealed class ClientUpdateHandoffTests
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         return completion.Task;
+    }
+
+    private static void AssertWithinBounds(FrameworkElement root, FrameworkElement element)
+    {
+        Assert.True(element.IsVisible);
+        var bounds = element.TransformToAncestor(root).TransformBounds(
+            new Rect(0, 0, element.ActualWidth, element.ActualHeight));
+        Assert.True(bounds.Left >= -1, $"{element.Name} is clipped on the left.");
+        Assert.True(bounds.Top >= -1, $"{element.Name} is clipped at the top.");
+        Assert.True(bounds.Right <= root.ActualWidth + 1, $"{element.Name} is clipped on the right.");
+        Assert.True(bounds.Bottom <= root.ActualHeight + 1, $"{element.Name} is clipped at the bottom.");
     }
 }

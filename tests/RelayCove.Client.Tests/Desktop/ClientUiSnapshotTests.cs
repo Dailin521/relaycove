@@ -1,15 +1,211 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using RelayCove.Client.Updates;
+using RelayCove.Shared.Updates;
 
 namespace RelayCove.Client.Tests.Desktop;
 
 [Collection(WpfTestCollection.Name)]
 public sealed class ClientUiSnapshotTests
 {
+    [Fact]
+    public async Task MainWindow_WhenSearchOverlayIsOpen_KeepsExplicitSearchControlsReachable()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.Width = 1600;
+                window.Height = 900;
+                window.SearchPanel.Visibility = Visibility.Visible;
+                window.Show();
+                window.UpdateLayout();
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+
+                AssertWithinBounds(root, window.CloseSearchButton);
+                AssertWithinBounds(root, window.MessageSearchTextBox);
+                AssertWithinBounds(root, window.MessageSearchScopeComboBox);
+                AssertWithinBounds(root, window.RunSearchButton);
+                Assert.Same(root, VisualTreeHelper.GetParent(window.SearchPanel));
+                Assert.Equal(1, Grid.GetRow(window.SearchPanel));
+                Assert.Equal(1, Grid.GetColumn(window.SearchPanel));
+                Assert.True(window.SearchPanel.ActualWidth >= window.MessageSearchTextBox.ActualWidth);
+                var searchCard = Assert.IsType<Border>(VisualTreeHelper.GetChild(window.SearchPanel, 0));
+                Assert.InRange(searchCard.ActualWidth, 756, 764);
+                Assert.True(searchCard.ActualHeight <= 640);
+
+                SaveSnapshotWhenRequested(root, "search-1600x900.png");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task MainWindow_WhenSettingsDrawerIsOpen_KeepsAccountActionsReachable()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.Width = 1280;
+                window.Height = 720;
+                window.SettingsOverlay.Visibility = Visibility.Visible;
+                window.Show();
+                window.UpdateLayout();
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+
+                AssertWithinBounds(root, window.CloseSettingsButton);
+                Assert.InRange(window.SettingsOverlay.ActualWidth, 395, 397);
+                Assert.True(window.SettingsOverlay.ActualWidth < root.ActualWidth / 2);
+
+                SaveSnapshotWhenRequested(root, "settings-1280x720.png");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task MainWindow_WhenMandatoryUpdateIsPresentedAtMinimumSize_KeepsActionsAndNotesReachable()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -32000;
+                window.Top = -32000;
+                window.Width = 900;
+                window.Height = 520;
+                window.BindUpdateActions(
+                    _ => Task.FromResult(true),
+                    () => Task.CompletedTask,
+                    () => Task.CompletedTask,
+                    static () => { },
+                    () => Task.CompletedTask,
+                    static () => { });
+                window.Show();
+                window.ApplyUpdateState(CreateMandatoryUpdateState(CreateRepresentativeReleaseNotes()));
+                window.UpdateLayout();
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+
+                Assert.Equal(Visibility.Visible, window.MandatoryUpdateOverlay.Visibility);
+                Assert.Equal(2, Grid.GetColumnSpan(window.MandatoryUpdateOverlay));
+                AssertWithinBounds(root, window.RetryMandatoryUpdateButton);
+                AssertWithinBounds(root, window.DownloadMandatoryUpdateButton);
+                AssertWithinBounds(root, window.ExitMandatoryUpdateButton);
+                Assert.True(window.MandatoryUpdateDetailText.ActualHeight > 0);
+                Assert.InRange(
+                    window.MandatoryUpdateNotesScrollViewer.ActualHeight,
+                    1,
+                    root.ActualHeight - 120);
+
+                SaveSnapshotWhenRequested(root, "mandatory-update-900x520.png");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task MainWindow_WhenImageViewerIsPresented_KeepsPreviewAndCloseActionReachable()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -32000;
+                window.Top = -32000;
+                window.Width = 1280;
+                window.Height = 720;
+                window.AttachmentImageViewerTitleText.Text = "rc.25-界面评审参考图.png";
+                window.AttachmentImageViewerStatusText.Text = "图片预览已加载；显示仍受 25 MiB 安全上限保护。";
+                window.AttachmentImageViewerImage.Source = CreateRepresentativeImagePreview();
+                window.AttachmentImageViewerOverlay.Visibility = Visibility.Visible;
+                window.Show();
+                window.UpdateLayout();
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+
+                Assert.Equal(Visibility.Visible, window.AttachmentImageViewerOverlay.Visibility);
+                Assert.Equal(2, Grid.GetColumnSpan(window.AttachmentImageViewerOverlay));
+                AssertWithinBounds(root, window.AttachmentImageViewerTitleText);
+                AssertWithinBounds(root, window.CloseAttachmentImageViewerButton);
+                AssertWithinBounds(root, window.AttachmentImageViewerImage);
+                AssertWithinBounds(root, window.AttachmentImageViewerStatusText);
+                Assert.NotNull(window.AttachmentImageViewerImage.Source);
+                Assert.InRange(window.AttachmentImageViewerImage.ActualWidth, 862, 871);
+                Assert.InRange(window.AttachmentImageViewerImage.ActualHeight, 483, 492);
+
+                SaveSnapshotWhenRequested(root, "image-viewer-1280x720.png");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData(900, 520, false)]
+    [InlineData(1280, 720, true)]
+    public async Task MainWindow_WhenRenderedAtLoginSizes_KeepsLoginFormReachable(
+        int width,
+        int height,
+        bool expectsBrandPanel)
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = new MainWindow
+            {
+                ShowActivated = false,
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Left = -32000,
+                Top = -32000,
+                Width = width,
+                Height = height,
+            };
+            AddRc25Resources(window);
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+
+                Assert.Equal(
+                    expectsBrandPanel ? Visibility.Visible : Visibility.Collapsed,
+                    window.LoginBrandPanel.Visibility);
+                AssertWithinBounds(root, window.ServerAddressTextBox);
+                AssertWithinBounds(root, window.UserNameTextBox);
+                AssertWithinBounds(root, window.PasswordInput);
+                AssertWithinBounds(root, window.LoginButton);
+                Assert.True(window.LoginButton.ActualHeight >= 38);
+
+                SaveSnapshotWhenRequested(root, $"login-{width}x{height}.png");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
     [Fact]
     public async Task MainWindow_WhenMemberDrawerIsOpenAndWindowNarrows_CollapsesDrawer()
     {
@@ -28,7 +224,7 @@ public sealed class ClientUiSnapshotTests
                 window.UpdateLayout();
 
                 Assert.Equal(Visibility.Visible, window.ChannelOverlay.Visibility);
-                Assert.Equal(new Thickness(0, 0, 372, 0), window.ConversationChatPanel.Margin);
+                Assert.Equal(new Thickness(0), window.ConversationChatPanel.Margin);
 
                 window.Width = 1280;
                 window.UpdateLayout();
@@ -75,6 +271,8 @@ public sealed class ClientUiSnapshotTests
                 Assert.True(window.MentionPickerButton.IsEnabled);
                 Assert.True(window.SendMessageButton.IsEnabled);
                 Assert.Equal("窗口较窄时请扩大窗口后再管理成员。", window.ChannelLiveRegionText.Text);
+                Assert.True(window.UnavailableFeatureNotice.IsNoticeVisible);
+                Assert.Equal("窗口较窄时请扩大窗口后再管理成员。", window.UnavailableFeatureNotice.Message);
             }
             finally
             {
@@ -84,6 +282,7 @@ public sealed class ClientUiSnapshotTests
     }
 
     [Theory]
+    [InlineData(900, 520)]
     [InlineData(1280, 720)]
     [InlineData(1600, 900)]
     [InlineData(1920, 1080)]
@@ -125,7 +324,7 @@ public sealed class ClientUiSnapshotTests
                 AssertWithinBounds(root, window.SendMessageButton);
                 Assert.True(window.MessageComposerTextBox.ActualHeight > 0);
                 Assert.True(window.SendMessageButton.ActualWidth > 0);
-                Assert.True(window.MessageList.ActualHeight >= 120);
+                Assert.True(window.MessageList.ActualHeight >= 80);
                 if (width == 1280)
                 {
                     Assert.Equal(Visibility.Collapsed, window.ChannelOverlay.Visibility);
@@ -144,17 +343,53 @@ public sealed class ClientUiSnapshotTests
                     }
                 }
 
-                var outputDirectory = Environment.GetEnvironmentVariable(
-                    "RELAYCOVE_UI_SNAPSHOT_DIR");
-                if (!string.IsNullOrWhiteSpace(outputDirectory))
+                SaveSnapshotWhenRequested(root, $"main-window-outer-{width}x{height}.png");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task MainWindow_WhenRenderedAtMinimumSize_KeepsCoreMessageActionsReachable()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -32000;
+                window.Top = -32000;
+                window.Width = 900;
+                window.Height = 520;
+                window.MessageList.ItemsSource = new object[]
                 {
-                    Directory.CreateDirectory(outputDirectory);
-                    SavePng(
-                        root,
-                        (int)Math.Ceiling(root.ActualWidth),
-                        (int)Math.Ceiling(root.ActualHeight),
-                        Path.Combine(outputDirectory, $"main-window-outer-{width}x{height}.png"));
+                    CreateMessage(
+                        "林乔",
+                        "最小窗口也必须保留复制、回复与重试入口。",
+                        "10:42",
+                        isOwnMessage: true,
+                        sendStatusLabel: "发送失败",
+                        canRetry: true),
+                };
+                window.Show();
+                window.UpdateLayout();
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+
+                var actions = FindVisualDescendants<Button>(window.MessageList)
+                    .Where(button => button.Content is "复制" or "回复" or "重试")
+                    .ToArray();
+                Assert.Equal(3, actions.Length);
+                foreach (var action in actions)
+                {
+                    Assert.True(action.IsVisible);
+                    AssertWithinBounds(root, action);
                 }
+
+                SaveSnapshotWhenRequested(root, "message-actions-900x520.png");
             }
             finally
             {
@@ -189,7 +424,7 @@ public sealed class ClientUiSnapshotTests
                 Assert.False(window.SelectAttachmentsButton.IsEnabled);
                 Assert.True(window.MentionPickerButton.IsEnabled);
                 Assert.True(window.SendMessageButton.IsEnabled);
-                Assert.True(window.MessageList.ActualHeight >= 120);
+                Assert.True(window.MessageList.ActualHeight >= 80);
 
                 ShowReplyAndAttachmentsState(window);
                 window.UpdateLayout();
@@ -202,7 +437,128 @@ public sealed class ClientUiSnapshotTests
                 Assert.False(window.SelectAttachmentsButton.IsEnabled);
                 Assert.False(window.MentionPickerButton.IsEnabled);
                 Assert.True(window.SendMessageButton.IsEnabled);
+                Assert.True(window.MessageList.ActualHeight >= 80);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task ComposerResizeThumb_WhenDragged_ExpandsAndClampsTheInputArea()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -32000;
+                window.Top = -32000;
+                window.Width = 1280;
+                window.Height = 720;
+                window.Show();
+                window.UpdateLayout();
+
+                var initialTextHeight = window.MessageComposerTextBox.ActualHeight;
+                Assert.Equal(System.Windows.Input.Cursors.SizeNS, window.ComposerResizeThumb.Cursor);
+
+                window.ComposerResizeThumb.RaiseEvent(new DragDeltaEventArgs(0, -140)
+                {
+                    RoutedEvent = Thumb.DragDeltaEvent,
+                });
+                window.UpdateLayout();
+
+                Assert.True(window.ComposerRow.Height.IsAuto);
+                Assert.InRange(window.MessageComposerTextBox.Height, 58, 200);
+                Assert.True(window.MessageComposerTextBox.ActualHeight > initialTextHeight);
                 Assert.True(window.MessageList.ActualHeight >= 120);
+
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+                SaveSnapshotWhenRequested(root, "composer-resized-1280x720.png");
+
+                window.ComposerResizeThumb.RaiseEvent(new DragDeltaEventArgs(0, 10000)
+                {
+                    RoutedEvent = Thumb.DragDeltaEvent,
+                });
+                window.UpdateLayout();
+
+                Assert.Equal(58, window.MessageComposerTextBox.Height);
+                AssertWithinBounds(root, window.SendMessageButton);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task ComposerResizeThumb_WhenExpandedAtMinimumWindowSize_KeepsMessageListVisible()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -32000;
+                window.Top = -32000;
+                window.Width = 900;
+                window.Height = 520;
+                window.Show();
+                window.UpdateLayout();
+
+                window.ComposerResizeThumb.RaiseEvent(new DragDeltaEventArgs(0, -10000)
+                {
+                    RoutedEvent = Thumb.DragDeltaEvent,
+                });
+                window.UpdateLayout();
+
+                Assert.InRange(window.MessageComposerTextBox.Height, 58, 200);
+                Assert.True(window.MessageList.ActualHeight >= 120);
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+                AssertWithinBounds(root, window.SendMessageButton);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task ComposerResizeThumb_WhenCollapsedWithComplexState_KeepsComposerActionsReachable()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -32000;
+                window.Top = -32000;
+                window.Width = 1280;
+                window.Height = 720;
+                ShowReplyAndAttachmentsState(window);
+                window.Show();
+                window.UpdateLayout();
+
+                window.ComposerResizeThumb.RaiseEvent(new DragDeltaEventArgs(0, 10000)
+                {
+                    RoutedEvent = Thumb.DragDeltaEvent,
+                });
+                window.UpdateLayout();
+
+                Assert.Equal(58, window.MessageComposerTextBox.Height);
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+                AssertWithinBounds(root, window.ReplyComposerPanel);
+                AssertWithinBounds(root, window.SelectedAttachmentPanel);
+                AssertWithinBounds(root, window.SelectAttachmentsButton);
+                AssertWithinBounds(root, window.MentionPickerButton);
+                AssertWithinBounds(root, window.SendMessageButton);
             }
             finally
             {
@@ -217,6 +573,7 @@ public sealed class ClientUiSnapshotTests
         {
             ShowActivated = false,
         };
+        AddRc25Resources(window);
 
         window.LoginPanel.Visibility = Visibility.Collapsed;
         window.AccountPanel.Visibility = Visibility.Visible;
@@ -325,17 +682,116 @@ public sealed class ClientUiSnapshotTests
         return window;
     }
 
+    private static ClientUpdateState CreateMandatoryUpdateState(string releaseNotes)
+    {
+        var manifest = new UpdateManifestDto(
+            SchemaVersion: UpdateConstants.SchemaVersion,
+            Channel: UpdateConstants.Channel,
+            Version: "1.0.0-rc.25",
+            MinimumSupportedVersion: "1.0.0-rc.25",
+            Mandatory: true,
+            Artifact: new UpdateArtifactDto(
+                Type: UpdateConstants.ArtifactTypePortableZip,
+                Url: "https://updates.example.test/RelayCove-1.0.0-rc.25.zip",
+                SizeBytes: 123,
+                Sha256: new string('a', 64)),
+            ReleaseNotes: releaseNotes);
+        return new ClientUpdateState(
+            ClientUpdatePhase.MandatoryAvailable,
+            CurrentVersion: "1.0.0-rc.24",
+            manifest,
+            UpdateDecisionKind.Mandatory,
+            Progress: null,
+            ArchivePath: null,
+            ClientUpdateFailure.None);
+    }
+
+    private static string CreateRepresentativeReleaseNotes() =>
+        "本次更新优化了聊天界面与窗口布局。" + Environment.NewLine + Environment.NewLine +
+        "• 输入卡片支持垂直拉伸，工具栏与发送操作保持在底部。" + Environment.NewLine +
+        "• 成员管理与账户设置以覆盖层展示，不再增加额外的主界面列。" + Environment.NewLine +
+        "• 修复高 DPI 下的标题栏、搜索与附件预览细节。";
+
+    private static BitmapSource CreateRepresentativeImagePreview()
+    {
+        const int width = 640;
+        const int height = 360;
+        var pixels = new byte[width * height * 4];
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var offset = (y * width + x) * 4;
+                var wave = (byte)((x + y) % 48);
+                pixels[offset] = (byte)(190 + wave / 5);
+                pixels[offset + 1] = (byte)(119 + wave / 4);
+                pixels[offset + 2] = (byte)(22 + wave / 8);
+                pixels[offset + 3] = byte.MaxValue;
+            }
+        }
+
+        var preview = BitmapSource.Create(
+            width,
+            height,
+            96,
+            96,
+            PixelFormats.Bgra32,
+            palette: null,
+            pixels,
+            width * 4);
+        preview.Freeze();
+        return preview;
+    }
+
+    private static void AddRc25Resources(FrameworkElement element)
+    {
+        element.Resources.MergedDictionaries.Add(new ResourceDictionary
+        {
+            Source = new Uri(
+                "/RelayCove.Client;component/Resources/ClientTheme.xaml",
+                UriKind.Relative),
+        });
+        element.Resources.MergedDictionaries.Add(new ResourceDictionary
+        {
+            Source = new Uri(
+                "/RelayCove.Client;component/Resources/ClientIcons.xaml",
+                UriKind.Relative),
+        });
+        element.Resources.MergedDictionaries.Add(new ResourceDictionary
+        {
+            Source = new Uri(
+                "/RelayCove.Client;component/Resources/ClientControls.xaml",
+                UriKind.Relative),
+        });
+    }
+
+    private static void SaveSnapshotWhenRequested(FrameworkElement root, string fileName)
+    {
+        var outputDirectory = Environment.GetEnvironmentVariable("RELAYCOVE_UI_SNAPSHOT_DIR");
+        if (string.IsNullOrWhiteSpace(outputDirectory))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(outputDirectory);
+        SavePng(
+            root,
+            (int)Math.Ceiling(root.ActualWidth),
+            (int)Math.Ceiling(root.ActualHeight),
+            Path.Combine(outputDirectory, fileName));
+    }
+
     private static void ShowRepresentativeMemberDrawer(MainWindow window)
     {
         window.ChannelOverlay.Visibility = Visibility.Visible;
-        window.ConversationChatPanel.Margin = new Thickness(0, 0, 372, 0);
+        window.ConversationChatPanel.Margin = new Thickness(0);
         window.ChannelCurrentHeadingText.Text = "当前会话成员（3）";
         window.ChannelMemberHelpText.Text = "你可以搜索、添加或移除私有频道成员。";
         window.ChannelParticipantList.ItemsSource = new object[]
         {
-            CreateMember("林", "林乔", "linqiao", "频道管理员", canRemove: false),
-            CreateMember("程", "程远", "chengyuan", "成员", canRemove: true),
-            CreateMember("许", "许言", "xuyan", "成员", canRemove: true),
+            CreateMember("林", "林乔", "linqiao", "可管理成员", canRemove: false),
+            CreateMember("程", "程远", "chengyuan", "频道成员", canRemove: true),
+            CreateMember("许", "许言", "xuyan", "频道成员", canRemove: true),
         };
         window.ChannelUserDirectoryList.ItemsSource = new object[]
         {

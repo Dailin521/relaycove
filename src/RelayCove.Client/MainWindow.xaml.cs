@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -6,6 +7,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Peers;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
@@ -15,8 +17,10 @@ using System.Windows.Threading;
 using RelayCove.Client.Accounts;
 using RelayCove.Client.Admin;
 using RelayCove.Client.Attachments;
+using RelayCove.Client.Controls;
 using RelayCove.Client.Mentions;
 using RelayCove.Client.Notifications;
+using RelayCove.Client.Presentation;
 using RelayCove.Client.Search;
 using RelayCove.Client.Storage;
 using RelayCove.Client.Sync;
@@ -29,6 +33,9 @@ namespace RelayCove.Client;
 
 public partial class MainWindow : Window
 {
+    private const double ComposerInputMinimumHeight = 58;
+    private const double ComposerInputMaximumHeight = 200;
+    private const double ComposerMessageListMinimumHeight = 120;
     private const int MaximumAttachmentThumbnailInProgressRetries = 15;
     private const int MaximumSearchHighlightMaterializationAttempts = 5;
     private static readonly TimeSpan AttachmentThumbnailRetryMinimumDelay =
@@ -92,6 +99,9 @@ public partial class MainWindow : Window
         new(StringComparer.Ordinal);
     private ClientAttachmentImageViewerOperation? attachmentImageViewerOperation;
     private IInputElement? attachmentImageViewerRestoreFocus;
+    private IInputElement? channelOverlayRestoreFocus;
+    private IInputElement? settingsOverlayRestoreFocus;
+    private IInputElement? searchOverlayRestoreFocus;
     private IReadOnlyList<ClientSearchResultPresentation> messageSearchResults =
         Array.Empty<ClientSearchResultPresentation>();
     private CancellationTokenSource? messageSearchCancellationSource;
@@ -124,10 +134,18 @@ public partial class MainWindow : Window
     private CancellationTokenSource? attachmentInputCancellationSource;
     private int lastAnnouncedAttachmentIndex;
     private int lastAnnouncedAttachmentProgressBucket = -1;
+    private IReadOnlyList<ClientConversationListItemPresentation> conversationItems =
+        Array.Empty<ClientConversationListItemPresentation>();
+    private ClientConversationFilter conversationFilter = ClientConversationFilter.All;
+    private LocalCacheOperationStatus conversationListStatus =
+        LocalCacheOperationStatus.AuthoritativeSnapshotRequired;
+    private Guid? selectedConversationId;
 
     public MainWindow()
     {
         InitializeComponent();
+        ApplicationTitleBar.IsMaximized = WindowState == WindowState.Maximized;
+        UpdateConversationFilterPresentation();
         MessageSearchScopeComboBox.ItemsSource = messageSearchScopeOptions;
         MessageSearchScopeComboBox.SelectedIndex = 0;
         ChannelTypeComboBox.ItemsSource = new[]
@@ -137,6 +155,7 @@ public partial class MainWindow : Window
         };
         ChannelTypeComboBox.SelectedIndex = 0;
         UpdateMessageSearchState();
+        SynchronizeSettingsPanelPresentation();
     }
 
     internal void BindAccountShell(ClientAccountShellCoordinator coordinator)
@@ -208,6 +227,7 @@ public partial class MainWindow : Window
         };
         SetLiveText(UpdateStatusText, status);
         CheckForUpdatesButton.IsEnabled = checkForUpdates is not null && !mandatoryUpdateGate;
+        SynchronizeSettingsPanelPresentation();
         optionalUpdateActionApplies = state.Phase == ClientUpdatePhase.Downloaded &&
             !mandatoryUpdateGate;
         optionalUpdateActionCancels = state.Phase == ClientUpdatePhase.Downloading &&
@@ -236,6 +256,11 @@ public partial class MainWindow : Window
         {
             return;
         }
+
+        // A mandatory update is the only modal surface allowed to outlive the
+        // normal client UI. Close every other overlay before it receives focus so
+        // a dismissed/replaced update never reveals a stale modal below it.
+        CloseTransientOverlaysForMandatoryUpdate();
 
         var notes = state.Manifest?.ReleaseNotes;
         SetLiveText(
@@ -296,6 +321,7 @@ public partial class MainWindow : Window
     {
         updateHandoffFailure = null;
         SetLiveText(UpdateStatusText, "更新：正在确认交接…");
+        SettingsOverlay.UpdateStatus = UpdateStatusText.Text;
         SetLiveText(MandatoryUpdateErrorText, string.Empty);
         SetLiveText(MandatoryUpdateProgressText, "更新程序正在确认交接，请稍候。");
         RetryMandatoryUpdateButton.IsEnabled = false;
@@ -306,8 +332,21 @@ public partial class MainWindow : Window
         FocusMandatoryUpdateAction();
     }
 
-    internal Guid? SelectedConversationId =>
-        (ConversationList.SelectedItem as ClientConversationListItemPresentation)?.Id;
+    internal Guid? SelectedConversationId => selectedConversationId;
+
+    internal System.Windows.Controls.Button CloseSettingsButton => SettingsOverlay.CloseButton;
+
+    // Keep the existing internal presentation seam stable while the visual header
+    // moves into a dedicated control.
+    internal TextBlock ConversationHeadingText => ChatHeader.HeadingText;
+
+    internal TextBlock NavigationNoticeText => ChatHeader.NoticeText;
+
+    internal TextBlock ConversationMembersSummaryText => ChatHeader.MembersSummaryText;
+
+    internal System.Windows.Controls.Button OpenChannelPanelButton => ChatHeader.MembersButton;
+
+    internal System.Windows.Controls.Button OpenSearchButton => ChatHeader.SearchButton;
 
     internal void CancelAttachmentInputForShutdown()
     {
@@ -338,6 +377,7 @@ public partial class MainWindow : Window
             UpdateComposerState();
             ClearMessageSearchPresentation(closePanel: true, clearKeyword: true);
             CloseChannelPanel(clearPresentation: true);
+            CloseSettingsOverlay(restoreFocus: false);
         }
 
         var presentation = ClientAccountShellPresenter.Present(snapshot);
@@ -348,6 +388,9 @@ public partial class MainWindow : Window
         SetLiveText(SidebarDisplayNameText, string.IsNullOrWhiteSpace(presentation.DisplayName)
             ? "尚未登录"
             : presentation.DisplayName);
+        ApplicationNavigation.AvatarText = string.IsNullOrWhiteSpace(presentation.DisplayName)
+            ? "RC"
+            : GetAvatarText(presentation.DisplayName, presentation.DisplayName);
         SetLiveText(SidebarServerText, string.IsNullOrWhiteSpace(presentation.ServerAddress)
             ? "—"
             : presentation.ServerAddress);
@@ -364,18 +407,14 @@ public partial class MainWindow : Window
         LoginBrandColumn.Width = presentation.ShowLogin
             ? new GridLength(270)
             : new GridLength(0);
-        MainContentPanel.Margin = presentation.ShowLogin
-            ? new Thickness(42, 34, 42, 34)
-            : new Thickness(16);
         HeadingText.Visibility = presentation.ShowLogin
             ? Visibility.Visible
             : Visibility.Collapsed;
         DetailText.Visibility = presentation.ShowLogin
             ? Visibility.Visible
             : Visibility.Collapsed;
-        MainWorkspace.Margin = presentation.ShowLogin
-            ? new Thickness(0, 30, 0, 24)
-            : new Thickness(0, 0, 0, 10);
+        UpdateResponsiveContentMargins();
+        UpdateResponsiveShellColumns();
         BusyIndicator.Visibility = presentation.IsBusy
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -386,9 +425,10 @@ public partial class MainWindow : Window
         RetryButton.IsEnabled = presentation.CanRetry;
         LogoutButton.IsEnabled = presentation.CanLogout;
         OpenSearchButton.IsEnabled = snapshot.HasActiveAccount && !presentation.IsBusy;
-        OpenChannelPanelButton.IsEnabled = snapshot.HasActiveAccount && !presentation.IsBusy;
+        ChatHeader.IsMembersEnabled = snapshot.HasActiveAccount && !presentation.IsBusy;
         CheckForUpdatesButton.IsEnabled = checkForUpdates is not null &&
             snapshot.ServerBaseUri is not null && !mandatoryUpdateGate;
+        SynchronizeSettingsPanelPresentation();
         UpdateMessageSearchState();
     }
 
@@ -401,12 +441,16 @@ public partial class MainWindow : Window
         }
 
         lastConversationRevision = outcome.Revision;
+        conversationListStatus = outcome.Status;
         var previousSelectionId = SelectedConversationId;
         var items = ClientConversationListPresenter.Present(outcome);
+        conversationItems = items;
         suppressSelectionRequest = true;
         try
         {
             var groupedItems = CollectionViewSource.GetDefaultView(items);
+            groupedItems.Filter = candidate => candidate is
+                ClientConversationListItemPresentation item && MatchesConversationFilter(item);
             groupedItems.GroupDescriptions.Clear();
             var groupDescription = new PropertyGroupDescription(
                 nameof(ClientConversationListItemPresentation.GroupTitle));
@@ -414,13 +458,16 @@ public partial class MainWindow : Window
             groupDescription.GroupNames.Add("私有频道");
             groupDescription.GroupNames.Add("私聊");
             groupedItems.GroupDescriptions.Add(groupDescription);
+            groupedItems.Refresh();
             ConversationList.ItemsSource = groupedItems;
             ConversationList.IsEnabled = outcome.Status == LocalCacheOperationStatus.Ready;
-            ConversationEmptyText.Visibility = items.Count == 0
+            ConversationEmptyText.Visibility = groupedItems.IsEmpty
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             SetLiveText(ConversationEmptyText, outcome.Status switch
             {
+                LocalCacheOperationStatus.Ready when items.Count > 0 =>
+                    "没有符合当前搜索或筛选条件的会话。",
                 LocalCacheOperationStatus.Ready => "暂无会话",
                 LocalCacheOperationStatus.AuthoritativeSnapshotRequired =>
                     "正在等待权威会话同步…",
@@ -439,14 +486,16 @@ public partial class MainWindow : Window
                 pendingConversationSelectionId = null;
             }
 
-            if (selection.Selection is not null)
+            selectedConversationId = selection.Selection?.Id;
+            ConversationList.SelectedItem = null;
+            if (selection.Selection is not null &&
+                MatchesConversationFilter(selection.Selection))
             {
                 ConversationList.SelectedItem = selection.Selection;
                 ConversationList.ScrollIntoView(selection.Selection);
             }
 
-            ApplySelectedConversation(
-                ConversationList.SelectedItem as ClientConversationListItemPresentation);
+            ApplySelectedConversation(selection.Selection);
         }
         finally
         {
@@ -455,6 +504,211 @@ public partial class MainWindow : Window
 
         accountShell?.SelectConversation(SelectedConversationId);
         UpdateMessageSearchState();
+    }
+
+    private bool MatchesConversationFilter(ClientConversationListItemPresentation item) =>
+        ClientConversationFilterPolicy.Matches(
+            item,
+            conversationFilter,
+            ConversationSearchTextBox.Text);
+
+    private void OnConversationSearchTextChanged(object sender, TextChangedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        RefreshConversationFilter();
+    }
+
+    private void OnConversationFilterClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button { Tag: string filterName } ||
+            !Enum.TryParse<ClientConversationFilter>(filterName, out var requestedFilter))
+        {
+            return;
+        }
+
+        SetConversationFilter(requestedFilter);
+        ApplicationNavigation.SelectedSection = requestedFilter == ClientConversationFilter.Channels
+            ? ClientNavigationSection.Channels
+            : ClientNavigationSection.Chat;
+    }
+
+    private void SetConversationFilter(ClientConversationFilter requestedFilter)
+    {
+        if (conversationFilter == requestedFilter)
+        {
+            return;
+        }
+
+        conversationFilter = requestedFilter;
+        UpdateConversationFilterPresentation();
+        RefreshConversationFilter();
+    }
+
+    private void RefreshConversationFilter()
+    {
+        if (ConversationList?.ItemsSource is not ICollectionView view)
+        {
+            return;
+        }
+
+        var selected = selectedConversationId is { } selectedId
+            ? conversationItems.FirstOrDefault(item => item.Id == selectedId)
+            : null;
+        suppressSelectionRequest = true;
+        try
+        {
+            view.Refresh();
+            ConversationList.SelectedItem = null;
+            if (selected is not null && MatchesConversationFilter(selected))
+            {
+                ConversationList.SelectedItem = selected;
+                ConversationList.ScrollIntoView(selected);
+            }
+
+            ConversationEmptyText.Visibility = view.IsEmpty
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            if (view.IsEmpty)
+            {
+                SetLiveText(ConversationEmptyText, conversationListStatus switch
+                {
+                    LocalCacheOperationStatus.Ready when conversationItems.Count > 0 =>
+                        "没有符合当前搜索或筛选条件的会话。",
+                    LocalCacheOperationStatus.Ready => "暂无会话",
+                    LocalCacheOperationStatus.AuthoritativeSnapshotRequired =>
+                        "正在等待权威会话同步…",
+                    LocalCacheOperationStatus.FatalScope =>
+                        "本地会话缓存不可用；不会显示旧账户数据。",
+                    _ => "会话列表暂时不可用，请稍后重试。",
+                });
+            }
+        }
+        finally
+        {
+            suppressSelectionRequest = false;
+        }
+    }
+
+    private void UpdateConversationFilterPresentation()
+    {
+        if (AllConversationFilterButton is null)
+        {
+            return;
+        }
+
+        UpdateFilterButton(AllConversationFilterButton, ClientConversationFilter.All);
+        UpdateFilterButton(UnreadConversationFilterButton, ClientConversationFilter.Unread);
+        UpdateFilterButton(ChannelConversationFilterButton, ClientConversationFilter.Channels);
+        UpdateFilterButton(DirectConversationFilterButton, ClientConversationFilter.Direct);
+    }
+
+    private void UpdateFilterButton(
+        System.Windows.Controls.Button button,
+        ClientConversationFilter filter)
+    {
+        button.SetResourceReference(
+            System.Windows.Controls.Control.BackgroundProperty,
+            conversationFilter == filter ? "RcPrimarySoftBrush" : "RcSurfaceBrush");
+        button.SetResourceReference(
+            System.Windows.Controls.Control.ForegroundProperty,
+            conversationFilter == filter ? "RcPrimaryBrush" : "RcTextSecondaryBrush");
+        button.SetResourceReference(
+            System.Windows.Controls.Control.BorderBrushProperty,
+            conversationFilter == filter ? "RcPrimaryBrush" : "RcBorderBrush");
+    }
+
+    private void OnNavigationRequested(
+        object? sender,
+        ClientNavigationRequestedEventArgs e)
+    {
+        _ = sender;
+        switch (e.Section)
+        {
+            case ClientNavigationSection.Chat:
+                ApplicationNavigation.SelectedSection = ClientNavigationSection.Chat;
+                SetConversationFilter(ClientConversationFilter.All);
+                break;
+            case ClientNavigationSection.Channels:
+                ApplicationNavigation.SelectedSection = ClientNavigationSection.Channels;
+                SetConversationFilter(ClientConversationFilter.Channels);
+                break;
+            case ClientNavigationSection.Settings:
+                var restoreTarget = Keyboard.FocusedElement;
+                ApplicationNavigation.SelectedSection = ClientNavigationSection.Settings;
+                CloseSearchPanelForOverlayTransition();
+                CloseChannelPanel(clearPresentation: false);
+                CloseAttachmentImageViewer(restoreFocus: false);
+                OpenSettingsOverlay(restoreTarget);
+                _ = CloseSettingsButton.Focus();
+                break;
+        }
+    }
+
+    private void OnCloseSettingsClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        CloseSettingsOverlay(restoreFocus: true);
+    }
+
+    private void OnSettingsCloseRequested(object sender, RoutedEventArgs e)
+    {
+        OnCloseSettingsClicked(sender, e);
+    }
+
+    private void OnSettingsCheckForUpdatesRequested(object sender, RoutedEventArgs e)
+    {
+        OnCheckForUpdatesClicked(sender, e);
+    }
+
+    private void OnSettingsReconnectRequested(object sender, RoutedEventArgs e)
+    {
+        OnRetryClicked(sender, e);
+    }
+
+    private void OnSettingsExitAccountRequested(object sender, RoutedEventArgs e)
+    {
+        OnLogoutClicked(sender, e);
+    }
+
+    private void OnUnavailableFeatureRequested(
+        object? sender,
+        ClientUnavailableFeatureRequestedEventArgs e)
+    {
+        _ = sender;
+        UnavailableFeatureNotice.ShowUnavailableFeature(e.DisplayName);
+    }
+
+    private void OnUnavailableFeatureButtonClicked(object sender, RoutedEventArgs e)
+    {
+        _ = e;
+        if (sender is not System.Windows.Controls.Button
+            {
+                Tag: ClientUiFeatureId featureId,
+            })
+        {
+            return;
+        }
+
+        UnavailableFeatureNotice.ShowUnavailableFeature(featureId switch
+        {
+            ClientUiFeatureId.ConversationPin => "置顶会话",
+            ClientUiFeatureId.ConversationNotifications => "会话通知",
+            ClientUiFeatureId.ConversationMore => "更多会话操作",
+            ClientUiFeatureId.Emoji => "表情回应",
+            ClientUiFeatureId.VoiceInput => "语音输入",
+            ClientUiFeatureId.ScreenCapture => "主动截图",
+            ClientUiFeatureId.SendOptions => "发送选项",
+            ClientUiFeatureId.MessageReaction => "表情回应",
+            ClientUiFeatureId.MessageForward => "转发消息",
+            ClientUiFeatureId.MessageBookmark => "收藏消息",
+            ClientUiFeatureId.MessagePin => "置顶消息",
+            ClientUiFeatureId.MessageDelete => "删除消息",
+            ClientUiFeatureId.MessageMore => "更多消息操作",
+            _ => "该功能",
+        });
     }
 
     private void OnConversationGroupExpanderLoaded(object sender, RoutedEventArgs e)
@@ -502,25 +756,7 @@ public partial class MainWindow : Window
         if (target.Kind == ClientNotificationActivationKind.Message &&
             target.ConversationId is { } conversationId)
         {
-            pendingConversationSelectionId = conversationId;
-            suppressSelectionRequest = true;
-            var selected = ConversationList.Items
-                .OfType<ClientConversationListItemPresentation>()
-                .FirstOrDefault(item => item.Id == conversationId);
-            try
-            {
-                if (selected is not null)
-                {
-                    ConversationList.SelectedItem = selected;
-                    ConversationList.ScrollIntoView(selected);
-                    pendingConversationSelectionId = null;
-                    ApplySelectedConversation(selected);
-                }
-            }
-            finally
-            {
-                suppressSelectionRequest = false;
-            }
+            _ = SelectConversationForAuthoritativeNavigation(conversationId);
 
             accountShell?.SelectConversation(conversationId, target.MessageId);
         }
@@ -529,7 +765,7 @@ public partial class MainWindow : Window
             ConversationList.Focus();
         }
 
-        SetLiveText(NavigationNoticeText, target.Kind switch
+        SetChatHeaderNotice(target.Kind switch
         {
             ClientNotificationActivationKind.Message =>
                 "通知目标已通过账户与缓存授权；正在定位对应消息。",
@@ -707,7 +943,18 @@ public partial class MainWindow : Window
         SetLiveText(
             SidebarNotificationText,
             ClientAccountShellPresenter.DescribeNotificationAvailability(isAvailable));
+        SettingsOverlay.NotificationStatus = SidebarNotificationText.Text;
     }
+
+    private void OnChatHeaderMembersRequested(
+        object? sender,
+        ChatHeaderMembersRequestedEventArgs e) =>
+        OnOpenChannelPanelClicked(ChatHeader.MembersButton, e);
+
+    private void OnChatHeaderSearchRequested(
+        object? sender,
+        ChatHeaderSearchRequestedEventArgs e) =>
+        OnOpenSearchClicked(ChatHeader.SearchButton, e);
 
     private async void OnOpenChannelPanelClicked(object sender, RoutedEventArgs e)
     {
@@ -716,7 +963,9 @@ public partial class MainWindow : Window
         if (ActualWidth < 1400)
         {
             CloseChannelPanel(clearPresentation: false);
-            SetLiveText(ChannelLiveRegionText, "窗口较窄时请扩大窗口后再管理成员。");
+            const string narrowMemberNotice = "窗口较窄时请扩大窗口后再管理成员。";
+            SetLiveText(ChannelLiveRegionText, narrowMemberNotice);
+            UnavailableFeatureNotice.ShowNotice(narrowMemberNotice);
             return;
         }
 
@@ -725,6 +974,11 @@ public partial class MainWindow : Window
             SetLiveText(ChannelLiveRegionText, "请先登录后再管理频道。");
             return;
         }
+
+        var restoreTarget = sender as IInputElement ?? Keyboard.FocusedElement;
+        CloseSearchPanelForOverlayTransition();
+        CloseSettingsOverlay(restoreFocus: false);
+        CloseAttachmentImageViewer(restoreFocus: false);
 
         if (sender is System.Windows.Controls.Button
             {
@@ -737,7 +991,7 @@ public partial class MainWindow : Window
             CreateChannelExpander.IsExpanded = true;
         }
 
-        ChannelOverlay.Visibility = Visibility.Visible;
+        OpenChannelOverlay(restoreTarget);
         UpdateMemberDrawerLayout();
         ChannelMemberSearchTextBox.Clear();
         UpdateChannelPanelState();
@@ -754,8 +1008,9 @@ public partial class MainWindow : Window
     {
         _ = sender;
         _ = e;
+        var restoreTarget = channelOverlayRestoreFocus;
         CloseChannelPanel(clearPresentation: false);
-        OpenChannelPanelButton.Focus();
+        RestoreOverlayFocus(restoreTarget, OpenChannelPanelButton);
     }
 
     private async void OnCreateChannelClicked(object sender, RoutedEventArgs e)
@@ -826,7 +1081,13 @@ public partial class MainWindow : Window
     {
         _ = sender;
         _ = e;
-        AccountDiagnosticsExpander.IsExpanded = !AccountDiagnosticsExpander.IsExpanded;
+        var restoreTarget = Keyboard.FocusedElement;
+        CloseSearchPanelForOverlayTransition();
+        CloseChannelPanel(clearPresentation: false);
+        CloseAttachmentImageViewer(restoreFocus: false);
+        OpenSettingsOverlay(restoreTarget);
+        ApplicationNavigation.SelectedSection = ClientNavigationSection.Settings;
+        _ = CloseSettingsButton.Focus();
     }
 
     private async void OnInviteChannelMemberClicked(object sender, RoutedEventArgs e)
@@ -951,7 +1212,7 @@ public partial class MainWindow : Window
         channelParticipantCancellationSource?.Cancel();
         using var cancellationSource = new CancellationTokenSource();
         channelParticipantCancellationSource = cancellationSource;
-        SetLiveText(ConversationMembersSummaryText, "成员：正在加载…");
+        SetChatHeaderMembersSummary("成员：正在加载…");
         var result = await coordinator.GetConversationParticipantsAsync(
             conversationId,
             cancellationSource.Token);
@@ -967,8 +1228,7 @@ public partial class MainWindow : Window
         if (result.Status == ClientAdminRequestStatus.Completed && result.Value is not null)
         {
             channelParticipants = result.Value;
-            SetLiveText(
-                ConversationMembersSummaryText,
+            SetChatHeaderMembersSummary(
                 result.Value.Participants.Count == 0
                     ? "成员：暂无正常成员"
                     : $"成员（{result.Value.Participants.Count}）：" +
@@ -978,7 +1238,7 @@ public partial class MainWindow : Window
         else
         {
             channelParticipants = null;
-            SetLiveText(ConversationMembersSummaryText, "成员：暂时无法加载");
+            SetChatHeaderMembersSummary("成员：暂时无法加载");
             ApplyChannelParticipantPresentation();
         }
     }
@@ -1081,9 +1341,20 @@ public partial class MainWindow : Window
         ChannelUserDirectoryList.IsEnabled = !channelOperationRunning;
     }
 
+    private void OpenChannelOverlay(IInputElement? restoreTarget)
+    {
+        if (ChannelOverlay.Visibility != Visibility.Visible)
+        {
+            channelOverlayRestoreFocus = restoreTarget ?? Keyboard.FocusedElement;
+        }
+
+        ChannelOverlay.Visibility = Visibility.Visible;
+    }
+
     private void CloseChannelPanel(bool clearPresentation)
     {
         ChannelOverlay.Visibility = Visibility.Collapsed;
+        channelOverlayRestoreFocus = null;
         UpdateMemberDrawerLayout();
         if (!clearPresentation)
         {
@@ -1096,20 +1367,235 @@ public partial class MainWindow : Window
         channelUserDirectory = Array.Empty<UserDirectoryEntryDto>();
         ChannelParticipantList.ItemsSource = null;
         ChannelUserDirectoryList.ItemsSource = null;
-        SetLiveText(ConversationMembersSummaryText, "成员：请选择会话");
+        SetChatHeaderMembersSummary("成员：请选择会话");
         SetLiveText(ChannelLiveRegionText, string.Empty);
+    }
+
+    private void OpenSettingsOverlay(IInputElement? restoreTarget)
+    {
+        if (SettingsOverlay.Visibility != Visibility.Visible)
+        {
+            settingsOverlayRestoreFocus = restoreTarget ?? Keyboard.FocusedElement;
+        }
+
+        SettingsOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void CloseSettingsOverlay(bool restoreFocus)
+    {
+        if (SettingsOverlay.Visibility != Visibility.Visible)
+        {
+            return;
+        }
+
+        var restoreTarget = settingsOverlayRestoreFocus;
+        settingsOverlayRestoreFocus = null;
+        SettingsOverlay.Visibility = Visibility.Collapsed;
+        if (ApplicationNavigation.SelectedSection == ClientNavigationSection.Settings)
+        {
+            ApplicationNavigation.SelectedSection = ClientNavigationSection.Chat;
+        }
+
+        if (restoreFocus)
+        {
+            RestoreOverlayFocus(restoreTarget, ApplicationNavigation);
+        }
+    }
+
+    private void SynchronizeSettingsPanelPresentation()
+    {
+        SettingsOverlay.DisplayName = SidebarDisplayNameText.Text;
+        SettingsOverlay.ServerAddress = SidebarServerText.Text;
+        SettingsOverlay.ConnectionStatus = SidebarConnectionText.Text;
+        SettingsOverlay.SyncStatus = SidebarSyncText.Text;
+        SettingsOverlay.NotificationStatus = SidebarNotificationText.Text;
+        SettingsOverlay.UpdateStatus = UpdateStatusText.Text;
+        SettingsOverlay.CanCheckForUpdates = CheckForUpdatesButton.IsEnabled;
+        SettingsOverlay.CanReconnect = RetryButton.IsEnabled;
+        SettingsOverlay.CanExitAccount = LogoutButton.IsEnabled;
+    }
+
+    private void CloseSearchPanelForOverlayTransition()
+    {
+        if (SearchPanel.Visibility == Visibility.Visible)
+        {
+            InvalidateMessageSearchFromUi(closePanel: true, clearKeyword: true);
+        }
+    }
+
+    private void CloseSearchPanelAfterNavigation()
+    {
+        SearchPanel.Visibility = Visibility.Collapsed;
+        SetSearchModalState(isOpen: false);
+        searchOverlayRestoreFocus = null;
+        _ = MessageList.Focus();
+    }
+
+    private void CloseTransientOverlaysForMandatoryUpdate()
+    {
+        CloseAttachmentImageViewer(restoreFocus: false);
+        CloseSearchPanelForOverlayTransition();
+        CloseChannelPanel(clearPresentation: false);
+        CloseSettingsOverlay(restoreFocus: false);
+    }
+
+    private static void RestoreOverlayFocus(IInputElement? restoreTarget, UIElement fallback)
+    {
+        if (restoreTarget is UIElement { IsVisible: true, IsEnabled: true } element &&
+            element.Focus())
+        {
+            return;
+        }
+
+        if (restoreTarget is ContentElement { IsEnabled: true } contentElement &&
+            contentElement.Focus())
+        {
+            return;
+        }
+
+        if (fallback.IsVisible && fallback.IsEnabled)
+        {
+            _ = fallback.Focus();
+        }
     }
 
     private void OnMainWindowSizeChanged(object sender, SizeChangedEventArgs e)
     {
         _ = sender;
+        UpdateResponsiveContentMargins();
+        UpdateResponsiveShellColumns();
         if (e.NewSize.Width < 1400 && ChannelOverlay.Visibility == Visibility.Visible)
         {
+            var restoreTarget = channelOverlayRestoreFocus;
             CloseChannelPanel(clearPresentation: false);
+            RestoreOverlayFocus(restoreTarget, OpenChannelPanelButton);
             return;
         }
 
         UpdateMemberDrawerLayout();
+    }
+
+    private void OnMainWindowStateChanged(object? sender, EventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        ApplicationTitleBar.IsMaximized = WindowState == WindowState.Maximized;
+    }
+
+    private void OnTitleBarDragRequested(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        DragMove();
+    }
+
+    private void OnTitleBarMinimizeRequested(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        SystemCommands.MinimizeWindow(this);
+    }
+
+    private void OnTitleBarMaximizeRestoreRequested(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (WindowState == WindowState.Maximized)
+        {
+            SystemCommands.RestoreWindow(this);
+            return;
+        }
+
+        SystemCommands.MaximizeWindow(this);
+    }
+
+    private void OnTitleBarCloseRequested(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        Close();
+    }
+
+    private void OnTitleBarSystemMenuRequested(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        ShowWindowSystemMenu();
+    }
+
+    private void ShowWindowSystemMenu()
+    {
+        var menuPoint = PointToScreen(new System.Windows.Point(8, 48));
+        SystemCommands.ShowSystemMenu(this, menuPoint);
+    }
+
+    private void UpdateResponsiveContentMargins()
+    {
+        if (MainContentPanel is null || MainWorkspace is null || LoginPanel is null)
+        {
+            return;
+        }
+
+        if (LoginPanel.Visibility == Visibility.Visible)
+        {
+            var compactLoginLayout = ActualHeight > 0 && ActualHeight <= 560;
+            MainContentPanel.Margin = compactLoginLayout
+                ? new Thickness(24, 12, 24, 10)
+                : ActualWidth > 0 && ActualWidth < 1100
+                    ? new Thickness(24, 20, 24, 20)
+                    : new Thickness(42, 34, 42, 34);
+            MainWorkspace.Margin = compactLoginLayout
+                ? new Thickness(0, 8, 0, 4)
+                : ActualHeight > 0 && ActualHeight <= 720
+                    ? new Thickness(0, 16, 0, 12)
+                    : new Thickness(0, 30, 0, 24);
+            LoginPanel.Padding = compactLoginLayout
+                ? new Thickness(28, 18, 28, 18)
+                : new Thickness(34);
+            return;
+        }
+
+        MainContentPanel.Margin = ActualHeight > 0 && ActualHeight <= 720
+            ? new Thickness(12, 4, 12, 4)
+            : new Thickness(16);
+        MainWorkspace.Margin = ActualHeight > 0 && ActualHeight <= 720
+            ? new Thickness(0)
+            : new Thickness(0, 0, 0, 10);
+    }
+
+    private void UpdateResponsiveShellColumns()
+    {
+        if (NavigationRailColumn is null || ConversationPanelColumn is null)
+        {
+            return;
+        }
+
+        NavigationRailColumn.Width = new GridLength(ActualWidth > 0 && ActualWidth < 1100
+            ? 64
+            : 72);
+        ConversationPanelColumn.Width = new GridLength(ActualWidth switch
+        {
+            > 0 and < 1100 => 280,
+            < 1400 => 320,
+            _ => 340,
+        });
+        if (ComposerSupplementaryActionsPanel is not null)
+        {
+            ComposerSupplementaryActionsPanel.Visibility = ActualWidth > 0 && ActualWidth < 1100
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+        }
+
+        if (LoginPanel.Visibility == Visibility.Visible)
+        {
+            var showBrandPanel = ActualWidth <= 0 || ActualWidth >= 1100;
+            LoginBrandPanel.Visibility = showBrandPanel
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            LoginBrandColumn.Width = showBrandPanel
+                ? new GridLength(270)
+                : new GridLength(0);
+        }
     }
 
     private void UpdateMemberDrawerLayout()
@@ -1119,10 +1605,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        ConversationChatPanel.Margin = ChannelOverlay.Visibility == Visibility.Visible &&
-            ActualWidth >= 1400
-            ? new Thickness(0, 0, 372, 0)
-            : new Thickness(0);
+        // The shell remains exactly three columns. Member management is a root-level
+        // drawer, like settings, and must never reflow or compress the composer.
+        ConversationChatPanel.Margin = new Thickness(0);
     }
 
     private static string DescribeAdminStatus(ClientAdminRequestStatus status) => status switch
@@ -1199,11 +1684,53 @@ public partial class MainWindow : Window
         RaiseLiveRegionChanged(textBlock);
     }
 
+    private void SetChatHeaderHeading(string value)
+    {
+        if (string.Equals(ChatHeader.Heading, value, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ChatHeader.Heading = value;
+        RaiseLiveRegionChanged(ChatHeader.HeadingText);
+    }
+
+    private void SetChatHeaderNotice(string value)
+    {
+        if (string.Equals(ChatHeader.Notice, value, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ChatHeader.Notice = value;
+        RaiseLiveRegionChanged(ChatHeader.NoticeText);
+    }
+
+    private void SetChatHeaderMembersSummary(string value)
+    {
+        if (string.Equals(ChatHeader.MembersSummary, value, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ChatHeader.MembersSummary = value;
+        RaiseLiveRegionChanged(ChatHeader.MembersSummaryText);
+    }
+
     private void OnOpenSearchClicked(object sender, RoutedEventArgs e)
     {
         _ = sender;
         _ = e;
+        if (SearchPanel.Visibility != Visibility.Visible)
+        {
+            searchOverlayRestoreFocus = Keyboard.FocusedElement;
+        }
+
+        CloseChannelPanel(clearPresentation: false);
+        CloseSettingsOverlay(restoreFocus: false);
+        CloseAttachmentImageViewer(restoreFocus: false);
         SearchPanel.Visibility = Visibility.Visible;
+        SetSearchModalState(isOpen: true);
         UpdateMessageSearchState();
         MessageSearchTextBox.Focus();
         MessageSearchTextBox.SelectAll();
@@ -1213,8 +1740,16 @@ public partial class MainWindow : Window
     {
         _ = sender;
         _ = e;
+        var restoreTarget = searchOverlayRestoreFocus;
         InvalidateMessageSearchFromUi(closePanel: true, clearKeyword: true);
-        ConversationList.Focus();
+        RestoreOverlayFocus(restoreTarget, ConversationList);
+    }
+
+    private void SetSearchModalState(bool isOpen)
+    {
+        var isInteractive = !isOpen && !mandatoryUpdateGate;
+        ApplicationNavigation.IsEnabled = isInteractive;
+        ConversationPanelContainer.IsEnabled = isInteractive;
     }
 
     private void OnMessageSearchTextChanged(object sender, TextChangedEventArgs e)
@@ -1441,7 +1976,7 @@ public partial class MainWindow : Window
             messageSearchResults = Array.Empty<ClientSearchResultPresentation>();
             MessageSearchResultList.ItemsSource = null;
             SelectSearchConversation(item.Result.ConversationId);
-            SearchPanel.Visibility = Visibility.Collapsed;
+            CloseSearchPanelAfterNavigation();
             SetLiveText(
                 NavigationNoticeText,
                 "访问权限已重新确认；正在定位并短暂高亮目标消息。");
@@ -1460,13 +1995,24 @@ public partial class MainWindow : Window
 
     private void SelectSearchConversation(Guid conversationId)
     {
+        _ = SelectConversationForAuthoritativeNavigation(conversationId);
+    }
+
+    private ClientConversationListItemPresentation? SelectConversationForAuthoritativeNavigation(
+        Guid conversationId)
+    {
         pendingConversationSelectionId = conversationId;
-        var selected = ConversationList.Items
-            .OfType<ClientConversationListItemPresentation>()
-            .FirstOrDefault(item => item.Id == conversationId);
+        if (!string.IsNullOrWhiteSpace(ConversationSearchTextBox.Text))
+        {
+            ConversationSearchTextBox.Clear();
+        }
+
+        SetConversationFilter(ClientConversationFilter.All);
+        ApplicationNavigation.SelectedSection = ClientNavigationSection.Chat;
+        var selected = conversationItems.FirstOrDefault(item => item.Id == conversationId);
         if (selected is null)
         {
-            return;
+            return null;
         }
 
         suppressSelectionRequest = true;
@@ -1474,6 +2020,7 @@ public partial class MainWindow : Window
         {
             ConversationList.SelectedItem = selected;
             ConversationList.ScrollIntoView(selected);
+            selectedConversationId = selected.Id;
             pendingConversationSelectionId = null;
             ApplySelectedConversation(selected);
         }
@@ -1481,6 +2028,8 @@ public partial class MainWindow : Window
         {
             suppressSelectionRequest = false;
         }
+
+        return selected;
     }
 
     private void OnSearchResultsInvalidated()
@@ -1577,6 +2126,8 @@ public partial class MainWindow : Window
         if (closePanel)
         {
             SearchPanel.Visibility = Visibility.Collapsed;
+            SetSearchModalState(isOpen: false);
+            searchOverlayRestoreFocus = null;
         }
 
         SetLiveText(MessageSearchStatusText, "输入关键词并选择搜索范围。");
@@ -2066,9 +2617,15 @@ public partial class MainWindow : Window
     {
         _ = sender;
         _ = e;
+        if (suppressSelectionRequest)
+        {
+            return;
+        }
+
         var selected = ConversationList.SelectedItem as
             ClientConversationListItemPresentation;
-        if (!suppressSelectionRequest && searchNavigationRunning)
+        selectedConversationId = selected?.Id;
+        if (searchNavigationRunning)
         {
             ++searchNavigationVersion;
             CancelMessageSearchOperation(searchNavigationCancellationSource);
@@ -2078,18 +2635,14 @@ public partial class MainWindow : Window
             SetLiveText(MessageSearchStatusText, "会话已切换，本次定位已取消。");
         }
 
-        if (!suppressSelectionRequest &&
-            searchHighlightLease is { } lease &&
+        if (searchHighlightLease is { } lease &&
             selected?.Id != lease.ConversationId)
         {
             ClearSearchHighlight();
         }
 
         ApplySelectedConversation(selected);
-        if (!suppressSelectionRequest)
-        {
-            accountShell?.SelectConversation(selected?.Id);
-        }
+        accountShell?.SelectConversation(selected?.Id);
 
         UpdateMessageSearchState();
     }
@@ -2120,6 +2673,28 @@ public partial class MainWindow : Window
         AdvanceComposerContextVersion();
         ReconcileComposerMentions();
         UpdateComposerState();
+    }
+
+    private void OnComposerResizeDragDelta(object sender, DragDeltaEventArgs e)
+    {
+        _ = sender;
+
+        var currentHeight = double.IsNaN(MessageComposerTextBox.Height)
+            ? Math.Max(ComposerInputMinimumHeight, MessageComposerTextBox.ActualHeight)
+            : MessageComposerTextBox.Height;
+        var availableExpansion = Math.Max(
+            0,
+            MessageList.ActualHeight - ComposerMessageListMinimumHeight);
+        var maximumHeight = Math.Min(
+            ComposerInputMaximumHeight,
+            currentHeight + availableExpansion);
+        var desiredHeight = Math.Clamp(
+            currentHeight - e.VerticalChange,
+            ComposerInputMinimumHeight,
+            maximumHeight);
+
+        MessageComposerTextBox.Height = desiredHeight;
+        e.Handled = true;
     }
 
     private async void OnSelectAttachmentsClicked(object sender, RoutedEventArgs e)
@@ -2992,6 +3567,9 @@ public partial class MainWindow : Window
         }
 
         CloseAttachmentImageViewer(restoreFocus: false);
+        CloseSearchPanelForOverlayTransition();
+        CloseChannelPanel(clearPresentation: false);
+        CloseSettingsOverlay(restoreFocus: false);
         var operation = new ClientAttachmentImageViewerOperation(
             state.Context,
             state,
@@ -3095,6 +3673,48 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.SystemKey == Key.Space &&
+            (Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt)
+        {
+            ShowWindowSystemMenu();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.K &&
+            (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control &&
+            AccountPanel.Visibility == Visibility.Visible)
+        {
+            FocusConversationSearch();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Escape && ChannelOverlay.Visibility == Visibility.Visible)
+        {
+            var restoreTarget = channelOverlayRestoreFocus;
+            CloseChannelPanel(clearPresentation: false);
+            RestoreOverlayFocus(restoreTarget, OpenChannelPanelButton);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Escape && SettingsOverlay.Visibility == Visibility.Visible)
+        {
+            OnCloseSettingsClicked(this, new RoutedEventArgs());
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Escape && SearchPanel.Visibility == Visibility.Visible)
+        {
+            var restoreTarget = searchOverlayRestoreFocus;
+            InvalidateMessageSearchFromUi(closePanel: true, clearKeyword: true);
+            RestoreOverlayFocus(restoreTarget, ConversationList);
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key != Key.Escape || AttachmentImageViewerOverlay.Visibility != Visibility.Visible)
         {
             return;
@@ -3102,6 +3722,12 @@ public partial class MainWindow : Window
 
         CloseAttachmentImageViewer(restoreFocus: true);
         e.Handled = true;
+    }
+
+    internal void FocusConversationSearch()
+    {
+        _ = Keyboard.Focus(ConversationSearchTextBox);
+        ConversationSearchTextBox.SelectAll();
     }
 
     private void FocusMandatoryUpdateAction()
@@ -3784,7 +4410,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        SetLiveText(NavigationNoticeText, item.IsReplyTargetAvailable
+        SetChatHeaderNotice(item.IsReplyTargetAvailable
             ? "正在定位被回复的消息。"
             : "原消息尚未加载；正在从服务器定位。");
         accountShell?.SelectConversation(conversationId, messageId);
@@ -4424,11 +5050,9 @@ public partial class MainWindow : Window
             ClearComposerReply();
         }
 
-        SetLiveText(
-            ConversationHeadingText,
+        SetChatHeaderHeading(
             selected is null ? "请选择会话" : selected.Name);
-        SetLiveText(
-            NavigationNoticeText,
+        SetChatHeaderNotice(
             selected is null
                 ? "选择左侧真实会话以查看消息。"
                 : $"已选择{selected.TypeLabel}；正在读取账户隔离的真实消息。");
@@ -4436,7 +5060,7 @@ public partial class MainWindow : Window
         {
             channelParticipantCancellationSource?.Cancel();
             channelParticipants = null;
-            SetLiveText(ConversationMembersSummaryText, "成员：请选择会话");
+            SetChatHeaderMembersSummary("成员：请选择会话");
             ApplyChannelParticipantPresentation();
         }
         else

@@ -1,0 +1,22 @@
+<UserControl x:Class="RelayCove.Client.Controls.UiNoticeHost"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             HorizontalAlignment="Center"
+             VerticalAlignment="Bottom"
+             IsHitTestVisible="False"
+             Visibility="Collapsed"
+             Unloaded="OnUnloaded">
+    <Border Margin="20"
+            Padding="14,9"
+            MaxWidth="480"
+            Background="{DynamicResource RcTextPrimaryBrush}"
+            CornerRadius="8"
+            Effect="{DynamicResource RcPanelShadow}">
+        <TextBlock x:Name="NoticeText"
+                   Foreground="White"
+                   FontFamily="{DynamicResource RcFontFamily}"
+                   TextWrapping="Wrap"
+                   AutomationProperties.Name="界面提示"
+                   AutomationProperties.LiveSetting="Polite" />
+    </Border>
+</UserControl>

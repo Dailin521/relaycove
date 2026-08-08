@@ -1,0 +1,149 @@
+<UserControl x:Class="RelayCove.Client.Controls.ChatHeaderControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:RelayCove.Client.Controls"
+             x:Name="Root"
+             Background="Transparent">
+    <UserControl.Resources>
+        <Style x:Key="ChatHeaderIconButtonStyle" TargetType="{x:Type Button}">
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="Padding" Value="7" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="ButtonBorder"
+                                Padding="{TemplateBinding Padding}"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#FFEAF3FF" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#FFD8EAFE" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="ChatHeaderUnavailableButtonStyle"
+               TargetType="{x:Type Button}"
+               BasedOn="{StaticResource ChatHeaderIconButtonStyle}">
+            <Setter Property="Opacity" Value="0.72" />
+        </Style>
+    </UserControl.Resources>
+    <Grid Margin="0,0,0,12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+
+        <StackPanel VerticalAlignment="Top">
+            <TextBlock x:Name="HeadingTextElement"
+                       Text="{Binding Heading, ElementName=Root}"
+                       AutomationProperties.LiveSetting="Polite"
+                       Foreground="{DynamicResource RcTextPrimaryBrush}"
+                       FontSize="20"
+                       FontWeight="SemiBold"
+                       TextTrimming="CharacterEllipsis" />
+            <TextBlock x:Name="NoticeTextElement"
+                       Margin="0,5,0,0"
+                       Text="{Binding Notice, ElementName=Root}"
+                       AutomationProperties.LiveSetting="Polite"
+                       Foreground="{DynamicResource RcTextSecondaryBrush}"
+                       TextWrapping="Wrap" />
+            <TextBlock x:Name="MembersSummaryTextElement"
+                       Margin="0,4,0,0"
+                       Text="{Binding MembersSummary, ElementName=Root}"
+                       AutomationProperties.LiveSetting="Polite"
+                       Foreground="{DynamicResource RcTextSecondaryBrush}"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       TextTrimming="CharacterEllipsis" />
+        </StackPanel>
+
+        <Button x:Name="MembersButtonElement"
+                Grid.Column="1"
+                Margin="12,0,0,0"
+                Style="{StaticResource ChatHeaderIconButtonStyle}"
+                VerticalAlignment="Top"
+                IsEnabled="{Binding IsMembersEnabled, ElementName=Root}"
+                AutomationProperties.Name="打开频道和成员面板"
+                ToolTip="成员"
+                Click="OnMembersClicked">
+            <Path Data="{DynamicResource RcIconMembers}"
+                  Stretch="Uniform"
+                  Stroke="{DynamicResource RcTextSecondaryBrush}"
+                  StrokeThickness="1.6" />
+        </Button>
+        <Button x:Name="SearchButtonElement"
+                Grid.Column="2"
+                Margin="4,0,0,0"
+                Style="{StaticResource ChatHeaderIconButtonStyle}"
+                VerticalAlignment="Top"
+                AutomationProperties.Name="打开消息搜索"
+                ToolTip="搜索"
+                Click="OnSearchClicked">
+            <Path Data="{DynamicResource RcIconSearch}"
+                  Stretch="Uniform"
+                  Stroke="{DynamicResource RcTextSecondaryBrush}"
+                  StrokeThickness="1.6" />
+        </Button>
+        <Button x:Name="PinButtonElement"
+                Grid.Column="3"
+                Margin="4,0,0,0"
+                Style="{StaticResource ChatHeaderUnavailableButtonStyle}"
+                VerticalAlignment="Top"
+                ToolTip="置顶会话（暂未开放）"
+                AutomationProperties.Name="置顶会话，暂未开放"
+                Click="OnUnavailableClicked">
+            <Path Data="{DynamicResource RcIconPin}"
+                  Stretch="Uniform"
+                  Stroke="{DynamicResource RcNeutralBrush}"
+                  StrokeThickness="1.6" />
+        </Button>
+        <Button x:Name="NotificationsButtonElement"
+                Grid.Column="4"
+                Margin="4,0,0,0"
+                Style="{StaticResource ChatHeaderUnavailableButtonStyle}"
+                VerticalAlignment="Top"
+                ToolTip="会话通知（暂未开放）"
+                AutomationProperties.Name="会话通知，暂未开放"
+                Click="OnUnavailableClicked">
+            <Path Data="{DynamicResource RcIconBell}"
+                  Stretch="Uniform"
+                  Stroke="{DynamicResource RcNeutralBrush}"
+                  StrokeThickness="1.6" />
+        </Button>
+        <Button x:Name="MoreButtonElement"
+                Grid.Column="5"
+                Margin="4,0,0,0"
+                Style="{StaticResource ChatHeaderUnavailableButtonStyle}"
+                VerticalAlignment="Top"
+                ToolTip="更多会话操作（暂未开放）"
+                AutomationProperties.Name="更多会话操作，暂未开放"
+                Click="OnUnavailableClicked">
+            <Path Data="{DynamicResource RcIconMore}"
+                  Stretch="Uniform"
+                  Fill="{DynamicResource RcNeutralBrush}" />
+        </Button>
+    </Grid>
+</UserControl>

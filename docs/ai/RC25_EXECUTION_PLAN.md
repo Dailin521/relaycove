@@ -9,6 +9,9 @@
 - **产品与架构真源：** [`../../RelayCove_工程落地方案.md`](../../RelayCove_工程落地方案.md)
 - **既有 UI 约束：** [`../ui-design-guidelines.md`](../ui-design-guidelines.md)
 - **设计输入：** [`../../plan/rc.25/`](../../plan/rc.25/)
+- **可执行实施规格：** [`RelayCove_UI_Redesign_Implementation_Spec_v1.1.md`](../../plan/rc.25/RelayCove_UI_Redesign_Implementation_Spec_v1.1.md)
+- **可执行组件规格：** [`RelayCove_UI_Component_Spec_v1.1.md`](../../plan/rc.25/RelayCove_UI_Component_Spec_v1.1.md)
+- **可执行验收清单：** [`RelayCove_UI_Acceptance_Checklist_v1.1.md`](../../plan/rc.25/RelayCove_UI_Acceptance_Checklist_v1.1.md)
 - **状态页：** [`STATUS.md`](STATUS.md)
 - **工作流：** [`WORKFLOW.md`](WORKFLOW.md)
 
@@ -48,8 +51,8 @@ rc.25 是 Windows WPF 客户端 UI 专项版本。目标是尽量复刻参考图
 
 - 创建本文档前分支为 `agent/stage-19-rc24-stabilization`，仅 `plan/` 为未跟踪输入。
 - 已切换到 `agent/stage-20-rc25-ui-redesign`；未发现其他工作区修改。
-- `docs/ai/STATUS.md` 记录的最近 Fast、Full 和 Release 基线均为通过。
-- 本轮文档准备曾启动一次新的 Fast 验证，但命令在工具时限内未返回最终结果；这不等同于测试失败，也不能标记为本轮 `已验证`。正式代码实施前必须重新运行并记录 Fast 结果。
+- `已验证`：本轮 S0 Fast 为 0 警告、0 错误；Shared 70、Server 353、Client 1,178、Updater 38，共 1,639 项通过。基准为 `baaae88`。
+- `已验证`：before 主窗口快照 3/3 已存在：1280×720、1600×900、1920×1080（见 [`docs/ui/rc.24/`](../ui/rc.24/)）。after 快照、Full、Release 与原生窗口验收仍为 `未验证`，留待对应切片。
 
 ## 4. 冻结的产品与视觉决策
 
@@ -408,7 +411,7 @@ pwsh ./scripts/verify-client-release.ps1 `
 2. 检查分支必须为 `agent/stage-20-rc25-ui-redesign`，工作区除 `plan/` 外不得有未知修改。
 3. 新建 stage-20 活动任务记录，并把当前现状、基准 commit、允许修改范围和停止条件写入记录。
 4. 重新运行 Fast；只有真实通过后才能标记绿色基线。
-5. 先完善 rc.25 三份草案和 UI 设计约束，再进入 S1；不要直接从效果图开始改 XAML。
+5. 先阅读 rc.25 三份 [v1.1 可执行规格](../../plan/rc.25/RelayCove_UI_Redesign_Implementation_Spec_v1.1.md)和 UI 设计约束，再进入 S1；不要直接从效果图开始改 XAML。
 6. 严格按 S1–S7 逐个纵向切片实施，单次只移动一个组件边界。
 7. 不得修改协议或伪造效果图中的业务能力。
 8. 完成后更新任务记录和 `STATUS.md`，再进行干净 HEAD 双构建。
