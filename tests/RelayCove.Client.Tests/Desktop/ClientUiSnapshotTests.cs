@@ -352,6 +352,42 @@ public sealed class ClientUiSnapshotTests
         });
     }
 
+    [Theory]
+    [InlineData(1600, 900)]
+    [InlineData(1920, 1080)]
+    public async Task MainWindow_WhenRenderedWithoutOverlayAtWideSize_KeepsCleanChatHierarchy(
+        int width,
+        int height)
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -32000;
+                window.Top = -32000;
+                window.Width = width;
+                window.Height = height;
+                window.Show();
+                window.UpdateLayout();
+
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+                Assert.Equal(Visibility.Collapsed, window.ChannelOverlay.Visibility);
+                Assert.Equal(Visibility.Collapsed, window.SettingsOverlay.Visibility);
+                Assert.True(window.MessageList.ActualHeight >= 120);
+                AssertWithinBounds(root, window.MessageComposerTextBox);
+                AssertWithinBounds(root, window.SendMessageButton);
+
+                SaveSnapshotWhenRequested(root, $"main-window-clean-{width}x{height}.png");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
     [Fact]
     public async Task MainWindow_WhenRenderedAtMinimumSize_KeepsCoreMessageActionsReachable()
     {

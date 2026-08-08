@@ -33,9 +33,9 @@
 
     <FontFamily x:Key="RcFontFamily">Segoe UI</FontFamily>
     <sys:Double x:Key="RcFontSizeCaption">11</sys:Double>
-    <sys:Double x:Key="RcFontSizeBody">13</sys:Double>
+    <sys:Double x:Key="RcFontSizeBody">14</sys:Double>
     <sys:Double x:Key="RcFontSizeSubtitle">16</sys:Double>
-    <sys:Double x:Key="RcFontSizeTitle">20</sys:Double>
+    <sys:Double x:Key="RcFontSizeTitle">22</sys:Double>
 
     <sys:Double x:Key="RcTitleBarHeight">48</sys:Double>
     <sys:Double x:Key="RcNavigationRailWidth">72</sys:Double>

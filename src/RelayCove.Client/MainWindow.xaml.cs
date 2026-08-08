@@ -156,6 +156,7 @@ public partial class MainWindow : Window
         ChannelTypeComboBox.SelectedIndex = 0;
         UpdateMessageSearchState();
         SynchronizeSettingsPanelPresentation();
+        Loaded += OnMainWindowLoaded;
     }
 
     internal void BindAccountShell(ClientAccountShellCoordinator coordinator)
@@ -415,6 +416,7 @@ public partial class MainWindow : Window
             : Visibility.Collapsed;
         UpdateResponsiveContentMargins();
         UpdateResponsiveShellColumns();
+        UpdateChatContentWidth();
         BusyIndicator.Visibility = presentation.IsBusy
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -610,13 +612,13 @@ public partial class MainWindow : Window
     {
         button.SetResourceReference(
             System.Windows.Controls.Control.BackgroundProperty,
-            conversationFilter == filter ? "RcPrimarySoftBrush" : "RcSurfaceBrush");
+            conversationFilter == filter ? "RcPrimarySoftBrush" : "RcTransparentBrush");
         button.SetResourceReference(
             System.Windows.Controls.Control.ForegroundProperty,
             conversationFilter == filter ? "RcPrimaryBrush" : "RcTextSecondaryBrush");
         button.SetResourceReference(
             System.Windows.Controls.Control.BorderBrushProperty,
-            conversationFilter == filter ? "RcPrimaryBrush" : "RcBorderBrush");
+            conversationFilter == filter ? "RcPrimaryBrush" : "RcTransparentBrush");
     }
 
     private void OnNavigationRequested(
@@ -852,6 +854,9 @@ public partial class MainWindow : Window
                 : Visibility.Collapsed;
             SetLiveText(MessageEmptyText, DescribeMessageState(snapshot));
             SetLiveText(MessageStatusText, DescribeMessageLoad(snapshot));
+            MessageStatusText.Visibility = snapshot.Status == ClientMessageListStatus.Ready
+                ? Visibility.Collapsed
+                : Visibility.Visible;
             LoadOlderButton.IsEnabled = snapshot.CanLoadOlder;
             LoadOlderButton.Visibility = snapshot.Status == ClientMessageListStatus.Ready &&
                 (snapshot.HasMoreBefore || snapshot.IsLoading)
@@ -1464,6 +1469,7 @@ public partial class MainWindow : Window
         _ = sender;
         UpdateResponsiveContentMargins();
         UpdateResponsiveShellColumns();
+        UpdateChatContentWidth();
         if (e.NewSize.Width < 1400 && ChannelOverlay.Visibility == Visibility.Visible)
         {
             var restoreTarget = channelOverlayRestoreFocus;
@@ -1596,6 +1602,35 @@ public partial class MainWindow : Window
                 ? new GridLength(270)
                 : new GridLength(0);
         }
+    }
+
+    private void OnMainWindowLoaded(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        UpdateChatContentWidth();
+    }
+
+    private void UpdateChatContentWidth()
+    {
+        if (ConversationChatPanel is null ||
+            MessageList is null ||
+            ChatHeader is null ||
+            ComposerSurface is null)
+        {
+            return;
+        }
+
+        var availableWidth = Math.Max(0, ConversationChatPanel.ActualWidth - 56);
+        if (availableWidth < 1)
+        {
+            return;
+        }
+
+        var contentWidth = Math.Min(1400, availableWidth);
+        MessageList.Width = contentWidth;
+        ChatHeader.Width = contentWidth;
+        ComposerSurface.Width = contentWidth;
     }
 
     private void UpdateMemberDrawerLayout()

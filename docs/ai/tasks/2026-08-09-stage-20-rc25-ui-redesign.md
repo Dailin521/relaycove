@@ -70,6 +70,8 @@ git diff --check
 - S7（局部）：为 Composer 输入卡增加可访问的垂直调整热区；仅拉伸正文区，严格保留消息流最小可视空间，并以定向 WPF 测试和调整后快照验证。
 - S8–S10：补齐成员/设置/搜索/图片查看器/强制更新覆盖层的互斥与焦点回退，补齐次级界面 after 快照；随后按参考图收敛会话栏、Header 与 Composer 的视觉密度。
 - S11：根据独立视觉复核修复最小窗口裁切、根级搜索遮罩、设置关闭按钮和辅助文本对比度；二次复核确认 P1 清零。
+- S12：根据产品复审进一步收敛为内容优先的三列聊天工作区：消息操作仅在 hover/失败状态显现，搜索改为带图标和快捷键提示的会话搜索卡，Composer 和 Header 采用一致的聊天内容宽度，成员抽屉仅遮罩聊天列；复杂回复/10 附件态压缩为完整两行 chip，并保留顶缘拖拽。
+- 图片链路：补充 Alice/Bob 独立账户的真实 Kestrel 单 PNG 测试；双方分别以自身账号、缓存和认证下载规范消息附件，并通过既有受限解码器生成冻结缩略图。可见图片行的 UI 自动下载→缩略图触发仍由既有 `Image.Loaded` 链路持有，自动行为限定为会话已打开且图片项已物化。
 - 组件化：SettingsPanelControl 与 ChatHeaderControl 已以展示 DP + RoutedEvent 形式接入；MainWindow 继续持有更新、会话、搜索、成员与生命周期协调。
 - 收口：独立代码复核确认未触及 Server/Shared、消息可靠发送、附件安全或更新交接；修复窄窗口成员提示曾落入隐藏抽屉的 P2，并完成干净 HEAD 的 Release 双构建与离线校验。
 
@@ -90,11 +92,13 @@ git diff --check
 | `已验证` | S9–S10 次级界面及视觉收敛快照 | `after-s9/` 覆盖搜索 1600×900、设置 1280×720、强制更新 900×520、图片查看器 1280×720；`after-s10/` 覆盖新版四档主窗口和 Composer。`ClientUiSnapshotTests` 16 项及更新/搜索/附件/标题栏定向 48 项通过。 |
 | `已验证` | S11 可访问性与布局复核 | `after-s11/` 覆盖 900×520 登录、900×520 消息操作、1600×900 根级搜索与 1280×720 设置。独立复核确认上述画面无 P1；定向快照/搜索/导航/附件回归 55 项通过。 |
 | `已验证` | Settings/ChatHeader 控件切片 | 设置和 Header 均通过展示 DP 与 RoutedEvent 接入；Debug 构建为 0 警告/错误，控件、快照与会话定向回归 21/21、19/19 通过。 |
-| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast` | 0 警告/错误；Shared 70、Server 353、Client 1,227、Updater 38，共 1,688 项通过。 |
-| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full` | format、Release 构建、Release 全量 1,688 项测试与 `git diff --check` 均通过。 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast`（S12） | 0 警告、0 错误；Shared 70、Server 353、Client 1,230、Updater 38，共 1,691 项通过。 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full`（S12） | format、Release 0 警告/错误、Release 全量 Shared 70、Server 353、Client 1,230、Updater 38（共 1,691 项）及 `git diff --check` 均通过。 |
 | `已验证` | 独立视觉与代码复核 | after-s11 视觉复核确认前序 5 个 P1 清零；代码复核确认关闭到托盘、更新交接、可靠发送、附件安全与虚拟化未回归。窄窗口成员提示的 P2 已改为顶层 `UiNoticeHost`，并有可见性回归。 |
 | `已验证` | rc.25 Release 双构建与离线验证 | 在干净提交 `5f8a070c28360860acbfa6dfeace8a423fdd98c3`、SDK `10.0.110` 上向 `artifacts/rc25/release-a` 和 `release-b` 分别构建；`verify-client-release.ps1` 确认 manifest、x64/self-contained、秘密排除和 ZIP 字节一致。当前一次构建 ZIP 长度为 `165,634,787` 字节，SHA-256 为 `50B7C25BA3B503EA3C659AC07E6414A78B2F769DAF8DF19AEEDF5DD84C0D9E05`。该证据将在本任务记录提交后的最终 HEAD 重建中更新。 |
-| `未验证` | Full、Release、真实 Windows 标题栏与最终验收 | 未运行或未完成；after 快照与 Composer 定向测试不能替代 Full/Release、独立复核或 100%/125%/150% DPI 的真实窗口验收。 |
+| `已验证` | S12 UI 快照定向回归 | `ClientUiSnapshotTests` 19/19 通过；`after-s12-final-draft/` 覆盖 900、1280 复杂 Composer、1600/1920 clean 和成员抽屉。独立复核确认宽屏内容宽度、设置文字和 10 附件两行均无 P1/P2。 |
+| `已验证` | 双端图片 PNG Kestrel 集成 | `KestrelAttachmentDownloadIntegrationTests` 2/2 通过：Alice 发送单张 640×320 PNG，Alice 与 Bob 均从独立账户缓存下载逐字节相同的附件，并安全生成 320×160 冻结缩略图。 |
+| `已验证` | S12 Full / Release | Fast 与 Full 均已在 S12 工作树运行；最终双构建仍必须从新的干净提交运行。真实 Windows 100%/125%/150% DPI、托盘及强制更新交接仍需人工矩阵。 |
 
 ### 文件范围
 
@@ -105,8 +109,8 @@ git diff --check
 ### 决策与限制
 
 - 决策：v1.1 是 rc.25 唯一可执行规格；v1.0 为保留的历史设计输入。品牌主色固定为 `#1677D2`，绿色仅表达成功或在线等真实语义。
-- 已知限制：所有规定的 WPF after 快照、Fast、Full、独立复核和干净 HEAD 双构建均已完成；真实 Windows 100%/125%/150% DPI、托盘恢复/真正退出及强制更新交接尚未在人工桌面矩阵验证，必须保持 `未验证`，Windows 原生窗口行为不能仅由 `RenderTargetBitmap` 验收。MessageListControl/ComposerControl 尚未拆分，继续由 MainWindow 保持展示和现有可靠性边界。
+- 已知限制：S12 的定向 UI、双端图片、Fast、Full 和独立视觉复核已完成；最终双构建仍必须从新的干净提交运行。真实 Windows 100%/125%/150% DPI、托盘恢复/真正退出及强制更新交接尚未在人工桌面矩阵验证，必须保持 `未验证`，Windows 原生窗口行为不能仅由 `RenderTargetBitmap` 验收。图片自动下载仅在会话已打开且图片项实际可见时启动，不进行后台全量图片下载。MessageListControl/ComposerControl 尚未拆分，继续由 MainWindow 保持展示和现有可靠性边界。
 
 ### 下一步
 
-- 在独立真实 Windows 环境完成 100%/125%/150% DPI、托盘和强制更新交接人工矩阵；MessageList/Composer 的后续组件拆分不得影响本 rc.25 已验证可靠性边界。
+- 以 S12 代码重新运行 Fast、Full、Release、独立复核和双构建；随后在独立真实 Windows 环境完成 100%/125%/150% DPI、托盘和强制更新交接人工矩阵。MessageList/Composer 的后续组件拆分不得影响本 rc.25 已验证可靠性边界。

@@ -98,10 +98,11 @@
                TargetType="Button"
                BasedOn="{StaticResource WindowButtonStyle}">
             <Setter Property="MinWidth" Value="42" />
-            <Setter Property="MinHeight" Value="28" />
-            <Setter Property="Padding" Value="7,2" />
+            <Setter Property="MinHeight" Value="26" />
+            <Setter Property="Padding" Value="8,2" />
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource RcTextSecondaryBrush}" />
         </Style>
         <Style x:Key="HeaderIconButtonStyle"
                TargetType="Button"
@@ -355,39 +356,63 @@
                                 <RowDefinition Height="*" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <Grid Margin="8,4,8,9">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Text="RelayCove"
-                                               Foreground="{StaticResource TextPrimaryBrush}"
-                                               FontSize="18"
-                                               FontWeight="SemiBold" />
-                                    <TextBlock Text="团队消息"
-                                               Margin="0,2,0,0"
-                                               Foreground="{StaticResource TextSecondaryBrush}"
-                                               FontSize="11" />
-                                </StackPanel>
-                                <Button Grid.Column="1"
-                                        Style="{StaticResource HeaderIconButtonStyle}"
-                                        ToolTip="搜索聊天记录"
-                                        AutomationProperties.Name="搜索聊天记录"
-                                        Click="OnOpenSearchClicked">
-                                    <Path Data="{DynamicResource RcIconSearch}"
-                                          Stretch="Uniform"
-                                          Stroke="{DynamicResource RcTextSecondaryBrush}"
-                                          StrokeThickness="1.6" />
-                                </Button>
+                            <Grid Margin="8,8,8,7">
+                                <Border Background="{DynamicResource RcSurfaceBrush}"
+                                        BorderBrush="{DynamicResource RcBorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="10">
+                                    <Grid>
+                                        <Path Width="17"
+                                              Height="17"
+                                              Margin="12,0,0,0"
+                                              HorizontalAlignment="Left"
+                                              VerticalAlignment="Center"
+                                              Data="{DynamicResource RcIconSearch}"
+                                              Stretch="Uniform"
+                                              Stroke="{DynamicResource RcTextSecondaryBrush}"
+                                              StrokeThickness="1.6"
+                                              IsHitTestVisible="False" />
+                                        <TextBox x:Name="ConversationSearchTextBox"
+                                                 MinHeight="42"
+                                                 Padding="38,7,66,7"
+                                                 Background="Transparent"
+                                                 BorderThickness="0"
+                                                 AutomationProperties.Name="搜索会话"
+                                                 ToolTip="按会话名称或消息预览筛选。Ctrl+K 聚焦。"
+                                                 TextChanged="OnConversationSearchTextChanged" />
+                                        <TextBlock Margin="39,0,0,0"
+                                                   HorizontalAlignment="Left"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource RcTextSecondaryBrush}"
+                                                   FontSize="13"
+                                                   IsHitTestVisible="False"
+                                                   Text="搜索会话">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Text, ElementName=ConversationSearchTextBox}" Value="">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <Border Margin="0,0,9,0"
+                                                Padding="6,2"
+                                                HorizontalAlignment="Right"
+                                                VerticalAlignment="Center"
+                                                Background="#FFF5F7FA"
+                                                CornerRadius="5"
+                                                IsHitTestVisible="False">
+                                            <TextBlock Text="Ctrl K"
+                                                       Foreground="{DynamicResource RcTextSecondaryBrush}"
+                                                       FontSize="10" />
+                                        </Border>
+                                    </Grid>
+                                </Border>
                             </Grid>
                             <StackPanel Grid.Row="1" Margin="8,0,8,6">
-                                <TextBox x:Name="ConversationSearchTextBox"
-                                         MinHeight="36"
-                                         Padding="10,6"
-                                         AutomationProperties.Name="搜索会话"
-                                         ToolTip="按会话名称或消息预览筛选。Ctrl+K 聚焦。"
-                                         TextChanged="OnConversationSearchTextChanged" />
                                 <UniformGrid Margin="0,5,0,0" Columns="4">
                                     <Button x:Name="AllConversationFilterButton"
                                             Margin="0,0,4,0"
@@ -606,7 +631,11 @@
                                                        TextTrimming="CharacterEllipsis" />
                                         </StackPanel>
                                          <Button Grid.Column="2"
-                                                 Style="{StaticResource SubtleButtonStyle}"
+                                                 MinWidth="48"
+                                                 MinHeight="30"
+                                                 Padding="8,4"
+                                                 Background="Transparent"
+                                                 BorderBrush="Transparent"
                                                  Content="设置"
                                                  ToolTip="打开账户与设置"
                                                  AutomationProperties.Name="打开账户与设置"
@@ -619,11 +648,11 @@
 
                     <Border x:Name="ConversationChatPanel"
                             Grid.Column="4"
-                            Padding="24,18,24,16"
+                            Padding="28,22,28,18"
                             Background="White"
-                            BorderBrush="#FFEDF0F4"
+                            BorderBrush="#FFF0F2F5"
                             BorderThickness="1"
-                            CornerRadius="16">
+                            CornerRadius="14">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
@@ -633,11 +662,14 @@
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <controls:ChatHeaderControl x:Name="ChatHeader"
+                                                        HorizontalAlignment="Left"
                                                         MembersRequested="OnChatHeaderMembersRequested"
                                                         SearchRequested="OnChatHeaderSearchRequested"
                                                         UnavailableFeatureRequested="OnUnavailableFeatureRequested" />
 
-                            <Grid Grid.Row="1" Margin="0,10,0,6">
+                            <Grid Grid.Row="1"
+                                  Margin="0,10,0,6"
+                                  HorizontalAlignment="Left">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
@@ -652,6 +684,7 @@
                                            Grid.Column="1"
                                            Margin="12,0,0,0"
                                            Text="请选择会话"
+                                           Visibility="Collapsed"
                                            AutomationProperties.LiveSetting="Polite"
                                            VerticalAlignment="Center"
                                            HorizontalAlignment="Right"
@@ -662,6 +695,7 @@
 
                             <Grid Grid.Row="2">
                                 <ListBox x:Name="MessageList"
+                                         HorizontalAlignment="Left"
                                          AutomationProperties.Name="消息列表"
                                          Background="White"
                                          BorderThickness="0"
@@ -1005,10 +1039,12 @@
                                                             </DataTemplate>
                                                         </ItemsControl.ItemTemplate>
                                                     </ItemsControl>
-                                                    <Button Margin="0,7,0,0"
+                                                    <Button MaxWidth="520"
+                                                            Margin="0,7,0,0"
                                                             MinHeight="0"
                                                             Padding="0"
-                                                            HorizontalContentAlignment="Stretch"
+                                                            HorizontalAlignment="Left"
+                                                            HorizontalContentAlignment="Left"
                                                             Background="Transparent"
                                                             BorderThickness="0"
                                                             Tag="{Binding ReplyToMessageId}"
@@ -1044,14 +1080,33 @@
                                                             </StackPanel>
                                                         </Border>
                                                     </Button>
-                                                    <StackPanel Margin="0,4,0,0"
-                                                                HorizontalAlignment="Right"
+                                                    <Border Margin="0,5,0,0"
+                                                            Padding="3,1"
+                                                            HorizontalAlignment="Right"
+                                                            Background="{DynamicResource RcSurfaceBrush}"
+                                                            BorderBrush="{DynamicResource RcBorderBrush}"
+                                                            BorderThickness="1"
+                                                            CornerRadius="7">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsMouseOver, ElementName=MessageCardBorder}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding CanRetry}" Value="True">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                    <StackPanel HorizontalAlignment="Right"
                                                                 Orientation="Horizontal">
                                                         <TextBlock Text="{Binding SendStatusLabel}"
-                                                                   Margin="0,0,8,0"
+                                                                   Margin="4,0,6,0"
                                                                    VerticalAlignment="Center"
-                                                                   Foreground="#FFB05A32"
-                                                                   FontSize="11" />
+                                                                   Foreground="{DynamicResource RcTextSecondaryBrush}"
+                                                                   FontSize="10" />
                                                         <Button Content="复制"
                                                                 Margin="0,0,6,0"
                                                                 Click="OnCopyMessageClicked">
@@ -1099,6 +1154,7 @@
                                                             </Button.Style>
                                                         </Button>
                                                     </StackPanel>
+                                                    </Border>
                                                     </StackPanel>
                                                 </Grid>
                                             </Border>
@@ -1133,12 +1189,13 @@
 
                             <Border x:Name="ComposerSurface"
                                     Grid.Row="3"
-                                    Margin="0,10,0,0"
-                                    Padding="12,10,12,8"
+                                    Margin="0,14,0,0"
+                                    Padding="14,10,14,8"
                                     Background="{DynamicResource RcSurfaceBrush}"
                                     BorderBrush="{DynamicResource RcBorderBrush}"
                                     BorderThickness="1"
-                                    CornerRadius="12">
+                                    CornerRadius="12"
+                                    Effect="{DynamicResource RcPanelShadow}">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
@@ -1156,8 +1213,8 @@
                                 </Grid.RowDefinitions>
                                 <Border x:Name="ReplyComposerPanel"
                                         Grid.ColumnSpan="4"
-                                        Margin="0,0,0,7"
-                                        Padding="10,7"
+                                        Margin="0,0,0,6"
+                                        Padding="10,5"
                                         Background="#FFF8FAFC"
                                         BorderBrush="{StaticResource AccentBrush}"
                                         BorderThickness="3,0,0,0"
@@ -1175,10 +1232,10 @@
                                                        FontSize="11"
                                                        FontWeight="SemiBold" />
                                             <TextBlock x:Name="ReplyComposerContentText"
-                                                       Margin="0,2,10,0"
+                                                       Margin="0,1,10,0"
                                                        Foreground="#FF596B7C"
                                                        FontSize="11"
-                                                       MaxHeight="34"
+                                                       MaxHeight="18"
                                                        TextTrimming="CharacterEllipsis"
                                                        TextWrapping="Wrap" />
                                         </StackPanel>
@@ -1312,8 +1369,8 @@
                                 <Border x:Name="SelectedAttachmentPanel"
                                         Grid.Row="2"
                                         Grid.ColumnSpan="4"
-                                        Margin="0,0,0,7"
-                                        Padding="10,7"
+                                        Margin="0,0,0,6"
+                                        Padding="9,5"
                                         Background="#FFF8FAFC"
                                          BorderBrush="{StaticResource BorderBrush}"
                                          BorderThickness="1"
@@ -1328,7 +1385,7 @@
                                                    FontSize="11"
                                                    FontWeight="SemiBold" />
                                          <ScrollViewer MaxHeight="62"
-                                                       Margin="0,5,0,0"
+                                                       Margin="0,4,0,0"
                                                        VerticalScrollBarVisibility="Auto">
                                          <ItemsControl x:Name="SelectedAttachmentList"
                                                        AutomationProperties.Name="已选附件">
@@ -1339,26 +1396,27 @@
                                             </ItemsControl.ItemsPanel>
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
-                                                    <Border Margin="0,0,7,5"
-                                                            Padding="7,4"
+                                                    <Border Margin="0,0,5,4"
+                                                            Padding="6,3"
                                                             Background="#FFE8F1F8"
-                                                            CornerRadius="3">
-                                                        <StackPanel Orientation="Horizontal">
+                                                            CornerRadius="5">
+                                                            <StackPanel Orientation="Horizontal">
                                                             <TextBlock Text="{Binding DisplayName}"
-                                                                       MaxWidth="230"
+                                                                       MaxWidth="96"
                                                                        TextTrimming="CharacterEllipsis"
                                                                        VerticalAlignment="Center" />
-                                                            <TextBlock Margin="5,0,0,0"
-                                                                       Text="{Binding DisplaySize}"
-                                                                       Foreground="#FF596B7C"
-                                                                       FontSize="10"
-                                                                       VerticalAlignment="Center" />
-                                                            <Button Margin="5,0,0,0"
-                                                                    MinWidth="24"
-                                                                    MinHeight="22"
-                                                                    Padding="3,0"
-                                                                    Content="移除"
+                                                            <Button Width="22"
+                                                                    Height="22"
+                                                                    Margin="4,0,0,0"
+                                                                    MinHeight="0"
+                                                                    Padding="0"
+                                                                    Background="Transparent"
+                                                                    BorderBrush="Transparent"
+                                                                    Content="×"
+                                                                    FontSize="16"
+                                                                    ToolTip="移除附件"
                                                                     AutomationProperties.Name="移除附件"
+                                                                    AutomationProperties.HelpText="{Binding DisplaySize}"
                                                                     Click="OnRemoveAttachmentClicked" />
                                                         </StackPanel>
                                                     </Border>
@@ -1417,8 +1475,9 @@
                                             </primitives:Thumb.Template>
                                         </primitives:Thumb>
                                         <TextBox x:Name="MessageComposerTextBox"
+                                                 Height="64"
                                                  MinHeight="58"
-                                                 Padding="10,8"
+                                                 Padding="10,7"
                                                  AcceptsReturn="True"
                                                  IsEnabled="False"
                                                  BorderThickness="0"
@@ -1530,9 +1589,9 @@
                                             </StackPanel>
                                             <Button x:Name="SendMessageButton"
                                                     Grid.Column="1"
-                                                    MinWidth="78"
-                                                    MinHeight="34"
-                                                    Padding="14,6"
+                                                    MinWidth="88"
+                                                    MinHeight="36"
+                                                    Padding="16,7"
                                                     Style="{StaticResource PrimaryButtonStyle}"
                                                     IsEnabled="False"
                                                     Click="OnSendMessageClicked">
@@ -1583,7 +1642,18 @@
                                            AutomationProperties.LiveSetting="Polite"
                                            Foreground="{DynamicResource RcNeutralBrush}"
                                            FontSize="10"
-                                           TextWrapping="Wrap" />
+                                           TextWrapping="Wrap">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <Trigger Property="Text" Value="选择可用会话后发送文字；正文为空时可选择附件。Ctrl+Enter 换行。">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
                             </Grid>
                             </Border>
 
@@ -1774,14 +1844,14 @@
               Grid.ColumnSpan="2"
               Panel.ZIndex="140"
               Visibility="Collapsed"
-              Width="376"
-              HorizontalAlignment="Right"
+              Margin="436,0,0,0"
               VerticalAlignment="Stretch"
+              Background="#0F0F172A"
               Focusable="True"
               KeyboardNavigation.TabNavigation="Cycle"
               AutomationProperties.Name="成员侧栏">
             <Border Width="360"
-                    Margin="0,16,16,16"
+                    Margin="0,14,14,14"
                     Padding="18"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Stretch"

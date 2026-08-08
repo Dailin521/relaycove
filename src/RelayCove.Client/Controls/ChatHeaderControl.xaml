@@ -46,7 +46,7 @@
             <Setter Property="Opacity" Value="0.72" />
         </Style>
     </UserControl.Resources>
-    <Grid Margin="0,0,0,12">
+    <Grid Margin="0,0,0,10">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="Auto" />
@@ -61,17 +61,18 @@
                        Text="{Binding Heading, ElementName=Root}"
                        AutomationProperties.LiveSetting="Polite"
                        Foreground="{DynamicResource RcTextPrimaryBrush}"
-                       FontSize="20"
+                       FontSize="22"
                        FontWeight="SemiBold"
                        TextTrimming="CharacterEllipsis" />
             <TextBlock x:Name="NoticeTextElement"
-                       Margin="0,5,0,0"
+                       Margin="0,4,0,0"
                        Text="{Binding Notice, ElementName=Root}"
                        AutomationProperties.LiveSetting="Polite"
                        Foreground="{DynamicResource RcTextSecondaryBrush}"
+                       FontSize="13"
                        TextWrapping="Wrap" />
             <TextBlock x:Name="MembersSummaryTextElement"
-                       Margin="0,4,0,0"
+                       Margin="0,3,0,0"
                        Text="{Binding MembersSummary, ElementName=Root}"
                        AutomationProperties.LiveSetting="Polite"
                        Foreground="{DynamicResource RcTextSecondaryBrush}"
