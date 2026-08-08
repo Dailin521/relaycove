@@ -91,6 +91,7 @@ pwsh ./scripts/verify.ps1 -Mode Full
 | `已验证` | Client 可靠性定向回归 | Release 0 警告、0 错误；`Notifications|Realtime|Sync|Desktop|Updates` 过滤器下 827/827 通过 |
 | `已验证` | WPF 内置快照 | `ClientUiSnapshotTests` 4/4 通过；生成 1280×720、1600×900、1920×1080 三份 PNG，并由内部图片查看工具审阅 |
 | `已验证` | Full 与 Release | format、Release 构建、Shared 70、Server 353、Client 1,176、Updater 38，共 1,637 项，以及 `git diff --check` 通过；0 警告、0 错误 |
+| `未验证` | 原生安装态通知 smoke | 设置 `RELAYCOVE_WINDOWS_NOTIFICATION_SMOKE=1` 后，`WindowsNotificationInstalledSmokeTests.InstalledRuntime_WhenExplicitlyEnabled_RegistersShowsQueriesAndRemoves` 在 `host.TryStart()` 返回 `false` 时失败；未进入提交、查询或清理，不能视为安装态通知证据。 |
 | `未验证` | Windows 安装态通知、断网、双账号与 rc.23→rc.24 更新 | 需要后续发布包和真实环境 |
 
 ### 自动化覆盖矩阵
@@ -112,7 +113,7 @@ pwsh ./scripts/verify.ps1 -Mode Full
 ### 决策与限制
 
 - 决策：先以自动化和内置快照证据选择修复，不在没有复现或反馈时改动可靠性核心。
-- 已知限制：当前切片不能用自动化替代 Windows 安装态通知、托盘、断网、双账号、旧 Toast 点击和 rc.23→rc.24 更新人工验收。
+- 已知限制：当前切片不能用自动化替代 Windows 安装态通知、托盘、断网、双账号、旧 Toast 点击和 rc.23→rc.24 更新人工验收。当前 `dotnet test` 宿主的原生通知注册不可用，安装态 smoke 保持未验证。
 
 ### 下一步
 
