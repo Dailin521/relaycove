@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- **计划状态：** `已制定，待执行`
+- **计划状态：** `执行中；S0–S4 已完成，S5–S7 待满足外部输入或 owner Gate`
 - **目标版本：** `1.0.0-rc.24`
 - **发布类型：** 内部 Windows Client RC
 - **计划基准：** `b8a7fb1fc7537b74a58673913d5d5a5292e7b5ce`
@@ -37,7 +37,7 @@
 ### 2.3 未验证边界
 
 - `未验证`：本计划制定时没有重新运行 Fast、Full 或 Release；上述结果来自当前状态页和已完成任务记录。
-- `未验证`：尚未构建 rc.24 包。
+- `已验证`：rc.24 已从提交 `9730a14ea736c83355ec7d8af0a78c5e024c8562` 双构建；两份 ZIP 字节一致。
 - `未验证`：尚未执行 rc.23→rc.24 更新演练。
 - `未验证`：尚未执行本轮真实 Windows 通知、托盘、断网恢复和双账号人工矩阵。
 - `未验证`：严格第二台 Windows 设备矩阵仍是可选发布增强，不是内部 rc.24 默认阻塞项。
@@ -343,6 +343,13 @@ pwsh ./scripts/verify-client-release.ps1 `
 - 包内 manifest、文件 hash、PE x64、自包含运行时和秘密排除检查通过。
 - 发布目录不包含源码、PDB、数据库、日志、缓存、凭据、密钥或临时文件。
 
+### 12.4 本轮证据（2026-08-08）
+
+- `已验证`：精确提交 `9730a14ea736c83355ec7d8af0a78c5e024c8562`，工作区在两次构建前均干净。
+- `已验证`：SDK `10.0.101`，版本 `1.0.0-rc.24`，两份 `RelayCove.Client-1.0.0-rc.24-win-x64.zip` 字节一致。
+- `已验证`：ZIP 长度 `165908074` bytes，SHA-256 `057a4683921166e03001d3d4bd0eb1bc2b9591fd84fb59fbcf6c19cbe223c228`。
+- `已验证`：离线 verifier 已核验 manifest、文件 hash、PE x64、自包含运行时、秘密排除和重复 ZIP 比较。
+
 ## 13. 更新清单决策与生成
 
 ### 13.1 发布策略 Gate
@@ -380,6 +387,8 @@ pwsh ./scripts/generate-update-manifest.ps1 `
 - 精确 rc.23 ZIP，长度和 SHA-256 必须匹配第 2.2 节。
 - 通过 S4 验证的精确 rc.24 ZIP。
 - 不从未知缓存、聊天附件或未验证下载目录取包。
+
+本轮状态：`未验证`。已在本机工作区和 `D:\WorkSpace` 查找精确 rc.23 ZIP，未找到与第 2.2 节长度和 SHA-256 匹配的归档；因此未执行 smoke，也未使用未知缓存或重新下载的未验证包。
 
 ### 14.2 自动更新 smoke
 
@@ -563,18 +572,18 @@ artifacts/rc24/
 
 ### 自动化
 
-- [ ] Fast 通过。
-- [ ] 通知/Realtime/Sync/Desktop/Updates 定向回归通过。
-- [ ] UI/图片/导航相关定向回归通过。
-- [ ] Full 通过。
-- [ ] Release 0 警告、0 错误。
-- [ ] `git diff --check` 通过。
+- [x] Fast 通过。
+- [x] 通知/Realtime/Sync/Desktop/Updates 定向回归通过。
+- [x] UI/图片/导航相关定向回归通过。
+- [x] Full 通过。
+- [x] Release 0 警告、0 错误。
+- [x] `git diff --check` 通过。
 
 ### 包与更新
 
-- [ ] rc.24 两次干净构建字节一致。
-- [ ] 离线 Client release verifier 通过。
-- [ ] 记录 ZIP 长度、SHA-256、commit 和 SDK。
+- [x] rc.24 两次干净构建字节一致。
+- [x] 离线 Client release verifier 通过。
+- [x] 记录 ZIP 长度、SHA-256、commit 和 SDK。
 - [ ] rc.23→rc.24 update delivery smoke 通过。
 - [ ] optional/mandatory/minimum version 经 owner 明确决定。
 
