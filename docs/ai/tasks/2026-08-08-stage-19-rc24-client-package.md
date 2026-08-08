@@ -24,5 +24,5 @@ pwsh ./scripts/verify-client-release.ps1 -Version 1.0.0-rc.24 -OutputRoot ./arti
 
 ## 限制与下一步
 
-- `未验证`：rc.23→rc.24 更新交付演练。未找到与已记录长度 `165845207` 和 SHA-256 `3f4384424c2e662299d195aedecc3be5008b7c8967272ce904b5263174b39d89` 匹配的精确 rc.23 ZIP。
+- `未验证`：rc.23→rc.24 更新交付演练。未找到与已记录长度 `165845207` 和 SHA-256 `3f4384424c2e662299d195aedecc3be5008b7c8967272ce904b5263174b39d89` 匹配的精确 rc.23 ZIP；隔离重建旧提交的结果为 `165907053` bytes、SHA-256 `854838e9e1de2c8deb6335da673ecb3a91f438c9632ec726621fa181240c5b64`，已拒绝作为替代输入。
 - 下一步：owner 提供已验证的 rc.23 归档后，运行 `verify-update-delivery.ps1`；发布策略、线上清单、推送、合并和部署仍须单独授权。

@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-- **当前阶段：** stage-19 进行中 — rc.24 S0–S4 已通过；S5 需要精确 rc.23 ZIP，S6 需要真实 Windows 双账号与通知环境
+- **当前阶段：** stage-19 进行中 — rc.24 S0–S4 已通过；S5 需要精确 rc.23 ZIP（旧提交隔离重建的长度和 SHA-256 不匹配，已拒绝），S6 需要真实 Windows 双账号与通知环境
 - **当前分支成果：** `agent/stage-19-rc24-stabilization` 已新增 rc.24 S0–S7 计划和任务记录；Fast、Release 定向可靠性 827 项、WPF 内置快照 6 项、Full/Release 1,639 项及差异检查均通过。窄窗口成员入口现会保持抽屉关闭并给出可访问提示；快照只构造可达的附件/提及输入状态，且三档截图已由内部工具复核。Client `1.0.0-rc.24` 已从 `9730a14` 双构建并由离线 verifier 确认字节一致（165,908,074 bytes，SHA-256 `057a4683921166e03001d3d4bd0eb1bc2b9591fd84fb59fbcf6c19cbe223c228`）；既有阶段 2–18 与 M4/M5 成果保持不变
 - **最近验证通过的状态：** stage-18 已完成客户端三栏视觉切片、分组频道栏、无气泡消息流、底部输入区、右侧成员抽屉、短状态表达和 WPF 内置快照；Full/Release 0 警告/0 错误，1,634 项测试通过。rc.23 已构建、推送、快进合并至 `main` 并发布内部更新；公网 manifest、ZIP SHA-256 ETag、Content-Length 和 Range 206 均已验证。逐成员频道角色字段因现有协议缺失保持能力标签
 - **最近补强：** 图片消息自动下载预览、私聊完整成员列表、频道分组折叠及设计约束文档已完成；Full/Release 0 警告/0 错误，1,637 项测试通过。详见 `docs/ui-design-guidelines.md` 与 `docs/ai/tasks/2026-08-07-client-image-preview-and-navigation.md`
