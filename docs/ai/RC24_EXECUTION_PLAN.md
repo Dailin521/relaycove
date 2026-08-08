@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- **计划状态：** `执行中；S0–S4 已完成，S5–S7 待满足外部输入或 owner Gate`
+- **计划状态：** `执行中；S0–S4 已完成，S5 经 owner 决定跳过且保持未验证，S6/S7 仍受验证与授权 Gate 约束`
 - **目标版本：** `1.0.0-rc.24`
 - **发布类型：** 内部 Windows Client RC
 - **计划基准：** `b8a7fb1fc7537b74a58673913d5d5a5292e7b5ce`
@@ -390,6 +390,11 @@ pwsh ./scripts/generate-update-manifest.ps1 `
 
 本轮状态：`未验证`。已在本机工作区和 `D:\WorkSpace` 查找精确 rc.23 ZIP，未找到与第 2.2 节长度和 SHA-256 匹配的归档；又在隔离 worktree 从提交 `70ed0eaaa16ae4f47ce4c8a45fe681515769dff5` 使用 SDK `10.0.101` 重建。重建结果为 `165907053` bytes、SHA-256 `854838e9e1de2c8deb6335da673ecb3a91f438c9632ec726621fa181240c5b64`，不匹配第 2.2 节的历史发布身份，已拒绝用于 smoke。因此未执行 smoke，也未使用未知缓存或重新下载的未验证包。
 
+### 14.3 Owner 决定（2026-08-08）
+
+- owner 明确决定跳过 rc.23→rc.24 更新交付演练；该场景保持 `未验证`，不作为通过结果或发布质量证明。
+- 此决定不授权生成线上清单、推送、合并、部署或写入内部更新通道。
+
 ### 14.2 自动更新 smoke
 
 ```powershell
@@ -584,7 +589,7 @@ artifacts/rc24/
 - [x] rc.24 两次干净构建字节一致。
 - [x] 离线 Client release verifier 通过。
 - [x] 记录 ZIP 长度、SHA-256、commit 和 SDK。
-- [ ] rc.23→rc.24 update delivery smoke 通过。
+- [ ] rc.23→rc.24 update delivery smoke 通过（owner 已决定跳过；保持未验证）。
 - [ ] optional/mandatory/minimum version 经 owner 明确决定。
 
 ### Windows 人工验收
