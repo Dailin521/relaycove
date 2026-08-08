@@ -713,6 +713,13 @@ public partial class MainWindow : Window
     {
         _ = sender;
         _ = e;
+        if (ActualWidth < 1400)
+        {
+            CloseChannelPanel(clearPresentation: false);
+            SetLiveText(ChannelLiveRegionText, "窗口较窄时请扩大窗口后再管理成员。");
+            return;
+        }
+
         if (accountShell?.AdminCoordinator is null || !accountShell.Snapshot.HasActiveAccount)
         {
             SetLiveText(ChannelLiveRegionText, "请先登录后再管理频道。");

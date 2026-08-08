@@ -43,6 +43,46 @@ public sealed class ClientUiSnapshotTests
         });
     }
 
+    [Fact]
+    public async Task MainWindow_WhenNarrowMemberButtonIsClicked_KeepsComposerReachable()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -32000;
+                window.Top = -32000;
+                window.Width = 1280;
+                window.Height = 720;
+                window.OpenChannelPanelButton.IsEnabled = true;
+                window.Show();
+                window.UpdateLayout();
+                window.MessageComposerTextBox.IsEnabled = true;
+                window.SelectAttachmentsButton.IsEnabled = true;
+                window.MentionPickerButton.IsEnabled = true;
+                window.SendMessageButton.IsEnabled = true;
+
+                window.OpenChannelPanelButton.RaiseEvent(
+                    new RoutedEventArgs(Button.ClickEvent, window.OpenChannelPanelButton));
+                window.UpdateLayout();
+
+                Assert.Equal(Visibility.Collapsed, window.ChannelOverlay.Visibility);
+                Assert.Equal(new Thickness(0), window.ConversationChatPanel.Margin);
+                Assert.True(window.MessageComposerTextBox.IsEnabled);
+                Assert.True(window.SelectAttachmentsButton.IsEnabled);
+                Assert.True(window.MentionPickerButton.IsEnabled);
+                Assert.True(window.SendMessageButton.IsEnabled);
+                Assert.Equal("窗口较窄时请扩大窗口后再管理成员。", window.ChannelLiveRegionText.Text);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
     [Theory]
     [InlineData(1280, 720)]
     [InlineData(1600, 900)]
@@ -67,7 +107,7 @@ public sealed class ClientUiSnapshotTests
                 }
                 else if (width == 1280)
                 {
-                    ShowExpandedComposerState(window);
+                    ShowReplyAndAttachmentsState(window);
                 }
 
                 window.Show();
@@ -85,6 +125,11 @@ public sealed class ClientUiSnapshotTests
                 AssertWithinBounds(root, window.SendMessageButton);
                 Assert.True(window.MessageComposerTextBox.ActualHeight > 0);
                 Assert.True(window.SendMessageButton.ActualWidth > 0);
+                Assert.True(window.MessageList.ActualHeight >= 120);
+                if (width == 1280)
+                {
+                    Assert.Equal(Visibility.Collapsed, window.ChannelOverlay.Visibility);
+                }
                 if (width >= 1600)
                 {
                     AssertWithinBounds(root, window.ChannelMemberSearchTextBox);
@@ -108,8 +153,56 @@ public sealed class ClientUiSnapshotTests
                         root,
                         (int)Math.Ceiling(root.ActualWidth),
                         (int)Math.Ceiling(root.ActualHeight),
-                        Path.Combine(outputDirectory, $"main-window-{width}x{height}.png"));
+                        Path.Combine(outputDirectory, $"main-window-outer-{width}x{height}.png"));
                 }
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task MainWindow_WhenNarrowComposerUsesReachableStates_KeepsActionsConsistent()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -32000;
+                window.Top = -32000;
+                window.Width = 1280;
+                window.Height = 720;
+                ShowReplyAndMentionState(window);
+                window.Show();
+                window.UpdateLayout();
+
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+                AssertWithinBounds(root, window.MessageComposerTextBox);
+                AssertWithinBounds(root, window.SelectAttachmentsButton);
+                AssertWithinBounds(root, window.MentionPickerButton);
+                AssertWithinBounds(root, window.SendMessageButton);
+                Assert.True(window.MessageComposerTextBox.IsEnabled);
+                Assert.False(window.SelectAttachmentsButton.IsEnabled);
+                Assert.True(window.MentionPickerButton.IsEnabled);
+                Assert.True(window.SendMessageButton.IsEnabled);
+                Assert.True(window.MessageList.ActualHeight >= 120);
+
+                ShowReplyAndAttachmentsState(window);
+                window.UpdateLayout();
+
+                AssertWithinBounds(root, window.MessageComposerTextBox);
+                AssertWithinBounds(root, window.SelectAttachmentsButton);
+                AssertWithinBounds(root, window.MentionPickerButton);
+                AssertWithinBounds(root, window.SendMessageButton);
+                Assert.False(window.MessageComposerTextBox.IsEnabled);
+                Assert.False(window.SelectAttachmentsButton.IsEnabled);
+                Assert.False(window.MentionPickerButton.IsEnabled);
+                Assert.True(window.SendMessageButton.IsEnabled);
+                Assert.True(window.MessageList.ActualHeight >= 120);
             }
             finally
             {
@@ -145,6 +238,8 @@ public sealed class ClientUiSnapshotTests
         window.NavigationNoticeText.Text = "讨论客户端体验和 rc.23 视觉改造";
         window.ConversationMembersSummaryText.Text = "成员：8 人";
         window.MessageComposerTextBox.IsEnabled = true;
+        window.SelectAttachmentsButton.IsEnabled = true;
+        window.MentionPickerButton.IsEnabled = true;
         window.MessageComposerTextBox.Text = "整理一下今天的评审结论…";
         window.SendMessageButton.IsEnabled = true;
 
@@ -249,8 +344,13 @@ public sealed class ClientUiSnapshotTests
         };
     }
 
-    private static void ShowExpandedComposerState(MainWindow window)
+    private static void ShowReplyAndAttachmentsState(MainWindow window)
     {
+        window.MessageComposerTextBox.Text = string.Empty;
+        window.MessageComposerTextBox.IsEnabled = false;
+        window.SelectAttachmentsButton.IsEnabled = false;
+        window.MentionPickerButton.IsEnabled = false;
+        window.SendMessageButton.IsEnabled = true;
         window.ReplyComposerPanel.Visibility = Visibility.Visible;
         window.ReplyComposerSenderText.Text = "回复 程远";
         window.ReplyComposerContentText.Text = "小窗口下的输入区仍应完整可用。";
@@ -275,6 +375,32 @@ public sealed class ClientUiSnapshotTests
                 DisplaySize = "128 KB",
             })
             .ToArray();
+        window.MentionPickerPanel.Visibility = Visibility.Collapsed;
+        window.MentionCandidateList.ItemsSource = null;
+        window.SelectedMentionList.ItemsSource = null;
+    }
+
+    private static void ShowReplyAndMentionState(MainWindow window)
+    {
+        ShowReplyAndAttachmentsState(window);
+        window.MessageComposerTextBox.Text = "Mention reply";
+        window.MessageComposerTextBox.IsEnabled = true;
+        window.SelectAttachmentsButton.IsEnabled = false;
+        window.MentionPickerButton.IsEnabled = true;
+        window.SendMessageButton.IsEnabled = true;
+        window.MentionPickerPanel.Visibility = Visibility.Visible;
+        window.MentionCandidateList.ItemsSource = new object[]
+        {
+            new { DisplayName = "Cheng Yuan", UserName = "chengyuan" },
+            new { DisplayName = "Xu Yan", UserName = "xuyan" },
+        };
+        window.SelectedMentionList.ItemsSource = new object[]
+        {
+            new { UserName = "chengyuan" },
+            new { UserName = "xuyan" },
+        };
+        window.SelectedAttachmentPanel.Visibility = Visibility.Collapsed;
+        window.SelectedAttachmentList.ItemsSource = null;
     }
 
     private static object CreateMember(

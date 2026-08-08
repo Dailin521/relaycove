@@ -3,9 +3,9 @@
 ## 任务定义
 
 - **任务名称：** 阶段 19 窄窗口成员抽屉与可达快照
-- **状态：** `进行中`
+- **状态：** `已完成`
 - **基准提交：** `b8a7fb1fc7537b74a58673913d5d5a5292e7b5ce`
-- **工作分支：** `agent/stage-19-narrow-member-drawer`
+- **工作分支：** `agent/stage-19-rc24-stabilization`
 - **相关方案章节：** 阶段 8、21.1；[`../ui-design-guidelines.md`](../../ui-design-guidelines.md)
 - **详细执行计划：** [`../RC24_EXECUTION_PLAN.md`](../RC24_EXECUTION_PLAN.md) 的 S2
 
@@ -36,10 +36,10 @@
 
 ### 验收标准
 
-- [ ] 1280px 下点击成员入口后抽屉保持关闭，聊天区无右边距，发送相关操作可用。
-- [ ] 1600px 下成员抽屉仍可打开，现有成员管理行为不回归。
-- [ ] 附件与提及快照状态均为生产可达状态，并通过布局/可用性断言。
-- [ ] WPF 快照定向、Fast 和 Full 通过，Release 0 警告、0 错误。
+- [x] 1280px 下点击成员入口后抽屉保持关闭，聊天区无右边距，发送相关操作可用。
+- [x] 1600px 下成员抽屉仍可打开，现有成员管理行为不回归。
+- [x] 附件与提及快照状态均为生产可达状态，并通过布局/可用性断言。
+- [x] WPF 快照定向、Fast 和 Full 通过，Release 0 警告、0 错误。
 
 ### 验证命令
 
@@ -58,20 +58,24 @@ pwsh ./scripts/verify.ps1 -Mode Full
 
 ### 修改摘要
 
-- 待执行。
+- 在 `OnOpenChannelPanelClicked` 的账户检查前加入 <1400px guard：关闭抽屉、恢复聊天区并通过 live region 提示用户扩大窗口。
+- 新增真实成员按钮点击的 WPF 回归；1280px 下断言抽屉关闭、右边距清除、正文/附件/@/发送仍保持可用。
+- 将快照合成状态拆为生产可达的“回复+附件”和“回复+提及”；补充控件启用状态、边界和消息视口高度断言。
+- 快照文件名明确为外窗尺寸，避免将 WPF 客户区的实际像素误表述为外窗分辨率。
 
 ### 验证证据
 
 | 状态 | 命令或场景 | 结果 |
 | --- | --- | --- |
-| `未验证` | 窄窗口成员点击回归 | 待执行 |
-| `未验证` | 可达附件/提及快照 | 待执行 |
-| `未验证` | Fast 与 Full | 待执行 |
+| `已验证` | `ClientUiSnapshotTests`（Release） | 6/6 通过；包含窄窗口点击、成员抽屉收起、可达附件/提及状态和三档渲染。 |
+| `已验证` | WPF 内置快照与内部图片审阅 | `artifacts/rc24/ui-snapshots/main-window-outer-{1280x720,1600x900,1920x1080}.png` 已生成并审阅；未见裁切或重叠。 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast` | Debug 0 警告/0 错误；Shared 70、Server 353、Client 1,178、Updater 38，共 1,639 项通过。 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full` | format、Release 0 警告/0 错误、1,639 项测试及 `git diff --check` 通过。 |
 
 ### 文件范围
 
 - 新增：`docs/ai/tasks/2026-08-08-stage-19-narrow-member-drawer.md`
-- 修改：无
+- 修改：`src/RelayCove.Client/MainWindow.xaml.cs`、`tests/RelayCove.Client.Tests/Desktop/ClientUiSnapshotTests.cs`、`docs/ai/STATUS.md`
 - 删除：无
 
 ### 决策与限制
@@ -81,4 +85,4 @@ pwsh ./scripts/verify.ps1 -Mode Full
 
 ### 下一步
 
-- 实现窄窗口成员入口 guard，并补充可达 WPF 快照回归。
+- 在本地提交该 P2 切片后，执行 rc.24 Client ZIP 双构建、离线 verifier 和已验证 rc.23 归档可用时的更新交付演练。
