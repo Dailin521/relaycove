@@ -2,7 +2,7 @@
 
 ## 任务定义
 
-- **状态：** 进行中（S0–S5 的视觉与局部回归切片已完成；正在收敛组件化、Full/Release、真实 Windows 与发布验收）
+- **状态：** 进行中（S0–S13 的 UI、图片预览与自动化切片已完成；正在执行最终 Full/Release、双构建与真实 Windows 人工验收）
 - **基准提交：** `baaae8813d518bee8364a4977174a95e97127eed` (`baaae88`)
 - **工作分支：** `agent/stage-20-rc25-ui-redesign`
 - **相关方案章节：** [工程方案 §9](../../../RelayCove_工程落地方案.md#9-客户端工程设计)、阶段 8、§22.3；[rc.25 执行方案](../RC25_EXECUTION_PLAN.md)
@@ -31,6 +31,7 @@
 - 允许修改：
   - `docs/`、`plan/rc.25/`、`RelayCove_工程落地方案.md`
   - `src/RelayCove.Client/` 与 `tests/RelayCove.Client.Tests/`（仅展示与验证边界）
+  - `scripts/verify-client-release.ps1`（仅与发布器统一秘密路径拒绝规则）
 - 明确不做：
   - 不修改 Shared DTO、Server、SignalR、SQLite、消息可靠性、附件安全或更新协议。
   - 不更新 `docs/ai/STATUS.md`，不推送、部署或发布更新通道。
@@ -71,6 +72,9 @@ git diff --check
 - S8–S10：补齐成员/设置/搜索/图片查看器/强制更新覆盖层的互斥与焦点回退，补齐次级界面 after 快照；随后按参考图收敛会话栏、Header 与 Composer 的视觉密度。
 - S11：根据独立视觉复核修复最小窗口裁切、根级搜索遮罩、设置关闭按钮和辅助文本对比度；二次复核确认 P1 清零。
 - S12：根据产品复审进一步收敛为内容优先的三列聊天工作区：消息操作仅在 hover/失败状态显现，搜索改为带图标和快捷键提示的会话搜索卡，Composer 和 Header 采用一致的聊天内容宽度，成员抽屉仅遮罩聊天列；复杂回复/10 附件态压缩为完整两行 chip，并保留顶缘拖拽。
+- S13：将 UI 质量门扩展至全部子界面。Rail、会话栏、Header、标题栏和设置抽屉统一为紧凑的蓝白层级；登录品牌区使用受控蓝色渐变和半透明连接状态卡；强制更新为居中紧凑卡，查看器关闭操作与深色查看器匹配。
+- S13 图片：单图消息改为图片主导的直接预览，点击图片可进入既有查看器，加载/失败只保留轻量状态。经独立视觉复核后移除固定 16:9 框，横图、方图与竖图均在 360×280 的受限范围内保留自身比例和可见辅助信息。
+- S13 发布校验：离线 verifier 的 credential/token 路径规则与发布器对齐，并以真实 ZIP 篡改回归验证拒绝 `credentials.bin` 与 `auth-access_token.bin`。
 - 图片链路：补充 Alice/Bob 独立账户的真实 Kestrel 单 PNG 测试；双方分别以自身账号、缓存和认证下载规范消息附件，并通过既有受限解码器生成冻结缩略图。可见图片行的 UI 自动下载→缩略图触发仍由既有 `Image.Loaded` 链路持有，自动行为限定为会话已打开且图片项已物化。
 - 组件化：SettingsPanelControl 与 ChatHeaderControl 已以展示 DP + RoutedEvent 形式接入；MainWindow 继续持有更新、会话、搜索、成员与生命周期协调。
 - 收口：独立代码复核确认未触及 Server/Shared、消息可靠发送、附件安全或更新交接；修复窄窗口成员提示曾落入隐藏抽屉的 P2，并完成干净 HEAD 的 Release 双构建与离线校验。
@@ -99,18 +103,23 @@ git diff --check
 | `已验证` | S12 UI 快照定向回归 | `ClientUiSnapshotTests` 19/19 通过；`after-s12-final-draft/` 覆盖 900、1280 复杂 Composer、1600/1920 clean 和成员抽屉。独立复核确认宽屏内容宽度、设置文字和 10 附件两行均无 P1/P2。 |
 | `已验证` | 双端图片 PNG Kestrel 集成 | `KestrelAttachmentDownloadIntegrationTests` 2/2 通过：Alice 发送单张 640×320 PNG，Alice 与 Bob 均从独立账户缓存下载逐字节相同的附件，并安全生成 320×160 冻结缩略图。 |
 | `已验证` | S12 Full / Release | Fast 与 Full 均已在 S12 工作树运行；最终双构建仍必须从新的干净提交运行。真实 Windows 100%/125%/150% DPI、托盘及强制更新交接仍需人工矩阵。 |
+| `已验证` | S13 WPF 快照矩阵 | `ClientUiSnapshotTests` 24/24 通过；`after-s13-aspect-final/` 覆盖登录、搜索、设置、成员、强制更新、查看器、主窗口及横图/方图/竖图直接预览。人工复核确认成员与设置均为覆盖层，无第四列。 |
+| `已验证` | S13 图片呈现与未开放入口 | 图片呈现回归及快照 34/34 通过；横/方/竖图保持比例并不超过 360×280。导航轨键盘/UIA 与连续未开放入口计时/零业务副作用回归已覆盖。 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast`（S13） | 0 警告、0 错误；Shared 70、Server 353、Client 1,235、Updater 38，共 1,696 项通过。 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full`（S13） | format、Release 构建 0 警告/错误、Release 全量 Shared 70、Server 353、Client 1,240、Updater 38（共 1,701 项）及 `git diff --check` 均通过。 |
+| `已验证` | 发布校验器秘密排除回归 | `ClientReleasePackageTests` 1/1 通过（真实双包和 ZIP 篡改），离线 verifier 精确拒绝 `credentials.bin`、`auth-access_token.bin`。 |
 
 ### 文件范围
 
 - 新增：上述文档、Client 资源/展示类型/控件及 S1–S3 测试。
-- 修改：`docs/ai/RC25_EXECUTION_PLAN.md`、`docs/ui-design-guidelines.md`、`RelayCove_工程落地方案.md`、`App.xaml`、`MainWindow.xaml(.cs)`。
+- 修改：`docs/ai/RC25_EXECUTION_PLAN.md`、`docs/ui-design-guidelines.md`、`RelayCove_工程落地方案.md`、`App.xaml`、`MainWindow.xaml(.cs)`、控件 XAML、发布 verifier 与其包装测试。
 - 删除：无
 
 ### 决策与限制
 
 - 决策：v1.1 是 rc.25 唯一可执行规格；v1.0 为保留的历史设计输入。品牌主色固定为 `#1677D2`，绿色仅表达成功或在线等真实语义。
-- 已知限制：S12 的定向 UI、双端图片、Fast、Full 和独立视觉复核已完成；最终双构建仍必须从新的干净提交运行。真实 Windows 100%/125%/150% DPI、托盘恢复/真正退出及强制更新交接尚未在人工桌面矩阵验证，必须保持 `未验证`，Windows 原生窗口行为不能仅由 `RenderTargetBitmap` 验收。图片自动下载仅在会话已打开且图片项实际可见时启动，不进行后台全量图片下载。MessageListControl/ComposerControl 尚未拆分，继续由 MainWindow 保持展示和现有可靠性边界。
+- 已知限制：S13 的定向 UI、双端图片、Fast、Full 与独立视觉复核已完成；最终双构建仍必须从新的干净提交运行。真实 Windows 100%/125%/150% DPI、托盘恢复/真正退出及强制更新交接尚未在人工桌面矩阵验证，必须保持 `未验证`，Windows 原生窗口行为不能仅由 `RenderTargetBitmap` 验收。图片自动下载仅在会话已打开且图片项实际可见时启动，不进行后台全量图片下载。MessageListControl/ComposerControl 尚未拆分，继续由 MainWindow 保持展示和现有可靠性边界。
 
 ### 下一步
 
-- 以 S12 代码重新运行 Fast、Full、Release、独立复核和双构建；随后在独立真实 Windows 环境完成 100%/125%/150% DPI、托盘和强制更新交接人工矩阵。MessageList/Composer 的后续组件拆分不得影响本 rc.25 已验证可靠性边界。
+- 从 S13 的干净精确 HEAD 执行 Release 双构建与离线校验；随后在独立真实 Windows 环境完成 100%/125%/150% DPI、托盘和强制更新交接人工矩阵。MessageList/Composer 的后续组件拆分不得影响本 rc.25 已验证可靠性边界。

@@ -89,7 +89,7 @@ function Assert-NoReparsePointAncestors {
 function Test-ForbiddenPath {
     param([Parameter(Mandatory)][string] $RelativePath)
 
-    return $RelativePath -match '(?i)(^|/)(bin|obj|data|uploads|logs|cache|temp)(/|$)|\.pdb$|\.cs$|\.csproj$|\.sln$|\.user$|(^|/)appsettings\.(?!json$)|(^|/).*\.(db|sqlite)(-wal|-shm)?$|(^|/)\.env(?:\.|$)|(^|/)[^/]*secret[^/]*\.json$|(^|/)relaycove-credential\.v1\.bin$|(^|/)[^/]*(credential|refresh-token|access-token)[^/]*\.(json|dat)$|\.(pfx|p12|pem|key|bak|tmp)$|(^|/)(appdata|localappdata|roaming)(/|$)'
+    return $RelativePath -match '(?i)(^|/)(bin|obj|data|uploads|logs|cache|temp)(/|$)|\.pdb$|\.cs$|\.csproj$|\.sln$|\.user$|(^|/)appsettings\.(?!json$)|(^|/).*\.(db|sqlite)(-wal|-shm)?$|(^|/)\.env(?:\.|$)|(^|/)[^/]*secret[^/]*\.json$|(^|/)relaycove-credential\.v1\.bin$|(^|/)[^/]*(credential|refresh[-_.]?token|access[-_.]?token)[^/]*\.(bin|json|dat)$|\.(pfx|p12|pem|key|bak|tmp)$|(^|/)(appdata|localappdata|roaming)(/|$)'
 }
 
 function Get-StreamInspection {

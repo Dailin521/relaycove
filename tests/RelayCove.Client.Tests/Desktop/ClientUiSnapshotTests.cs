@@ -5,7 +5,10 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using RelayCove.Client.Accounts;
+using RelayCove.Client.Attachments;
 using RelayCove.Client.Updates;
+using RelayCove.Shared.Messages;
 using RelayCove.Shared.Updates;
 
 namespace RelayCove.Client.Tests.Desktop;
@@ -77,8 +80,13 @@ public sealed class ClientUiSnapshotTests
         });
     }
 
-    [Fact]
-    public async Task MainWindow_WhenMandatoryUpdateIsPresentedAtMinimumSize_KeepsActionsAndNotesReachable()
+    [Theory]
+    [InlineData(900, 520, "mandatory-update-900x520.png")]
+    [InlineData(1280, 720, "mandatory-update-1280x720.png")]
+    public async Task MainWindow_WhenMandatoryUpdateIsPresented_KeepsActionsAndNotesReachable(
+        int width,
+        int height,
+        string snapshotFileName)
     {
         await RunOnStaAsync(() =>
         {
@@ -88,8 +96,8 @@ public sealed class ClientUiSnapshotTests
                 window.WindowStartupLocation = WindowStartupLocation.Manual;
                 window.Left = -32000;
                 window.Top = -32000;
-                window.Width = 900;
-                window.Height = 520;
+                window.Width = width;
+                window.Height = height;
                 window.BindUpdateActions(
                     _ => Task.FromResult(true),
                     () => Task.CompletedTask,
@@ -113,7 +121,7 @@ public sealed class ClientUiSnapshotTests
                     1,
                     root.ActualHeight - 120);
 
-                SaveSnapshotWhenRequested(root, "mandatory-update-900x520.png");
+                SaveSnapshotWhenRequested(root, snapshotFileName);
             }
             finally
             {
@@ -122,8 +130,13 @@ public sealed class ClientUiSnapshotTests
         });
     }
 
-    [Fact]
-    public async Task MainWindow_WhenImageViewerIsPresented_KeepsPreviewAndCloseActionReachable()
+    [Theory]
+    [InlineData(1280, 720, "image-viewer-1280x720.png")]
+    [InlineData(1600, 900, "image-viewer-1600x900.png")]
+    public async Task MainWindow_WhenImageViewerIsPresented_KeepsPreviewAndCloseActionReachable(
+        int width,
+        int height,
+        string snapshotFileName)
     {
         await RunOnStaAsync(() =>
         {
@@ -133,8 +146,8 @@ public sealed class ClientUiSnapshotTests
                 window.WindowStartupLocation = WindowStartupLocation.Manual;
                 window.Left = -32000;
                 window.Top = -32000;
-                window.Width = 1280;
-                window.Height = 720;
+                window.Width = width;
+                window.Height = height;
                 window.AttachmentImageViewerTitleText.Text = "rc.25-界面评审参考图.png";
                 window.AttachmentImageViewerStatusText.Text = "图片预览已加载；显示仍受 25 MiB 安全上限保护。";
                 window.AttachmentImageViewerImage.Source = CreateRepresentativeImagePreview();
@@ -150,10 +163,60 @@ public sealed class ClientUiSnapshotTests
                 AssertWithinBounds(root, window.AttachmentImageViewerImage);
                 AssertWithinBounds(root, window.AttachmentImageViewerStatusText);
                 Assert.NotNull(window.AttachmentImageViewerImage.Source);
-                Assert.InRange(window.AttachmentImageViewerImage.ActualWidth, 862, 871);
-                Assert.InRange(window.AttachmentImageViewerImage.ActualHeight, 483, 492);
+                Assert.True(window.AttachmentImageViewerImage.ActualWidth >= 862);
+                Assert.True(window.AttachmentImageViewerImage.ActualHeight >= 483);
 
-                SaveSnapshotWhenRequested(root, "image-viewer-1280x720.png");
+                SaveSnapshotWhenRequested(root, snapshotFileName);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData(640, 360, "direct-image-preview-landscape-1280x720.png")]
+    [InlineData(640, 640, "direct-image-preview-square-1280x720.png")]
+    [InlineData(360, 640, "direct-image-preview-portrait-1280x720.png")]
+    public async Task MainWindow_WhenSingleImageMessageIsReady_RendersDirectPreviewWithoutDocumentChrome(
+        int sourceWidth,
+        int sourceHeight,
+        string snapshotFileName)
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -32000;
+                window.Top = -32000;
+                window.Width = 1280;
+                window.Height = 720;
+                window.MessageList.ItemsSource = new[] { CreateReadyImagePreviewMessage(sourceWidth, sourceHeight) };
+                window.Show();
+                window.UpdateLayout();
+
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+                var previewCard = Assert.Single(
+                    FindVisualDescendants<Border>(window.MessageList),
+                    candidate => candidate.MaxWidth == 360 && candidate.MaxHeight == 280);
+                var previewImage = Assert.Single(
+                    FindVisualDescendants<System.Windows.Controls.Image>(window.MessageList),
+                    candidate => candidate.Source is not null);
+                Assert.Equal(new CornerRadius(8), previewCard.CornerRadius);
+                Assert.True(previewCard.ClipToBounds);
+                Assert.InRange(previewCard.ActualWidth, 1, 360.5);
+                Assert.InRange(previewCard.ActualHeight, 1, 280.5);
+                Assert.InRange(
+                    previewCard.ActualWidth / previewCard.ActualHeight,
+                    (sourceWidth / (double)sourceHeight) - 0.02,
+                    (sourceWidth / (double)sourceHeight) + 0.02);
+                AssertWithinBounds(root, previewCard);
+                AssertWithinBounds(root, previewImage);
+
+                SaveSnapshotWhenRequested(root, snapshotFileName);
             }
             finally
             {
@@ -748,10 +811,8 @@ public sealed class ClientUiSnapshotTests
         "• 成员管理与账户设置以覆盖层展示，不再增加额外的主界面列。" + Environment.NewLine +
         "• 修复高 DPI 下的标题栏、搜索与附件预览细节。";
 
-    private static BitmapSource CreateRepresentativeImagePreview()
+    private static BitmapSource CreateRepresentativeImagePreview(int width = 640, int height = 360)
     {
-        const int width = 640;
-        const int height = 360;
         var pixels = new byte[width * height * 4];
         for (var y = 0; y < height; y++)
         {
@@ -951,6 +1012,60 @@ public sealed class ClientUiSnapshotTests
             Attachments = Array.Empty<object>(),
             HasAttachments = false,
         };
+
+    private static ClientMessageListItemPresentation CreateReadyImagePreviewMessage(
+        int sourceWidth = 640,
+        int sourceHeight = 360)
+    {
+        var conversationId = Guid.NewGuid();
+        var messageClientId = Guid.NewGuid();
+        var attachmentId = Guid.NewGuid();
+        var imageState = new ClientAttachmentImageViewState(
+            new ClientAttachmentDownloadContext(
+                conversationId,
+                messageClientId,
+                attachmentId,
+                contextVersion: 1),
+            "团队白板参考图.png",
+            eligible: true);
+        Assert.True(imageState.TryBeginLoad());
+        Assert.True(imageState.TryApplyLoaded(CreateRepresentativeImagePreview(sourceWidth, sourceHeight)));
+        var attachment = new ClientMessageAttachmentPresentation(
+            messageClientId,
+            attachmentId,
+            "团队白板参考图.png",
+            "186 KB",
+            IsImage: true,
+            IsDownloaded: true)
+        {
+            ImageState = imageState,
+        };
+        return new ClientMessageListItemPresentation(
+            ServerMessageId: 42,
+            ClientMessageId: messageClientId,
+            SenderLabel: "程远",
+            Content: "我把本轮界面参考图发在这里。",
+            Timestamp: "10:45",
+            DateSeparatorLabel: "今天",
+            ShowDateSeparator: true,
+            ShowNewMessageSeparator: false,
+            IsMergedWithPrevious: false,
+            IsOwnMessage: false,
+            SendStatus: MessageSendStatus.Sent,
+            SendStatusLabel: "已发送",
+            CanRetry: false,
+            ReplyToMessageId: null,
+            ReplySenderLabel: string.Empty,
+            ReplyContent: string.Empty,
+            HasReply: false,
+            IsReplyTargetAvailable: false,
+            CanReply: true,
+            CanCopy: true,
+            Links: Array.Empty<ClientMessageLinkPresentation>(),
+            HasLinks: false,
+            Attachments: [attachment],
+            HasAttachments: true);
+    }
 
     private static void AssertWithinBounds(FrameworkElement root, FrameworkElement element)
     {

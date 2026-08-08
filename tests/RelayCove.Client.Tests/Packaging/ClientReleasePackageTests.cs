@@ -81,6 +81,22 @@ public sealed partial class ClientReleasePackageTests
             Assert.Contains("forbidden updater companion", companionUpdater.CombinedOutput, StringComparison.OrdinalIgnoreCase);
             RestoreArchive(archiveBackupPath, first.ArchivePath, first.SidecarPath, originalSidecar);
 
+            foreach (var forbiddenFileName in new[] { "credentials.bin", "auth-access_token.bin" })
+            {
+                await AddArchiveFileAsync(
+                    first.ArchivePath,
+                    packageName: $"RelayCove.Client-{version}-{RuntimeIdentifier}",
+                    relativePath: forbiddenFileName);
+                await WriteArchiveSidecarAsync(first.ArchivePath, first.SidecarPath);
+                var forbiddenFile = await PowerShellProcess.RunAsync(
+                    "scripts/verify-client-release.ps1",
+                    ["-Version", version, "-OutputRoot", firstOutput.Path, "-AllowDirtySource"],
+                    VerifyTimeout);
+                Assert.NotEqual(0, forbiddenFile.ExitCode);
+                Assert.Contains($"forbidden file '{forbiddenFileName}'", forbiddenFile.CombinedOutput, StringComparison.OrdinalIgnoreCase);
+                RestoreArchive(archiveBackupPath, first.ArchivePath, first.SidecarPath, originalSidecar);
+            }
+
             CorruptArchive(first.ArchivePath);
             await AssertScriptFailsAsync(
                 "scripts/verify-client-release.ps1",
@@ -437,9 +453,17 @@ public sealed partial class ClientReleasePackageTests
 
     private static async Task AddUpdaterCompanionAsync(string archivePath, string packageName)
     {
-        var companionPath = $"{packageName}/RelayCove.Updater.dll";
+        await AddArchiveFileAsync(archivePath, packageName, "RelayCove.Updater.dll");
+    }
+
+    private static async Task AddArchiveFileAsync(
+        string archivePath,
+        string packageName,
+        string relativePath)
+    {
+        var archivePathEntry = $"{packageName}/{relativePath}";
         var manifestPath = $"{packageName}/manifest.json";
-        var companionContent = Encoding.UTF8.GetBytes("not a standalone updater");
+        var content = Encoding.UTF8.GetBytes("release package mutation");
         var temporaryArchivePath = $"{archivePath}.mutation-{Guid.NewGuid():N}.tmp";
 
         try
@@ -457,9 +481,9 @@ public sealed partial class ClientReleasePackageTests
                 var files = Assert.IsType<JsonArray>(manifest["files"]);
                 files.Add(new JsonObject
                 {
-                    ["path"] = "RelayCove.Updater.dll",
-                    ["length"] = companionContent.LongLength,
-                    ["sha256"] = Convert.ToHexString(SHA256.HashData(companionContent)).ToLowerInvariant(),
+                    ["path"] = relativePath,
+                    ["length"] = content.LongLength,
+                    ["sha256"] = Convert.ToHexString(SHA256.HashData(content)).ToLowerInvariant(),
                     ["attributes"] = "00000080",
                 });
                 manifest["files"] = new JsonArray(
@@ -485,7 +509,7 @@ public sealed partial class ClientReleasePackageTests
                     leaveOpen: true,
                     Encoding.UTF8);
                 foreach (var entryName in sourceArchive.Entries.Select(entry => entry.FullName)
-                             .Append(companionPath)
+                             .Append(archivePathEntry)
                              .OrderBy(name => name, StringComparer.Ordinal))
                 {
                     var targetEntry = targetArchive.CreateEntry(entryName, CompressionLevel.Optimal);
@@ -496,9 +520,9 @@ public sealed partial class ClientReleasePackageTests
                     {
                         await targetEntryStream.WriteAsync(manifestContent);
                     }
-                    else if (entryName == companionPath)
+                    else if (entryName == archivePathEntry)
                     {
-                        await targetEntryStream.WriteAsync(companionContent);
+                        await targetEntryStream.WriteAsync(content);
                     }
                     else
                     {

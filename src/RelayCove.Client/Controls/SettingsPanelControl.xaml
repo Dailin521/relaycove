@@ -7,8 +7,8 @@
              AutomationProperties.Name="账户与设置侧栏">
     <UserControl.Resources>
         <Style x:Key="SettingsButtonStyle" TargetType="{x:Type Button}">
-            <Setter Property="MinHeight" Value="34" />
-            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="MinHeight" Value="36" />
+            <Setter Property="Padding" Value="12,7" />
             <Setter Property="Background" Value="{DynamicResource RcSurfaceBrush}" />
             <Setter Property="Foreground" Value="{DynamicResource RcTextPrimaryBrush}" />
             <Setter Property="BorderBrush" Value="{DynamicResource RcBorderBrush}" />
@@ -58,8 +58,8 @@
         </Style>
     </UserControl.Resources>
     <Border Width="380"
-            Margin="0,16,16,16"
-            Padding="20"
+            Margin="0,12,16,12"
+            Padding="20,18"
             HorizontalAlignment="Right"
             Background="{DynamicResource RcSurfaceBrush}"
             BorderBrush="{DynamicResource RcBorderBrush}"
@@ -82,7 +82,7 @@
                 </Grid.ColumnDefinitions>
                 <StackPanel>
                     <TextBlock Text="账户与设置"
-                               FontSize="20"
+                               FontSize="19"
                                FontWeight="SemiBold"
                                Foreground="{DynamicResource RcTextPrimaryBrush}" />
                     <TextBlock Margin="0,4,0,0"
@@ -106,32 +106,62 @@
                 </Button>
                 <Border Grid.Row="1"
                         Grid.ColumnSpan="2"
-                        Margin="0,20,0,0"
+                        Margin="0,18,0,0"
                         Padding="14"
                         Background="{DynamicResource RcPrimarySoftBrush}"
+                        BorderBrush="#FFD0E5FA"
+                        BorderThickness="1"
+                        CornerRadius="12">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="38" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Border Width="32"
+                                Height="32"
+                                VerticalAlignment="Top"
+                                Background="{DynamicResource RcPrimaryBrush}"
+                                CornerRadius="10">
+                            <Path Width="17"
+                                  Height="17"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"
+                                  Data="{DynamicResource RcIconChat}"
+                                  Stretch="Uniform"
+                                  Stroke="White"
+                                  StrokeThickness="1.5" />
+                        </Border>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="当前账户"
+                                       Foreground="{DynamicResource RcTextSecondaryBrush}"
+                                       FontSize="11" />
+                            <TextBlock Margin="0,3,0,0"
+                                       Text="{Binding DisplayName, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsPanelControl}}}"
+                                       Foreground="{DynamicResource RcTextPrimaryBrush}"
+                                       FontSize="16"
+                                       FontWeight="SemiBold"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Margin="0,3,0,0"
+                                       Text="{Binding ServerAddress, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsPanelControl}}}"
+                                       Foreground="{DynamicResource RcTextSecondaryBrush}"
+                                       FontSize="11"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <Border Grid.Row="2"
+                        Grid.ColumnSpan="2"
+                        Margin="0,14,0,0"
+                        Padding="14"
+                        Background="{DynamicResource RcCanvasBrush}"
+                        BorderBrush="{DynamicResource RcBorderBrush}"
+                        BorderThickness="1"
                         CornerRadius="8">
                     <StackPanel>
-                        <TextBlock Text="当前账户"
-                                   Foreground="{DynamicResource RcTextSecondaryBrush}"
-                                   FontSize="11" />
-                        <TextBlock Margin="0,4,0,0"
-                                   Text="{Binding DisplayName, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsPanelControl}}}"
+                        <TextBlock Text="连接与通知"
                                    Foreground="{DynamicResource RcTextPrimaryBrush}"
-                                   FontSize="16"
-                                   FontWeight="SemiBold"
-                                   TextTrimming="CharacterEllipsis" />
-                        <TextBlock Margin="0,4,0,0"
-                                   Text="{Binding ServerAddress, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsPanelControl}}}"
-                                   Foreground="{DynamicResource RcTextSecondaryBrush}"
-                                   FontSize="11"
-                                   TextWrapping="Wrap" />
-                    </StackPanel>
-                </Border>
-                <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Margin="0,20,0,0">
-                    <TextBlock Text="连接与通知"
-                               Foreground="{DynamicResource RcTextPrimaryBrush}"
-                               FontWeight="SemiBold" />
-                    <TextBlock Margin="0,6,0,0"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Margin="0,8,0,0"
                                Text="{Binding ConnectionStatus, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsPanelControl}}}"
                                Foreground="{DynamicResource RcTextSecondaryBrush}"
                                TextWrapping="Wrap" />
@@ -143,24 +173,36 @@
                                Text="{Binding NotificationStatus, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsPanelControl}}}"
                                Foreground="{DynamicResource RcTextSecondaryBrush}"
                                TextWrapping="Wrap" />
-                </StackPanel>
-                <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Margin="0,20,0,0">
-                    <TextBlock Text="客户端"
-                               Foreground="{DynamicResource RcTextPrimaryBrush}"
-                               FontWeight="SemiBold" />
-                    <TextBlock Margin="0,6,0,0"
+                    </StackPanel>
+                </Border>
+                <Border Grid.Row="3"
+                        Grid.ColumnSpan="2"
+                        Margin="0,14,0,0"
+                        Padding="14"
+                        Background="{DynamicResource RcCanvasBrush}"
+                        BorderBrush="{DynamicResource RcBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                    <StackPanel>
+                        <TextBlock Text="客户端"
+                                   Foreground="{DynamicResource RcTextPrimaryBrush}"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Margin="0,8,0,0"
                                Text="{Binding UpdateStatus, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsPanelControl}}}"
                                Foreground="{DynamicResource RcTextSecondaryBrush}"
                                TextWrapping="Wrap" />
                     <Button x:Name="CheckForUpdatesButtonElement"
                             Margin="0,10,0,0"
                             HorizontalAlignment="Left"
+                            Style="{StaticResource SettingsButtonStyle}"
                             Content="检查更新"
                             IsEnabled="{Binding CanCheckForUpdates, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsPanelControl}}}"
                             Click="OnCheckForUpdatesClicked" />
-                </StackPanel>
-                <StackPanel Grid.Row="4" Grid.ColumnSpan="2" Margin="0,20,0,0">
+                    </StackPanel>
+                </Border>
+                <StackPanel Grid.Row="4" Grid.ColumnSpan="2" Margin="0,18,0,0">
                     <Button x:Name="ReconnectButtonElement"
+                            Style="{StaticResource SettingsButtonStyle}"
                             Content="重试连接"
                             IsEnabled="{Binding CanReconnect, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsPanelControl}}}"
                             Click="OnReconnectClicked" />

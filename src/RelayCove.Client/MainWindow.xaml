@@ -172,7 +172,13 @@
                                   CloseRequested="OnTitleBarCloseRequested"
                                   SystemMenuRequested="OnTitleBarSystemMenuRequested" />
 
-        <Border x:Name="LoginBrandPanel" Grid.Row="1" Grid.Column="0" Background="#FF0958D9">
+        <Border x:Name="LoginBrandPanel" Grid.Row="1" Grid.Column="0">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                    <GradientStop Offset="0" Color="#FF0958D9" />
+                    <GradientStop Offset="1" Color="#FF1677D2" />
+                </LinearGradientBrush>
+            </Border.Background>
             <Grid Margin="28,32,28,26">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -195,7 +201,9 @@
                 <Border Grid.Row="1"
                         Margin="0,32,0,0"
                         Padding="13,11"
-                        Background="#FF0958D9"
+                        Background="#24FFFFFF"
+                        BorderBrush="#38FFFFFF"
+                        BorderThickness="1"
                         CornerRadius="8">
                     <StackPanel>
                         <TextBlock x:Name="SidebarConnectionText"
@@ -845,6 +853,7 @@
                                                         </ItemsControl.Style>
                                                         <ItemsControl.ItemTemplate>
                                                             <DataTemplate>
+                                                                <Grid>
                                                                 <Border Margin="0,0,0,6"
                                                                         Padding="9,7"
                                                                         AutomationProperties.Name="{Binding DisplayName}"
@@ -853,9 +862,18 @@
                                                                         BorderBrush="{StaticResource BorderBrush}"
                                                                         BorderThickness="1"
                                                                         CornerRadius="8">
+                                                                    <Border.Style>
+                                                                        <Style TargetType="Border">
+                                                                            <Setter Property="Visibility" Value="Visible" />
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsImage}" Value="True">
+                                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </Border.Style>
                                                                     <Grid>
                                                                         <Grid.RowDefinitions>
-                                                                            <RowDefinition Height="Auto" />
                                                                             <RowDefinition Height="Auto" />
                                                                             <RowDefinition Height="Auto" />
                                                                             <RowDefinition Height="Auto" />
@@ -929,75 +947,123 @@
                                                                                 </Style>
                                                                             </ProgressBar.Style>
                                                                         </ProgressBar>
-                                                                        <Grid Grid.Row="3"
-                                                                              Grid.ColumnSpan="2"
-                                                                              Margin="0,8,0,0"
-                                                                              HorizontalAlignment="Left">
-                                                                            <Grid.Style>
-                                                                                <Style TargetType="Grid">
-                                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                                    <Style.Triggers>
-                                                                                        <DataTrigger Binding="{Binding ImageState.ShowPreview}" Value="True">
-                                                                                            <Setter Property="Visibility" Value="Visible" />
-                                                                                        </DataTrigger>
-                                                                                    </Style.Triggers>
-                                                                                </Style>
-                                                                            </Grid.Style>
-                                                                            <Grid.RowDefinitions>
-                                                                                <RowDefinition Height="Auto" />
-                                                                                <RowDefinition Height="Auto" />
-                                                                            </Grid.RowDefinitions>
-                                                                            <Border Grid.Row="0"
-                                                                                    MaxWidth="320"
-                                                                                    MaxHeight="180"
-                                                                                    Background="#FFE8F1F8"
-                                                                                    BorderBrush="#FFD7E2ED"
-                                                                                    BorderThickness="1"
-                                                                                    CornerRadius="4">
-                                                                                <Grid>
-                                                                                    <Image Source="{Binding ImageState.Thumbnail}"
-                                                                                           MaxWidth="320"
-                                                                                           MaxHeight="180"
-                                                                                           Stretch="Uniform"
-                                                                                           Loaded="OnAttachmentThumbnailLoaded"
-                                                                                           Unloaded="OnAttachmentThumbnailUnloaded"
-                                                                                           DataContextChanged="OnAttachmentThumbnailDataContextChanged"
-                                                                                           AutomationProperties.Name="{Binding ImageState.AutomationName}" />
-                                                                                    <TextBlock Margin="10"
-                                                                                               HorizontalAlignment="Center"
-                                                                                               VerticalAlignment="Center"
-                                                                                               Text="{Binding ImageState.StatusText}"
-                                                                                               TextWrapping="Wrap"
-                                                                                               TextAlignment="Center"
-                                                                                               Foreground="#FF52708C"
-                                                                                               FontSize="11"
-                                                                                               AutomationProperties.LiveSetting="Polite"
-                                                                                               IsHitTestVisible="False">
-                                                                                        <TextBlock.Style>
-                                                                                            <Style TargetType="TextBlock">
-                                                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                                                                <Style.Triggers>
-                                                                                                    <DataTrigger Binding="{Binding ImageState.Thumbnail}" Value="{x:Null}">
-                                                                                                        <Setter Property="Visibility" Value="Visible" />
-                                                                                                    </DataTrigger>
-                                                                                                </Style.Triggers>
-                                                                                            </Style>
-                                                                                        </TextBlock.Style>
-                                                                                    </TextBlock>
-                                                                                </Grid>
-                                                                            </Border>
-                                                                            <Button Grid.Row="1"
-                                                                                    Margin="0,6,0,0"
-                                                                                    Padding="9,3"
-                                                                                    HorizontalAlignment="Left"
-                                                                                    VerticalAlignment="Bottom"
-                                                                                    Content="查看图片"
-                                                                                    IsEnabled="{Binding ImageState.CanView}"
-                                                                                    AutomationProperties.Name="{Binding ImageState.AutomationName}"
-                                                                                    Click="OnAttachmentImageViewClicked" />
-                                                                        </Grid>
                                                                     </Grid>
                                                                 </Border>
+                                                                <StackPanel Margin="0,0,0,8"
+                                                                            HorizontalAlignment="Left"
+                                                                            AutomationProperties.Name="{Binding ImageState.AutomationName}"
+                                                                            AutomationProperties.HelpText="{Binding ImageState.StatusText}">
+                                                                    <StackPanel.Style>
+                                                                        <Style TargetType="StackPanel">
+                                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding IsImage}" Value="True">
+                                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </StackPanel.Style>
+                                                                    <Border MaxWidth="360"
+                                                                            MaxHeight="280"
+                                                                            HorizontalAlignment="Left"
+                                                                            Background="{StaticResource AccentSoftBrush}"
+                                                                            BorderBrush="#FFD5E1EE"
+                                                                            BorderThickness="1"
+                                                                            CornerRadius="8"
+                                                                            ClipToBounds="True">
+                                                                        <Border.Effect>
+                                                                            <DropShadowEffect BlurRadius="8"
+                                                                                              ShadowDepth="1"
+                                                                                              Opacity="0.08"
+                                                                                              Color="#FF1F2328" />
+                                                                        </Border.Effect>
+                                                                        <Grid>
+                                                                            <Button Padding="0"
+                                                                                    Background="Transparent"
+                                                                                    BorderThickness="0"
+                                                                                    Content="查看图片"
+                                                                                    ToolTip="点击查看图片"
+                                                                                    IsEnabled="{Binding ImageState.CanView}"
+                                                                                    AutomationProperties.Name="{Binding ImageState.AutomationName}"
+                                                                                    Click="OnAttachmentImageViewClicked">
+                                                                                <Button.Template>
+                                                                                    <ControlTemplate TargetType="Button">
+                                                                                        <Border Background="{TemplateBinding Background}"
+                                                                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                                                                BorderThickness="{TemplateBinding BorderThickness}">
+                                                                                            <Image Source="{Binding ImageState.Thumbnail}"
+                                                                                                   MaxWidth="360"
+                                                                                                   MaxHeight="280"
+                                                                                                   Stretch="Uniform"
+                                                                                                   Loaded="OnAttachmentThumbnailLoaded"
+                                                                                                   Unloaded="OnAttachmentThumbnailUnloaded"
+                                                                                                   DataContextChanged="OnAttachmentThumbnailDataContextChanged"
+                                                                                                   AutomationProperties.Name="{Binding ImageState.AutomationName}" />
+                                                                                        </Border>
+                                                                                    </ControlTemplate>
+                                                                                </Button.Template>
+                                                                            </Button>
+                                                                            <Border HorizontalAlignment="Center"
+                                                                                    VerticalAlignment="Center"
+                                                                                    MaxWidth="260"
+                                                                                    Padding="10,5"
+                                                                                    Background="#EAF3FF"
+                                                                                    BorderBrush="#FFD5E1EE"
+                                                                                    BorderThickness="1"
+                                                                                    CornerRadius="12"
+                                                                                    IsHitTestVisible="False">
+                                                                                <Border.Style>
+                                                                                    <Style TargetType="Border">
+                                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                                        <Style.Triggers>
+                                                                                            <DataTrigger Binding="{Binding ImageState.Thumbnail}" Value="{x:Null}">
+                                                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                                            </DataTrigger>
+                                                                                        </Style.Triggers>
+                                                                                    </Style>
+                                                                                </Border.Style>
+                                                                                <TextBlock Text="{Binding ImageState.StatusText}"
+                                                                                           TextWrapping="Wrap"
+                                                                                           TextAlignment="Center"
+                                                                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                                                                           FontSize="11"
+                                                                                           AutomationProperties.LiveSetting="Polite" />
+                                                                            </Border>
+                                                                        </Grid>
+                                                                    </Border>
+                                                                    <Grid Margin="0,5,0,0"
+                                                                          MinWidth="160"
+                                                                          MaxWidth="360">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="*" />
+                                                                            <ColumnDefinition Width="Auto" />
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <StackPanel Orientation="Horizontal"
+                                                                                    VerticalAlignment="Center">
+                                                                            <TextBlock MaxWidth="260"
+                                                                                       Text="{Binding DisplayName}"
+                                                                                       Foreground="{StaticResource TextSecondaryBrush}"
+                                                                                       FontSize="11"
+                                                                                       TextTrimming="CharacterEllipsis" />
+                                                                            <TextBlock Margin="6,0,0,0"
+                                                                                       Text="{Binding DisplaySize}"
+                                                                                       Foreground="#FF98A2B3"
+                                                                                       FontSize="11" />
+                                                                        </StackPanel>
+                                                                        <Button Grid.Column="1"
+                                                                                Padding="6,1"
+                                                                                Background="Transparent"
+                                                                                BorderThickness="0"
+                                                                                Foreground="{StaticResource AccentBrush}"
+                                                                                FontSize="11"
+                                                                                Content="查看图片"
+                                                                                ToolTip="在图片查看器中打开"
+                                                                                IsEnabled="{Binding ImageState.CanView}"
+                                                                                AutomationProperties.Name="{Binding ImageState.AutomationName}"
+                                                                                Click="OnAttachmentImageViewClicked" />
+                                                                    </Grid>
+                                                                </StackPanel>
+                                                                </Grid>
                                                             </DataTemplate>
                                                         </ItemsControl.ItemTemplate>
                                                     </ItemsControl>
@@ -2091,7 +2157,11 @@
                     <Button x:Name="CloseAttachmentImageViewerButton"
                             Grid.Column="1"
                             Margin="12,0,0,0"
+                            MinHeight="32"
                             Padding="10,4"
+                            Background="#FF344054"
+                            BorderBrush="#FF475467"
+                            Foreground="White"
                             Content="关闭"
                             AutomationProperties.Name="关闭图片查看器"
                             Click="OnCloseAttachmentImageViewerClicked" />
@@ -2127,14 +2197,16 @@
               AutomationProperties.Name="需要更新"
               AutomationProperties.LiveSetting="Assertive">
             <Border MaxWidth="620"
+                    MaxHeight="540"
                     Margin="36"
                     Padding="32"
                     HorizontalAlignment="Center"
-                    VerticalAlignment="Stretch"
+                    VerticalAlignment="Center"
                     Background="{DynamicResource RcSurfaceBrush}"
                     BorderBrush="{DynamicResource RcPrimaryBrush}"
                     BorderThickness="2"
-                    CornerRadius="12">
+                    CornerRadius="12"
+                    Effect="{DynamicResource RcPanelShadow}">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />

@@ -9,6 +9,69 @@
              shell:WindowChrome.IsHitTestVisibleInChrome="True"
              MouseLeftButtonDown="OnTitleBarMouseLeftButtonDown"
              MouseRightButtonUp="OnTitleBarMouseRightButtonUp">
+    <UserControl.Resources>
+        <Style x:Key="TitleBarButtonStyle" TargetType="{x:Type Button}">
+            <Setter Property="Width" Value="46" />
+            <Setter Property="Height" Value="48" />
+            <Setter Property="Padding" Value="14" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource RcTextSecondaryBrush}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{DynamicResource RcFocusVisualStyle}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="ButtonBorder"
+                                Padding="{TemplateBinding Padding}"
+                                Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource RcPrimarySoftBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource RcPrimaryBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonBorder" Property="Background" Value="#FFD8EAFE" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="TitleBarCloseButtonStyle"
+               TargetType="{x:Type Button}">
+            <Setter Property="Width" Value="46" />
+            <Setter Property="Height" Value="48" />
+            <Setter Property="Padding" Value="14" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="Foreground" Value="{DynamicResource RcTextSecondaryBrush}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="FocusVisualStyle" Value="{DynamicResource RcFocusVisualStyle}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Button}">
+                        <Border x:Name="CloseButtonBorder"
+                                Padding="{TemplateBinding Padding}"
+                                Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CloseButtonBorder" Property="Background" Value="#FFFEE4E2" />
+                                <Setter Property="Foreground" Value="{DynamicResource RcDangerBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="CloseButtonBorder" Property="Background" Value="#FFFECACA" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
     <Border BorderBrush="{DynamicResource RcBorderBrush}"
             BorderThickness="0,0,0,1">
         <Grid>
@@ -19,10 +82,10 @@
             <StackPanel Margin="16,0,0,0"
                         VerticalAlignment="Center"
                         Orientation="Horizontal">
-                <Border Width="28"
-                        Height="28"
+                <Border Width="26"
+                        Height="26"
                         Background="{DynamicResource RcPrimaryBrush}"
-                        CornerRadius="14">
+                        CornerRadius="8">
                     <Path Width="16"
                           Height="16"
                           HorizontalAlignment="Center"
@@ -39,31 +102,23 @@
                 <TextBlock Margin="10,0,0,0"
                            VerticalAlignment="Center"
                            FontFamily="{DynamicResource RcFontFamily}"
-                           FontSize="15"
+                           FontSize="14"
                            FontWeight="SemiBold"
                            Text="{Binding Title, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}" />
             </StackPanel>
             <StackPanel Grid.Column="1" Orientation="Horizontal">
                 <Button x:Name="MinimizeButton"
-                        Width="46"
-                        Height="40"
-                        Padding="13"
-                        Background="Transparent"
-                        BorderBrush="Transparent"
+                        Style="{StaticResource TitleBarButtonStyle}"
                         ToolTip="最小化"
                         AutomationProperties.Name="最小化窗口"
                         Click="OnMinimizeClicked">
                     <Path Data="{DynamicResource RcIconMinimize}"
                           Stretch="Uniform"
-                          Stroke="{DynamicResource RcTextPrimaryBrush}"
+                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
                           StrokeThickness="1.5" />
                 </Button>
                 <Button x:Name="MaximizeRestoreButton"
-                        Width="46"
-                        Height="40"
-                        Padding="13"
-                        Background="Transparent"
-                        BorderBrush="Transparent"
+                        Style="{StaticResource TitleBarButtonStyle}"
                         ToolTip="最大化或还原"
                         AutomationProperties.Name="最大化或还原窗口"
                         Click="OnMaximizeRestoreClicked">
@@ -71,28 +126,24 @@
                         <Path x:Name="MaximizeIcon"
                               Data="{DynamicResource RcIconMaximize}"
                               Stretch="Uniform"
-                              Stroke="{DynamicResource RcTextPrimaryBrush}"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
                               StrokeThickness="1.5" />
                         <Path x:Name="RestoreIcon"
                               Data="{DynamicResource RcIconRestore}"
                               Stretch="Uniform"
-                              Stroke="{DynamicResource RcTextPrimaryBrush}"
+                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
                               StrokeThickness="1.5"
                               Visibility="Collapsed" />
                     </Grid>
                 </Button>
                 <Button x:Name="CloseButton"
-                        Width="46"
-                        Height="40"
-                        Padding="13"
-                        Background="Transparent"
-                        BorderBrush="Transparent"
+                        Style="{StaticResource TitleBarCloseButtonStyle}"
                         ToolTip="关闭"
                         AutomationProperties.Name="关闭窗口"
                         Click="OnCloseClicked">
                     <Path Data="{DynamicResource RcIconClose}"
                           Stretch="Uniform"
-                          Stroke="{DynamicResource RcTextPrimaryBrush}"
+                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}"
                           StrokeThickness="1.5" />
                 </Button>
             </StackPanel>

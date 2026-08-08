@@ -85,10 +85,23 @@ public sealed class MainWindowAttachmentImagePresentationTests
                     candidate => ReferenceEquals(candidate.DataContext, attachment));
                 Assert.Null(thumbnail.Source);
                 Assert.Equal(state.AutomationName, AutomationProperties.GetName(thumbnail));
+                var previewButton = Assert.Single(FindVisualAncestors<Button>(thumbnail));
+                Assert.Same(attachment, previewButton.DataContext);
+                Assert.False(previewButton.IsEnabled);
+                var previewCard = Assert.Single(
+                    FindVisualDescendants<Border>(window.MessageList),
+                        candidate => ReferenceEquals(candidate.DataContext, attachment) &&
+                        candidate.MaxWidth == 360 &&
+                        candidate.MaxHeight == 280);
+                Assert.Equal(new CornerRadius(8), previewCard.CornerRadius);
+                Assert.True(previewCard.ClipToBounds);
+                Assert.True(double.IsNaN(previewCard.Width));
+                Assert.True(double.IsNaN(previewCard.Height));
                 var viewButton = Assert.Single(
                     FindVisualDescendants<Button>(window.MessageList),
                     candidate => ReferenceEquals(candidate.DataContext, attachment) &&
-                        Equals(candidate.Content, "查看图片"));
+                        Equals(candidate.Content, "查看图片") &&
+                        Equals(candidate.ToolTip, "在图片查看器中打开"));
                 Assert.False(viewButton.IsEnabled);
 
                 var frozen = CreateFrozenBitmap();
@@ -98,6 +111,7 @@ public sealed class MainWindowAttachmentImagePresentationTests
 
                 Assert.Same(frozen, thumbnail.Source);
                 Assert.True(Assert.IsAssignableFrom<BitmapSource>(thumbnail.Source).IsFrozen);
+                Assert.True(previewButton.IsEnabled);
                 Assert.True(viewButton.IsEnabled);
                 Assert.Equal("查看图片：旅行照片.png", AutomationProperties.GetName(viewButton));
 
@@ -115,8 +129,54 @@ public sealed class MainWindowAttachmentImagePresentationTests
                 var hiddenImageButton = Assert.Single(
                     FindVisualDescendants<Button>(window.MessageList),
                     candidate => ReferenceEquals(candidate.DataContext, fileAttachment) &&
-                        Equals(candidate.Content, "查看图片"));
+                        Equals(candidate.Content, "查看图片") &&
+                        Equals(candidate.ToolTip, "在图片查看器中打开"));
                 Assert.False(hiddenImageButton.IsVisible);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData(640, 320)]
+    [InlineData(640, 640)]
+    [InlineData(320, 640)]
+    public async Task ApplyMessageListSnapshot_WhenSafePreviewHasDifferentAspectRatio_PreservesAspectWithinPreviewBounds(
+        int sourceWidth,
+        int sourceHeight)
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateVisibleWindow();
+            try
+            {
+                window.ApplyMessageListSnapshot(CreateSnapshot(
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    Guid.NewGuid(),
+                    isImage: true,
+                    isDownloaded: true,
+                    revision: 1));
+                var state = GetOnlyImageState(window);
+                Assert.True(state.TryBeginLoad());
+                Assert.True(state.TryApplyLoaded(CreateFrozenBitmap(sourceWidth, sourceHeight)));
+                Layout(window);
+
+                var attachment = GetOnlyAttachment(window);
+                var previewCard = Assert.Single(
+                    FindVisualDescendants<Border>(window.MessageList),
+                        candidate => ReferenceEquals(candidate.DataContext, attachment) &&
+                        candidate.MaxWidth == 360 &&
+                        candidate.MaxHeight == 280);
+                Assert.InRange(previewCard.ActualWidth, 1, 360.5);
+                Assert.InRange(previewCard.ActualHeight, 1, 280.5);
+                Assert.InRange(
+                    previewCard.ActualWidth / previewCard.ActualHeight,
+                    (sourceWidth / (double)sourceHeight) - 0.02,
+                    (sourceWidth / (double)sourceHeight) + 0.02);
             }
             finally
             {
@@ -492,17 +552,22 @@ public sealed class MainWindowAttachmentImagePresentationTests
     private static ClientAttachmentImageViewState GetOnlyImageState(MainWindow window) =>
         Assert.IsType<ClientAttachmentImageViewState>(GetOnlyAttachment(window).ImageState);
 
-    private static BitmapSource CreateFrozenBitmap()
+    private static BitmapSource CreateFrozenBitmap(int width = 1, int height = 1)
     {
+        var pixels = new byte[checked(width * height * 4)];
+        for (var index = 3; index < pixels.Length; index += 4)
+        {
+            pixels[index] = byte.MaxValue;
+        }
         var bitmap = BitmapSource.Create(
-            1,
-            1,
+            width,
+            height,
             96,
             96,
             PixelFormats.Bgra32,
             palette: null,
-            pixels: new byte[] { 0, 0, 0, 255 },
-            stride: 4);
+            pixels,
+            stride: width * 4);
         bitmap.Freeze();
         return bitmap;
     }
@@ -587,6 +652,18 @@ public sealed class MainWindowAttachmentImagePresentationTests
             foreach (var descendant in FindVisualDescendants<T>(child))
             {
                 yield return descendant;
+            }
+        }
+    }
+
+    private static IEnumerable<T> FindVisualAncestors<T>(DependencyObject child)
+        where T : DependencyObject
+    {
+        for (var parent = VisualTreeHelper.GetParent(child); parent is not null; parent = VisualTreeHelper.GetParent(parent))
+        {
+            if (parent is T match)
+            {
+                yield return match;
             }
         }
     }
