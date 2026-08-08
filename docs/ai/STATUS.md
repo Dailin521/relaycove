@@ -4,8 +4,8 @@
 
 ## 当前状态
 
-- **当前阶段：** stage-18 已完成 — rc.23 Windows 客户端 UI 重构；stage-17 的网页管理员入口收敛和 rc.22 发布已完成
-- **当前分支成果：** 阶段 2 认证与管理员闭环、阶段 3 会话/成员 API、阶段 4 全部服务端消息切片、阶段 5 服务端/客户端 SignalR，以及阶段 6 账户隔离缓存、权威快照、Sync 页原子提交、HTTP single-flight、真实认证会话、DPAPI 凭据存储、持久会话恢复、单账户 runtime、本地未读与通知候选事务、read-through 安全上传、平台无关通知协调与撤权清理确认；阶段 7 Windows 原生通知、单实例授权路由、attention/托盘；阶段 8 production 账户组合、凭据清理 barrier、账户隔离会话列表、持续连接/总未读、双栏壳、有界消息列表、History/Around、渲染后 read-through、Text durable 发送、WindowActivated/Periodic 持续同步、Reply、消息复制/日期分割、安全链接、稳定新消息分割线，以及会话作用域提及候选、显式 picker、token 绑定和 durable 非空提及发送；阶段 9 全部附件纵向闭环；阶段 10 权限化中文/Unicode 正文与附件原名搜索的 Shared/Server API、客户端 Global/Current UI、Around-first 重新授权跳转及一次性高亮；M4-01 可复现 Linux x64 Server RC、M4-02 可复现 Windows Client 自包含 ZIP、M4-03 共享更新协议、确定性清单、外部自举 Updater 与真实 rc.6→rc.11 替换恢复，以及 M4-04 Server exact 托管、Client 检查/下载、optional/mandatory UI 和显式 Exit→Updater 交接均已完成
+- **当前阶段：** stage-19 进行中 — rc.24 S0/S1 自动化门禁已通过；正在修复窄窗口成员抽屉覆盖发送区的 P2
+- **当前分支成果：** `agent/stage-19-rc24-stabilization` 已新增 rc.24 S0–S7 计划和任务记录；Fast、Release 定向可靠性 827 项、WPF 内置快照 4 项、Full/Release 1,637 项及差异检查均通过。内部截图审阅发现窄窗口成员抽屉重新打开可覆盖发送区的 P2，已拆分最小 Client/WPF 测试切片；既有阶段 2–18 与 M4/M5 成果保持不变
 - **最近验证通过的状态：** stage-18 已完成客户端三栏视觉切片、分组频道栏、无气泡消息流、底部输入区、右侧成员抽屉、短状态表达和 WPF 内置快照；Full/Release 0 警告/0 错误，1,634 项测试通过。rc.23 已构建、推送、快进合并至 `main` 并发布内部更新；公网 manifest、ZIP SHA-256 ETag、Content-Length 和 Range 206 均已验证。逐成员频道角色字段因现有协议缺失保持能力标签
 - **最近补强：** 图片消息自动下载预览、私聊完整成员列表、频道分组折叠及设计约束文档已完成；Full/Release 0 警告/0 错误，1,637 项测试通过。详见 `docs/ui-design-guidelines.md` 与 `docs/ai/tasks/2026-08-07-client-image-preview-and-navigation.md`
 - **可构建状态：** `已验证` — Fast、Full 与 Release 构建均为 0 警告、0 错误
@@ -17,7 +17,7 @@
 
 ## 进行中
 
-- 无
+- stage-19 窄窗口成员抽屉与可达快照：`进行中`。只修复 <1400px 重新打开抽屉覆盖聊天区的 P2，并补充生产可达的附件/提及 WPF 快照回归
 
 ## 已完成
 
@@ -91,7 +91,7 @@
 
 ## 下一任务
 
-根据 owner 对 rc.22 的实际使用反馈确定下一个可用性切片。公开 Tag/Release 和严格第二 Windows UI 矩阵仍为可选后续。
+完成窄窗口成员抽屉 P2 后，运行 Fast、Full、内置快照和内部图片审阅；随后进入 rc.24 发布包双构建与更新演练。公开 Tag/Release、线上更新通道写入和严格第二 Windows UI 矩阵仍需单独授权或决策。
 
 ## 阻塞项
 
