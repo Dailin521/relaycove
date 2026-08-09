@@ -5,6 +5,7 @@ using RelayCove.Server.Data;
 using RelayCove.Server.Data.Entities;
 using RelayCove.Server.Options;
 using RelayCove.Server.Services;
+using RelayCove.Shared.Conversations;
 
 namespace RelayCove.Server.Hosting;
 
@@ -49,6 +50,18 @@ public sealed class BootstrapAdminHostedService(
         }
 
         dbContext.Users.Add(admin);
+        var defaultChannel = Conversation.CreateChannel(
+            Guid.NewGuid(),
+            ConversationType.PublicChannel,
+            "general",
+            admin.Id,
+            now);
+        dbContext.Conversations.Add(defaultChannel);
+        dbContext.ConversationMembers.Add(new ConversationMember(
+            defaultChannel.Id,
+            admin.Id,
+            ConversationMemberRole.Administrator,
+            now));
         await dbContext.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         logger.LogInformation("Bootstrap administrator {UserId} was created. Remove bootstrap credentials before restart.", admin.Id);

@@ -166,6 +166,29 @@ public sealed class ClientConversationListPresenterTests
         Assert.Equal(pendingId, resolution.Selection?.Id);
     }
 
+    [Fact]
+    public void ResolveSelection_WhenReadyListHasNoPriorSelection_SelectsMostRecentFirstRow()
+    {
+        var mostRecentId = Guid.NewGuid();
+        var items = ClientConversationListPresenter.Present(new LocalConversationListReadOutcome(
+            LocalCacheOperationStatus.Ready,
+            [
+                CreateItem(MessageType.Text, "latest") with { Id = mostRecentId },
+                CreateItem(MessageType.Text, "older") with { Id = Guid.NewGuid() },
+            ],
+            TotalUnreadCount: 0,
+            Revision: 1));
+
+        var resolution = ClientConversationListPresenter.ResolveSelection(
+            items,
+            LocalCacheOperationStatus.Ready,
+            pendingSelectionId: null,
+            previousSelectionId: null);
+
+        Assert.False(resolution.ClearPendingSelection);
+        Assert.Equal(mostRecentId, resolution.Selection?.Id);
+    }
+
     private static LocalConversationListItem CreateItem(
         MessageType? messageType,
         string? content) =>

@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-- **当前阶段：** stage-20 rc.25 UI 重构已完成 S0–S17 代码、组件、视觉与交互收口；待从最终已提交 HEAD 完成双构建包校验及独立只读复核
-- **当前分支成果：** `agent/stage-20-rc25-ui-redesign` 已实现蓝白设计系统、自绘标题栏、三列主界面、覆盖式成员/设置抽屉、可伸缩 Composer、图片直预览及登录/搜索/更新/查看器等所有可达子界面。`MessageListControl`、`ComposerControl` 与 `ConversationPanelControl` 现只承载展示和用户意图，可靠发送、附件安全、同步、滚动与窗口生命周期仍由 `MainWindow` 持有
-- **最近验证通过的状态：** S17 Fast/Full 通过：Shared 70、Server 353、Client 1,257、Updater 38，合计 1,718 项，Debug/Release 均为 0 警告、0 错误；Full 同时确认 format 与 `git diff --check`。成员重载、提及收起和消息视口快照见 `artifacts/rc25/ui-snapshots/after-s17-interaction-fixes/`。
+- **当前阶段：** stage-20 rc.25 UI 重构已完成 S0–S18 代码、组件、视觉与交互收口；待从最终已提交 HEAD 完成双构建包校验及独立只读复核
+- **当前分支成果：** `agent/stage-20-rc25-ui-redesign` 已实现蓝白设计系统、自绘标题栏、三列主界面、覆盖式成员/设置抽屉、可伸缩 Composer、图片直预览及登录/搜索/更新/查看器等所有可达子界面。S18 补齐首次进入时最新会话选中、bootstrap 空库的 `general` 公开频道、私聊成员目录、底部对齐的双向消息气泡和内嵌 `@` 候选。可靠发送、附件安全、同步、滚动与窗口生命周期仍由 `MainWindow` 持有。
+- **最近验证通过的状态：** S18 Fast/Full 通过：Shared 70、Server 353、Client 1,265、Updater 38，合计 1,726 项，Debug/Release 均为 0 警告、0 错误；Full 同时确认 format 与 `git diff --check`。双向气泡、底部消息视口与各尺寸快照见 `artifacts/rc25/ui-snapshots/after-s18-chat-experience-r2/`。
 - **可构建状态：** `已验证` — Debug/Release 构建 0 警告、0 错误
 - **自动化验证：** `已验证` — 覆盖主题、标题栏意图、会话筛选、组件转发、Composer、附件/图片预览、搜索、成员抽屉、设置可选更新入口和快照几何；真实 Windows 原生窗口矩阵仍单列为未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过

@@ -17,9 +17,14 @@
         </Style>
     </UserControl.Resources>
     <Grid>
-        <ListBox x:Name="MessageList" HorizontalAlignment="Left" AutomationProperties.Name="消息列表" Background="Transparent" BorderThickness="0"
+        <ListBox x:Name="MessageList" AutomationProperties.Name="消息列表" Background="Transparent" BorderThickness="0"
                  ScrollViewer.CanContentScroll="True" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.ScrollChanged="OnScrollChanged"
                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+            <ListBox.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <VirtualizingStackPanel VerticalAlignment="Bottom" />
+                </ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
             <ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="0" /><Setter Property="Margin" Value="0" /><Setter Property="Focusable" Value="False" /><Setter Property="Background" Value="Transparent" /><Setter Property="BorderBrush" Value="Transparent" /><Style.Triggers><Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="Transparent" /><Setter Property="BorderBrush" Value="Transparent" /></Trigger></Style.Triggers></Style></ListBox.ItemContainerStyle>
             <ListBox.ItemTemplate>
                 <DataTemplate>
@@ -33,10 +38,22 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                             <Border Height="1" VerticalAlignment="Center" Background="#FFCE6871" /><TextBlock Grid.Column="1" Margin="10,0" Text="新消息" Foreground="#FFB84F5A" FontSize="11" FontWeight="SemiBold" /><Border Grid.Column="2" Height="1" VerticalAlignment="Center" Background="#FFCE6871" />
                         </Grid>
-                        <Border x:Name="MessageCardBorder" Padding="12,4" Tag="MessageCard" Background="Transparent" BorderThickness="0" CornerRadius="6" Loaded="OnCardLoaded" Unloaded="OnCardUnloaded" DataContextChanged="OnCardDataContextChanged">
-                            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="38" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Border x:Name="MessageCardBorder" MaxWidth="680" Padding="10,5" Tag="MessageCard" BorderThickness="0" CornerRadius="12" Loaded="OnCardLoaded" Unloaded="OnCardUnloaded" DataContextChanged="OnCardDataContextChanged">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <Setter Property="Background" Value="#FFF3F6F9" />
+                                    <Setter Property="HorizontalAlignment" Value="Left" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsOwnMessage}" Value="True">
+                                            <Setter Property="Background" Value="{DynamicResource RcPrimarySoftBrush}" />
+                                            <Setter Property="HorizontalAlignment" Value="Right" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Grid><Grid.Style><Style TargetType="Grid"><Setter Property="FlowDirection" Value="LeftToRight" /><Style.Triggers><DataTrigger Binding="{Binding IsOwnMessage}" Value="True"><Setter Property="FlowDirection" Value="RightToLeft" /></DataTrigger></Style.Triggers></Style></Grid.Style><Grid.ColumnDefinitions><ColumnDefinition Width="38" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                 <Border Width="30" Height="30" VerticalAlignment="Top" Background="{DynamicResource RcPrimarySoftBrush}" CornerRadius="15"><Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Visible" /><Style.Triggers><DataTrigger Binding="{Binding IsMergedWithPrevious}" Value="True"><Setter Property="Visibility" Value="Hidden" /></DataTrigger></Style.Triggers></Style></Border.Style><TextBlock Text="{Binding SenderLabel, TargetNullValue=?}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource RcPrimaryBrush}" FontSize="11" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /></Border>
-                                <StackPanel Grid.Column="1">
+                                <StackPanel Grid.Column="1" FlowDirection="LeftToRight">
                                     <Grid><Grid.Style><Style TargetType="Grid"><Setter Property="Visibility" Value="Visible" /><Style.Triggers><DataTrigger Binding="{Binding IsMergedWithPrevious}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></Grid.Style><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><TextBlock Text="{Binding SenderLabel}" Foreground="{DynamicResource RcTextPrimaryBrush}" FontWeight="SemiBold" /><TextBlock Grid.Column="1" Text="{Binding Timestamp}" Foreground="{DynamicResource RcTextSecondaryBrush}" FontSize="11" /></Grid>
                                     <TextBlock Text="{Binding Content}" Margin="0,3,0,0" Foreground="{DynamicResource RcTextPrimaryBrush}" FontSize="14" TextWrapping="Wrap" />
                                     <ItemsControl ItemsSource="{Binding Attachments}" Margin="0,8,0,0">

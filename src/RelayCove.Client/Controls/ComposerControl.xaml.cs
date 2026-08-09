@@ -27,6 +27,7 @@ public partial class ComposerControl : WpfControls.UserControl
     internal WpfControls.TextBlock ReplySenderText => ReplyComposerSenderText;
     internal WpfControls.TextBlock ReplyContentText => ReplyComposerContentText;
     internal WpfControls.Border MentionPanel => MentionPickerPanel;
+    internal WpfPrimitives.Popup MentionPopup => MentionPickerPopup;
     internal WpfControls.TextBox MentionSearchTextBoxElement => MentionSearchTextBox;
     internal WpfControls.Button MentionSearchButtonElement => MentionSearchButton;
     internal WpfControls.TextBlock MentionSearchStatusTextElement => MentionSearchStatusText;

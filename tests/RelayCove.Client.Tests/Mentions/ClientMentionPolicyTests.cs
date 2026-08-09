@@ -63,6 +63,36 @@ public sealed class ClientMentionPolicyTests
     public void IsValidQuery_WhenInputVaries_ReturnsExpected(string query, bool expected) =>
         Assert.Equal(expected, ClientMentionPolicy.IsValidQuery(query));
 
+    [Theory]
+    [InlineData("@al", 3, true, 0, 3, "al")]
+    [InlineData("请 @alice 确认", 8, true, 2, 6, "alice")]
+    [InlineData("mail@alice", 10, false, 0, 0, "")]
+    [InlineData("@@alice", 7, false, 0, 0, "")]
+    [InlineData("@alice!", 6, true, 0, 6, "alice")]
+    [InlineData("@alice", 3, true, 0, 6, "al")]
+    public void TryGetActiveQuery_WhenCaretIsAtMention_ReturnsReplacementRange(
+        string content,
+        int caret,
+        bool expected,
+        int expectedStart,
+        int expectedLength,
+        string expectedQuery)
+    {
+        var result = ClientMentionPolicy.TryGetActiveQuery(content, caret, out var query);
+
+        Assert.Equal(expected, result);
+        if (!expected)
+        {
+            Assert.Null(query);
+            return;
+        }
+
+        Assert.NotNull(query);
+        Assert.Equal(expectedStart, query.Start);
+        Assert.Equal(expectedLength, query.Length);
+        Assert.Equal(expectedQuery, query.Query);
+    }
+
     [Fact]
     public void TryCanonicalizeUserIds_WhenValid_SortsWithoutMutatingInput()
     {

@@ -41,6 +41,9 @@ public partial class MainWindow : Window
     internal System.Windows.Controls.Button UnreadConversationFilterButton => ConversationPanel.UnreadFilterButton;
     internal System.Windows.Controls.Button ChannelConversationFilterButton => ConversationPanel.ChannelFilterButton;
     internal System.Windows.Controls.Button DirectConversationFilterButton => ConversationPanel.DirectFilterButton;
+    internal Border DirectContactsPanel => ConversationPanel.DirectContactsPanelElement;
+    internal System.Windows.Controls.ListBox DirectContactsList => ConversationPanel.DirectContactsListElement;
+    internal TextBlock DirectContactsStatusText => ConversationPanel.DirectContactsStatusTextElement;
     internal System.Windows.Controls.ListBox MessageList => MessageListPanel.List;
     internal TextBlock MessageEmptyText => MessageListPanel.EmptyText;
     internal System.Windows.Controls.Button NewMessageIndicatorButton => MessageListPanel.NewMessageButton;
@@ -50,6 +53,7 @@ public partial class MainWindow : Window
     internal TextBlock ReplyComposerSenderText => Composer.ReplySenderText;
     internal TextBlock ReplyComposerContentText => Composer.ReplyContentText;
     internal Border MentionPickerPanel => Composer.MentionPanel;
+    internal Popup MentionPickerPopup => Composer.MentionPopup;
     internal System.Windows.Controls.TextBox MentionSearchTextBox => Composer.MentionSearchTextBoxElement;
     internal System.Windows.Controls.Button MentionSearchButton => Composer.MentionSearchButtonElement;
     internal TextBlock MentionSearchStatusText => Composer.MentionSearchStatusTextElement;
@@ -173,6 +177,8 @@ public partial class MainWindow : Window
     private int lastAnnouncedAttachmentProgressBucket = -1;
     private IReadOnlyList<ClientConversationListItemPresentation> conversationItems =
         Array.Empty<ClientConversationListItemPresentation>();
+    private IReadOnlyList<UserDirectoryEntryDto> directContacts = Array.Empty<UserDirectoryEntryDto>();
+    private bool directContactOperationRunning;
     private ClientConversationFilter conversationFilter = ClientConversationFilter.All;
     private LocalCacheOperationStatus conversationListStatus =
         LocalCacheOperationStatus.AuthoritativeSnapshotRequired;
@@ -205,6 +211,11 @@ public partial class MainWindow : Window
         }
 
         ClearMessageSearchPresentation(closePanel: true, clearKeyword: true);
+        SetConversationFilter(ClientConversationFilter.All);
+        directContacts = Array.Empty<UserDirectoryEntryDto>();
+        directContactOperationRunning = false;
+        DirectContactsList.ItemsSource = null;
+        SetLiveText(DirectContactsStatusText, "选择成员即可开始私聊。");
         accountShell = coordinator;
         coordinator.SearchResultsInvalidated += OnSearchResultsInvalidated;
         ApplyAccountShellSnapshot(coordinator.Snapshot);
@@ -599,6 +610,9 @@ public partial class MainWindow : Window
             case "SelectionChanged" when e.OriginalEventArgs is SelectionChangedEventArgs selectionChanged:
                 OnConversationSelectionChanged(e.InteractionSource, selectionChanged);
                 break;
+            case "DirectContactSelectionChanged" when e.OriginalEventArgs is SelectionChangedEventArgs directSelectionChanged:
+                OnDirectContactSelectionChanged(e.InteractionSource, directSelectionChanged);
+                break;
             case "CreateChannelRequested" when e.OriginalEventArgs is RoutedEventArgs createChannel:
                 OnOpenChannelPanelClicked(e.InteractionSource, createChannel);
                 break;
@@ -749,12 +763,111 @@ public partial class MainWindow : Window
     {
         if (conversationFilter == requestedFilter)
         {
+            UpdateDirectContactsPresentation();
             return;
         }
 
         conversationFilter = requestedFilter;
         UpdateConversationFilterPresentation();
         RefreshConversationFilter();
+        UpdateDirectContactsPresentation();
+    }
+
+    private void UpdateDirectContactsPresentation()
+    {
+        var showContacts = conversationFilter == ClientConversationFilter.Direct;
+        DirectContactsPanel.Visibility = showContacts ? Visibility.Visible : Visibility.Collapsed;
+        ConversationList.Visibility = showContacts ? Visibility.Collapsed : Visibility.Visible;
+        if (showContacts)
+        {
+            ConversationEmptyText.Visibility = Visibility.Collapsed;
+            if (!directContactOperationRunning)
+            {
+                _ = LoadDirectContactsAsync();
+            }
+        }
+    }
+
+    private async Task LoadDirectContactsAsync()
+    {
+        var coordinator = accountShell?.AdminCoordinator;
+        if (coordinator is null ||
+            directContactOperationRunning ||
+            conversationFilter != ClientConversationFilter.Direct)
+        {
+            return;
+        }
+
+        directContactOperationRunning = true;
+        SetLiveText(DirectContactsStatusText, "正在读取所有成员…");
+        try
+        {
+            var result = await coordinator.GetUserDirectoryAsync();
+            if (!ReferenceEquals(accountShell?.AdminCoordinator, coordinator) ||
+                conversationFilter != ClientConversationFilter.Direct)
+            {
+                return;
+            }
+
+            if (result.Status != ClientAdminRequestStatus.Completed || result.Value is null)
+            {
+                SetLiveText(DirectContactsStatusText, $"成员目录暂不可用：{DescribeAdminStatus(result.Status)}。");
+                return;
+            }
+
+            directContacts = result.Value
+                .Where(user => user.UserId != coordinator.CurrentUserId)
+                .OrderBy(user => user.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+                .ThenBy(user => user.UserName, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            DirectContactsList.ItemsSource = directContacts;
+            SetLiveText(
+                DirectContactsStatusText,
+                directContacts.Count == 0 ? "暂时没有其他可私聊成员。" : "选择成员即可开始或回到私聊。");
+        }
+        finally
+        {
+            directContactOperationRunning = false;
+        }
+    }
+
+    private async void OnDirectContactSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _ = sender;
+        _ = e;
+        if (DirectContactsList.SelectedItem is not UserDirectoryEntryDto contact || directContactOperationRunning)
+        {
+            return;
+        }
+
+        DirectContactsList.SelectedItem = null;
+        var coordinator = accountShell?.AdminCoordinator;
+        if (coordinator is null || contact.UserId == coordinator.CurrentUserId)
+        {
+            return;
+        }
+
+        directContactOperationRunning = true;
+        SetLiveText(DirectContactsStatusText, $"正在打开与 {contact.DisplayName} 的私聊…");
+        try
+        {
+            var result = await coordinator.CreateConversationForChatAsync(
+                new CreateConversationRequest(ConversationType.Direct, ParticipantUserId: contact.UserId));
+            if (!ReferenceEquals(accountShell?.AdminCoordinator, coordinator) ||
+                result.Status != ClientAdminRequestStatus.Completed || result.Value is null)
+            {
+                SetLiveText(DirectContactsStatusText, $"无法打开私聊：{DescribeAdminStatus(result.Status)}。");
+                return;
+            }
+
+            pendingConversationSelectionId = result.Value.Id;
+            await accountShell!.RefreshConversationsAsync();
+            SetLiveText(DirectContactsStatusText, $"已打开与 {contact.DisplayName} 的私聊。");
+        }
+        finally
+        {
+            directContactOperationRunning = false;
+        }
     }
 
     private void RefreshConversationFilter()
@@ -2992,6 +3105,7 @@ public partial class MainWindow : Window
         AdvanceComposerContextVersion();
         ReconcileComposerMentions();
         UpdateComposerState();
+        UpdateActiveMentionPicker();
     }
 
     private void OnComposerResizeDragDelta(object sender, DragDeltaEventArgs e)
@@ -3382,7 +3496,7 @@ public partial class MainWindow : Window
     {
         composerAttachments.AddRange(drafts);
         AdvanceComposerContextVersion(cancelAttachmentInput: false);
-        MentionPickerPanel.Visibility = Visibility.Collapsed;
+        CloseMentionPicker(restoreComposerFocus: false);
         RefreshSelectedAttachmentPresentation();
         SetLiveText(
             MessageComposerStatusText,
@@ -3421,7 +3535,7 @@ public partial class MainWindow : Window
         MessageComposerTextBox.Focus();
     }
 
-    private async void OnMentionPickerClicked(object sender, RoutedEventArgs e)
+    private void OnMentionPickerClicked(object sender, RoutedEventArgs e)
     {
         _ = sender;
         _ = e;
@@ -3430,17 +3544,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        MentionPickerPanel.Visibility = MentionPickerPanel.Visibility == Visibility.Visible
-            ? Visibility.Collapsed
-            : Visibility.Visible;
-        if (MentionPickerPanel.Visibility == Visibility.Visible)
+        if (MentionPickerPopup.IsOpen)
         {
-            MentionSearchTextBox.Focus();
-            await SearchMentionCandidatesAsync(debounce: false);
+            CloseMentionPicker();
         }
         else
         {
-            CancelMentionSearch();
+            var selectionStart = MessageComposerTextBox.SelectionStart;
+            MessageComposerTextBox.SelectedText = "@";
+            MessageComposerTextBox.SelectionStart = selectionStart + 1;
+            MessageComposerTextBox.SelectionLength = 0;
+            MessageComposerTextBox.Focus();
         }
 
         UpdateComposerState();
@@ -3453,11 +3567,15 @@ public partial class MainWindow : Window
         CloseMentionPicker();
     }
 
-    private void CloseMentionPicker()
+    private void CloseMentionPicker(bool restoreComposerFocus = true)
     {
         CancelMentionSearch();
         MentionPickerPanel.Visibility = Visibility.Collapsed;
-        MessageComposerTextBox.Focus();
+        MentionPickerPopup.IsOpen = false;
+        if (restoreComposerFocus)
+        {
+            MessageComposerTextBox.Focus();
+        }
     }
 
     private async void OnMentionSearchTextChanged(object sender, TextChangedEventArgs e)
@@ -3466,10 +3584,45 @@ public partial class MainWindow : Window
         _ = e;
         UpdateComposerState();
         if (!suppressMentionSearchInputChanges &&
-            MentionPickerPanel.Visibility == Visibility.Visible)
+            MentionPickerPopup.IsOpen)
         {
             await SearchMentionCandidatesAsync(debounce: true);
         }
+    }
+
+    private async void UpdateActiveMentionPicker()
+    {
+        if (!composerAvailable ||
+            !ClientMentionPolicy.TryGetActiveQuery(
+                MessageComposerTextBox.Text,
+                MessageComposerTextBox.SelectionStart,
+                out var query) ||
+            query is null)
+        {
+            if (MentionPickerPopup.IsOpen)
+            {
+                CloseMentionPicker(restoreComposerFocus: false);
+            }
+
+            return;
+        }
+
+        MentionPickerPanel.Visibility = Visibility.Visible;
+        MentionPickerPopup.IsOpen = true;
+        if (!string.Equals(MentionSearchTextBox.Text, query.Query, StringComparison.Ordinal))
+        {
+            suppressMentionSearchInputChanges = true;
+            try
+            {
+                MentionSearchTextBox.Text = query.Query;
+            }
+            finally
+            {
+                suppressMentionSearchInputChanges = false;
+            }
+        }
+
+        await SearchMentionCandidatesAsync(debounce: true);
     }
 
     private async void OnMentionSearchPreviewKeyDown(
@@ -3477,6 +3630,13 @@ public partial class MainWindow : Window
         System.Windows.Input.KeyEventArgs e)
     {
         _ = sender;
+        if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            CloseMentionPicker();
+            return;
+        }
+
         if (e.Key != Key.Enter)
         {
             return;
@@ -3624,10 +3784,21 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!ClientMentionPolicy.TryInsertToken(
+        if (!ClientMentionPolicy.TryGetActiveQuery(
                 MessageComposerTextBox.Text,
                 MessageComposerTextBox.SelectionStart,
-                MessageComposerTextBox.SelectionLength,
+                out var replacement) ||
+            replacement is null)
+        {
+            SetLiveText(MentionSearchStatusText, "提及位置已改变，请在 @ 用户名后重新选择候选。");
+            CloseMentionPicker();
+            return;
+        }
+
+        if (!ClientMentionPolicy.TryInsertToken(
+                MessageComposerTextBox.Text,
+                replacement.Start,
+                replacement.Length,
                 candidate.UserName,
                 out var edit))
         {
@@ -3671,6 +3842,13 @@ public partial class MainWindow : Window
         System.Windows.Input.KeyEventArgs e)
     {
         _ = sender;
+        if (e.Key == Key.Escape && MentionPickerPopup.IsOpen)
+        {
+            e.Handled = true;
+            CloseMentionPicker();
+            return;
+        }
+
         if (e.Key != Key.Enter)
         {
             return;
@@ -5511,7 +5689,7 @@ public partial class MainWindow : Window
             "打开后自动列出成员；输入用户名字符会即时筛选。");
         if (closePicker)
         {
-            MentionPickerPanel.Visibility = Visibility.Collapsed;
+            CloseMentionPicker(restoreComposerFocus: false);
         }
 
         if (hadSelectedMentions)

@@ -91,6 +91,47 @@ internal static class ClientMentionPolicy
         return true;
     }
 
+    public static bool TryGetActiveQuery(
+        string? content,
+        int caretIndex,
+        out ClientMentionActiveQuery? activeQuery)
+    {
+        activeQuery = null;
+        if (content is null || caretIndex < 0 || caretIndex > content.Length)
+        {
+            return false;
+        }
+
+        var queryStart = caretIndex;
+        while (queryStart > 0 && IsUserNameCharacter(content[queryStart - 1]))
+        {
+            queryStart--;
+        }
+
+        var atIndex = queryStart - 1;
+        if (atIndex < 0 ||
+            content[atIndex] != '@' ||
+            atIndex > 0 && IsTokenAdjacentCharacter(content[atIndex - 1]))
+        {
+            return false;
+        }
+
+        var query = content[queryStart..caretIndex];
+        if (!IsValidQuery(query))
+        {
+            return false;
+        }
+
+        var tokenEnd = caretIndex;
+        while (tokenEnd < content.Length && IsUserNameCharacter(content[tokenEnd]))
+        {
+            tokenEnd++;
+        }
+
+        activeQuery = new ClientMentionActiveQuery(atIndex, tokenEnd - atIndex, query);
+        return true;
+    }
+
     public static bool TryCanonicalizeUserIds(
         IReadOnlyList<Guid>? userIds,
         out IReadOnlyList<Guid> canonicalUserIds)

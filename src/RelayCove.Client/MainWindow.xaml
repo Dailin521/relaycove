@@ -439,13 +439,11 @@
 
                             <controls:MessageListControl x:Name="MessageListPanel"
                                                          Grid.Row="2"
-                                                         HorizontalAlignment="Left"
                                                          InteractionRequested="OnMessageListInteractionRequested" />
 
                             <controls:ComposerControl x:Name="Composer"
                                                       Grid.Row="3"
                                                       Margin="0,14,0,0"
-                                                      HorizontalAlignment="Left"
                                                       InteractionRequested="OnComposerInteractionRequested" />
 
                             <StackPanel Grid.Row="4"

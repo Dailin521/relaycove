@@ -83,6 +83,7 @@ git diff --check
 - S16：以三路独立审查收口全部次级界面。成员抽屉以透明命中层阻断背景会话切换，并在重新加载前清除旧成员/目录及操作模型；邀请和移除进一步确认展示对象仍属于当前会话。搜索结果具备唯一 UIA 名称，搜索加载、零结果与错误主标题可辨；设置页将可选更新交接失败同步为可见 live status；图片查看器明确区分加载与安全预览失败，并阻止 `Ctrl+K` 将焦点逃逸到遮罩下方。新增查看器加载/失败快照与更新交接、可访问搜索结果回归。
 - S16 独立复核：发现旧会话操作在完成后仍可能取消新会话加载的并发 P1，已在回调处复核当前抽屉、会话与 coordinator 后才更新界面或重载成员；搜索结果 UIA 名称改用不泄露内部 ID 的稳定序号，避免同会话同分钟结果碰撞。
 - S17 交互回归：消息发送引发的会话列表重发布不再被当作一次重新选择，只有会话 ID 实际变化才刷新成员；成员抽屉打开和成员增删成功仍保留显式刷新。提及候选成功选中后会取消候选搜索、关闭面板并把焦点交还输入框。消息同窗口重绘不再按“顶部补历史”补偿滚动偏移，消息行被点击选中时维持中性外观，避免默认蓝色整行高亮。
+- S18 聊天体验：首次获得 Ready 会话快照时选择按活动时间排序的首项；私聊筛选展示正常成员目录（排除自身），点击复用既有 Direct 创建/获取并选中返回会话；bootstrap 空库与管理员在同一事务内创建 `general` 公开频道及其创建者成员关系。消息列表保持回收虚拟化，短历史贴近 Composer；他人消息左侧浅灰、本人消息右侧品牌浅蓝。`@` 改为锚定输入框上方的浮层，正文键入 `@prefix` 即筛选候选，候选选择时重新验证完整 token 替换范围，Esc/选择或点击外部后收起并回焦输入框。独立复核的四个 P2（光标中段替换、默认筛选、目录刷新、Popup 键盘关闭）均已修复。
 - 图片链路：补充 Alice/Bob 独立账户的真实 Kestrel 单 PNG 测试；双方分别以自身账号、缓存和认证下载规范消息附件，并通过既有受限解码器生成冻结缩略图。可见图片行的 UI 自动下载→缩略图触发仍由既有 `Image.Loaded` 链路持有，自动行为限定为会话已打开且图片项已物化。
 - 组件化：SettingsPanelControl 与 ChatHeaderControl 已以展示 DP + RoutedEvent 形式接入；MainWindow 继续持有更新、会话、搜索、成员与生命周期协调。
 - 收口：独立代码复核确认未触及 Server/Shared、消息可靠发送、附件安全或更新交接；修复窄窗口成员提示曾落入隐藏抽屉的 P2，并完成干净 HEAD 的 Release 双构建与离线校验。
@@ -129,6 +130,9 @@ git diff --check
 | `已验证` | S17 成员、提及与消息视口定向回归 | 提及候选的“已有 token / 新插入 token”两条成功路径均会关闭候选面板并恢复输入焦点；消息选中外观保持透明；同窗口重绘不再触发错误的 prepend 滚动补偿。定向 16/16 通过；WPF 快照 28/28 通过，见 `artifacts/rc25/ui-snapshots/after-s17-interaction-fixes/`。 |
 | `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast`（S17） | Debug 0 警告、0 错误；Shared 70、Server 353、Client 1,257、Updater 38，共 1,718 项通过。 |
 | `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full`（S17） | format、Release 构建 0 警告/错误、Release 全量 Shared 70、Server 353、Client 1,257、Updater 38（共 1,718 项）及 `git diff --check` 均通过。 |
+| `已验证` | S18 聊天体验定向回归 | 首次选择、`@` 片段替换、Popup 收起、双向气泡与 bootstrap `general` 的定向测试通过；`ClientUiSnapshotTests` 28/28 通过。快照：`artifacts/rc25/ui-snapshots/after-s18-chat-experience-r2/`。 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast`（S18） | Debug 0 警告、0 错误；Shared 70、Server 353、Client 1,264、Updater 38，共 1,725 项通过。 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full`（S18，复核修正后） | format、Release 构建 0 警告/错误、Release 全量 Shared 70、Server 353、Client 1,265、Updater 38（共 1,726 项）及 `git diff --check` 均通过。 |
 
 ### 文件范围
 
@@ -139,7 +143,7 @@ git diff --check
 ### 决策与限制
 
 - 决策：v1.1 是 rc.25 唯一可执行规格；v1.0 为保留的历史设计输入。品牌主色固定为 `#1677D2`，绿色仅表达成功或在线等真实语义。
-- 已知限制：S16 的次级界面定向 UI、快照、Fast 与 Full 已完成；最终双构建仍必须从新的干净提交运行。真实 Windows 100%/125%/150% DPI、拖动/边缘缩放/Alt+Space、托盘恢复/真正退出及强制更新交接尚未在人工桌面矩阵验证，必须保持 `未验证`，Windows 原生窗口行为不能仅由 `RenderTargetBitmap` 验收。图片自动下载仅在会话已打开且图片项实际可见时启动，不进行后台全量图片下载。
+- 已知限制：S18 的聊天体验、快照、Fast 与 Full 已完成；最终双构建仍必须从新的干净提交运行。`general` 仅在启用 bootstrap 的全新空库中创建，不接管已有数据库或自动复建被删除频道。真实 Windows 100%/125%/150% DPI、拖动/边缘缩放/Alt+Space、托盘恢复/真正退出及强制更新交接尚未在人工桌面矩阵验证，必须保持 `未验证`，Windows 原生窗口行为不能仅由 `RenderTargetBitmap` 验收。图片自动下载仅在会话已打开且图片项实际可见时启动，不进行后台全量图片下载。
 
 ### 下一步
 

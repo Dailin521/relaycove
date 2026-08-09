@@ -1062,6 +1062,7 @@ public sealed class ClientUiSnapshotTests
         window.ReplyComposerSenderText.Text = "回复 程远";
         window.ReplyComposerContentText.Text = "小窗口下的输入区仍应完整可用。";
         window.MentionPickerPanel.Visibility = Visibility.Visible;
+        window.MentionPickerPopup.IsOpen = true;
         window.MentionCandidateList.ItemsSource = new object[]
         {
             new { DisplayName = "程远", UserName = "chengyuan" },
@@ -1083,6 +1084,7 @@ public sealed class ClientUiSnapshotTests
             })
             .ToArray();
         window.MentionPickerPanel.Visibility = Visibility.Collapsed;
+        window.MentionPickerPopup.IsOpen = false;
         window.MentionCandidateList.ItemsSource = null;
         window.SelectedMentionList.ItemsSource = null;
     }
@@ -1096,6 +1098,7 @@ public sealed class ClientUiSnapshotTests
         window.MentionPickerButton.IsEnabled = true;
         window.SendMessageButton.IsEnabled = true;
         window.MentionPickerPanel.Visibility = Visibility.Visible;
+        window.MentionPickerPopup.IsOpen = true;
         window.MentionCandidateList.ItemsSource = new object[]
         {
             new { DisplayName = "Cheng Yuan", UserName = "chengyuan" },

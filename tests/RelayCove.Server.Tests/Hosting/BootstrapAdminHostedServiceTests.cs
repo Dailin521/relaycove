@@ -12,6 +12,7 @@ using RelayCove.Server.Options;
 using RelayCove.Server.Services;
 using RelayCove.Server.Tests.Infrastructure;
 using RelayCove.Shared.Auth;
+using RelayCove.Shared.Conversations;
 
 namespace RelayCove.Server.Tests.Hosting;
 
@@ -52,6 +53,17 @@ public sealed class BootstrapAdminHostedServiceTests
         Assert.False(user.IsDisabled);
         Assert.NotEqual(Password, user.PasswordHash);
         Assert.Equal(PasswordVerificationOutcome.Success, passwordService.VerifyPassword(user, user.PasswordHash, Password));
+
+        var defaultChannel = await dbContext.Conversations
+            .Include(conversation => conversation.Members)
+            .AsNoTracking()
+            .SingleAsync();
+        Assert.Equal(ConversationType.PublicChannel, defaultChannel.Type);
+        Assert.Equal("general", defaultChannel.Name);
+        Assert.Equal(user.Id, defaultChannel.CreatedByUserId);
+        var creatorMembership = Assert.Single(defaultChannel.Members);
+        Assert.Equal(user.Id, creatorMembership.UserId);
+        Assert.Equal(ConversationMemberRole.Administrator, creatorMembership.Role);
 
         using var client = factory.CreateClient();
         using var loginResponse = await client.PostAsJsonAsync(
@@ -100,6 +112,7 @@ public sealed class BootstrapAdminHostedServiceTests
         Assert.Equal(existingUserId, existingUser.Id);
         Assert.False(existingUser.IsAdmin);
         Assert.Equal(originalPasswordHash, existingUser.PasswordHash);
+        Assert.Empty(await afterContext.Conversations.AsNoTracking().ToArrayAsync());
     }
 
     [Fact]

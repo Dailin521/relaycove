@@ -41,7 +41,16 @@ internal static class ClientConversationListPresenter
             }
         }
 
-        return (Find(items, previousSelectionId), false);
+        var previousSelection = Find(items, previousSelectionId);
+        if (previousSelection is not null || status != LocalCacheOperationStatus.Ready)
+        {
+            return (previousSelection, false);
+        }
+
+        // The cache reader supplies ready conversations in descending activity order.
+        // A fresh account therefore opens the most recently active available conversation
+        // rather than presenting an empty chat surface until the user clicks a row.
+        return (items.FirstOrDefault(), false);
     }
 
     private static ClientConversationListItemPresentation Present(

@@ -138,6 +138,47 @@ public sealed class MessageListControlPresentationTests
         });
     }
 
+    [Fact]
+    public async Task MessageListControl_WhenOwnAndOtherMessagesAreRendered_UsesOppositeBlueWhiteBubbles()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var control = new MessageListControl();
+            AddRc25Resources(control);
+            var own = CreateMessage(Guid.NewGuid(), false, [], false);
+            var other = CreateMessage(Guid.NewGuid(), false, [], false) with
+            {
+                ClientMessageId = Guid.NewGuid(),
+                IsOwnMessage = false,
+                SenderLabel = "程远",
+            };
+            control.List.ItemsSource = new[] { other, own };
+            var host = CreateHost(control);
+            try
+            {
+                host.Show();
+                host.UpdateLayout();
+
+                var bubbles = FindVisualDescendants<Border>(control)
+                    .Where(border => border.Name == "MessageCardBorder")
+                    .ToDictionary(
+                        border => ((ClientMessageListItemPresentation)border.DataContext).IsOwnMessage,
+                        border => border);
+
+                Assert.Equal(HorizontalAlignment.Right, bubbles[true].HorizontalAlignment);
+                Assert.Equal(HorizontalAlignment.Left, bubbles[false].HorizontalAlignment);
+                Assert.Equal(Color.FromRgb(0xEA, 0xF3, 0xFF),
+                    Assert.IsType<SolidColorBrush>(bubbles[true].Background).Color);
+                Assert.Equal(Color.FromRgb(0xF3, 0xF6, 0xF9),
+                    Assert.IsType<SolidColorBrush>(bubbles[false].Background).Color);
+            }
+            finally
+            {
+                host.Close();
+            }
+        });
+    }
+
     private static ClientMessageListItemPresentation CreateMessage(
         Guid clientMessageId,
         bool canRetry,

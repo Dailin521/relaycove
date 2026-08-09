@@ -37,6 +37,9 @@ public partial class ConversationPanelControl : WpfControls.UserControl
     internal WpfControls.Button UnreadFilterButton => UnreadConversationFilterButton;
     internal WpfControls.Button ChannelFilterButton => ChannelConversationFilterButton;
     internal WpfControls.Button DirectFilterButton => DirectConversationFilterButton;
+    internal WpfControls.Border DirectContactsPanelElement => DirectContactsPanel;
+    internal WpfControls.ListBox DirectContactsListElement => DirectContactsList;
+    internal WpfControls.TextBlock DirectContactsStatusTextElement => DirectContactsStatusText;
 
     private void OnSearchTextChanged(object sender, WpfControls.TextChangedEventArgs e) =>
         Raise("SearchTextChanged", sender, e);
@@ -46,6 +49,9 @@ public partial class ConversationPanelControl : WpfControls.UserControl
 
     private void OnSelectionChanged(object sender, WpfControls.SelectionChangedEventArgs e) =>
         Raise("SelectionChanged", sender, e);
+
+    private void OnDirectContactSelectionChanged(object sender, WpfControls.SelectionChangedEventArgs e) =>
+        Raise("DirectContactSelectionChanged", sender, e);
 
     private void OnCreateChannelClicked(object sender, RoutedEventArgs e) =>
         Raise("CreateChannelRequested", sender, e);

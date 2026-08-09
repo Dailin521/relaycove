@@ -115,9 +115,10 @@ public sealed class ClientConversationPanelPresentationTests
                 var candidate = new MentionCandidateDto(Guid.NewGuid(), "alice", "Alice");
                 SetPrivateField(window, "composerAvailable", true);
                 window.MessageComposerTextBox.IsEnabled = true;
-                window.MessageComposerTextBox.Text = tokenAlreadyExists ? "请确认 @alice " : "请确认 ";
+                window.MessageComposerTextBox.Text = tokenAlreadyExists ? "请确认 @alice " : "请确认 @";
                 window.MessageComposerTextBox.SelectionStart = window.MessageComposerTextBox.Text.Length;
                 window.MentionPickerPanel.Visibility = Visibility.Visible;
+                window.MentionPickerPopup.IsOpen = true;
                 window.MentionCandidateList.ItemsSource = new[] { candidate };
                 window.UpdateLayout();
 
@@ -130,6 +131,7 @@ public sealed class ClientConversationPanelPresentationTests
 
                 Assert.Contains("@alice", window.MessageComposerTextBox.Text, StringComparison.Ordinal);
                 Assert.Equal(Visibility.Collapsed, window.MentionPickerPanel.Visibility);
+                Assert.False(window.MentionPickerPopup.IsOpen);
                 Assert.Same(window.MessageComposerTextBox, System.Windows.Input.Keyboard.FocusedElement);
             }
             finally
