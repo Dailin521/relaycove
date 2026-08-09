@@ -17,7 +17,8 @@ public sealed class ClientMessageScrollPolicyTests
             targetMessageId: null,
             targetChanged: false);
 
-        Assert.Equal(50, decision.ScrollToMessageId);
+        Assert.Null(decision.ScrollToMessageId);
+        Assert.True(decision.ScrollToEnd);
         Assert.Equal(50, decision.ObservedThroughMessageId);
         Assert.False(decision.PreservePrependOffset);
     }

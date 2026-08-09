@@ -1144,8 +1144,8 @@ public partial class MainWindow : Window
                  item.ClientMessageId == snapshot.Messages[^1].ClientMessageId));
         var scrollViewer = FindVisualChild<ScrollViewer>(MessageList);
         var oldOffset = scrollViewer?.VerticalOffset ?? 0;
-        var oldExtent = scrollViewer?.ExtentHeight ?? 0;
         var wasNearBottom = IsNearBottom(scrollViewer);
+        var viewportAnchor = CaptureMessageViewportAnchor(scrollViewer);
         var targetChanged = snapshot.TargetMessageId.HasValue &&
             (!sameConversation || displayedTargetMessageId != snapshot.TargetMessageId);
         var decision = ClientMessageScrollPolicy.Decide(
@@ -1207,8 +1207,7 @@ public partial class MainWindow : Window
             scrollViewer ??= FindVisualChild<ScrollViewer>(MessageList);
             if (decision.PreservePrependOffset && scrollViewer is not null)
             {
-                var extentDelta = Math.Max(0, scrollViewer.ExtentHeight - oldExtent);
-                scrollViewer.ScrollToVerticalOffset(oldOffset + extentDelta);
+                RestoreMessageViewportAnchor(scrollViewer, viewportAnchor, snapshot, oldOffset);
             }
             else if (decision.ScrollToMessageId is { } scrollTarget)
             {
@@ -6318,6 +6317,91 @@ public partial class MainWindow : Window
         scrollViewer is null ||
         scrollViewer.ScrollableHeight - scrollViewer.VerticalOffset <= 1.5;
 
+    private MessageViewportAnchor? CaptureMessageViewportAnchor(ScrollViewer? scrollViewer)
+    {
+        if (scrollViewer is null)
+        {
+            return null;
+        }
+
+        MessageViewportAnchor? anchor = null;
+        foreach (var container in FindVisualDescendants<ListBoxItem>(MessageList))
+        {
+            if (container.DataContext is not ClientMessageListItemPresentation item ||
+                !container.IsVisible)
+            {
+                continue;
+            }
+
+            var top = GetTopInViewport(container, scrollViewer);
+            if (!top.HasValue)
+            {
+                continue;
+            }
+
+            // The first fully visible entry is the preferred anchor. If the
+            // viewport starts within an item, keep the nearest preceding item.
+            if (top.Value >= 0 &&
+                (anchor is null || anchor.TopInViewport < 0 || top.Value < anchor.TopInViewport))
+            {
+                anchor = new MessageViewportAnchor(item.ClientMessageId, top.Value);
+            }
+            else if (top.Value < 0 && anchor is null)
+            {
+                anchor = new MessageViewportAnchor(item.ClientMessageId, top.Value);
+            }
+        }
+
+        return anchor;
+    }
+
+    private void RestoreMessageViewportAnchor(
+        ScrollViewer scrollViewer,
+        MessageViewportAnchor? anchor,
+        ClientMessageListSnapshot snapshot,
+        double oldOffset)
+    {
+        if (anchor is null)
+        {
+            return;
+        }
+
+        var target = snapshot.Messages.FirstOrDefault(
+            item => item.ClientMessageId == anchor.ClientMessageId);
+        if (target is null)
+        {
+            return;
+        }
+
+        var container = MessageList.ItemContainerGenerator.ContainerFromItem(target) as ListBoxItem;
+        if (container is null)
+        {
+            MessageList.ScrollIntoView(target);
+            MessageList.UpdateLayout();
+            container = MessageList.ItemContainerGenerator.ContainerFromItem(target) as ListBoxItem;
+        }
+
+        var currentTop = container is null ? null : GetTopInViewport(container, scrollViewer);
+        if (currentTop.HasValue)
+        {
+            scrollViewer.ScrollToVerticalOffset(Math.Max(
+                0,
+                oldOffset + currentTop.Value - anchor.TopInViewport));
+        }
+    }
+
+    private static double? GetTopInViewport(FrameworkElement element, Visual viewport)
+    {
+        try
+        {
+            return element.TransformToAncestor(viewport).Transform(new System.Windows.Point()).Y;
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
     private static SolidColorBrush CreateFrozenBrush(byte red, byte green, byte blue)
     {
         var brush = new SolidColorBrush(
@@ -6376,6 +6460,10 @@ public partial class MainWindow : Window
             }
         }
     }
+
+    private sealed record MessageViewportAnchor(
+        Guid ClientMessageId,
+        double TopInViewport);
 
     private sealed record ChannelUserPresentation(
         Guid UserId,

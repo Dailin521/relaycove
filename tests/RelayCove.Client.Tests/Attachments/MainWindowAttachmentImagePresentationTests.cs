@@ -97,12 +97,8 @@ public sealed class MainWindowAttachmentImagePresentationTests
                 Assert.True(previewCard.ClipToBounds);
                 Assert.True(double.IsNaN(previewCard.Width));
                 Assert.True(double.IsNaN(previewCard.Height));
-                var viewButton = Assert.Single(
-                    FindVisualDescendants<Button>(window.MessageList),
-                    candidate => ReferenceEquals(candidate.DataContext, attachment) &&
-                        Equals(candidate.Content, "查看图片") &&
-                        Equals(candidate.ToolTip, "在图片查看器中打开"));
-                Assert.False(viewButton.IsEnabled);
+                Assert.Equal("点击图片查看", previewButton.ToolTip);
+                Assert.False(previewButton.IsEnabled);
 
                 var frozen = CreateFrozenBitmap();
                 Assert.True(state.TryBeginLoad());
@@ -112,8 +108,7 @@ public sealed class MainWindowAttachmentImagePresentationTests
                 Assert.Same(frozen, thumbnail.Source);
                 Assert.True(Assert.IsAssignableFrom<BitmapSource>(thumbnail.Source).IsFrozen);
                 Assert.True(previewButton.IsEnabled);
-                Assert.True(viewButton.IsEnabled);
-                Assert.Equal("查看图片：旅行照片.png", AutomationProperties.GetName(viewButton));
+                Assert.Equal("查看图片：旅行照片.png", AutomationProperties.GetName(previewButton));
 
                 window.ApplyMessageListSnapshot(CreateSnapshot(
                     conversationId,
@@ -126,12 +121,11 @@ public sealed class MainWindowAttachmentImagePresentationTests
 
                 var fileAttachment = GetOnlyAttachment(window);
                 Assert.False(Assert.IsType<ClientAttachmentImageViewState>(fileAttachment.ImageState).IsEligible);
-                var hiddenImageButton = Assert.Single(
+                Assert.DoesNotContain(
                     FindVisualDescendants<Button>(window.MessageList),
                     candidate => ReferenceEquals(candidate.DataContext, fileAttachment) &&
-                        Equals(candidate.Content, "查看图片") &&
-                        Equals(candidate.ToolTip, "在图片查看器中打开"));
-                Assert.False(hiddenImageButton.IsVisible);
+                        Equals(candidate.ToolTip, "点击图片查看") &&
+                        candidate.IsVisible);
             }
             finally
             {

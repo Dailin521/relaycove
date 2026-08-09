@@ -177,6 +177,23 @@ public sealed class MessageListControlPresentationTests
                 Assert.Equal(2, avatars.Length);
                 Assert.All(avatars, avatar => Assert.Equal(new CornerRadius(4), avatar.CornerRadius));
                 Assert.All(avatars, avatar => Assert.NotEqual(avatar.Parent, bubbles[true]));
+                Assert.Equal(ScrollUnit.Pixel, VirtualizingPanel.GetScrollUnit(control.List));
+
+                var ownAvatar = Assert.Single(FindVisualDescendants<Border>(control),
+                    border => border.Name == "OwnMessageAvatarBorder" && border.IsVisible);
+                var otherAvatar = Assert.Single(FindVisualDescendants<Border>(control),
+                    border => border.Name == "MessageAvatarBorder" && border.IsVisible);
+                var ownBubbleRight = bubbles[true].TransformToAncestor(control)
+                    .Transform(new System.Windows.Point()).X + bubbles[true].ActualWidth;
+                var ownAvatarLeft = ownAvatar.TransformToAncestor(control)
+                    .Transform(new System.Windows.Point()).X;
+                var otherBubbleLeft = bubbles[false].TransformToAncestor(control)
+                    .Transform(new System.Windows.Point()).X;
+                var otherAvatarRight = otherAvatar.TransformToAncestor(control)
+                    .Transform(new System.Windows.Point()).X + otherAvatar.ActualWidth;
+
+                Assert.True(ownAvatarLeft >= ownBubbleRight);
+                Assert.True(otherAvatarRight <= otherBubbleLeft);
             }
             finally
             {

@@ -56,7 +56,8 @@ public sealed class MainWindowAttachmentDownloadPresentationTests
                     FindVisualDescendants<Button>(window.MessageList),
                     candidate => ReferenceEquals(candidate.DataContext, attachment) &&
                         !Equals(candidate.Content, "查看图片") &&
-                        !Equals(candidate.Content, "打开"));
+                        !Equals(candidate.Content, "打开") &&
+                        !Equals(candidate.ToolTip, "点击图片查看"));
                 Assert.Equal("下载", button.Content);
                 Assert.True(button.IsEnabled);
                 Assert.Equal(
@@ -76,7 +77,8 @@ public sealed class MainWindowAttachmentDownloadPresentationTests
                     FindVisualDescendants<Button>(window.MessageList),
                     candidate => ReferenceEquals(candidate.DataContext, attachment) &&
                         !Equals(candidate.Content, "查看图片") &&
-                        !Equals(candidate.Content, "打开"));
+                        !Equals(candidate.Content, "打开") &&
+                        !Equals(candidate.ToolTip, "点击图片查看"));
                 Assert.Same(button, sameButton);
                 Assert.Equal("取消", button.Content);
                 Assert.True(button.IsEnabled);
@@ -122,7 +124,8 @@ public sealed class MainWindowAttachmentDownloadPresentationTests
                         FindVisualDescendants<Button>(window.MessageList),
                         candidate => ReferenceEquals(candidate.DataContext, attachment) &&
                             !Equals(candidate.Content, "查看图片") &&
-                            !Equals(candidate.Content, "打开")));
+                            !Equals(candidate.Content, "打开") &&
+                            !Equals(candidate.ToolTip, "点击图片查看")));
                 Assert.Equal("正在取消…", button.Content);
                 Assert.False(button.IsEnabled);
 
@@ -165,7 +168,8 @@ public sealed class MainWindowAttachmentDownloadPresentationTests
                         FindVisualDescendants<Button>(window.MessageList),
                         candidate => ReferenceEquals(candidate.DataContext, attachment) &&
                             !Equals(candidate.Content, "查看图片") &&
-                            !Equals(candidate.Content, "打开")));
+                            !Equals(candidate.Content, "打开") &&
+                            !Equals(candidate.ToolTip, "点击图片查看")));
                 Assert.Equal("在文件夹中显示", button.Content);
                 Assert.True(button.IsEnabled);
                 Assert.Equal(

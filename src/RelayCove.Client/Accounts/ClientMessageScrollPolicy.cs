@@ -28,8 +28,8 @@ internal static class ClientMessageScrollPolicy
         {
             return new ClientMessageScrollDecision(
                 PreservePrependOffset: false,
-                ScrollToMessageId: nextLatestMessageId,
-                ScrollToEnd: nextLatestMessageId is null && hasNextItems,
+                ScrollToMessageId: null,
+                ScrollToEnd: hasNextItems,
                 ShowNewMessageIndicator: false,
                 ObservedThroughMessageId: nextLatestMessageId);
         }

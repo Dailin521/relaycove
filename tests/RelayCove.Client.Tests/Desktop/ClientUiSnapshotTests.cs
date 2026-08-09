@@ -335,10 +335,9 @@ public sealed class ClientUiSnapshotTests
                     (sourceWidth / (double)sourceHeight) + 0.02);
                 AssertWithinBounds(root, previewCard);
                 AssertWithinBounds(root, previewImage);
-                var imageMetadata = Assert.Single(
+                Assert.DoesNotContain(
                     FindVisualDescendants<TextBlock>(window.MessageList),
                     candidate => candidate.Text == "团队白板参考图.png" && candidate.ActualHeight > 0);
-                AssertDoesNotOverlap(root, previewCard, imageMetadata);
 
                 SaveSnapshotWhenRequested(root, snapshotFileName);
             }
