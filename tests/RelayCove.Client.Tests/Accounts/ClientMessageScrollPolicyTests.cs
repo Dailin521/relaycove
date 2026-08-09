@@ -59,7 +59,7 @@ public sealed class ClientMessageScrollPolicyTests
     }
 
     [Fact]
-    public void Decide_WhenSameWindowIsRepublished_PreservesOffsetAndDoesNotAdvanceRead()
+    public void Decide_WhenSameWindowIsRepublished_DoesNotTreatLayoutGrowthAsPrepend()
     {
         var decision = ClientMessageScrollPolicy.Decide(
             sameConversation: true,
@@ -71,7 +71,7 @@ public sealed class ClientMessageScrollPolicyTests
             targetMessageId: null,
             targetChanged: false);
 
-        Assert.True(decision.PreservePrependOffset);
+        Assert.False(decision.PreservePrependOffset);
         Assert.Null(decision.ScrollToMessageId);
         Assert.False(decision.ShowNewMessageIndicator);
         Assert.Null(decision.ObservedThroughMessageId);

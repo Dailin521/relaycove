@@ -47,7 +47,11 @@ internal static class ClientMessageScrollPolicy
         if (sameWindow)
         {
             return new ClientMessageScrollDecision(
-                PreservePrependOffset: true,
+                // A republished window can still grow after layout when an image
+                // preview, attachment state, or wrapped text materializes. That is
+                // not a history prepend, so compensating by the extent delta makes
+                // a manually positioned viewport jump downward.
+                PreservePrependOffset: false,
                 ScrollToMessageId: null,
                 ScrollToEnd: false,
                 ShowNewMessageIndicator: false,

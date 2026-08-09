@@ -103,6 +103,41 @@ public sealed class MessageListControlPresentationTests
         });
     }
 
+    [Fact]
+    public async Task MessageListControl_WhenMessageRowIsSelected_KeepsRowPresentationNeutral()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var control = new MessageListControl();
+            AddRc25Resources(control);
+            var message = CreateMessage(
+                Guid.NewGuid(),
+                canRetry: false,
+                links: Array.Empty<ClientMessageLinkPresentation>(),
+                hasReply: false);
+            control.List.ItemsSource = new[] { message };
+            var host = CreateHost(control);
+            try
+            {
+                host.Show();
+                host.UpdateLayout();
+                control.List.SelectedItem = message;
+
+                var container = Assert.IsType<ListBoxItem>(
+                    control.List.ItemContainerGenerator.ContainerFromItem(message));
+                var background = Assert.IsType<SolidColorBrush>(container.Background);
+                var border = Assert.IsType<SolidColorBrush>(container.BorderBrush);
+
+                Assert.Equal(Colors.Transparent, background.Color);
+                Assert.Equal(Colors.Transparent, border.Color);
+            }
+            finally
+            {
+                host.Close();
+            }
+        });
+    }
+
     private static ClientMessageListItemPresentation CreateMessage(
         Guid clientMessageId,
         bool canRetry,

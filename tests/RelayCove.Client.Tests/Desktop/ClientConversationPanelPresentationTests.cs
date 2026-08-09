@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
 using RelayCove.Client;
 using RelayCove.Client.Controls;
@@ -100,6 +101,44 @@ public sealed class ClientConversationPanelPresentationTests
         });
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MainWindow_WhenMentionCandidateIsSelected_ClosesPickerAndKeepsComposerFocused(
+        bool tokenAlreadyExists)
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateVisibleWindow();
+            try
+            {
+                var candidate = new MentionCandidateDto(Guid.NewGuid(), "alice", "Alice");
+                SetPrivateField(window, "composerAvailable", true);
+                window.MessageComposerTextBox.IsEnabled = true;
+                window.MessageComposerTextBox.Text = tokenAlreadyExists ? "请确认 @alice " : "请确认 ";
+                window.MessageComposerTextBox.SelectionStart = window.MessageComposerTextBox.Text.Length;
+                window.MentionPickerPanel.Visibility = Visibility.Visible;
+                window.MentionCandidateList.ItemsSource = new[] { candidate };
+                window.UpdateLayout();
+
+                var selectButton = new Button { DataContext = candidate };
+                InvokePrivate(
+                    window,
+                    "OnMentionCandidateClicked",
+                    selectButton,
+                    new RoutedEventArgs(Button.ClickEvent));
+
+                Assert.Contains("@alice", window.MessageComposerTextBox.Text, StringComparison.Ordinal);
+                Assert.Equal(Visibility.Collapsed, window.MentionPickerPanel.Visibility);
+                Assert.Same(window.MessageComposerTextBox, System.Windows.Input.Keyboard.FocusedElement);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
     private static LocalConversationListItem CreateConversation(
         Guid id,
         ConversationType type,
@@ -143,6 +182,15 @@ public sealed class ClientConversationPanelPresentationTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic) ??
             throw new InvalidOperationException($"Expected field '{fieldName}'.");
         field.SetValue(window, value);
+    }
+
+    private static void InvokePrivate(MainWindow window, string methodName, params object[] arguments)
+    {
+        var method = typeof(MainWindow).GetMethod(
+            methodName,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic) ??
+            throw new InvalidOperationException($"Expected method '{methodName}'.");
+        method.Invoke(window, arguments);
     }
 
     private static Task RunOnStaAsync(Action action)

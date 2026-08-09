@@ -539,7 +539,12 @@ public partial class MainWindow : Window
                 ConversationList.ScrollIntoView(selection.Selection);
             }
 
-            ApplySelectedConversation(selection.Selection);
+            // A conversation-list publication also happens for message and attachment
+            // mutations. Reapplying the same selection must not re-fetch its member
+            // roster or replace the header with a loading state.
+            ApplySelectedConversation(
+                selection.Selection,
+                refreshParticipants: previousSelectionId != selection.Selection?.Id);
         }
         finally
         {
@@ -3445,6 +3450,11 @@ public partial class MainWindow : Window
     {
         _ = sender;
         _ = e;
+        CloseMentionPicker();
+    }
+
+    private void CloseMentionPicker()
+    {
         CancelMentionSearch();
         MentionPickerPanel.Visibility = Visibility.Collapsed;
         MessageComposerTextBox.Focus();
@@ -3609,7 +3619,7 @@ public partial class MainWindow : Window
             }
 
             SetLiveText(MentionSearchStatusText, "正文中已有 token，已关联该提及。");
-            MessageComposerTextBox.Focus();
+            CloseMentionPicker();
             UpdateComposerState();
             return;
         }
@@ -3632,7 +3642,7 @@ public partial class MainWindow : Window
         AdvanceComposerContextVersion();
         RefreshSelectedMentionPresentation();
         SetLiveText(MentionSearchStatusText, "已插入提及；编辑或删除 token 会同步更新发送集合。");
-        MessageComposerTextBox.Focus();
+        CloseMentionPicker();
         UpdateComposerState();
     }
 
@@ -5383,7 +5393,8 @@ public partial class MainWindow : Window
     }
 
     private void ApplySelectedConversation(
-        ClientConversationListItemPresentation? selected)
+        ClientConversationListItemPresentation? selected,
+        bool refreshParticipants = true)
     {
         if (composerContextConversationId != selected?.Id)
         {
@@ -5409,7 +5420,7 @@ public partial class MainWindow : Window
             SetChatHeaderMembersSummary("成员：请选择会话");
             ApplyChannelParticipantPresentation();
         }
-        else
+        else if (refreshParticipants)
         {
             _ = LoadConversationParticipantsAsync(selected.Id);
         }
