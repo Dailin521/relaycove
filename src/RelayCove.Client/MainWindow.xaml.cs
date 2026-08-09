@@ -152,6 +152,7 @@ public partial class MainWindow : Window
     private SearchHighlightLease? searchHighlightLease;
     private DispatcherTimer? searchHighlightTimer;
     private long mentionSearchVersion;
+    private string? completedMentionSearchQuery;
     private long messageSearchVersion;
     private long searchNavigationVersion;
     private long attachmentSubmissionVersion;
@@ -167,6 +168,7 @@ public partial class MainWindow : Window
     private bool composerSubmissionRunning;
     private bool mentionSearchRunning;
     private bool suppressMentionSearchInputChanges;
+    private bool suppressMentionPickerUpdates;
     private bool messageSearchRunning;
     private bool searchNavigationRunning;
     private bool suppressMessageSearchInputChanges;
@@ -1219,7 +1221,7 @@ public partial class MainWindow : Window
             }
             else if (decision.ScrollToEnd && snapshot.Messages.Count != 0)
             {
-                MessageList.ScrollIntoView(snapshot.Messages[^1]);
+                scrollViewer?.ScrollToEnd();
             }
 
             if (searchTargetOwnsAcknowledgment)
@@ -3102,10 +3104,15 @@ public partial class MainWindow : Window
     {
         _ = sender;
         _ = e;
-        AdvanceComposerContextVersion();
+        // Text edits must not tear down an attachment operation or repeatedly
+        // recreate the mention surface. Only a genuine context change owns that.
+        AdvanceComposerContextVersion(cancelAttachmentInput: false);
         ReconcileComposerMentions();
         UpdateComposerState();
-        UpdateActiveMentionPicker();
+        if (!suppressMentionPickerUpdates)
+        {
+            UpdateActiveMentionPicker();
+        }
     }
 
     private void OnComposerResizeDragDelta(object sender, DragDeltaEventArgs e)
@@ -3551,10 +3558,19 @@ public partial class MainWindow : Window
         else
         {
             var selectionStart = MessageComposerTextBox.SelectionStart;
-            MessageComposerTextBox.SelectedText = "@";
+            suppressMentionPickerUpdates = true;
+            try
+            {
+                MessageComposerTextBox.SelectedText = "@";
+            }
+            finally
+            {
+                suppressMentionPickerUpdates = false;
+            }
             MessageComposerTextBox.SelectionStart = selectionStart + 1;
             MessageComposerTextBox.SelectionLength = 0;
             MessageComposerTextBox.Focus();
+            UpdateActiveMentionPicker(immediate: true);
         }
 
         UpdateComposerState();
@@ -3590,7 +3606,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void UpdateActiveMentionPicker()
+    private async void UpdateActiveMentionPicker(bool immediate = false)
     {
         if (!composerAvailable ||
             !ClientMentionPolicy.TryGetActiveQuery(
@@ -3622,7 +3638,7 @@ public partial class MainWindow : Window
             }
         }
 
-        await SearchMentionCandidatesAsync(debounce: true);
+        await SearchMentionCandidatesAsync(debounce: !immediate);
     }
 
     private async void OnMentionSearchPreviewKeyDown(
@@ -3669,12 +3685,17 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (string.Equals(completedMentionSearchQuery, query, StringComparison.Ordinal) &&
+            MentionCandidateList.ItemsSource is not null)
+        {
+            return;
+        }
+
         mentionSearchCancellationSource?.Cancel();
         using var cancellationSource = new CancellationTokenSource();
         mentionSearchCancellationSource = cancellationSource;
         var searchVersion = ++mentionSearchVersion;
         mentionSearchRunning = true;
-        MentionCandidateList.ItemsSource = null;
         SetLiveText(
             MentionSearchStatusText,
             query.Length == 0
@@ -3685,7 +3706,7 @@ public partial class MainWindow : Window
         {
             if (debounce)
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(120), cancellationSource.Token);
+                await Task.Delay(TimeSpan.FromMilliseconds(200), cancellationSource.Token);
             }
 
             var outcome = await accountShell.SearchMentionCandidatesAsync(
@@ -3701,6 +3722,7 @@ public partial class MainWindow : Window
             if (outcome.Status == ClientMentionCandidateStatus.Completed)
             {
                 MentionCandidateList.ItemsSource = outcome.Candidates;
+                completedMentionSearchQuery = query;
                 SetLiveText(
                     MentionSearchStatusText,
                     outcome.Candidates.Count == 0
@@ -3713,7 +3735,7 @@ public partial class MainWindow : Window
             }
             else
             {
-                MentionCandidateList.ItemsSource = null;
+                completedMentionSearchQuery = null;
                 SetLiveText(MentionSearchStatusText, DescribeMentionSearchOutcome(outcome));
             }
         }
@@ -3746,6 +3768,7 @@ public partial class MainWindow : Window
     {
         mentionSearchVersion++;
         mentionSearchRunning = false;
+        completedMentionSearchQuery = null;
         var cancellationSource = mentionSearchCancellationSource;
         mentionSearchCancellationSource = null;
         cancellationSource?.Cancel();
@@ -5673,6 +5696,7 @@ public partial class MainWindow : Window
         CancelMentionSearch();
         composerMentions.Clear();
         MentionCandidateList.ItemsSource = null;
+        completedMentionSearchQuery = null;
         SelectedMentionList.ItemsSource = null;
         suppressMentionSearchInputChanges = true;
         try

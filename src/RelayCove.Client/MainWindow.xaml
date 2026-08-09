@@ -846,7 +846,7 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <Border Width="30" Height="30" Background="{StaticResource AccentSoftBrush}" CornerRadius="15">
+                                            <Border Width="30" Height="30" Background="{StaticResource AccentSoftBrush}" CornerRadius="4">
                                                 <TextBlock Text="{Binding AvatarText}"
                                                            HorizontalAlignment="Center"
                                                            VerticalAlignment="Center"
@@ -913,7 +913,7 @@
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
-                                            <Border Width="30" Height="30" Background="{StaticResource AccentSoftBrush}" CornerRadius="15">
+                                            <Border Width="30" Height="30" Background="{StaticResource AccentSoftBrush}" CornerRadius="4">
                                                 <TextBlock Text="{Binding AvatarText}"
                                                            HorizontalAlignment="Center"
                                                            VerticalAlignment="Center"

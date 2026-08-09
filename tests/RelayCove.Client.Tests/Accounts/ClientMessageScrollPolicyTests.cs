@@ -78,7 +78,7 @@ public sealed class ClientMessageScrollPolicyTests
     }
 
     [Theory]
-    [InlineData(true, 101L, false, 101L)]
+    [InlineData(true, null, false, 101L)]
     [InlineData(false, null, true, null)]
     public void Decide_WhenRealtimeAppends_OnlyFollowsUserAtLatest(
         bool wasNearBottom,

@@ -169,8 +169,14 @@ public sealed class MessageListControlPresentationTests
                 Assert.Equal(HorizontalAlignment.Left, bubbles[false].HorizontalAlignment);
                 Assert.Equal(Color.FromRgb(0xEA, 0xF3, 0xFF),
                     Assert.IsType<SolidColorBrush>(bubbles[true].Background).Color);
-                Assert.Equal(Color.FromRgb(0xF3, 0xF6, 0xF9),
+                Assert.Equal(Colors.White,
                     Assert.IsType<SolidColorBrush>(bubbles[false].Background).Color);
+                var avatars = FindVisualDescendants<Border>(control)
+                    .Where(border => border.Name == "MessageAvatarBorder")
+                    .ToArray();
+                Assert.Equal(2, avatars.Length);
+                Assert.All(avatars, avatar => Assert.Equal(new CornerRadius(4), avatar.CornerRadius));
+                Assert.All(avatars, avatar => Assert.NotEqual(avatar.Parent, bubbles[true]));
             }
             finally
             {

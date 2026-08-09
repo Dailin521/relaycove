@@ -141,6 +141,39 @@ public sealed class ClientConversationPanelPresentationTests
         });
     }
 
+    [Fact]
+    public async Task MainWindow_WhenMentionButtonIsClicked_OpensStablePickerAndTogglesIt()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateVisibleWindow();
+            try
+            {
+                SetPrivateField(window, "composerAvailable", true);
+                window.MessageComposerTextBox.IsEnabled = true;
+                window.MentionPickerButton.IsEnabled = true;
+
+                window.MentionPickerButton.RaiseEvent(
+                    new RoutedEventArgs(Button.ClickEvent));
+
+                Assert.True(window.MentionPickerPopup.IsOpen);
+                Assert.Equal(Visibility.Visible, window.MentionPickerPanel.Visibility);
+                Assert.Equal("@", window.MessageComposerTextBox.Text);
+
+                window.MentionPickerButton.RaiseEvent(
+                    new RoutedEventArgs(Button.ClickEvent));
+
+                Assert.False(window.MentionPickerPopup.IsOpen);
+                Assert.Equal(Visibility.Collapsed, window.MentionPickerPanel.Visibility);
+                Assert.Equal("@", window.MessageComposerTextBox.Text);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
     private static LocalConversationListItem CreateConversation(
         Guid id,
         ConversationType type,

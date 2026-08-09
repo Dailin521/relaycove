@@ -325,7 +325,7 @@ public sealed class ClientUiSnapshotTests
                 var previewImage = Assert.Single(
                     FindVisualDescendants<System.Windows.Controls.Image>(window.MessageList),
                     candidate => candidate.Source is not null);
-                Assert.Equal(new CornerRadius(8), previewCard.CornerRadius);
+                Assert.Equal(new CornerRadius(12), previewCard.CornerRadius);
                 Assert.True(previewCard.ClipToBounds);
                 Assert.InRange(previewCard.ActualWidth, 1, 360.5);
                 Assert.InRange(previewCard.ActualHeight, 1, 280.5);

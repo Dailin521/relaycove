@@ -72,8 +72,11 @@ internal static class ClientMessageScrollPolicy
         {
             return new ClientMessageScrollDecision(
                 PreservePrependOffset: false,
-                ScrollToMessageId: nextLatestMessageId,
-                ScrollToEnd: contentAppended,
+                // Keep the continuous conversation viewport anchored to its end.
+                // ScrollIntoView targets an individual container and causes a
+                // visible reposition when templates later change height.
+                ScrollToMessageId: null,
+                ScrollToEnd: true,
                 ShowNewMessageIndicator: false,
                 ObservedThroughMessageId: nextLatestMessageId);
         }

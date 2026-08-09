@@ -93,7 +93,7 @@ public sealed class MainWindowAttachmentImagePresentationTests
                         candidate => ReferenceEquals(candidate.DataContext, attachment) &&
                         candidate.MaxWidth == 360 &&
                         candidate.MaxHeight == 280);
-                Assert.Equal(new CornerRadius(8), previewCard.CornerRadius);
+                Assert.Equal(new CornerRadius(12), previewCard.CornerRadius);
                 Assert.True(previewCard.ClipToBounds);
                 Assert.True(double.IsNaN(previewCard.Width));
                 Assert.True(double.IsNaN(previewCard.Height));

@@ -74,7 +74,7 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="14">
+                                CornerRadius="6">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
                         <ControlTemplate.Triggers>
@@ -107,9 +107,10 @@
                     AutomationProperties.Name="打开账户与设置"
                     Click="OnAccountClicked">
                 <Grid>
-                    <Ellipse Width="30"
-                             Height="30"
-                             Fill="{DynamicResource RcPrimaryBrush}" />
+                    <Border Width="30"
+                            Height="30"
+                            Background="{DynamicResource RcPrimaryBrush}"
+                            CornerRadius="4" />
                     <TextBlock HorizontalAlignment="Center"
                                VerticalAlignment="Center"
                                Foreground="White"
