@@ -17,10 +17,12 @@ public sealed class ClientWindowChromePresentationTests
             var minimizeCount = 0;
             var maximizeRestoreCount = 0;
             var closeCount = 0;
+            var systemMenuCount = 0;
 
             titleBar.MinimizeRequested += (_, _) => minimizeCount++;
             titleBar.MaximizeRestoreRequested += (_, _) => maximizeRestoreCount++;
             titleBar.CloseRequested += (_, _) => closeCount++;
+            titleBar.SystemMenuRequested += (_, _) => systemMenuCount++;
 
             titleBar.MinimizeButton.RaiseEvent(
                 new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
@@ -28,10 +30,13 @@ public sealed class ClientWindowChromePresentationTests
                 new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
             titleBar.CloseButton.RaiseEvent(
                 new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+            titleBar.RaiseEvent(
+                new RoutedEventArgs(TitleBarControl.SystemMenuRequestedEvent, titleBar));
 
             Assert.Equal(1, minimizeCount);
             Assert.Equal(1, maximizeRestoreCount);
             Assert.Equal(1, closeCount);
+            Assert.Equal(1, systemMenuCount);
         });
     }
 
@@ -114,6 +119,62 @@ public sealed class ClientWindowChromePresentationTests
             }
         });
     }
+
+    [Fact]
+    public async Task MainWindow_WhenTitleBarCommandButtonsAreInvoked_RoutesIntentsToBoundWindow()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateOffscreenWindow();
+            var observedEvents = new List<RoutedEvent>();
+            var sources = new List<object?>();
+            RoutedEventHandler observer = (_, e) =>
+            {
+                observedEvents.Add(e.RoutedEvent);
+                sources.Add(e.Source);
+            };
+
+            window.AddHandler(TitleBarControl.MinimizeRequestedEvent, observer);
+            window.AddHandler(TitleBarControl.MaximizeRestoreRequestedEvent, observer);
+            try
+            {
+                window.Show();
+
+                window.ApplicationTitleBar.MaximizeRestoreButton.RaiseEvent(
+                    new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+
+                window.ApplicationTitleBar.MaximizeRestoreButton.RaiseEvent(
+                    new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+
+                window.ApplicationTitleBar.MinimizeButton.RaiseEvent(
+                    new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+
+                Assert.Equal(
+                    [
+                        TitleBarControl.MaximizeRestoreRequestedEvent,
+                        TitleBarControl.MaximizeRestoreRequestedEvent,
+                        TitleBarControl.MinimizeRequestedEvent,
+                    ],
+                    observedEvents);
+                Assert.All(sources, source => Assert.Same(window.ApplicationTitleBar, source));
+            }
+            finally
+            {
+                window.RemoveHandler(TitleBarControl.MinimizeRequestedEvent, observer);
+                window.RemoveHandler(TitleBarControl.MaximizeRestoreRequestedEvent, observer);
+                window.Close();
+            }
+        });
+    }
+
+    private static MainWindow CreateOffscreenWindow() =>
+        new()
+        {
+            ShowActivated = false,
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = -32000,
+            Top = -32000,
+        };
 
     private static Task RunOnStaAsync(Action action)
     {

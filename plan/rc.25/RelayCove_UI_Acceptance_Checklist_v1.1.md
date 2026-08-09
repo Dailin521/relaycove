@@ -7,7 +7,7 @@
 - [x] 基准为 `baaae88`；Fast 为 0 警告、0 错误，Shared 70 + Server 353 + Client 1,178 + Updater 38 = 1,639 项。
 - [x] before 快照 3/3：1280×720、1600×900、1920×1080 主窗口。
 - [x] v1.0 未改；v1.1 冻结蓝白 token、断点、标题栏、功能映射与本清单。
-- [ ] Full、Release、after 快照和真实 Windows 验收（留待 S1–S7）。
+- [x] Fast、Full、Release 构建和 after 快照自动化验证；真实 Windows 原生验收仍保持 `未验证`。
 
 ## 2. 布局与窗口
 
@@ -32,15 +32,15 @@
 
 - [ ] 本地会话搜索为 Name/Preview 的 `OrdinalIgnoreCase` 包含匹配；All/Unread/Channels/Direct 不改变未读、会话或权威选择。
 - [ ] 会话和消息列表仍使用虚拟化；连续消息、日期/新消息线、回复、提及、链接、图片和文件卡片不回归。
-- [ ] Composer 保留多行、Enter、Ctrl+Enter、附件选择/拖入/粘贴、`@`、单附件移除和成功清理语义。
+- [x] Composer 保留多行、Enter、Ctrl+Enter、附件选择/拖入/粘贴、`@`、单附件移除和成功清理语义。
 - [ ] 图片继续走授权、缓存、完整性校验和安全解码，绝不直接绑定远端 URL。
 - [ ] 键盘焦点、Tab/Enter/Space/Escape、AutomationProperties 与焦点回退可用。
 
 ## 5. 快照、验证与发布门
 
-- [ ] after 快照：登录（900×520、1280×720）、主聊天（900×520、1280×720、1600×900 抽屉、1920×1080）、Composer 压力、搜索、设置、强制更新、图片查看器。
+- [x] after 快照：登录（900×520、1280×720）、主聊天（900×520、1280×720、1600×900 抽屉、1920×1080）、Composer 压力、搜索稳定空态、成员抽屉、设置/可选更新、强制更新、图片查看器；证据在 `artifacts/rc25/ui-snapshots/after-s14-secondary/`。
 - [ ] 标准宽度布局误差不超过 4px；WPF/DPI 字体差异仅人工复核，不做跨 DPI 逐像素断言。
-- [ ] Fast、Full、Release 0 警告、0 错误；既有快照与定向回归通过；`git diff --check` 通过。
+- [x] Fast、Full、Release 0 警告、0 错误；既有快照与定向回归通过；`git diff --check` 通过。
 - [ ] 独立只读复核确认未改变关闭到托盘/更新交接、Dispatcher/取消、虚拟化/焦点、未开放副作用或 Shared/Server/数据库/可靠发送语义。
 - [ ] 真实 Windows 在 100%/125%/150% DPI 完成标题栏、托盘恢复、真正退出和强制更新交接验证；未执行项明确为 `未验证`。
 - [ ] 仅在干净、已提交 HEAD 双构建 rc.25，两个 ZIP 字节一致并通过离线包验证；不生成线上 manifest、不推送或部署。

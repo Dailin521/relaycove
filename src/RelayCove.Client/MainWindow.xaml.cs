@@ -33,6 +33,43 @@ namespace RelayCove.Client;
 
 public partial class MainWindow : Window
 {
+    internal ConversationPanelControl ConversationPanelContainer => ConversationPanel;
+    internal System.Windows.Controls.TextBox ConversationSearchTextBox => ConversationPanel.SearchTextBox;
+    internal System.Windows.Controls.ListBox ConversationList => ConversationPanel.List;
+    internal TextBlock ConversationEmptyText => ConversationPanel.EmptyText;
+    internal System.Windows.Controls.Button AllConversationFilterButton => ConversationPanel.AllFilterButton;
+    internal System.Windows.Controls.Button UnreadConversationFilterButton => ConversationPanel.UnreadFilterButton;
+    internal System.Windows.Controls.Button ChannelConversationFilterButton => ConversationPanel.ChannelFilterButton;
+    internal System.Windows.Controls.Button DirectConversationFilterButton => ConversationPanel.DirectFilterButton;
+    internal System.Windows.Controls.ListBox MessageList => MessageListPanel.List;
+    internal TextBlock MessageEmptyText => MessageListPanel.EmptyText;
+    internal System.Windows.Controls.Button NewMessageIndicatorButton => MessageListPanel.NewMessageButton;
+    internal System.Windows.Controls.ProgressBar MessageLoadingBar => MessageListPanel.LoadingBar;
+    internal Border ComposerSurface => Composer.Surface;
+    internal Border ReplyComposerPanel => Composer.ReplyPanel;
+    internal TextBlock ReplyComposerSenderText => Composer.ReplySenderText;
+    internal TextBlock ReplyComposerContentText => Composer.ReplyContentText;
+    internal Border MentionPickerPanel => Composer.MentionPanel;
+    internal System.Windows.Controls.TextBox MentionSearchTextBox => Composer.MentionSearchTextBoxElement;
+    internal System.Windows.Controls.Button MentionSearchButton => Composer.MentionSearchButtonElement;
+    internal TextBlock MentionSearchStatusText => Composer.MentionSearchStatusTextElement;
+    internal System.Windows.Controls.ListBox MentionCandidateList => Composer.MentionCandidateListElement;
+    internal TextBlock SelectedMentionHeadingText => Composer.SelectedMentionHeadingTextElement;
+    internal ItemsControl SelectedMentionList => Composer.SelectedMentionListElement;
+    internal Border SelectedAttachmentPanel => Composer.SelectedAttachmentPanelElement;
+    internal TextBlock SelectedAttachmentHeadingText => Composer.SelectedAttachmentHeadingTextElement;
+    internal ItemsControl SelectedAttachmentList => Composer.SelectedAttachmentListElement;
+    internal Border AttachmentInputDropTarget => Composer.AttachmentInputDropTargetElement;
+    internal Thumb ComposerResizeThumb => Composer.ResizeThumb;
+    internal System.Windows.Controls.TextBox MessageComposerTextBox => Composer.MessageTextBox;
+    internal System.Windows.Controls.Button SelectAttachmentsButton => Composer.SelectAttachmentsButtonElement;
+    internal System.Windows.Controls.Button MentionPickerButton => Composer.MentionPickerButtonElement;
+    internal StackPanel ComposerSupplementaryActionsPanel => Composer.SupplementaryActionsPanel;
+    internal System.Windows.Controls.Button SendMessageButton => Composer.SendButton;
+    internal Grid AttachmentUploadProgressPanel => Composer.UploadProgressPanel;
+    internal System.Windows.Controls.ProgressBar AttachmentUploadProgressBar => Composer.UploadProgressBar;
+    internal TextBlock AttachmentUploadProgressText => Composer.UploadProgressText;
+    internal TextBlock MessageComposerStatusText => Composer.StatusText;
     private const double ComposerInputMinimumHeight = 58;
     private const double ComposerInputMaximumHeight = 200;
     private const double ComposerMessageListMinimumHeight = 120;
@@ -228,25 +265,24 @@ public partial class MainWindow : Window
         };
         SetLiveText(UpdateStatusText, status);
         CheckForUpdatesButton.IsEnabled = checkForUpdates is not null && !mandatoryUpdateGate;
-        SynchronizeSettingsPanelPresentation();
         optionalUpdateActionApplies = state.Phase == ClientUpdatePhase.Downloaded &&
             !mandatoryUpdateGate;
         optionalUpdateActionCancels = state.Phase == ClientUpdatePhase.Downloading &&
             !mandatoryUpdateGate;
-        OptionalUpdateActionButton.Visibility = !mandatoryUpdateGate && state.Phase is
+        SettingsOverlay.HasOptionalUpdateAction = !mandatoryUpdateGate && state.Phase is
             ClientUpdatePhase.OptionalAvailable or ClientUpdatePhase.Downloading or ClientUpdatePhase.Downloaded
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-        OptionalUpdateActionButton.Content = optionalUpdateActionCancels
+            ;
+        SettingsOverlay.UpdateActionLabel = optionalUpdateActionCancels
             ? "取消下载"
             : optionalUpdateActionApplies
                 ? "关闭并更新"
                 : "下载更新";
-        OptionalUpdateActionButton.IsEnabled = optionalUpdateActionCancels
+        SettingsOverlay.IsUpdateActionEnabled = optionalUpdateActionCancels
             ? cancelUpdateDownload is not null
             : optionalUpdateActionApplies
             ? applyUpdate is not null
             : downloadUpdate is not null;
+        SynchronizeSettingsPanelPresentation();
 
         MandatoryUpdateOverlay.Visibility = mandatoryUpdateGate
             ? Visibility.Visible
@@ -314,7 +350,7 @@ public partial class MainWindow : Window
         SetLiveText(MandatoryUpdateErrorText, message);
         RetryMandatoryUpdateButton.IsEnabled = checkForUpdates is not null;
         ApplyMandatoryUpdateButton.IsEnabled = applyUpdate is not null;
-        OptionalUpdateActionButton.IsEnabled = applyUpdate is not null;
+        SettingsOverlay.IsUpdateActionEnabled = applyUpdate is not null;
         FocusMandatoryUpdateAction();
     }
 
@@ -329,13 +365,17 @@ public partial class MainWindow : Window
         DownloadMandatoryUpdateButton.IsEnabled = false;
         CancelMandatoryUpdateButton.IsEnabled = false;
         ApplyMandatoryUpdateButton.IsEnabled = false;
-        OptionalUpdateActionButton.IsEnabled = false;
+        SettingsOverlay.IsUpdateActionEnabled = false;
         FocusMandatoryUpdateAction();
     }
 
     internal Guid? SelectedConversationId => selectedConversationId;
 
     internal System.Windows.Controls.Button CloseSettingsButton => SettingsOverlay.CloseButton;
+
+    internal Border MessageSearchEmptyStatePanel => MessageSearchEmptyState;
+
+    internal Border ChannelDrawerSurfacePanel => ChannelDrawerSurface;
 
     // Keep the existing internal presentation seam stable while the visual header
     // moves into a dedicated control.
@@ -536,6 +576,168 @@ public partial class MainWindow : Window
             : ClientNavigationSection.Chat;
     }
 
+    private void OnConversationPanelInteractionRequested(
+        object sender,
+        ClientControlInteractionRequestedEventArgs e)
+    {
+        _ = sender;
+        switch (e.Interaction)
+        {
+            case "SearchTextChanged" when e.OriginalEventArgs is TextChangedEventArgs textChanged:
+                OnConversationSearchTextChanged(e.InteractionSource, textChanged);
+                break;
+            case "FilterRequested" when e.OriginalEventArgs is RoutedEventArgs routed:
+                OnConversationFilterClicked(e.InteractionSource, routed);
+                break;
+            case "SelectionChanged" when e.OriginalEventArgs is SelectionChangedEventArgs selectionChanged:
+                OnConversationSelectionChanged(e.InteractionSource, selectionChanged);
+                break;
+            case "CreateChannelRequested" when e.OriginalEventArgs is RoutedEventArgs createChannel:
+                OnOpenChannelPanelClicked(e.InteractionSource, createChannel);
+                break;
+            case "SettingsRequested" when e.OriginalEventArgs is RoutedEventArgs settings:
+                OnToggleAccountDiagnosticsClicked(e.InteractionSource, settings);
+                break;
+            case "GroupLoaded" when e.OriginalEventArgs is RoutedEventArgs groupLoaded:
+                OnConversationGroupExpanderLoaded(e.InteractionSource, groupLoaded);
+                break;
+            case "GroupExpanded" when e.OriginalEventArgs is RoutedEventArgs groupExpanded:
+                OnConversationGroupExpanded(e.InteractionSource, groupExpanded);
+                break;
+            case "GroupCollapsed" when e.OriginalEventArgs is RoutedEventArgs groupCollapsed:
+                OnConversationGroupCollapsed(e.InteractionSource, groupCollapsed);
+                break;
+        }
+    }
+
+    private void OnMessageListInteractionRequested(
+        object sender,
+        ClientControlInteractionRequestedEventArgs e)
+    {
+        _ = sender;
+        switch (e.Interaction)
+        {
+            case "ScrollChanged" when e.OriginalEventArgs is ScrollChangedEventArgs scrollChanged:
+                OnMessageScrollChanged(e.InteractionSource, scrollChanged);
+                break;
+            case "CardLoaded" when e.OriginalEventArgs is RoutedEventArgs cardLoaded:
+                OnMessageCardLoaded(e.InteractionSource, cardLoaded);
+                break;
+            case "CardUnloaded" when e.OriginalEventArgs is RoutedEventArgs cardUnloaded:
+                OnMessageCardUnloaded(e.InteractionSource, cardUnloaded);
+                break;
+            case "CardDataContextChanged" when e.OriginalEventArgs is DependencyPropertyChangedEventArgs cardChanged:
+                OnMessageCardDataContextChanged(e.InteractionSource, cardChanged);
+                break;
+            case "ReplyRequested" when e.OriginalEventArgs is RoutedEventArgs reply:
+                OnReplyMessageClicked(e.InteractionSource, reply);
+                break;
+            case "ReplyReferenceClicked" when e.OriginalEventArgs is RoutedEventArgs replyReference:
+                OnReplyReferenceClicked(e.InteractionSource, replyReference);
+                break;
+            case "CopyRequested" when e.OriginalEventArgs is RoutedEventArgs copy:
+                OnCopyMessageClicked(e.InteractionSource, copy);
+                break;
+            case "LinkClicked" when e.OriginalEventArgs is RoutedEventArgs link:
+                OnMessageLinkClicked(e.InteractionSource, link);
+                break;
+            case "RetryRequested" when e.OriginalEventArgs is RoutedEventArgs retry:
+                OnRetryPendingMessageClicked(e.InteractionSource, retry);
+                break;
+            case "NewMessagesRequested" when e.OriginalEventArgs is RoutedEventArgs newMessages:
+                OnNewMessagesClicked(e.InteractionSource, newMessages);
+                break;
+            case "AttachmentOpenRequested" when e.OriginalEventArgs is RoutedEventArgs attachmentOpen:
+                OnAttachmentOpenClicked(e.InteractionSource, attachmentOpen);
+                break;
+            case "AttachmentDownloadRequested" when e.OriginalEventArgs is RoutedEventArgs attachmentDownload:
+                OnAttachmentDownloadActionClicked(e.InteractionSource, attachmentDownload);
+                break;
+            case "ThumbnailLoaded" when e.OriginalEventArgs is RoutedEventArgs thumbnailLoaded:
+                OnAttachmentThumbnailLoaded(e.InteractionSource, thumbnailLoaded);
+                break;
+            case "ThumbnailUnloaded" when e.OriginalEventArgs is RoutedEventArgs thumbnailUnloaded:
+                OnAttachmentThumbnailUnloaded(e.InteractionSource, thumbnailUnloaded);
+                break;
+            case "ThumbnailDataContextChanged" when e.OriginalEventArgs is DependencyPropertyChangedEventArgs thumbnailChanged:
+                OnAttachmentThumbnailDataContextChanged(e.InteractionSource, thumbnailChanged);
+                break;
+            case "ImageViewRequested" when e.OriginalEventArgs is RoutedEventArgs imageView:
+                OnAttachmentImageViewClicked(e.InteractionSource, imageView);
+                break;
+        }
+    }
+
+    private void OnComposerInteractionRequested(
+        object sender,
+        ClientControlInteractionRequestedEventArgs e)
+    {
+        _ = sender;
+        switch (e.Interaction)
+        {
+            case "CancelReplyRequested" when e.OriginalEventArgs is RoutedEventArgs cancelReply:
+                OnCancelReplyClicked(e.InteractionSource, cancelReply);
+                break;
+            case "CloseMentionPickerRequested" when e.OriginalEventArgs is RoutedEventArgs closeMentionPicker:
+                OnCloseMentionPickerClicked(e.InteractionSource, closeMentionPicker);
+                break;
+            case "MentionSearchTextChanged" when e.OriginalEventArgs is TextChangedEventArgs mentionTextChanged:
+                OnMentionSearchTextChanged(e.InteractionSource, mentionTextChanged);
+                break;
+            case "MentionSearchPreviewKeyDown" when e.OriginalEventArgs is System.Windows.Input.KeyEventArgs mentionKey:
+                OnMentionSearchPreviewKeyDown(e.InteractionSource, mentionKey);
+                break;
+            case "MentionSearchRequested" when e.OriginalEventArgs is RoutedEventArgs mentionSearch:
+                OnMentionSearchClicked(e.InteractionSource, mentionSearch);
+                break;
+            case "MentionCandidateRequested" when e.OriginalEventArgs is RoutedEventArgs mentionCandidate:
+                OnMentionCandidateClicked(e.InteractionSource, mentionCandidate);
+                break;
+            case "RemoveMentionRequested" when e.OriginalEventArgs is RoutedEventArgs removeMention:
+                OnRemoveMentionClicked(e.InteractionSource, removeMention);
+                break;
+            case "RemoveAttachmentRequested" when e.OriginalEventArgs is RoutedEventArgs removeAttachment:
+                OnRemoveAttachmentClicked(e.InteractionSource, removeAttachment);
+                break;
+            case "AttachmentDragEnter" when e.OriginalEventArgs is System.Windows.DragEventArgs dragEnter:
+                OnAttachmentInputPreviewDragEnter(e.InteractionSource, dragEnter);
+                break;
+            case "AttachmentDragOver" when e.OriginalEventArgs is System.Windows.DragEventArgs dragOver:
+                OnAttachmentInputPreviewDragOver(e.InteractionSource, dragOver);
+                break;
+            case "AttachmentDragLeave" when e.OriginalEventArgs is System.Windows.DragEventArgs dragLeave:
+                OnAttachmentInputPreviewDragLeave(e.InteractionSource, dragLeave);
+                break;
+            case "AttachmentDrop" when e.OriginalEventArgs is System.Windows.DragEventArgs drop:
+                OnAttachmentInputPreviewDrop(e.InteractionSource, drop);
+                break;
+            case "AttachmentPreviewKeyDown" when e.OriginalEventArgs is System.Windows.Input.KeyEventArgs attachmentKey:
+                OnAttachmentInputPreviewKeyDown(e.InteractionSource, attachmentKey);
+                break;
+            case "ResizeDragDelta" when e.OriginalEventArgs is DragDeltaEventArgs resize:
+                OnComposerResizeDragDelta(e.InteractionSource, resize);
+                break;
+            case "MessageTextChanged" when e.OriginalEventArgs is TextChangedEventArgs messageTextChanged:
+                OnMessageComposerTextChanged(e.InteractionSource, messageTextChanged);
+                break;
+            case "MessagePreviewKeyDown" when e.OriginalEventArgs is System.Windows.Input.KeyEventArgs messageKey:
+                OnMessageComposerPreviewKeyDown(e.InteractionSource, messageKey);
+                break;
+            case "SelectAttachmentsRequested" when e.OriginalEventArgs is RoutedEventArgs selectAttachments:
+                OnSelectAttachmentsClicked(e.InteractionSource, selectAttachments);
+                break;
+            case "MentionPickerRequested" when e.OriginalEventArgs is RoutedEventArgs mentionPicker:
+                OnMentionPickerClicked(e.InteractionSource, mentionPicker);
+                break;
+            case "UnavailableFeatureRequested" when e.OriginalEventArgs is RoutedEventArgs unavailable:
+                OnUnavailableFeatureButtonClicked(e.InteractionSource, unavailable);
+                break;
+            case "SendRequested" when e.OriginalEventArgs is RoutedEventArgs send:
+                OnSendMessageClicked(e.InteractionSource, send);
+                break;
+        }
+    }
+
     private void SetConversationFilter(ClientConversationFilter requestedFilter)
     {
         if (conversationFilter == requestedFilter)
@@ -673,6 +875,11 @@ public partial class MainWindow : Window
     private void OnSettingsExitAccountRequested(object sender, RoutedEventArgs e)
     {
         OnLogoutClicked(sender, e);
+    }
+
+    private void OnSettingsOptionalUpdateActionRequested(object sender, RoutedEventArgs e)
+    {
+        OnOptionalUpdateActionClicked(sender, e);
     }
 
     private void OnUnavailableFeatureRequested(
@@ -1558,6 +1765,12 @@ public partial class MainWindow : Window
             LoginPanel.Padding = compactLoginLayout
                 ? new Thickness(28, 18, 28, 18)
                 : new Thickness(34);
+            LoginPanelHeadingText.Visibility = compactLoginLayout
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            LoginPanelSubtitleText.Visibility = compactLoginLayout
+                ? Visibility.Collapsed
+                : Visibility.Visible;
             return;
         }
 

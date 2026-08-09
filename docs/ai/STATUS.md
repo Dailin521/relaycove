@@ -4,12 +4,11 @@
 
 ## 当前状态
 
-- **当前阶段：** stage-19 自动化范围已完成 — rc.24 S0–S4 已通过；owner 已决定跳过 S5（保持未验证）；owner 指定 Windows 采用 WPF 内置快照复核，真实双账号/通知矩阵及测试宿主原生通知注册仍保持未验证
-- **当前分支成果：** `agent/stage-19-rc24-stabilization` 已新增 rc.24 S0–S7 计划和任务记录；Fast、Release 定向可靠性 827 项、WPF 内置快照 6 项、Full/Release 1,639 项及差异检查均通过。窄窗口成员入口现会保持抽屉关闭并给出可访问提示；快照只构造可达的附件/提及输入状态，且三档截图已由内部工具复核。Client `1.0.0-rc.24` 已从 `9730a14` 双构建并由离线 verifier 确认字节一致（165,908,074 bytes，SHA-256 `057a4683921166e03001d3d4bd0eb1bc2b9591fd84fb59fbcf6c19cbe223c228`）；既有阶段 2–18 与 M4/M5 成果保持不变
-- **最近验证通过的状态：** stage-18 已完成客户端三栏视觉切片、分组频道栏、无气泡消息流、底部输入区、右侧成员抽屉、短状态表达和 WPF 内置快照；Full/Release 0 警告/0 错误，1,634 项测试通过。rc.23 已构建、推送、快进合并至 `main` 并发布内部更新；公网 manifest、ZIP SHA-256 ETag、Content-Length 和 Range 206 均已验证。逐成员频道角色字段因现有协议缺失保持能力标签
-- **最近补强：** 图片消息自动下载预览、私聊完整成员列表、频道分组折叠及设计约束文档已完成；Full/Release 0 警告/0 错误，1,637 项测试通过。详见 `docs/ui-design-guidelines.md` 与 `docs/ai/tasks/2026-08-07-client-image-preview-and-navigation.md`
-- **可构建状态：** `已验证` — Fast、Full 与 Release 构建均为 0 警告、0 错误
-- **自动化验证：** `已验证` — stage-15 最终 Full、format 与 1,613 项测试（Shared 69、Server 352、Client 1,154、Updater 38）通过；Release 0 警告/0 错误。覆盖网页管理 Cookie/JWT 隔离、CSRF、限流、实时撤权、PathBase、管理写操作、两字符账号 migration 与既有全部 RC 闭环
+- **当前阶段：** stage-20 rc.25 UI 重构已完成 S0–S15 代码、组件和视觉收口；待从最终已提交 HEAD 完成双构建包校验及独立只读复核
+- **当前分支成果：** `agent/stage-20-rc25-ui-redesign` 已实现蓝白设计系统、自绘标题栏、三列主界面、覆盖式成员/设置抽屉、可伸缩 Composer、图片直预览及登录/搜索/更新/查看器等所有可达子界面。`MessageListControl`、`ComposerControl` 与 `ConversationPanelControl` 现只承载展示和用户意图，可靠发送、附件安全、同步、滚动与窗口生命周期仍由 `MainWindow` 持有
+- **最近验证通过的状态：** S15 Fast 与 Full 均通过：Shared 70、Server 353、Client 1,249、Updater 38，合计 1,710 项；Full 同时确认 format、Release 构建和 `git diff --check`，均为 0 警告、0 错误。次级界面快照见 `artifacts/rc25/ui-snapshots/after-s15-secondary/`。
+- **可构建状态：** `已验证` — Debug/Release 构建 0 警告、0 错误
+- **自动化验证：** `已验证` — 覆盖主题、标题栏意图、会话筛选、组件转发、Composer、附件/图片预览、搜索、成员抽屉、设置可选更新入口和快照几何；真实 Windows 原生窗口矩阵仍单列为未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
 - **Claude MCP：** `已验证` — 本机全局 0.5.0 API-only 持久 job 健康检查、start/check/read 与重启可恢复状态目录可用；仓库访问限于 Read/Glob/Grep
 - **最近 Claude 调用：** #85 已通过 MCP 0.5 持久任务完成 M5 更新供应链与备份恢复边界的唯一一次 Sonnet/High 只读挑战；其高风险意见均已由 `e200da6` 修正，两路 Codex 与本机验证复核通过，剩余要求进入 VPS 实测
@@ -17,7 +16,7 @@
 
 ## 进行中
 
-- 无自动化进行中任务。真实 Windows 双账号、托盘、断网、旧 Toast 与安装态升级矩阵均保持 `未验证`；如需公开或内部发布，须另行获得 owner 的人工验收与发布授权
+- 正在从最终已提交 HEAD 生成两份独立 rc.25 Windows x64 自包含包并进行离线校验。真实 Windows 100%/125%/150% DPI、拖动/边缘缩放/Alt+Space、托盘恢复/真正退出和强制更新交接均保持 `未验证`；不发布更新通道
 
 ## 已完成
 

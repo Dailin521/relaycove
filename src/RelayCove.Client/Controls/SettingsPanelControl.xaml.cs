@@ -37,6 +37,16 @@ public partial class SettingsPanelControl : System.Windows.Controls.UserControl
     public static readonly DependencyProperty CanExitAccountProperty = RegisterBooleanProperty(
         nameof(CanExitAccount));
 
+    public static readonly DependencyProperty HasOptionalUpdateActionProperty = RegisterBooleanProperty(
+        nameof(HasOptionalUpdateAction));
+
+    public static readonly DependencyProperty UpdateActionLabelProperty = RegisterTextProperty(
+        nameof(UpdateActionLabel),
+        "下载更新");
+
+    public static readonly DependencyProperty IsUpdateActionEnabledProperty = RegisterBooleanProperty(
+        nameof(IsUpdateActionEnabled));
+
     public static readonly RoutedEvent CloseRequestedEvent = RegisterRequestEvent(nameof(CloseRequested));
 
     public static readonly RoutedEvent CheckForUpdatesRequestedEvent = RegisterRequestEvent(
@@ -47,6 +57,9 @@ public partial class SettingsPanelControl : System.Windows.Controls.UserControl
 
     public static readonly RoutedEvent ExitAccountRequestedEvent = RegisterRequestEvent(
         nameof(ExitAccountRequested));
+
+    public static readonly RoutedEvent OptionalUpdateActionRequestedEvent = RegisterRequestEvent(
+        nameof(OptionalUpdateActionRequested));
 
     public SettingsPanelControl()
     {
@@ -107,6 +120,24 @@ public partial class SettingsPanelControl : System.Windows.Controls.UserControl
         set => SetValue(CanExitAccountProperty, value);
     }
 
+    public bool HasOptionalUpdateAction
+    {
+        get => (bool)GetValue(HasOptionalUpdateActionProperty);
+        set => SetValue(HasOptionalUpdateActionProperty, value);
+    }
+
+    public string UpdateActionLabel
+    {
+        get => (string)GetValue(UpdateActionLabelProperty);
+        set => SetValue(UpdateActionLabelProperty, value);
+    }
+
+    public bool IsUpdateActionEnabled
+    {
+        get => (bool)GetValue(IsUpdateActionEnabledProperty);
+        set => SetValue(IsUpdateActionEnabledProperty, value);
+    }
+
     public event RoutedEventHandler CloseRequested
     {
         add => AddHandler(CloseRequestedEvent, value);
@@ -131,6 +162,12 @@ public partial class SettingsPanelControl : System.Windows.Controls.UserControl
         remove => RemoveHandler(ExitAccountRequestedEvent, value);
     }
 
+    public event RoutedEventHandler OptionalUpdateActionRequested
+    {
+        add => AddHandler(OptionalUpdateActionRequestedEvent, value);
+        remove => RemoveHandler(OptionalUpdateActionRequestedEvent, value);
+    }
+
     internal System.Windows.Controls.Button CloseButton => CloseButtonElement;
 
     internal System.Windows.Controls.Button CheckForUpdatesButton => CheckForUpdatesButtonElement;
@@ -138,6 +175,8 @@ public partial class SettingsPanelControl : System.Windows.Controls.UserControl
     internal System.Windows.Controls.Button ReconnectButton => ReconnectButtonElement;
 
     internal System.Windows.Controls.Button ExitAccountButton => ExitAccountButtonElement;
+
+    internal System.Windows.Controls.Button OptionalUpdateActionButton => OptionalUpdateActionButtonElement;
 
     private static DependencyProperty RegisterTextProperty(string name, string defaultValue) =>
         DependencyProperty.Register(name, typeof(string), typeof(SettingsPanelControl), new PropertyMetadata(defaultValue));
@@ -178,5 +217,12 @@ public partial class SettingsPanelControl : System.Windows.Controls.UserControl
         _ = sender;
         e.Handled = true;
         RaiseEvent(new RoutedEventArgs(ExitAccountRequestedEvent, this));
+    }
+
+    private void OnOptionalUpdateActionClicked(object sender, RoutedEventArgs e)
+    {
+        _ = sender;
+        e.Handled = true;
+        RaiseEvent(new RoutedEventArgs(OptionalUpdateActionRequestedEvent, this));
     }
 }

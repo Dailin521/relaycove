@@ -25,6 +25,9 @@ public sealed class SettingsPanelControlPresentationTests
                 CanCheckForUpdates = true,
                 CanReconnect = true,
                 CanExitAccount = true,
+                HasOptionalUpdateAction = true,
+                UpdateActionLabel = "关闭并更新",
+                IsUpdateActionEnabled = true,
             };
 
             Assert.Equal("林乔", panel.DisplayName);
@@ -36,6 +39,9 @@ public sealed class SettingsPanelControlPresentationTests
             Assert.True(panel.CheckForUpdatesButton.IsEnabled);
             Assert.True(panel.ReconnectButton.IsEnabled);
             Assert.True(panel.ExitAccountButton.IsEnabled);
+            Assert.True(panel.HasOptionalUpdateAction);
+            Assert.Equal("关闭并更新", panel.UpdateActionLabel);
+            Assert.True(panel.OptionalUpdateActionButton.IsEnabled);
         });
     }
 
@@ -54,20 +60,24 @@ public sealed class SettingsPanelControlPresentationTests
             var updateRequests = 0;
             var reconnectRequests = 0;
             var exitRequests = 0;
+            var optionalUpdateRequests = 0;
             panel.CloseRequested += (_, _) => closeRequests++;
             panel.CheckForUpdatesRequested += (_, _) => updateRequests++;
             panel.ReconnectRequested += (_, _) => reconnectRequests++;
             panel.ExitAccountRequested += (_, _) => exitRequests++;
+            panel.OptionalUpdateActionRequested += (_, _) => optionalUpdateRequests++;
 
             RaiseClick(panel.CloseButton);
             RaiseClick(panel.CheckForUpdatesButton);
             RaiseClick(panel.ReconnectButton);
             RaiseClick(panel.ExitAccountButton);
+            RaiseClick(panel.OptionalUpdateActionButton);
 
             Assert.Equal(1, closeRequests);
             Assert.Equal(1, updateRequests);
             Assert.Equal(1, reconnectRequests);
             Assert.Equal(1, exitRequests);
+            Assert.Equal(1, optionalUpdateRequests);
         });
     }
 

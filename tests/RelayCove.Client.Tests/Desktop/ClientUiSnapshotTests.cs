@@ -41,9 +41,45 @@ public sealed class ClientUiSnapshotTests
                 Assert.True(window.SearchPanel.ActualWidth >= window.MessageSearchTextBox.ActualWidth);
                 var searchCard = Assert.IsType<Border>(VisualTreeHelper.GetChild(window.SearchPanel, 0));
                 Assert.InRange(searchCard.ActualWidth, 756, 764);
+                Assert.InRange(searchCard.ActualHeight, 360, 640);
+                Assert.True(window.MessageSearchResultList.ActualHeight >= 180);
+                Assert.Equal(Visibility.Visible, window.MessageSearchEmptyStatePanel.Visibility);
                 Assert.True(searchCard.ActualHeight <= 640);
 
                 SaveSnapshotWhenRequested(root, "search-1600x900.png");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task MainWindow_WhenMemberDrawerIsOpen_UsesChatOverlayRatherThanFourthColumn()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.WindowStartupLocation = WindowStartupLocation.Manual;
+                window.Left = -32000;
+                window.Top = -32000;
+                window.Width = 1600;
+                window.Height = 900;
+                ShowRepresentativeMemberDrawer(window);
+                window.Show();
+                window.UpdateLayout();
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+
+                Assert.Equal(1, Grid.GetColumn(window.ChannelOverlay));
+                Assert.Equal(Visibility.Visible, window.ChannelOverlay.Visibility);
+                Assert.InRange(window.ChannelDrawerSurfacePanel.ActualWidth, 378, 382);
+                Assert.True(window.ChannelDrawerSurfacePanel.ActualWidth < root.ActualWidth / 2);
+                AssertWithinBounds(root, window.ChannelMemberSearchTextBox);
+
+                SaveSnapshotWhenRequested(root, "members-1600x900.png");
             }
             finally
             {
@@ -72,6 +108,42 @@ public sealed class ClientUiSnapshotTests
                 Assert.True(window.SettingsOverlay.ActualWidth < root.ActualWidth / 2);
 
                 SaveSnapshotWhenRequested(root, "settings-1280x720.png");
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task MainWindow_WhenOptionalUpdateIsAvailable_ShowsActionInSettingsDrawer()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.Width = 1280;
+                window.Height = 720;
+                window.BindUpdateActions(
+                    _ => Task.FromResult(true),
+                    () => Task.CompletedTask,
+                    () => Task.CompletedTask,
+                    static () => { },
+                    () => Task.CompletedTask,
+                    static () => { });
+                window.ApplyUpdateState(CreateOptionalUpdateState());
+                window.SettingsOverlay.Visibility = Visibility.Visible;
+                window.Show();
+                window.UpdateLayout();
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+
+                Assert.True(window.SettingsOverlay.HasOptionalUpdateAction);
+                Assert.Equal("下载更新", window.SettingsOverlay.UpdateActionLabel);
+                AssertWithinBounds(root, window.SettingsOverlay.OptionalUpdateActionButton);
+
+                SaveSnapshotWhenRequested(root, "settings-optional-update-1280x720.png");
             }
             finally
             {
@@ -215,6 +287,10 @@ public sealed class ClientUiSnapshotTests
                     (sourceWidth / (double)sourceHeight) + 0.02);
                 AssertWithinBounds(root, previewCard);
                 AssertWithinBounds(root, previewImage);
+                var imageMetadata = Assert.Single(
+                    FindVisualDescendants<TextBlock>(window.MessageList),
+                    candidate => candidate.Text == "团队白板参考图.png" && candidate.ActualHeight > 0);
+                AssertDoesNotOverlap(root, previewCard, imageMetadata);
 
                 SaveSnapshotWhenRequested(root, snapshotFileName);
             }
@@ -259,6 +335,12 @@ public sealed class ClientUiSnapshotTests
                 AssertWithinBounds(root, window.PasswordInput);
                 AssertWithinBounds(root, window.LoginButton);
                 Assert.True(window.LoginButton.ActualHeight >= 38);
+                Assert.Equal(
+                    width == 900 ? Visibility.Collapsed : Visibility.Visible,
+                    window.LoginPanelHeadingText.Visibility);
+                Assert.Equal(
+                    width == 900 ? Visibility.Collapsed : Visibility.Visible,
+                    window.LoginPanelSubtitleText.Visibility);
 
                 SaveSnapshotWhenRequested(root, $"login-{width}x{height}.png");
             }
@@ -805,6 +887,30 @@ public sealed class ClientUiSnapshotTests
             ClientUpdateFailure.None);
     }
 
+    private static ClientUpdateState CreateOptionalUpdateState()
+    {
+        var manifest = new UpdateManifestDto(
+            SchemaVersion: UpdateConstants.SchemaVersion,
+            Channel: UpdateConstants.Channel,
+            Version: "1.0.0-rc.25",
+            MinimumSupportedVersion: "1.0.0-rc.24",
+            Mandatory: false,
+            Artifact: new UpdateArtifactDto(
+                Type: UpdateConstants.ArtifactTypePortableZip,
+                Url: "https://updates.example.test/RelayCove-1.0.0-rc.25.zip",
+                SizeBytes: 123,
+                Sha256: new string('b', 64)),
+            ReleaseNotes: "本次更新优化了聊天界面与窗口布局。");
+        return new ClientUpdateState(
+            ClientUpdatePhase.OptionalAvailable,
+            CurrentVersion: "1.0.0-rc.24",
+            manifest,
+            UpdateDecisionKind.Optional,
+            Progress: null,
+            ArchivePath: null,
+            ClientUpdateFailure.None);
+    }
+
     private static string CreateRepresentativeReleaseNotes() =>
         "本次更新优化了聊天界面与窗口布局。" + Environment.NewLine + Environment.NewLine +
         "• 输入卡片支持垂直拉伸，工具栏与发送操作保持在底部。" + Environment.NewLine +
@@ -1074,6 +1180,19 @@ public sealed class ClientUiSnapshotTests
         Assert.InRange(position.Y, 0, root.ActualHeight);
         Assert.True(position.X + element.ActualWidth <= root.ActualWidth + 0.5);
         Assert.True(position.Y + element.ActualHeight <= root.ActualHeight + 0.5);
+    }
+
+    private static void AssertDoesNotOverlap(
+        FrameworkElement root,
+        FrameworkElement first,
+        FrameworkElement second)
+    {
+        var firstPosition = first.TransformToAncestor(root).Transform(new Point(0, 0));
+        var secondPosition = second.TransformToAncestor(root).Transform(new Point(0, 0));
+        var firstBounds = new Rect(firstPosition, first.RenderSize);
+        var secondBounds = new Rect(secondPosition, second.RenderSize);
+
+        Assert.False(firstBounds.IntersectsWith(secondBounds));
     }
 
     private static void SavePng(

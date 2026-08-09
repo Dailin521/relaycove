@@ -13,6 +13,47 @@ namespace RelayCove.Client.Tests.Desktop;
 public sealed class ClientUpdateHandoffTests
 {
     [Fact]
+    public async Task OptionalUpdate_WhenAvailable_ExposesDownloadActionThroughSettingsDrawer()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var downloadCount = 0;
+            var window = CreateVisibleWindow();
+            try
+            {
+                window.BindUpdateActions(
+                    _ => Task.FromResult(true),
+                    () => Task.CompletedTask,
+                    () =>
+                    {
+                        downloadCount++;
+                        return Task.CompletedTask;
+                    },
+                    static () => { },
+                    () => Task.CompletedTask,
+                    static () => { });
+                window.ApplyUpdateState(CreateOptionalState());
+                window.SettingsOverlay.Visibility = Visibility.Visible;
+                window.UpdateLayout();
+
+                Assert.True(window.SettingsOverlay.HasOptionalUpdateAction);
+                Assert.Equal("下载更新", window.SettingsOverlay.UpdateActionLabel);
+                Assert.True(window.SettingsOverlay.OptionalUpdateActionButton.IsEnabled);
+                Assert.True(window.SettingsOverlay.OptionalUpdateActionButton.IsVisible);
+
+                window.SettingsOverlay.OptionalUpdateActionButton.RaiseEvent(
+                    new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+
+                Assert.Equal(1, downloadCount);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public async Task MandatoryGate_WhenComposerHadFocus_DisablesBusinessPanelsAndCapturesEnter()
     {
         await RunOnStaAsync(() =>
@@ -290,6 +331,30 @@ public sealed class ClientUpdateHandoffTests
             CurrentVersion: "1.0.0",
             manifest,
             UpdateDecisionKind.Mandatory,
+            Progress: null,
+            ArchivePath: null,
+            ClientUpdateFailure.None);
+    }
+
+    private static ClientUpdateState CreateOptionalState()
+    {
+        var manifest = new UpdateManifestDto(
+            SchemaVersion: UpdateConstants.SchemaVersion,
+            Channel: UpdateConstants.Channel,
+            Version: "1.0.1-rc.1",
+            MinimumSupportedVersion: "1.0.0",
+            Mandatory: false,
+            Artifact: new UpdateArtifactDto(
+                Type: UpdateConstants.ArtifactTypePortableZip,
+                Url: "https://updates.example.test/RelayCove-1.0.1-rc.1.zip",
+                SizeBytes: 123,
+                Sha256: new string('b', 64)),
+            ReleaseNotes: "Optional fixes.");
+        return new ClientUpdateState(
+            ClientUpdatePhase.OptionalAvailable,
+            CurrentVersion: "1.0.0",
+            manifest,
+            UpdateDecisionKind.Optional,
             Progress: null,
             ArchivePath: null,
             ClientUpdateFailure.None);

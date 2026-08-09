@@ -83,6 +83,35 @@
             <Setter Property="Foreground" Value="White" />
             <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
             <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="PrimaryButtonBorder"
+                                Padding="{TemplateBinding Padding}"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                              RecognizesAccessKey="True" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="PrimaryButtonBorder" Property="Background" Value="#FF0958D9" />
+                                <Setter TargetName="PrimaryButtonBorder" Property="BorderBrush" Value="#FF0958D9" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="PrimaryButtonBorder" Property="Background" Value="#FF003EB3" />
+                                <Setter TargetName="PrimaryButtonBorder" Property="BorderBrush" Value="#FF003EB3" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
         <Style x:Key="SubtleButtonStyle"
                TargetType="Button"
@@ -258,12 +287,6 @@
                                Foreground="#FFEAF3FF"
                                Text="更新：尚未检查"
                                TextWrapping="Wrap" />
-                    <Button x:Name="OptionalUpdateActionButton"
-                            Margin="0,8,0,0"
-                            Padding="10,5"
-                            HorizontalAlignment="Left"
-                            Visibility="Collapsed"
-                            Click="OnOptionalUpdateActionClicked" />
                 </StackPanel>
 
                 <TextBlock x:Name="SidebarUnreadText"
@@ -311,6 +334,16 @@
                         BorderThickness="1"
                         CornerRadius="12">
                     <StackPanel>
+                        <TextBlock x:Name="LoginPanelHeadingText"
+                                   Text="登录到工作区"
+                                   Foreground="{DynamicResource RcTextPrimaryBrush}"
+                                   FontSize="20"
+                                   FontWeight="SemiBold" />
+                        <TextBlock x:Name="LoginPanelSubtitleText"
+                                   Margin="0,5,0,24"
+                                   Text="输入团队服务器地址和账号信息。"
+                                   Foreground="{DynamicResource RcTextSecondaryBrush}"
+                                   FontSize="12" />
                         <TextBlock Text="服务器地址"
                                    Foreground="#FF31465B"
                                    FontWeight="SemiBold" />
@@ -327,9 +360,9 @@
                         <TextBlock Text="密码"
                                    Foreground="#FF31465B"
                                    FontWeight="SemiBold" />
-                        <PasswordBox x:Name="PasswordInput"
-                                     Margin="0,7,0,24"
-                                     AutomationProperties.Name="密码" />
+                         <PasswordBox x:Name="PasswordInput"
+                                      Margin="0,7,0,24"
+                                      AutomationProperties.Name="密码" />
                         <Button x:Name="LoginButton"
                                 Content="登录"
                                 IsDefault="True"
@@ -352,307 +385,10 @@
                                                     NavigationRequested="OnNavigationRequested"
                                                     UnavailableFeatureRequested="OnUnavailableFeatureRequested" />
 
-                    <Border x:Name="ConversationPanelContainer"
-                            Grid.Column="2"
-                            Padding="8,10,10,8"
-                            Background="Transparent"
-                            BorderThickness="0">
-                        <Grid>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="*" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <Grid Margin="8,8,8,7">
-                                <Border Background="{DynamicResource RcSurfaceBrush}"
-                                        BorderBrush="{DynamicResource RcBorderBrush}"
-                                        BorderThickness="1"
-                                        CornerRadius="10">
-                                    <Grid>
-                                        <Path Width="17"
-                                              Height="17"
-                                              Margin="12,0,0,0"
-                                              HorizontalAlignment="Left"
-                                              VerticalAlignment="Center"
-                                              Data="{DynamicResource RcIconSearch}"
-                                              Stretch="Uniform"
-                                              Stroke="{DynamicResource RcTextSecondaryBrush}"
-                                              StrokeThickness="1.6"
-                                              IsHitTestVisible="False" />
-                                        <TextBox x:Name="ConversationSearchTextBox"
-                                                 MinHeight="42"
-                                                 Padding="38,7,66,7"
-                                                 Background="Transparent"
-                                                 BorderThickness="0"
-                                                 AutomationProperties.Name="搜索会话"
-                                                 ToolTip="按会话名称或消息预览筛选。Ctrl+K 聚焦。"
-                                                 TextChanged="OnConversationSearchTextChanged" />
-                                        <TextBlock Margin="39,0,0,0"
-                                                   HorizontalAlignment="Left"
-                                                   VerticalAlignment="Center"
-                                                   Foreground="{DynamicResource RcTextSecondaryBrush}"
-                                                   FontSize="13"
-                                                   IsHitTestVisible="False"
-                                                   Text="搜索会话">
-                                            <TextBlock.Style>
-                                                <Style TargetType="TextBlock">
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding Text, ElementName=ConversationSearchTextBox}" Value="">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </TextBlock.Style>
-                                        </TextBlock>
-                                        <Border Margin="0,0,9,0"
-                                                Padding="6,2"
-                                                HorizontalAlignment="Right"
-                                                VerticalAlignment="Center"
-                                                Background="#FFF5F7FA"
-                                                CornerRadius="5"
-                                                IsHitTestVisible="False">
-                                            <TextBlock Text="Ctrl K"
-                                                       Foreground="{DynamicResource RcTextSecondaryBrush}"
-                                                       FontSize="10" />
-                                        </Border>
-                                    </Grid>
-                                </Border>
-                            </Grid>
-                            <StackPanel Grid.Row="1" Margin="8,0,8,6">
-                                <UniformGrid Margin="0,5,0,0" Columns="4">
-                                    <Button x:Name="AllConversationFilterButton"
-                                            Margin="0,0,4,0"
-                                            Style="{StaticResource ConversationFilterButtonStyle}"
-                                            Content="全部"
-                                            Tag="All"
-                                            Click="OnConversationFilterClicked" />
-                                    <Button x:Name="UnreadConversationFilterButton"
-                                            Margin="0,0,4,0"
-                                            Style="{StaticResource ConversationFilterButtonStyle}"
-                                            Content="未读"
-                                            Tag="Unread"
-                                            Click="OnConversationFilterClicked" />
-                                    <Button x:Name="ChannelConversationFilterButton"
-                                            Margin="0,0,4,0"
-                                            Style="{StaticResource ConversationFilterButtonStyle}"
-                                            Content="频道"
-                                            Tag="Channels"
-                                            Click="OnConversationFilterClicked" />
-                                    <Button x:Name="DirectConversationFilterButton"
-                                            Style="{StaticResource ConversationFilterButtonStyle}"
-                                            Content="私聊"
-                                            Tag="Direct"
-                                            Click="OnConversationFilterClicked" />
-                                </UniformGrid>
-                            </StackPanel>
-                            <ListBox x:Name="ConversationList"
-                                     Grid.Row="2"
-                                     AutomationProperties.Name="会话列表"
-                                     Background="Transparent"
-                                     BorderThickness="0"
-                                     ScrollViewer.CanContentScroll="True"
-                                     VirtualizingPanel.IsVirtualizing="True"
-                                     VirtualizingPanel.IsVirtualizingWhenGrouping="True"
-                                     VirtualizingPanel.VirtualizationMode="Recycling"
-                                     SelectionChanged="OnConversationSelectionChanged">
-                                <ListBox.GroupStyle>
-                                    <GroupStyle>
-                                        <GroupStyle.ContainerStyle>
-                                            <Style TargetType="{x:Type GroupItem}">
-                                                <Setter Property="Template">
-                                                    <Setter.Value>
-                                                        <ControlTemplate TargetType="{x:Type GroupItem}">
-                                                            <Expander x:Name="ConversationGroupExpander"
-                                                                      Tag="{Binding Name}"
-                                                                      IsExpanded="True"
-                                                                      BorderThickness="0"
-                                                                      Loaded="OnConversationGroupExpanderLoaded"
-                                                                      Expanded="OnConversationGroupExpanded"
-                                                                      Collapsed="OnConversationGroupCollapsed">
-                                                                <Expander.Header>
-                                                                    <ContentPresenter Content="{Binding}"
-                                                                                      ContentTemplate="{Binding RelativeSource={RelativeSource TemplatedParent}, Path=HeaderTemplate}" />
-                                                                </Expander.Header>
-                                                                <ItemsPresenter />
-                                                            </Expander>
-                                                        </ControlTemplate>
-                                                    </Setter.Value>
-                                                </Setter>
-                                            </Style>
-                                        </GroupStyle.ContainerStyle>
-                                        <GroupStyle.HeaderTemplate>
-                                            <DataTemplate>
-                                                <Grid Margin="6,12,4,5">
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Text="{Binding Name}"
-                                                               Foreground="{StaticResource TextSecondaryBrush}"
-                                                               FontSize="11"
-                                                               FontWeight="SemiBold" />
-                                                    <Button Grid.Column="1"
-                                                            Width="24"
-                                                            Height="24"
-                                                            MinHeight="0"
-                                                            Padding="0"
-                                                            Content="+"
-                                                            FontSize="16"
-                                                            ToolTip="创建频道"
-                                                            AutomationProperties.Name="创建频道"
-                                                            Click="OnOpenChannelPanelClicked">
-                                                        <Button.Style>
-                                                            <Style TargetType="Button" BasedOn="{StaticResource SubtleButtonStyle}">
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding Name}" Value="私聊">
-                                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </Button.Style>
-                                                    </Button>
-                                                </Grid>
-                                            </DataTemplate>
-                                        </GroupStyle.HeaderTemplate>
-                                    </GroupStyle>
-                                </ListBox.GroupStyle>
-                                <ListBox.ItemContainerStyle>
-                                    <Style TargetType="ListBoxItem">
-                                        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                        <Setter Property="Padding" Value="0" />
-                                        <Setter Property="Margin" Value="0,2" />
-                                        <Setter Property="Background" Value="Transparent" />
-                                        <Setter Property="BorderThickness" Value="0" />
-                                        <Style.Triggers>
-                                            <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter Property="Background" Value="#FFF5F6F8" />
-                                            </Trigger>
-                                            <Trigger Property="IsSelected" Value="True">
-                                                <Setter Property="Background" Value="{StaticResource AccentSoftBrush}" />
-                                                <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
-                                            </Trigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </ListBox.ItemContainerStyle>
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="9,6">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="28" />
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                                <Border Width="26"
-                                                    Height="26"
-                                                    VerticalAlignment="Top"
-                                                    Background="{StaticResource AccentSoftBrush}"
-                                                    CornerRadius="13">
-                                                <TextBlock Text="{Binding TypeIcon}"
-                                                           HorizontalAlignment="Center"
-                                                           VerticalAlignment="Center"
-                                                           Foreground="{StaticResource AccentBrush}"
-                                                           FontWeight="SemiBold" />
-                                            </Border>
-                                            <StackPanel Grid.Column="1" Margin="0,0,8,0">
-                                                <TextBlock Text="{Binding Name}"
-                                                           Foreground="#FF25394D"
-                                                           FontWeight="SemiBold"
-                                                           TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Text="{Binding Preview}"
-                                                           Margin="0,2,0,0"
-                                                           Foreground="{StaticResource TextSecondaryBrush}"
-                                                           FontSize="11"
-                                                           TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Text="{Binding MutedLabel}"
-                                                           Margin="0,2,0,0"
-                                                           Foreground="#FF596B7C"
-                                                           FontSize="11" />
-                                            </StackPanel>
-                                            <StackPanel Grid.Column="2" HorizontalAlignment="Right">
-                                                <TextBlock Text="{Binding Timestamp}"
-                                                           Foreground="#FF596B7C"
-                                                           FontSize="10" />
-                                                <Border Margin="0,4,0,0"
-                                                        Padding="6,2"
-                                                        HorizontalAlignment="Right"
-                                                        Background="{StaticResource AccentBrush}"
-                                                        CornerRadius="8">
-                                                    <Border.Style>
-                                                        <Style TargetType="Border">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding HasUnread}" Value="False">
-                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </Border.Style>
-                                                    <TextBlock Text="{Binding UnreadText}"
-                                                               Foreground="White"
-                                                               FontSize="10"
-                                                               FontWeight="SemiBold" />
-                                                </Border>
-                                            </StackPanel>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                            <TextBlock x:Name="ConversationEmptyText"
-                                       Grid.Row="2"
-                                       Margin="18"
-                                       Text="正在读取账户会话…"
-                                       AutomationProperties.LiveSetting="Polite"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Center"
-                                       Foreground="#FF596B7C"
-                                       TextAlignment="Center"
-                                       TextWrapping="Wrap" />
-                            <Border Grid.Row="3"
-                                    Margin="4,10,4,0"
-                                    Padding="8,9,8,6"
-                                    BorderBrush="{StaticResource BorderBrush}"
-                                    BorderThickness="0,1,0,0">
-                                <StackPanel>
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="32" />
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <Border Width="28" Height="28" Background="{StaticResource AccentSoftBrush}" CornerRadius="14">
-                                            <TextBlock Text="●"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center"
-                                                       Foreground="{StaticResource AccentBrush}"
-                                                       FontSize="10" />
-                                        </Border>
-                                        <StackPanel Grid.Column="1" Margin="7,0,4,0">
-                                            <TextBlock Text="{Binding Text, ElementName=SidebarDisplayNameText}"
-                                                       Foreground="{StaticResource TextPrimaryBrush}"
-                                                       FontWeight="SemiBold"
-                                                       TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Text="{Binding Text, ElementName=SidebarConnectionText}"
-                                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                                       FontSize="10"
-                                                       TextTrimming="CharacterEllipsis" />
-                                        </StackPanel>
-                                         <Button Grid.Column="2"
-                                                 MinWidth="48"
-                                                 MinHeight="30"
-                                                 Padding="8,4"
-                                                 Background="Transparent"
-                                                 BorderBrush="Transparent"
-                                                 Content="设置"
-                                                 ToolTip="打开账户与设置"
-                                                 AutomationProperties.Name="打开账户与设置"
-                                                 Click="OnToggleAccountDiagnosticsClicked" />
-                                     </Grid>
-                                </StackPanel>
-                            </Border>
-                        </Grid>
-                    </Border>
+                    <controls:ConversationPanelControl x:Name="ConversationPanel"
+                                                        Grid.Column="2"
+                                                        CornerRadius="12"
+                                                        InteractionRequested="OnConversationPanelInteractionRequested" />
 
                     <Border x:Name="ConversationChatPanel"
                             Grid.Column="4"
@@ -701,1027 +437,16 @@
                                            TextWrapping="Wrap" />
                             </Grid>
 
-                            <Grid Grid.Row="2">
-                                <ListBox x:Name="MessageList"
-                                         HorizontalAlignment="Left"
-                                         AutomationProperties.Name="消息列表"
-                                         Background="White"
-                                         BorderThickness="0"
-                                         ScrollViewer.CanContentScroll="True"
-                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                         ScrollViewer.ScrollChanged="OnMessageScrollChanged"
-                                         VirtualizingPanel.IsVirtualizing="True"
-                                         VirtualizingPanel.VirtualizationMode="Recycling">
-                                    <ListBox.ItemContainerStyle>
-                                        <Style TargetType="ListBoxItem">
-                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                            <Setter Property="Padding" Value="0" />
-                                            <Setter Property="Margin" Value="0" />
-                                            <Setter Property="Focusable" Value="False" />
-                                        </Style>
-                                    </ListBox.ItemContainerStyle>
-                                    <ListBox.ItemTemplate>
-                                        <DataTemplate>
-                                            <StackPanel>
-                                                <Border Margin="0,4,0,5"
-                                                        Padding="9,3"
-                                                        HorizontalAlignment="Center"
-                                                        Background="#FFE9EEF4"
-                                                        CornerRadius="9">
-                                                    <Border.Style>
-                                                        <Style TargetType="Border">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding ShowDateSeparator}" Value="True">
-                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </Border.Style>
-                                                    <TextBlock Text="{Binding DateSeparatorLabel}"
-                                                               Foreground="#FF596B7C"
-                                                               FontSize="11" />
-                                                </Border>
-                                                <Grid Margin="0,5,0,6"
-                                                      AutomationProperties.Name="新消息分割线">
-                                                    <Grid.Style>
-                                                        <Style TargetType="Grid">
-                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding ShowNewMessageSeparator}" Value="True">
-                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </Grid.Style>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="Auto" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <Border Height="1"
-                                                            VerticalAlignment="Center"
-                                                            Background="#FFCE6871" />
-                                                    <TextBlock Grid.Column="1"
-                                                               Margin="10,0"
-                                                               Text="新消息"
-                                                               Foreground="#FFB84F5A"
-                                                               FontSize="11"
-                                                               FontWeight="SemiBold" />
-                                                    <Border Grid.Column="2"
-                                                            Height="1"
-                                                            VerticalAlignment="Center"
-                                                            Background="#FFCE6871" />
-                                                </Grid>
-                                            <Border x:Name="MessageCardBorder"
-                                                    Padding="12,4"
-                                                    Tag="MessageCard"
-                                                    Background="Transparent"
-                                                    BorderThickness="0"
-                                                    CornerRadius="6"
-                                                    Loaded="OnMessageCardLoaded"
-                                                    Unloaded="OnMessageCardUnloaded"
-                                                    DataContextChanged="OnMessageCardDataContextChanged">
-                                                <Grid>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="38" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <Border Width="30"
-                                                            Height="30"
-                                                            VerticalAlignment="Top"
-                                                            Background="{StaticResource AccentSoftBrush}"
-                                                            CornerRadius="15">
-                                                        <Border.Style>
-                                                            <Style TargetType="Border">
-                                                                <Setter Property="Visibility" Value="Visible" />
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding IsMergedWithPrevious}" Value="True">
-                                                                        <Setter Property="Visibility" Value="Hidden" />
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </Border.Style>
-                                                        <TextBlock Text="{Binding SenderLabel, TargetNullValue=?}"
-                                                                   HorizontalAlignment="Center"
-                                                                   VerticalAlignment="Center"
-                                                                   Foreground="{StaticResource AccentBrush}"
-                                                                   FontSize="11"
-                                                                   FontWeight="SemiBold"
-                                                                   TextTrimming="CharacterEllipsis" />
-                                                    </Border>
-                                                    <StackPanel Grid.Column="1">
-                                                    <Grid>
-                                                        <Grid.Style>
-                                                            <Style TargetType="Grid">
-                                                                <Setter Property="Visibility" Value="Visible" />
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding IsMergedWithPrevious}" Value="True">
-                                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </Grid.Style>
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="*" />
-                                                            <ColumnDefinition Width="Auto" />
-                                                        </Grid.ColumnDefinitions>
-                                                        <TextBlock Text="{Binding SenderLabel}"
-                                                                   Foreground="{StaticResource TextPrimaryBrush}"
-                                                                   FontWeight="SemiBold" />
-                                                        <TextBlock Grid.Column="1"
-                                                                   Text="{Binding Timestamp}"
-                                                                   Foreground="#FF596B7C"
-                                                                   FontSize="11" />
-                                                    </Grid>
-                                                    <TextBlock Text="{Binding Content}"
-                                                               Margin="0,3,0,0"
-                                                               Foreground="{StaticResource TextPrimaryBrush}"
-                                                               FontSize="14"
-                                                               TextWrapping="Wrap" />
-                                                    <ItemsControl ItemsSource="{Binding Attachments}"
-                                                                  Margin="0,8,0,0">
-                                                        <ItemsControl.Style>
-                                                            <Style TargetType="ItemsControl">
-                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding HasAttachments}" Value="True">
-                                                                        <Setter Property="Visibility" Value="Visible" />
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </ItemsControl.Style>
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate>
-                                                                <Grid>
-                                                                <Border Margin="0,0,0,6"
-                                                                        Padding="9,7"
-                                                                        AutomationProperties.Name="{Binding DisplayName}"
-                                                                        AutomationProperties.HelpText="{Binding DownloadState.StatusText}"
-                                                                        Background="#FFF8FAFC"
-                                                                        BorderBrush="{StaticResource BorderBrush}"
-                                                                        BorderThickness="1"
-                                                                        CornerRadius="8">
-                                                                    <Border.Style>
-                                                                        <Style TargetType="Border">
-                                                                            <Setter Property="Visibility" Value="Visible" />
-                                                                            <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding IsImage}" Value="True">
-                                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                                </DataTrigger>
-                                                                            </Style.Triggers>
-                                                                        </Style>
-                                                                    </Border.Style>
-                                                                    <Grid>
-                                                                        <Grid.RowDefinitions>
-                                                                            <RowDefinition Height="Auto" />
-                                                                            <RowDefinition Height="Auto" />
-                                                                            <RowDefinition Height="Auto" />
-                                                                        </Grid.RowDefinitions>
-                                                                        <Grid.ColumnDefinitions>
-                                                                            <ColumnDefinition Width="*" />
-                                                                            <ColumnDefinition Width="Auto" />
-                                                                        </Grid.ColumnDefinitions>
-                                                                        <StackPanel>
-                                                                            <TextBlock Text="{Binding DisplayName}"
-                                                                                       MaxWidth="420"
-                                                                                       Foreground="#FF25394D"
-                                                                                       FontWeight="SemiBold"
-                                                                                       TextTrimming="CharacterEllipsis" />
-                                                                            <TextBlock Text="{Binding DisplaySize}"
-                                                                                       Margin="0,2,0,0"
-                                                                                       Foreground="#FF596B7C"
-                                                                                       FontSize="11" />
-                                                                        </StackPanel>
-                                                                        <StackPanel Grid.Column="1"
-                                                                                    Margin="12,0,0,0"
-                                                                                    Orientation="Horizontal">
-                                                                            <Button MinWidth="52"
-                                                                                    Margin="0,0,6,0"
-                                                                                    Padding="9,3"
-                                                                                    Content="打开"
-                                                                                    IsEnabled="{Binding DownloadState.CanOpen}"
-                                                                                    AutomationProperties.Name="{Binding DownloadState.DisplayName, StringFormat=打开附件：{0}}"
-                                                                                    Click="OnAttachmentOpenClicked">
-                                                                                <Button.Style>
-                                                                                    <Style TargetType="Button">
-                                                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                                                        <Style.Triggers>
-                                                                                            <DataTrigger Binding="{Binding DownloadState.CanOpen}" Value="True">
-                                                                                                <Setter Property="Visibility" Value="Visible" />
-                                                                                            </DataTrigger>
-                                                                                        </Style.Triggers>
-                                                                                    </Style>
-                                                                                </Button.Style>
-                                                                            </Button>
-                                                                            <Button MinWidth="72"
-                                                                                    Padding="9,3"
-                                                                                    Content="{Binding DownloadState.ActionLabel}"
-                                                                                    IsEnabled="{Binding DownloadState.CanInvoke}"
-                                                                                    AutomationProperties.Name="{Binding DownloadState.AutomationName}"
-                                                                                    Click="OnAttachmentDownloadActionClicked" />
-                                                                        </StackPanel>
-                                                                        <TextBlock Grid.Row="1"
-                                                                                   Grid.ColumnSpan="2"
-                                                                                   Margin="0,5,0,0"
-                                                                                   Text="{Binding DownloadState.StatusText}"
-                                                                                   AutomationProperties.LiveSetting="Polite"
-                                                                                   Foreground="#FF52708C"
-                                                                                   FontSize="11" />
-                                                                        <ProgressBar Grid.Row="2"
-                                                                                     Grid.ColumnSpan="2"
-                                                                                     Height="4"
-                                                                                     Margin="0,5,0,0"
-                                                                                     Minimum="0"
-                                                                                     Maximum="100"
-                                                                                     Value="{Binding DownloadState.Percent, Mode=OneWay}"
-                                                                                     AutomationProperties.Name="附件下载进度">
-                                                                            <ProgressBar.Style>
-                                                                                <Style TargetType="ProgressBar">
-                                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                                    <Style.Triggers>
-                                                                                        <DataTrigger Binding="{Binding DownloadState.ShowProgress}" Value="True">
-                                                                                            <Setter Property="Visibility" Value="Visible" />
-                                                                                        </DataTrigger>
-                                                                                    </Style.Triggers>
-                                                                                </Style>
-                                                                            </ProgressBar.Style>
-                                                                        </ProgressBar>
-                                                                    </Grid>
-                                                                </Border>
-                                                                <StackPanel Margin="0,0,0,8"
-                                                                            HorizontalAlignment="Left"
-                                                                            AutomationProperties.Name="{Binding ImageState.AutomationName}"
-                                                                            AutomationProperties.HelpText="{Binding ImageState.StatusText}">
-                                                                    <StackPanel.Style>
-                                                                        <Style TargetType="StackPanel">
-                                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                                            <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding IsImage}" Value="True">
-                                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                                </DataTrigger>
-                                                                            </Style.Triggers>
-                                                                        </Style>
-                                                                    </StackPanel.Style>
-                                                                    <Border MaxWidth="360"
-                                                                            MaxHeight="280"
-                                                                            HorizontalAlignment="Left"
-                                                                            Background="{StaticResource AccentSoftBrush}"
-                                                                            BorderBrush="#FFD5E1EE"
-                                                                            BorderThickness="1"
-                                                                            CornerRadius="8"
-                                                                            ClipToBounds="True">
-                                                                        <Border.Effect>
-                                                                            <DropShadowEffect BlurRadius="8"
-                                                                                              ShadowDepth="1"
-                                                                                              Opacity="0.08"
-                                                                                              Color="#FF1F2328" />
-                                                                        </Border.Effect>
-                                                                        <Grid>
-                                                                            <Button Padding="0"
-                                                                                    Background="Transparent"
-                                                                                    BorderThickness="0"
-                                                                                    Content="查看图片"
-                                                                                    ToolTip="点击查看图片"
-                                                                                    IsEnabled="{Binding ImageState.CanView}"
-                                                                                    AutomationProperties.Name="{Binding ImageState.AutomationName}"
-                                                                                    Click="OnAttachmentImageViewClicked">
-                                                                                <Button.Template>
-                                                                                    <ControlTemplate TargetType="Button">
-                                                                                        <Border Background="{TemplateBinding Background}"
-                                                                                                BorderBrush="{TemplateBinding BorderBrush}"
-                                                                                                BorderThickness="{TemplateBinding BorderThickness}">
-                                                                                            <Image Source="{Binding ImageState.Thumbnail}"
-                                                                                                   MaxWidth="360"
-                                                                                                   MaxHeight="280"
-                                                                                                   Stretch="Uniform"
-                                                                                                   Loaded="OnAttachmentThumbnailLoaded"
-                                                                                                   Unloaded="OnAttachmentThumbnailUnloaded"
-                                                                                                   DataContextChanged="OnAttachmentThumbnailDataContextChanged"
-                                                                                                   AutomationProperties.Name="{Binding ImageState.AutomationName}" />
-                                                                                        </Border>
-                                                                                    </ControlTemplate>
-                                                                                </Button.Template>
-                                                                            </Button>
-                                                                            <Border HorizontalAlignment="Center"
-                                                                                    VerticalAlignment="Center"
-                                                                                    MaxWidth="260"
-                                                                                    Padding="10,5"
-                                                                                    Background="#EAF3FF"
-                                                                                    BorderBrush="#FFD5E1EE"
-                                                                                    BorderThickness="1"
-                                                                                    CornerRadius="12"
-                                                                                    IsHitTestVisible="False">
-                                                                                <Border.Style>
-                                                                                    <Style TargetType="Border">
-                                                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                                                        <Style.Triggers>
-                                                                                            <DataTrigger Binding="{Binding ImageState.Thumbnail}" Value="{x:Null}">
-                                                                                                <Setter Property="Visibility" Value="Visible" />
-                                                                                            </DataTrigger>
-                                                                                        </Style.Triggers>
-                                                                                    </Style>
-                                                                                </Border.Style>
-                                                                                <TextBlock Text="{Binding ImageState.StatusText}"
-                                                                                           TextWrapping="Wrap"
-                                                                                           TextAlignment="Center"
-                                                                                           Foreground="{StaticResource TextSecondaryBrush}"
-                                                                                           FontSize="11"
-                                                                                           AutomationProperties.LiveSetting="Polite" />
-                                                                            </Border>
-                                                                        </Grid>
-                                                                    </Border>
-                                                                    <Grid Margin="0,5,0,0"
-                                                                          MinWidth="160"
-                                                                          MaxWidth="360">
-                                                                        <Grid.ColumnDefinitions>
-                                                                            <ColumnDefinition Width="*" />
-                                                                            <ColumnDefinition Width="Auto" />
-                                                                        </Grid.ColumnDefinitions>
-                                                                        <StackPanel Orientation="Horizontal"
-                                                                                    VerticalAlignment="Center">
-                                                                            <TextBlock MaxWidth="260"
-                                                                                       Text="{Binding DisplayName}"
-                                                                                       Foreground="{StaticResource TextSecondaryBrush}"
-                                                                                       FontSize="11"
-                                                                                       TextTrimming="CharacterEllipsis" />
-                                                                            <TextBlock Margin="6,0,0,0"
-                                                                                       Text="{Binding DisplaySize}"
-                                                                                       Foreground="#FF98A2B3"
-                                                                                       FontSize="11" />
-                                                                        </StackPanel>
-                                                                        <Button Grid.Column="1"
-                                                                                Padding="6,1"
-                                                                                Background="Transparent"
-                                                                                BorderThickness="0"
-                                                                                Foreground="{StaticResource AccentBrush}"
-                                                                                FontSize="11"
-                                                                                Content="查看图片"
-                                                                                ToolTip="在图片查看器中打开"
-                                                                                IsEnabled="{Binding ImageState.CanView}"
-                                                                                AutomationProperties.Name="{Binding ImageState.AutomationName}"
-                                                                                Click="OnAttachmentImageViewClicked" />
-                                                                    </Grid>
-                                                                </StackPanel>
-                                                                </Grid>
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
-                                                    <ItemsControl ItemsSource="{Binding Links}"
-                                                                  Margin="0,6,0,0">
-                                                        <ItemsControl.Style>
-                                                            <Style TargetType="ItemsControl">
-                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding HasLinks}" Value="True">
-                                                                        <Setter Property="Visibility" Value="Visible" />
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </ItemsControl.Style>
-                                                        <ItemsControl.ItemsPanel>
-                                                            <ItemsPanelTemplate>
-                                                                <WrapPanel />
-                                                            </ItemsPanelTemplate>
-                                                        </ItemsControl.ItemsPanel>
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate>
-                                                                <Button MinHeight="0"
-                                                                        MaxWidth="420"
-                                                                        Margin="0,0,8,3"
-                                                                        Padding="0"
-                                                                        HorizontalContentAlignment="Left"
-                                                                        AutomationProperties.Name="{Binding DisplayText}"
-                                                                        Background="Transparent"
-                                                                        BorderThickness="0"
-                                                                        Foreground="#FF1677D2"
-                                                                        Click="OnMessageLinkClicked">
-                                                                    <TextBlock Text="{Binding DisplayText}"
-                                                                               MaxHeight="34"
-                                                                               TextDecorations="Underline"
-                                                                               TextTrimming="CharacterEllipsis"
-                                                                               TextWrapping="Wrap" />
-                                                                </Button>
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
-                                                    <Button MaxWidth="520"
-                                                            Margin="0,7,0,0"
-                                                            MinHeight="0"
-                                                            Padding="0"
-                                                            HorizontalAlignment="Left"
-                                                            HorizontalContentAlignment="Left"
-                                                            Background="Transparent"
-                                                            BorderThickness="0"
-                                                            Tag="{Binding ReplyToMessageId}"
-                                                            ToolTip="定位被回复的消息"
-                                                            Click="OnReplyReferenceClicked">
-                                                        <Button.Style>
-                                                            <Style TargetType="Button">
-                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding HasReply}" Value="True">
-                                                                        <Setter Property="Visibility" Value="Visible" />
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </Button.Style>
-                                                        <Border Padding="9,6"
-                                                                Background="#FFF8FAFC"
-                                                                BorderBrush="{StaticResource AccentBrush}"
-                                                                BorderThickness="3,0,0,0"
-                                                                CornerRadius="6">
-                                                            <StackPanel>
-                                                                <TextBlock Text="{Binding ReplySenderLabel}"
-                                                                           Foreground="#FF52708C"
-                                                                           FontSize="11"
-                                                                           FontWeight="SemiBold" />
-                                                                <TextBlock Text="{Binding ReplyContent}"
-                                                                           Margin="0,2,0,0"
-                                                                           Foreground="#FF596B7C"
-                                                                           FontSize="11"
-                                                                           MaxHeight="34"
-                                                                           TextTrimming="CharacterEllipsis"
-                                                                           TextWrapping="Wrap" />
-                                                            </StackPanel>
-                                                        </Border>
-                                                    </Button>
-                                                    <Border Margin="0,5,0,0"
-                                                            Padding="3,1"
-                                                            HorizontalAlignment="Right"
-                                                            Background="{DynamicResource RcSurfaceBrush}"
-                                                            BorderBrush="{DynamicResource RcBorderBrush}"
-                                                            BorderThickness="1"
-                                                            CornerRadius="7">
-                                                        <Border.Style>
-                                                            <Style TargetType="Border">
-                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding IsMouseOver, ElementName=MessageCardBorder}" Value="True">
-                                                                        <Setter Property="Visibility" Value="Visible" />
-                                                                    </DataTrigger>
-                                                                    <DataTrigger Binding="{Binding CanRetry}" Value="True">
-                                                                        <Setter Property="Visibility" Value="Visible" />
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </Border.Style>
-                                                    <StackPanel HorizontalAlignment="Right"
-                                                                Orientation="Horizontal">
-                                                        <TextBlock Text="{Binding SendStatusLabel}"
-                                                                   Margin="4,0,6,0"
-                                                                   VerticalAlignment="Center"
-                                                                   Foreground="{DynamicResource RcTextSecondaryBrush}"
-                                                                   FontSize="10" />
-                                                        <Button Content="复制"
-                                                                Margin="0,0,6,0"
-                                                                Click="OnCopyMessageClicked">
-                                                            <Button.Style>
-                                                                <Style TargetType="Button" BasedOn="{StaticResource MessageActionButtonStyle}">
-                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding CanCopy}" Value="True">
-                                                                            <Setter Property="Visibility" Value="Visible" />
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </Button.Style>
-                                                        </Button>
-                                                        <Button Content="回复"
-                                                                Margin="0,0,6,0"
-                                                                Tag="{Binding ServerMessageId}"
-                                                                Click="OnReplyMessageClicked">
-                                                            <Button.Style>
-                                                                <Style TargetType="Button" BasedOn="{StaticResource MessageActionButtonStyle}">
-                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding CanReply}" Value="True">
-                                                                            <Setter Property="Visibility" Value="Visible" />
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </Button.Style>
-                                                        </Button>
-                                                        <Button Content="重试"
-                                                                MinWidth="42"
-                                                                MinHeight="28"
-                                                                Padding="8,2"
-                                                                Tag="{Binding ClientMessageId}"
-                                                                Click="OnRetryPendingMessageClicked">
-                                                            <Button.Style>
-                                                                <Style TargetType="Button" BasedOn="{StaticResource DangerButtonStyle}">
-                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding CanRetry}" Value="True">
-                                                                            <Setter Property="Visibility" Value="Visible" />
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </Button.Style>
-                                                        </Button>
-                                                    </StackPanel>
-                                                    </Border>
-                                                    </StackPanel>
-                                                </Grid>
-                                            </Border>
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </ListBox.ItemTemplate>
-                                </ListBox>
-                                <TextBlock x:Name="MessageEmptyText"
-                                           Margin="28"
-                                           Text="请选择会话"
-                                           AutomationProperties.LiveSetting="Polite"
-                                           HorizontalAlignment="Center"
-                                           VerticalAlignment="Center"
-                                           Foreground="#FF596B7C"
-                                           TextAlignment="Center"
-                                           TextWrapping="Wrap" />
-                                <Button x:Name="NewMessageIndicatorButton"
-                                        Content="有新消息，回到最新"
-                                        Margin="0,0,16,14"
-                                        Padding="14,6"
-                                        HorizontalAlignment="Right"
-                                        VerticalAlignment="Bottom"
-                                        Visibility="Collapsed"
-                                        Click="OnNewMessagesClicked" />
-                                <ProgressBar x:Name="MessageLoadingBar"
-                                             Height="3"
-                                             VerticalAlignment="Top"
-                                             AutomationProperties.Name="消息加载中"
-                                             IsIndeterminate="True"
-                                             Visibility="Collapsed" />
-                            </Grid>
+                            <controls:MessageListControl x:Name="MessageListPanel"
+                                                         Grid.Row="2"
+                                                         HorizontalAlignment="Left"
+                                                         InteractionRequested="OnMessageListInteractionRequested" />
 
-                            <Border x:Name="ComposerSurface"
-                                    Grid.Row="3"
-                                    Margin="0,14,0,0"
-                                    Padding="14,10,14,8"
-                                    Background="{DynamicResource RcSurfaceBrush}"
-                                    BorderBrush="{DynamicResource RcBorderBrush}"
-                                    BorderThickness="1"
-                                    CornerRadius="12"
-                                    Effect="{DynamicResource RcPanelShadow}">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
-                                <Border x:Name="ReplyComposerPanel"
-                                        Grid.ColumnSpan="4"
-                                        Margin="0,0,0,6"
-                                        Padding="10,5"
-                                        Background="#FFF8FAFC"
-                                        BorderBrush="{StaticResource AccentBrush}"
-                                        BorderThickness="3,0,0,0"
-                                        CornerRadius="3"
-                                        Visibility="Collapsed">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel>
-                                            <TextBlock x:Name="ReplyComposerSenderText"
-                                                       Text="正在回复"
-                                                       Foreground="#FF52708C"
-                                                       FontSize="11"
-                                                       FontWeight="SemiBold" />
-                                            <TextBlock x:Name="ReplyComposerContentText"
-                                                       Margin="0,1,10,0"
-                                                       Foreground="#FF596B7C"
-                                                       FontSize="11"
-                                                       MaxHeight="18"
-                                                       TextTrimming="CharacterEllipsis"
-                                                       TextWrapping="Wrap" />
-                                        </StackPanel>
-                                        <Button Grid.Column="1"
-                                                Content="取消"
-                                                MinHeight="28"
-                                                Padding="8,2"
-                                                VerticalAlignment="Center"
-                                                Click="OnCancelReplyClicked" />
-                                    </Grid>
-                                </Border>
-                                 <Border x:Name="MentionPickerPanel"
-                                        Grid.Row="1"
-                                        Grid.ColumnSpan="4"
-                                        Margin="0,0,0,7"
-                                        Padding="10,8"
-                                        Background="#FFF8FAFC"
-                                         BorderBrush="{StaticResource BorderBrush}"
-                                         BorderThickness="1"
-                                         CornerRadius="3"
-                                         MaxHeight="190"
-                                         Visibility="Collapsed">
-                                     <ScrollViewer VerticalScrollBarVisibility="Auto">
-                                     <StackPanel>
-                                        <DockPanel LastChildFill="True">
-                                            <Button DockPanel.Dock="Right"
-                                                    MinHeight="26"
-                                                    Padding="8,1"
-                                                    Content="关闭"
-                                                    Click="OnCloseMentionPickerClicked" />
-                                            <TextBlock VerticalAlignment="Center"
-                                                       Text="添加 @用户"
-                                                       FontWeight="SemiBold"
-                                                       Foreground="#FF36536D" />
-                                        </DockPanel>
-                                        <Grid Margin="0,7,0,0">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <TextBox x:Name="MentionSearchTextBox"
-                                                     MinHeight="30"
-                                                     Padding="7,4"
-                                                     MaxLength="64"
-                                                     AutomationProperties.Name="按用户名搜索提及候选"
-                                                     TextChanged="OnMentionSearchTextChanged"
-                                                     PreviewKeyDown="OnMentionSearchPreviewKeyDown" />
-                                            <Button x:Name="MentionSearchButton"
-                                                    Grid.Column="1"
-                                                    MinWidth="68"
-                                                    Margin="8,0,0,0"
-                                                    Padding="10,3"
-                                                    Content="搜索"
-                                                    Click="OnMentionSearchClicked" />
-                                        </Grid>
-                                        <TextBlock x:Name="MentionSearchStatusText"
-                                                   Margin="1,5,0,0"
-                                                   Text="打开后自动列出成员；输入用户名字符会即时筛选。"
-                                                   AutomationProperties.LiveSetting="Polite"
-                                                   Foreground="#FF596B7C"
-                                                   FontSize="11"
-                                                   TextWrapping="Wrap" />
-                                        <ListBox x:Name="MentionCandidateList"
-                                                 Margin="0,6,0,0"
-                                                 MaxHeight="132"
-                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                                                 AutomationProperties.Name="提及候选">
-                                            <ListBox.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Grid Margin="2,2">
-                                                        <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="*" />
-                                                            <ColumnDefinition Width="Auto" />
-                                                        </Grid.ColumnDefinitions>
-                                                        <StackPanel>
-                                                            <TextBlock Text="{Binding DisplayName}"
-                                                                       FontWeight="SemiBold" />
-                                                            <StackPanel Orientation="Horizontal">
-                                                                <TextBlock Text="@" Foreground="#FF596B7C" />
-                                                                <TextBlock Text="{Binding UserName}"
-                                                                           Foreground="#FF596B7C" />
-                                                            </StackPanel>
-                                                        </StackPanel>
-                                                        <Button Grid.Column="1"
-                                                                MinWidth="54"
-                                                                Margin="10,0,0,0"
-                                                                Padding="8,2"
-                                                                Content="添加"
-                                                                Click="OnMentionCandidateClicked" />
-                                                    </Grid>
-                                                </DataTemplate>
-                                            </ListBox.ItemTemplate>
-                                        </ListBox>
-                                        <TextBlock x:Name="SelectedMentionHeadingText"
-                                                   Margin="1,7,0,0"
-                                                   Text="已选 0/20"
-                                                   Foreground="#FF52708C"
-                                                   FontSize="11" />
-                                        <ItemsControl x:Name="SelectedMentionList"
-                                                      Margin="0,3,0,0"
-                                                      AutomationProperties.Name="已选提及用户">
-                                            <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate>
-                                                    <WrapPanel />
-                                                </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Border Margin="0,0,6,4"
-                                                            Padding="6,3"
-                                                            Background="#FFE8F1F8"
-                                                            CornerRadius="3">
-                                                        <StackPanel Orientation="Horizontal">
-                                                            <TextBlock Text="@" VerticalAlignment="Center" />
-                                                            <TextBlock Text="{Binding UserName}"
-                                                                       VerticalAlignment="Center" />
-                                                            <Button Margin="5,0,0,0"
-                                                                    MinWidth="24"
-                                                                    Padding="3,0"
-                                                                    Content="移除"
-                                                                    AutomationProperties.Name="移除提及用户"
-                                                                    Click="OnRemoveMentionClicked" />
-                                                        </StackPanel>
-                                                    </Border>
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
-                                    </StackPanel>
-                                    </ScrollViewer>
-                                </Border>
-                                <Border x:Name="SelectedAttachmentPanel"
-                                        Grid.Row="2"
-                                        Grid.ColumnSpan="4"
-                                        Margin="0,0,0,6"
-                                        Padding="9,5"
-                                        Background="#FFF8FAFC"
-                                         BorderBrush="{StaticResource BorderBrush}"
-                                         BorderThickness="1"
-                                         CornerRadius="3"
-                                         MaxHeight="96"
-                                         Visibility="Collapsed">
-                                     <StackPanel>
-                                        <TextBlock x:Name="SelectedAttachmentHeadingText"
-                                                   Text="已选 0/10 个附件"
-                                                   AutomationProperties.LiveSetting="Polite"
-                                                   Foreground="#FF36536D"
-                                                   FontSize="11"
-                                                   FontWeight="SemiBold" />
-                                         <ScrollViewer MaxHeight="62"
-                                                       Margin="0,4,0,0"
-                                                       VerticalScrollBarVisibility="Auto">
-                                         <ItemsControl x:Name="SelectedAttachmentList"
-                                                       AutomationProperties.Name="已选附件">
-                                            <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate>
-                                                    <WrapPanel />
-                                                </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate>
-                                                    <Border Margin="0,0,5,4"
-                                                            Padding="6,3"
-                                                            Background="#FFE8F1F8"
-                                                            CornerRadius="5">
-                                                            <StackPanel Orientation="Horizontal">
-                                                            <TextBlock Text="{Binding DisplayName}"
-                                                                       MaxWidth="96"
-                                                                       TextTrimming="CharacterEllipsis"
-                                                                       VerticalAlignment="Center" />
-                                                            <Button Width="22"
-                                                                    Height="22"
-                                                                    Margin="4,0,0,0"
-                                                                    MinHeight="0"
-                                                                    Padding="0"
-                                                                    Background="Transparent"
-                                                                    BorderBrush="Transparent"
-                                                                    Content="×"
-                                                                    FontSize="16"
-                                                                    ToolTip="移除附件"
-                                                                    AutomationProperties.Name="移除附件"
-                                                                    AutomationProperties.HelpText="{Binding DisplaySize}"
-                                                                    Click="OnRemoveAttachmentClicked" />
-                                                        </StackPanel>
-                                                    </Border>
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                         </ItemsControl>
-                                         </ScrollViewer>
-                                    </StackPanel>
-                                </Border>
-                                <Border x:Name="AttachmentInputDropTarget"
-                                        Grid.Row="3"
-                                        Grid.ColumnSpan="4"
-                                        Padding="0"
-                                        Background="Transparent"
-                                        BorderThickness="0"
-                                        AllowDrop="True"
-                                        AutomationProperties.Name="消息内容和附件输入区"
-                                        AutomationProperties.HelpText="正文为空且未选择 @用户时，可拖入最多十个本地文件，或按 Ctrl+V 粘贴截图。"
-                                        PreviewDragEnter="OnAttachmentInputPreviewDragEnter"
-                                        PreviewDragOver="OnAttachmentInputPreviewDragOver"
-                                        PreviewDragLeave="OnAttachmentInputPreviewDragLeave"
-                                        PreviewDrop="OnAttachmentInputPreviewDrop"
-                                        PreviewKeyDown="OnAttachmentInputPreviewKeyDown">
-                                    <Grid>
-                                        <Grid.RowDefinitions>
-                                            <RowDefinition Height="*" />
-                                            <RowDefinition Height="Auto" />
-                                        </Grid.RowDefinitions>
-                                        <primitives:Thumb x:Name="ComposerResizeThumb"
-                                                          Height="12"
-                                                          Margin="0,-8,0,0"
-                                                          VerticalAlignment="Top"
-                                                          Cursor="SizeNS"
-                                                          Panel.ZIndex="2"
-                                                          ToolTip="上下拖动以调整输入框高度"
-                                                          AutomationProperties.Name="调整输入框高度"
-                                                          DragDelta="OnComposerResizeDragDelta">
-                                            <primitives:Thumb.Template>
-                                                <ControlTemplate TargetType="primitives:Thumb">
-                                                    <Grid Background="Transparent">
-                                                        <Border x:Name="ResizeGrip"
-                                                                Width="34"
-                                                                Height="3"
-                                                                Background="{DynamicResource RcBorderBrush}"
-                                                                CornerRadius="2"
-                                                                HorizontalAlignment="Center"
-                                                                VerticalAlignment="Center"
-                                                                Opacity="0" />
-                                                    </Grid>
-                                                    <ControlTemplate.Triggers>
-                                                        <Trigger Property="IsMouseOver" Value="True">
-                                                            <Setter TargetName="ResizeGrip" Property="Opacity" Value="1" />
-                                                        </Trigger>
-                                                    </ControlTemplate.Triggers>
-                                                </ControlTemplate>
-                                            </primitives:Thumb.Template>
-                                        </primitives:Thumb>
-                                        <TextBox x:Name="MessageComposerTextBox"
-                                                 Height="64"
-                                                 MinHeight="58"
-                                                 Padding="10,7"
-                                                 AcceptsReturn="True"
-                                                 IsEnabled="False"
-                                                 BorderThickness="0"
-                                                 TextWrapping="Wrap"
-                                                 VerticalContentAlignment="Top"
-                                                 VerticalScrollBarVisibility="Auto"
-                                                 AutomationProperties.Name="消息内容"
-                                                 TextChanged="OnMessageComposerTextChanged"
-                                                 PreviewKeyDown="OnMessageComposerPreviewKeyDown" />
-                                        <Grid Grid.Row="1" Margin="0,6,0,0">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel VerticalAlignment="Center" Orientation="Horizontal">
-                                                <Button x:Name="SelectAttachmentsButton"
-                                                        Width="32"
-                                                        MinHeight="32"
-                                                        Margin="0,0,5,0"
-                                                        Padding="7"
-                                                        Style="{StaticResource ComposerIconButtonStyle}"
-                                                        ToolTip="正文为空且未选择 @用户时，可以选择、拖入或粘贴最多 10 个附件。"
-                                                        AutomationProperties.Name="选择附件"
-                                                        IsEnabled="False"
-                                                        Click="OnSelectAttachmentsClicked">
-                                                    <Path Data="{DynamicResource RcIconAttach}"
-                                                          Stretch="Uniform"
-                                                          Stroke="{DynamicResource RcTextSecondaryBrush}"
-                                                          StrokeThickness="1.6" />
-                                                </Button>
-                                                <Button x:Name="MentionPickerButton"
-                                                        Width="32"
-                                                        MinHeight="32"
-                                                        Padding="7"
-                                                        Style="{StaticResource ComposerIconButtonStyle}"
-                                                        ToolTip="提及成员"
-                                                        AutomationProperties.Name="提及成员"
-                                                        IsEnabled="False"
-                                                        Click="OnMentionPickerClicked">
-                                                    <Path Data="{DynamicResource RcIconMention}"
-                                                          Stretch="Uniform"
-                                                          Stroke="{DynamicResource RcTextSecondaryBrush}"
-                                                          StrokeThickness="1.6" />
-                                                </Button>
-                                                <StackPanel x:Name="ComposerSupplementaryActionsPanel"
-                                                            Margin="5,0,0,0"
-                                                            VerticalAlignment="Center"
-                                                            Orientation="Horizontal">
-                                            <Button Width="32"
-                                                    Height="32"
-                                                    Padding="7"
-                                                    Style="{StaticResource ComposerIconButtonStyle}"
-                                                    Opacity="0.72"
-                                                    ToolTip="表情回应（暂未开放）"
-                                                    AutomationProperties.Name="表情回应，暂未开放"
-                                                    Tag="{x:Static presentation:ClientUiFeatureId.Emoji}"
-                                                    Click="OnUnavailableFeatureButtonClicked">
-                                                <Path Data="{DynamicResource RcIconSmile}"
-                                                      Stretch="Uniform"
-                                                      Stroke="{DynamicResource RcNeutralBrush}"
-                                                      StrokeThickness="1.6" />
-                                            </Button>
-                                            <Button Width="32"
-                                                    Height="32"
-                                                    Margin="3,0,0,0"
-                                                    Padding="7"
-                                                    Style="{StaticResource ComposerIconButtonStyle}"
-                                                    Opacity="0.72"
-                                                    ToolTip="语音输入（暂未开放）"
-                                                    AutomationProperties.Name="语音输入，暂未开放"
-                                                    Tag="{x:Static presentation:ClientUiFeatureId.VoiceInput}"
-                                                    Click="OnUnavailableFeatureButtonClicked">
-                                                <Path Data="{DynamicResource RcIconMicrophone}"
-                                                      Stretch="Uniform"
-                                                      Stroke="{DynamicResource RcNeutralBrush}"
-                                                      StrokeThickness="1.6" />
-                                            </Button>
-                                            <Button Width="32"
-                                                    Height="32"
-                                                    Margin="3,0,0,0"
-                                                    Padding="7"
-                                                    Style="{StaticResource ComposerIconButtonStyle}"
-                                                    Opacity="0.72"
-                                                    ToolTip="主动截图（暂未开放）"
-                                                    AutomationProperties.Name="主动截图，暂未开放"
-                                                    Tag="{x:Static presentation:ClientUiFeatureId.ScreenCapture}"
-                                                    Click="OnUnavailableFeatureButtonClicked">
-                                                <Path Data="{DynamicResource RcIconScissors}"
-                                                      Stretch="Uniform"
-                                                      Stroke="{DynamicResource RcNeutralBrush}"
-                                                      StrokeThickness="1.6" />
-                                            </Button>
-                                            <Button Width="32"
-                                                    Height="32"
-                                                    Margin="3,0,0,0"
-                                                    Padding="7"
-                                                    Style="{StaticResource ComposerIconButtonStyle}"
-                                                    Opacity="0.72"
-                                                    ToolTip="发送选项（暂未开放）"
-                                                    AutomationProperties.Name="发送选项，暂未开放"
-                                                    Tag="{x:Static presentation:ClientUiFeatureId.SendOptions}"
-                                                    Click="OnUnavailableFeatureButtonClicked">
-                                                <Path Data="{DynamicResource RcIconChevronDown}"
-                                                      Stretch="Uniform"
-                                                      Stroke="{DynamicResource RcNeutralBrush}"
-                                                      StrokeThickness="1.6" />
-                                            </Button>
-                                                </StackPanel>
-                                            </StackPanel>
-                                            <Button x:Name="SendMessageButton"
-                                                    Grid.Column="1"
-                                                    MinWidth="88"
-                                                    MinHeight="36"
-                                                    Padding="16,7"
-                                                    Style="{StaticResource PrimaryButtonStyle}"
-                                                    IsEnabled="False"
-                                                    Click="OnSendMessageClicked">
-                                                <StackPanel Orientation="Horizontal">
-                                                    <Path Width="15"
-                                                          Height="15"
-                                                          Margin="0,0,6,0"
-                                                          Data="{DynamicResource RcIconSend}"
-                                                          Stretch="Uniform"
-                                                          Stroke="White"
-                                                          StrokeThickness="1.6" />
-                                                    <TextBlock VerticalAlignment="Center" Text="发送" />
-                                                </StackPanel>
-                                            </Button>
-                                        </Grid>
-                                    </Grid>
-                                </Border>
-                                <Grid x:Name="AttachmentUploadProgressPanel"
-                                      Grid.Row="4"
-                                      Grid.ColumnSpan="4"
-                                      Margin="2,7,0,0"
-                                      Visibility="Collapsed">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="150" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <ProgressBar x:Name="AttachmentUploadProgressBar"
-                                                 Height="8"
-                                                 Minimum="0"
-                                                 Maximum="100"
-                                                 Value="0"
-                                                 VerticalAlignment="Center"
-                                                 AutomationProperties.Name="附件上传进度" />
-                                    <TextBlock x:Name="AttachmentUploadProgressText"
-                                               Grid.Column="1"
-                                               Margin="10,0,0,0"
-                                               Text="准备附件上传…"
-                                               AutomationProperties.LiveSetting="Polite"
-                                               Foreground="#FF52708C"
-                                               FontSize="11"
-                                               TextWrapping="Wrap" />
-                                </Grid>
-                                <TextBlock x:Name="MessageComposerStatusText"
-                                           Grid.Row="5"
-                                           Grid.ColumnSpan="4"
-                                           Margin="2,4,0,0"
-                                           Text="选择可用会话后发送文字；正文为空时可选择附件。Ctrl+Enter 换行。"
-                                           AutomationProperties.LiveSetting="Polite"
-                                           Foreground="{DynamicResource RcNeutralBrush}"
-                                           FontSize="10"
-                                           TextWrapping="Wrap">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Visibility" Value="Visible" />
-                                            <Style.Triggers>
-                                                <Trigger Property="Text" Value="选择可用会话后发送文字；正文为空时可选择附件。Ctrl+Enter 换行。">
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                </Trigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                            </Grid>
-                            </Border>
+                            <controls:ComposerControl x:Name="Composer"
+                                                      Grid.Row="3"
+                                                      Margin="0,14,0,0"
+                                                      HorizontalAlignment="Left"
+                                                      InteractionRequested="OnComposerInteractionRequested" />
 
                             <StackPanel Grid.Row="4"
                                         Margin="0,14,0,0"
@@ -1757,8 +482,9 @@
              Background="{DynamicResource RcOverlayBrush}"
              KeyboardNavigation.TabNavigation="Cycle"
              AutomationProperties.Name="消息搜索对话框">
-                            <Border MaxWidth="760"
-               MaxHeight="640"
+                             <Border MaxWidth="760"
+                MinHeight="360"
+                MaxHeight="640"
                Margin="28"
                Padding="22"
                HorizontalAlignment="Stretch"
@@ -1805,15 +531,30 @@
                        <ColumnDefinition Width="150" />
                        <ColumnDefinition Width="Auto" />
                    </Grid.ColumnDefinitions>
-                   <TextBox x:Name="MessageSearchTextBox"
-                            AutomationProperties.Name="搜索关键词"
-                            ToolTip="输入 1–64 个字符后按 Enter 或点击搜索"
-                            TextChanged="OnMessageSearchTextChanged"
-                            PreviewKeyDown="OnMessageSearchPreviewKeyDown" />
+                   <Grid>
+                       <Path Width="16"
+                             Height="16"
+                             Margin="12,0,0,0"
+                             Panel.ZIndex="1"
+                             HorizontalAlignment="Left"
+                             VerticalAlignment="Center"
+                             IsHitTestVisible="False"
+                             Data="{DynamicResource RcIconSearch}"
+                             Stretch="Uniform"
+                             Stroke="{DynamicResource RcTextSecondaryBrush}"
+                             StrokeThickness="1.5" />
+                       <TextBox x:Name="MessageSearchTextBox"
+                                Padding="36,7,10,7"
+                                AutomationProperties.Name="搜索关键词"
+                                ToolTip="输入 1–64 个字符后按 Enter 或点击搜索"
+                                TextChanged="OnMessageSearchTextChanged"
+                                PreviewKeyDown="OnMessageSearchPreviewKeyDown" />
+                   </Grid>
                    <ComboBox x:Name="MessageSearchScopeComboBox"
         Grid.Column="1"
         Margin="10,0,0,0"
         MinHeight="40"
+        Style="{DynamicResource RcComboBoxStyle}"
         AutomationProperties.Name="搜索范围"
         SelectionChanged="OnMessageSearchScopeChanged" />
                    <Button x:Name="RunSearchButton"
@@ -1833,15 +574,15 @@
                           Foreground="#FF596B7C"
                           TextWrapping="Wrap" />
 
-               <ListBox x:Name="MessageSearchResultList"
-                        Grid.Row="3"
-                        AutomationProperties.Name="消息搜索结果"
-                        Background="#FFF7F9FC"
-                        BorderBrush="#FFE6ECF3"
-                        BorderThickness="1"
-                        ScrollViewer.CanContentScroll="True"
-                        VirtualizingPanel.IsVirtualizing="True"
-                        VirtualizingPanel.VirtualizationMode="Recycling">
+                <Grid Grid.Row="3" MinHeight="190">
+                <ListBox x:Name="MessageSearchResultList"
+                         AutomationProperties.Name="消息搜索结果"
+                         Background="{DynamicResource RcCanvasBrush}"
+                         BorderBrush="{DynamicResource RcBorderBrush}"
+                         BorderThickness="1"
+                         ScrollViewer.CanContentScroll="True"
+                         VirtualizingPanel.IsVirtualizing="True"
+                         VirtualizingPanel.VirtualizationMode="Recycling">
                    <ListBox.ItemContainerStyle>
                        <Style TargetType="ListBoxItem">
                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -1897,7 +638,55 @@
                            </Button>
                        </DataTemplate>
                    </ListBox.ItemTemplate>
-               </ListBox>
+                </ListBox>
+                <Border x:Name="MessageSearchEmptyState"
+                        IsHitTestVisible="False"
+                        Background="{DynamicResource RcCanvasBrush}"
+                        BorderBrush="{DynamicResource RcBorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasItems, ElementName=MessageSearchResultList}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel Width="300"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                        <Border Width="42"
+                                Height="42"
+                                HorizontalAlignment="Center"
+                                Background="{DynamicResource RcPrimarySoftBrush}"
+                                CornerRadius="21">
+                            <Path Width="18"
+                                  Height="18"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"
+                                  Data="{DynamicResource RcIconSearch}"
+                                  Stretch="Uniform"
+                                  Stroke="{DynamicResource RcPrimaryBrush}"
+                                  StrokeThickness="1.6" />
+                        </Border>
+                        <TextBlock HorizontalAlignment="Center"
+                                   Margin="0,10,0,0"
+                                   Text="搜索结果将在这里显示"
+                                   Foreground="{DynamicResource RcTextPrimaryBrush}"
+                                   FontWeight="SemiBold" />
+                        <TextBlock Margin="0,6,0,0"
+                                   HorizontalAlignment="Center"
+                                   Text="{Binding Text, ElementName=MessageSearchStatusText}"
+                                   Foreground="{DynamicResource RcTextSecondaryBrush}"
+                                   FontSize="12"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+                </Grid>
            </Grid>
                             </Border>
                             </Grid>
@@ -1906,19 +695,18 @@
                                Grid.ColumnSpan="2"
                                Panel.ZIndex="80" />
         <Grid x:Name="ChannelOverlay"
-              Grid.Row="1"
-              Grid.ColumnSpan="2"
-              Panel.ZIndex="140"
-              Visibility="Collapsed"
-              Margin="436,0,0,0"
-              VerticalAlignment="Stretch"
-              Background="#0F0F172A"
+               Grid.Row="1"
+               Grid.Column="1"
+               Panel.ZIndex="140"
+               Visibility="Collapsed"
+               VerticalAlignment="Stretch"
               Focusable="True"
               KeyboardNavigation.TabNavigation="Cycle"
               AutomationProperties.Name="成员侧栏">
-            <Border Width="360"
-                    Margin="0,14,14,14"
-                    Padding="18"
+            <Border x:Name="ChannelDrawerSurface"
+                    Width="380"
+                    Margin="0,12,16,12"
+                    Padding="20,18"
                     HorizontalAlignment="Right"
                     VerticalAlignment="Stretch"
                     Background="{DynamicResource RcSurfaceBrush}"
@@ -1940,21 +728,34 @@
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <StackPanel>
-                        <TextBlock Text="成员"
-                                   FontSize="20"
+                        <TextBlock Text="成员与频道"
+                                   FontSize="19"
                                    FontWeight="SemiBold"
-                                   Foreground="{StaticResource TextPrimaryBrush}" />
+                                   Foreground="{DynamicResource RcTextPrimaryBrush}" />
                         <TextBlock x:Name="ChannelPanelSubtitleText"
                                    Margin="0,4,0,0"
                                    Text="查看成员并管理私有频道"
-                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   Foreground="{DynamicResource RcTextSecondaryBrush}"
                                    FontSize="12" />
                     </StackPanel>
                     <Button x:Name="CloseChannelPanelButton"
-                            Grid.Column="1"
-                            Content="关闭"
-                            AutomationProperties.Name="关闭频道与成员面板"
-                            Click="OnCloseChannelPanelClicked" />
+                             Grid.Column="1"
+                             Width="32"
+                             Height="32"
+                             MinHeight="32"
+                             Padding="6"
+                             Background="Transparent"
+                             BorderBrush="Transparent"
+                             ToolTip="关闭"
+                             AutomationProperties.Name="关闭频道与成员面板"
+                             Click="OnCloseChannelPanelClicked">
+                        <Path Data="{DynamicResource RcIconClose}"
+                              Width="16"
+                              Height="16"
+                              Stretch="Uniform"
+                              Stroke="{DynamicResource RcTextSecondaryBrush}"
+                              StrokeThickness="1.6" />
+                    </Button>
                     <Grid Grid.Row="1" Grid.ColumnSpan="2" Margin="0,18,0,0">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -1964,14 +765,33 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBox x:Name="ChannelMemberSearchTextBox"
-                                 Grid.Row="0"
-                                 Margin="0,0,0,12"
-                                 AutomationProperties.Name="搜索频道成员"
-                                 ToolTip="按昵称或账号搜索"
-                                 TextChanged="OnChannelMemberSearchTextChanged" />
+                        <Grid Grid.Row="0" Margin="0,0,0,12">
+                            <Path Width="16"
+                                  Height="16"
+                                  Margin="12,0,0,0"
+                                  Panel.ZIndex="1"
+                                  HorizontalAlignment="Left"
+                                  VerticalAlignment="Center"
+                                  IsHitTestVisible="False"
+                                  Data="{DynamicResource RcIconSearch}"
+                                  Stretch="Uniform"
+                                  Stroke="{DynamicResource RcTextSecondaryBrush}"
+                                  StrokeThickness="1.5" />
+                            <TextBox x:Name="ChannelMemberSearchTextBox"
+                                     Padding="36,7,10,7"
+                                     AutomationProperties.Name="搜索频道成员"
+                                     ToolTip="按昵称或账号搜索"
+                                     TextChanged="OnChannelMemberSearchTextChanged" />
+                        </Grid>
                         <StackPanel x:Name="ChannelUserDirectorySection" Grid.Row="1">
-                            <Expander x:Name="CreateChannelExpander" Header="创建频道">
+                            <Border Padding="12"
+                                    Background="{DynamicResource RcCanvasBrush}"
+                                    BorderBrush="{DynamicResource RcBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="8">
+                            <Expander x:Name="CreateChannelExpander"
+                                      Header="创建频道"
+                                      Style="{DynamicResource RcExpanderStyle}">
                             <StackPanel Margin="0,8,0,0">
                             <TextBox x:Name="ChannelNameInput"
                                      Margin="0,7,0,7"
@@ -1981,6 +801,7 @@
                                      TextChanged="OnChannelNameTextChanged" />
                             <ComboBox x:Name="ChannelTypeComboBox"
                                       MinHeight="36"
+                                      Style="{DynamicResource RcComboBoxStyle}"
                                       AutomationProperties.Name="新频道类型" />
                             <Button x:Name="CreateChannelButton"
                                     Margin="0,9,0,0"
@@ -1989,18 +810,27 @@
                                     Content="创建频道"
                                     Click="OnCreateChannelClicked" />
                             </StackPanel>
-                            </Expander>
-                            <TextBlock Margin="0,22,0,0"
-                                       Text="可添加成员"
-                                       FontWeight="SemiBold" />
+                             </Expander>
+                            </Border>
+                            <Border Margin="0,14,0,0"
+                                    Padding="12"
+                                    Background="{DynamicResource RcCanvasBrush}"
+                                    BorderBrush="{DynamicResource RcBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="8">
+                            <StackPanel>
+                             <TextBlock
+                                        Text="可添加成员"
+                                        FontWeight="SemiBold" />
                             <TextBlock Margin="0,3,0,6"
                                        Text="在私有频道中点击“拉入”。"
-                                                               Foreground="#FF596B7C"
+                                        Foreground="{DynamicResource RcTextSecondaryBrush}"
                                        FontSize="11" />
                             <ListBox x:Name="ChannelUserDirectoryList"
                                      MaxHeight="190"
                                      Margin="0,6,0,0"
-                                     BorderThickness="0"
+                                      BorderThickness="0"
+                                      Background="Transparent"
                                      AutomationProperties.Name="团队成员目录">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
@@ -2037,9 +867,18 @@
                                         </Grid>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
-                            </ListBox>
+                             </ListBox>
+                            </StackPanel>
+                            </Border>
                         </StackPanel>
-                        <StackPanel Grid.Row="2" Margin="0,18,0,0">
+                        <Border Grid.Row="2"
+                                Margin="0,14,0,0"
+                                Padding="12"
+                                Background="{DynamicResource RcCanvasBrush}"
+                                BorderBrush="{DynamicResource RcBorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8">
+                        <StackPanel>
                             <TextBlock x:Name="ChannelCurrentHeadingText"
                                        Text="当前会话成员"
                                        FontSize="18"
@@ -2047,7 +886,7 @@
                             <TextBlock x:Name="ChannelMemberHelpText"
                                        Margin="0,4,0,8"
                                        Text="选择会话后显示成员。"
-                                       Foreground="#FF596B7C"
+                                        Foreground="{DynamicResource RcTextSecondaryBrush}"
                                        TextWrapping="Wrap" />
                             <ListBox x:Name="ChannelParticipantList"
                                      MaxHeight="230"
@@ -2090,18 +929,33 @@
                                         </Grid>
                                     </DataTemplate>
                                 </ListBox.ItemTemplate>
-                            </ListBox>
+                             </ListBox>
                         </StackPanel>
+                        </Border>
                     </Grid>
                     <TextBlock x:Name="ChannelLiveRegionText"
                                Grid.Row="2"
                                Grid.ColumnSpan="2"
                                Margin="0,14,0,0"
                                Text="准备就绪。"
-                               Foreground="#FF1677D2"
+                                Foreground="{DynamicResource RcPrimaryBrush}"
                                TextWrapping="Wrap"
-                               AutomationProperties.Name="频道操作状态"
-                               AutomationProperties.LiveSetting="Assertive" />
+                                AutomationProperties.Name="频道操作状态"
+                                AutomationProperties.LiveSetting="Assertive">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <Trigger Property="Text" Value="准备就绪。">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </Trigger>
+                                    <Trigger Property="Text" Value="">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
                     </Grid>
                 </ScrollViewer>
             </Border>
@@ -2116,8 +970,9 @@
                                        Visibility="Collapsed"
                                        CloseRequested="OnSettingsCloseRequested"
                                        CheckForUpdatesRequested="OnSettingsCheckForUpdatesRequested"
-                                       ReconnectRequested="OnSettingsReconnectRequested"
-                                       ExitAccountRequested="OnSettingsExitAccountRequested" />
+                                        ReconnectRequested="OnSettingsReconnectRequested"
+                                        ExitAccountRequested="OnSettingsExitAccountRequested"
+                                        OptionalUpdateActionRequested="OnSettingsOptionalUpdateActionRequested" />
         <Grid x:Name="AttachmentImageViewerOverlay"
               Grid.Row="1"
               Grid.ColumnSpan="2"
@@ -2155,16 +1010,24 @@
                                TextTrimming="CharacterEllipsis"
                                AutomationProperties.Name="图片查看器标题" />
                     <Button x:Name="CloseAttachmentImageViewerButton"
-                            Grid.Column="1"
-                            Margin="12,0,0,0"
-                            MinHeight="32"
-                            Padding="10,4"
-                            Background="#FF344054"
-                            BorderBrush="#FF475467"
-                            Foreground="White"
-                            Content="关闭"
-                            AutomationProperties.Name="关闭图片查看器"
-                            Click="OnCloseAttachmentImageViewerClicked" />
+                             Grid.Column="1"
+                             Margin="12,0,0,0"
+                             Width="32"
+                             Height="32"
+                             MinHeight="32"
+                             Padding="6"
+                             Background="#FF344054"
+                             BorderBrush="#FF475467"
+                             ToolTip="关闭"
+                             AutomationProperties.Name="关闭图片查看器"
+                             Click="OnCloseAttachmentImageViewerClicked">
+                        <Path Data="{DynamicResource RcIconClose}"
+                              Width="16"
+                              Height="16"
+                              Stretch="Uniform"
+                              Stroke="White"
+                              StrokeThickness="1.6" />
+                    </Button>
                     <Image x:Name="AttachmentImageViewerImage"
                            Grid.Row="1"
                            Grid.ColumnSpan="2"
@@ -2175,6 +1038,49 @@
                            VerticalAlignment="Center"
                            Stretch="Uniform"
                            AutomationProperties.Name="当前图片预览" />
+                    <StackPanel Grid.Row="1"
+                                Grid.ColumnSpan="2"
+                                Width="260"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                IsHitTestVisible="False">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding Source, ElementName=AttachmentImageViewerImage}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <Border Width="48"
+                                Height="48"
+                                HorizontalAlignment="Center"
+                                Background="#FF344054"
+                                CornerRadius="24">
+                            <Path Width="20"
+                                  Height="20"
+                                  HorizontalAlignment="Center"
+                                  VerticalAlignment="Center"
+                                  Data="{DynamicResource RcIconFolder}"
+                                  Stretch="Uniform"
+                                  Stroke="#FFD0D5DD"
+                                  StrokeThickness="1.6" />
+                        </Border>
+                        <TextBlock Margin="0,12,0,0"
+                                   HorizontalAlignment="Center"
+                                   Foreground="White"
+                                   FontWeight="SemiBold"
+                                   Text="正在准备图片预览" />
+                        <TextBlock Margin="0,5,0,0"
+                                   HorizontalAlignment="Center"
+                                   Foreground="#FFD0D5DD"
+                                   FontSize="12"
+                                   Text="加载完成后会在这里显示。"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
                     <TextBlock x:Name="AttachmentImageViewerStatusText"
                                Grid.Row="2"
                                Grid.ColumnSpan="2"
@@ -2254,8 +1160,7 @@
                         <Button x:Name="DownloadMandatoryUpdateButton"
                                 Margin="0,0,10,0"
                                 Content="下载更新"
-                                Background="#FF1677D2"
-                                Foreground="White"
+                                Style="{StaticResource PrimaryButtonStyle}"
                                 Click="OnDownloadUpdateClicked" />
                         <Button x:Name="CancelMandatoryUpdateButton"
                                 Margin="0,0,10,0"
@@ -2265,8 +1170,7 @@
                         <Button x:Name="ApplyMandatoryUpdateButton"
                                 Margin="0,0,10,0"
                                 Content="关闭并更新"
-                                Background="#FF1677D2"
-                                Foreground="White"
+                                Style="{StaticResource PrimaryButtonStyle}"
                                 Visibility="Collapsed"
                                 Click="OnApplyUpdateClicked" />
                         <Button x:Name="ExitMandatoryUpdateButton"

@@ -5,12 +5,16 @@
     <Color x:Key="RcPrimaryHoverColor">#FF0958D9</Color>
     <Color x:Key="RcPrimaryPressedColor">#FF003EB3</Color>
     <Color x:Key="RcPrimarySoftColor">#FFEAF3FF</Color>
+    <Color x:Key="RcPrimaryPressedSoftColor">#FFD8EAFE</Color>
+    <Color x:Key="RcSurfaceHoverColor">#FFF2F7FD</Color>
     <Color x:Key="RcCanvasColor">#FFF5F7FA</Color>
     <Color x:Key="RcSurfaceColor">#FFFFFFFF</Color>
     <Color x:Key="RcBorderColor">#FFE5EAF0</Color>
     <Color x:Key="RcTextPrimaryColor">#FF1F2328</Color>
     <Color x:Key="RcTextSecondaryColor">#FF667085</Color>
-    <Color x:Key="RcNeutralColor">#FF667085</Color>
+    <Color x:Key="RcNeutralColor">#FF8F9AA5</Color>
+    <Color x:Key="RcScrollBarTrackColor">#FFEAF0F6</Color>
+    <Color x:Key="RcScrollBarThumbColor">#FFB8C3CF</Color>
     <Color x:Key="RcDangerColor">#FFD92D20</Color>
     <Color x:Key="RcSuccessColor">#FF12B76A</Color>
     <Color x:Key="RcWarningColor">#FFF79009</Color>
@@ -19,12 +23,17 @@
     <SolidColorBrush x:Key="RcPrimaryHoverBrush" Color="{StaticResource RcPrimaryHoverColor}" />
     <SolidColorBrush x:Key="RcPrimaryPressedBrush" Color="{StaticResource RcPrimaryPressedColor}" />
     <SolidColorBrush x:Key="RcPrimarySoftBrush" Color="{StaticResource RcPrimarySoftColor}" />
+    <SolidColorBrush x:Key="RcPrimaryPressedSoftBrush" Color="{StaticResource RcPrimaryPressedSoftColor}" />
+    <SolidColorBrush x:Key="RcSurfaceHoverBrush" Color="{StaticResource RcSurfaceHoverColor}" />
     <SolidColorBrush x:Key="RcCanvasBrush" Color="{StaticResource RcCanvasColor}" />
     <SolidColorBrush x:Key="RcSurfaceBrush" Color="{StaticResource RcSurfaceColor}" />
     <SolidColorBrush x:Key="RcBorderBrush" Color="{StaticResource RcBorderColor}" />
     <SolidColorBrush x:Key="RcTextPrimaryBrush" Color="{StaticResource RcTextPrimaryColor}" />
     <SolidColorBrush x:Key="RcTextSecondaryBrush" Color="{StaticResource RcTextSecondaryColor}" />
     <SolidColorBrush x:Key="RcNeutralBrush" Color="{StaticResource RcNeutralColor}" />
+    <SolidColorBrush x:Key="RcFocusRingBrush" Color="{StaticResource RcPrimaryColor}" />
+    <SolidColorBrush x:Key="RcScrollBarTrackBrush" Color="{StaticResource RcScrollBarTrackColor}" />
+    <SolidColorBrush x:Key="RcScrollBarThumbBrush" Color="{StaticResource RcScrollBarThumbColor}" />
     <SolidColorBrush x:Key="RcDangerBrush" Color="{StaticResource RcDangerColor}" />
     <SolidColorBrush x:Key="RcSuccessBrush" Color="{StaticResource RcSuccessColor}" />
     <SolidColorBrush x:Key="RcWarningBrush" Color="{StaticResource RcWarningColor}" />
