@@ -54,6 +54,41 @@ public sealed class ClientUpdateHandoffTests
     }
 
     [Fact]
+    public async Task OptionalUpdate_WhenHandoffFails_ExposesFailureReasonAndRestoresApplyAction()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateVisibleWindow();
+            try
+            {
+                window.BindUpdateActions(
+                    _ => Task.FromResult(true),
+                    () => Task.CompletedTask,
+                    () => Task.CompletedTask,
+                    static () => { },
+                    () => Task.CompletedTask,
+                    static () => { });
+                window.ApplyUpdateState(CreateOptionalState() with
+                {
+                    Phase = ClientUpdatePhase.Downloaded,
+                    ArchivePath = "C:\\temporary\\relaycove.zip",
+                });
+                window.ShowUpdateHandoffConfirming();
+                window.ShowUpdateHandoffFailure("更新程序未能启动。");
+
+                Assert.Contains("更新交接失败", window.UpdateStatusText.Text, StringComparison.Ordinal);
+                Assert.Contains("更新程序未能启动", window.SettingsOverlay.UpdateStatus, StringComparison.Ordinal);
+                Assert.True(window.SettingsOverlay.IsUpdateActionEnabled);
+                Assert.Equal("关闭并更新", window.SettingsOverlay.UpdateActionLabel);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public async Task MandatoryGate_WhenComposerHadFocus_DisablesBusinessPanelsAndCapturesEnter()
     {
         await RunOnStaAsync(() =>

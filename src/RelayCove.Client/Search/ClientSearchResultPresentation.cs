@@ -9,11 +9,16 @@ internal sealed record ClientSearchResultPresentation(
     string Timestamp,
     string Snippet,
     string AttachmentLabel,
-    bool HasMatchedAttachment)
+    bool HasMatchedAttachment,
+    int ResultOrdinal)
 {
-    public static ClientSearchResultPresentation Create(SearchResultDto result)
+    public string AutomationName =>
+        $"打开搜索结果：{ConversationAndSender}，{Timestamp}，结果 {ResultOrdinal}";
+
+    public static ClientSearchResultPresentation Create(SearchResultDto result, int resultOrdinal = 1)
     {
         ArgumentNullException.ThrowIfNull(result);
+        ArgumentOutOfRangeException.ThrowIfLessThan(resultOrdinal, 1);
         var hasMatchedAttachment = !string.IsNullOrEmpty(result.MatchedAttachmentFileName);
         var snippet = string.IsNullOrEmpty(result.Snippet)
             ? hasMatchedAttachment
@@ -28,7 +33,8 @@ internal sealed record ClientSearchResultPresentation(
             hasMatchedAttachment
                 ? $"匹配附件：{result.MatchedAttachmentFileName}"
                 : string.Empty,
-            hasMatchedAttachment);
+            hasMatchedAttachment,
+            resultOrdinal);
     }
 
     public override string ToString() =>

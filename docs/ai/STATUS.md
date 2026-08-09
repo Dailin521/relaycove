@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-- **当前阶段：** stage-20 rc.25 UI 重构已完成 S0–S15 代码、组件和视觉收口；待从最终已提交 HEAD 完成双构建包校验及独立只读复核
+- **当前阶段：** stage-20 rc.25 UI 重构已完成 S0–S16 代码、组件和视觉收口；待从最终已提交 HEAD 完成双构建包校验及独立只读复核
 - **当前分支成果：** `agent/stage-20-rc25-ui-redesign` 已实现蓝白设计系统、自绘标题栏、三列主界面、覆盖式成员/设置抽屉、可伸缩 Composer、图片直预览及登录/搜索/更新/查看器等所有可达子界面。`MessageListControl`、`ComposerControl` 与 `ConversationPanelControl` 现只承载展示和用户意图，可靠发送、附件安全、同步、滚动与窗口生命周期仍由 `MainWindow` 持有
-- **最近验证通过的状态：** S15 Fast 与 Full 均通过：Shared 70、Server 353、Client 1,249、Updater 38，合计 1,710 项；Full 同时确认 format、Release 构建和 `git diff --check`，均为 0 警告、0 错误。次级界面快照见 `artifacts/rc25/ui-snapshots/after-s15-secondary/`。
+- **最近验证通过的状态：** S16 Fast 与 Full 均通过：Shared 70、Server 353、Client 1,254、Updater 38，合计 1,715 项；Full 同时确认 format、Release 构建和 `git diff --check`，均为 0 警告、0 错误。次级界面快照见 `artifacts/rc25/ui-snapshots/after-s16-secondary/`。
 - **可构建状态：** `已验证` — Debug/Release 构建 0 警告、0 错误
 - **自动化验证：** `已验证` — 覆盖主题、标题栏意图、会话筛选、组件转发、Composer、附件/图片预览、搜索、成员抽屉、设置可选更新入口和快照几何；真实 Windows 原生窗口矩阵仍单列为未验证
 - **同步契约文档验证：** `已验证` — 固定 `ReviewHead=66ea70465741b4810e944d729d6374223c672bcc` 的规范断言、旧口径、文件白名单、空白与 Codex 降级独立复核通过
@@ -16,7 +16,7 @@
 
 ## 进行中
 
-- 正在从最终已提交 HEAD 生成两份独立 rc.25 Windows x64 自包含包并进行离线校验。真实 Windows 100%/125%/150% DPI、拖动/边缘缩放/Alt+Space、托盘恢复/真正退出和强制更新交接均保持 `未验证`；不发布更新通道
+- 待提交 S16 次级界面质量收口后，从精确 HEAD 生成两份独立 rc.25 Windows x64 自包含包并进行离线校验。真实 Windows 100%/125%/150% DPI、拖动/边缘缩放/Alt+Space、托盘恢复/真正退出和强制更新交接均保持 `未验证`；不发布更新通道
 
 ## 已完成
 

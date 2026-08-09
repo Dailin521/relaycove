@@ -225,6 +225,7 @@
                         <TextBlock Margin="0,8,0,0"
                                Text="{Binding UpdateStatus, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsPanelControl}}}"
                                Foreground="{DynamicResource RcTextSecondaryBrush}"
+                               AutomationProperties.LiveSetting="Polite"
                                TextWrapping="Wrap" />
                     <Button x:Name="CheckForUpdatesButtonElement"
                             Margin="0,10,0,0"
@@ -238,7 +239,7 @@
                             HorizontalAlignment="Left"
                             Content="{Binding UpdateActionLabel, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsPanelControl}}}"
                             IsEnabled="{Binding IsUpdateActionEnabled, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsPanelControl}}}"
-                            AutomationProperties.Name="执行可选更新操作"
+                            AutomationProperties.Name="{Binding UpdateActionLabel, RelativeSource={RelativeSource AncestorType={x:Type local:SettingsPanelControl}}}"
                             Click="OnOptionalUpdateActionClicked">
                         <Button.Style>
                             <Style TargetType="{x:Type Button}" BasedOn="{StaticResource UpdateActionButtonStyle}">

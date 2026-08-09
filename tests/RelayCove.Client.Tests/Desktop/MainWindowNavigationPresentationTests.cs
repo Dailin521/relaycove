@@ -47,6 +47,52 @@ public sealed class MainWindowNavigationPresentationTests
     }
 
     [Fact]
+    public async Task ChannelMemberOperation_WhenDrawerClosesOrConversationChanges_RejectsStaleRefresh()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateVisibleWindow();
+            try
+            {
+                var conversationA = Guid.NewGuid();
+                var conversationB = Guid.NewGuid();
+                var participants = new ConversationParticipantListResponse(
+                    conversationA,
+                    ConversationType.PrivateChannel,
+                    CanManageMembers: true,
+                    Participants: Array.Empty<UserDirectoryEntryDto>());
+                SetPrivateField(window, "selectedConversationId", conversationA);
+                window.ChannelOverlay.Visibility = Visibility.Visible;
+
+                Assert.True(InvokePrivate<bool>(
+                    window,
+                    "IsCurrentChannelMemberOperation",
+                    participants,
+                    null!));
+
+                window.ChannelOverlay.Visibility = Visibility.Collapsed;
+                Assert.False(InvokePrivate<bool>(
+                    window,
+                    "IsCurrentChannelMemberOperation",
+                    participants,
+                    null!));
+
+                window.ChannelOverlay.Visibility = Visibility.Visible;
+                SetPrivateField(window, "selectedConversationId", conversationB);
+                Assert.False(InvokePrivate<bool>(
+                    window,
+                    "IsCurrentChannelMemberOperation",
+                    participants,
+                    null!));
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
     public async Task ConversationGroupExpander_WhenCollapsed_RemembersStateAcrossMaterialization()
     {
         await RunOnStaAsync(() =>
@@ -119,8 +165,17 @@ public sealed class MainWindowNavigationPresentationTests
         var method = typeof(MainWindow).GetMethod(
             methodName,
             BindingFlags.Instance | BindingFlags.NonPublic) ??
-            throw new InvalidOperationException($"Expected method '{methodName}'.");
+        throw new InvalidOperationException($"Expected method '{methodName}'.");
         method.Invoke(window, arguments);
+    }
+
+    private static T InvokePrivate<T>(MainWindow window, string methodName, params object[] arguments)
+    {
+        var method = typeof(MainWindow).GetMethod(
+            methodName,
+            BindingFlags.Instance | BindingFlags.NonPublic) ??
+        throw new InvalidOperationException($"Expected method '{methodName}'.");
+        return Assert.IsType<T>(method.Invoke(window, arguments));
     }
 
     private static Task RunOnStaAsync(Action action)

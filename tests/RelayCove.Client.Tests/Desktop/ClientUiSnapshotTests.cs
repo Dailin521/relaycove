@@ -248,6 +248,54 @@ public sealed class ClientUiSnapshotTests
     }
 
     [Theory]
+    [InlineData(
+        "正在准备图片预览",
+        "加载完成后会在这里显示。安全限制会在显示前完成检查。",
+        "正在加载受限图片预览…",
+        "image-viewer-loading-1280x720.png")]
+    [InlineData(
+        "无法预览此图片",
+        "图片未通过安全显示检查，或暂时无法从本地缓存读取。请关闭后稍后重试。",
+        "图片文件不可用，未显示预览。",
+        "image-viewer-error-1280x720.png")]
+    public async Task MainWindow_WhenImageViewerHasNoSafeImage_ExplainsLoadingOrFailure(
+        string emptyTitle,
+        string emptyDetail,
+        string status,
+        string snapshotFileName)
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateRepresentativeWindow();
+            try
+            {
+                window.Width = 1280;
+                window.Height = 720;
+                window.AttachmentImageViewerTitleText.Text = "设计稿参考图.png";
+                window.AttachmentImageViewerEmptyTitleText.Text = emptyTitle;
+                window.AttachmentImageViewerEmptyDetailText.Text = emptyDetail;
+                window.AttachmentImageViewerStatusText.Text = status;
+                window.AttachmentImageViewerImage.Source = null;
+                window.AttachmentImageViewerOverlay.Visibility = Visibility.Visible;
+                window.Show();
+                window.UpdateLayout();
+                var root = Assert.IsAssignableFrom<FrameworkElement>(window.Content);
+
+                Assert.Null(window.AttachmentImageViewerImage.Source);
+                Assert.Equal(emptyTitle, window.AttachmentImageViewerEmptyTitleText.Text);
+                Assert.Equal(emptyDetail, window.AttachmentImageViewerEmptyDetailText.Text);
+                AssertWithinBounds(root, window.CloseAttachmentImageViewerButton);
+                AssertWithinBounds(root, window.AttachmentImageViewerStatusText);
+                SaveSnapshotWhenRequested(root, snapshotFileName);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Theory]
     [InlineData(640, 360, "direct-image-preview-landscape-1280x720.png")]
     [InlineData(640, 640, "direct-image-preview-square-1280x720.png")]
     [InlineData(360, 640, "direct-image-preview-portrait-1280x720.png")]

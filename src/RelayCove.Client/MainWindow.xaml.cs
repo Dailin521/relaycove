@@ -347,6 +347,8 @@ public partial class MainWindow : Window
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         updateHandoffFailure = message;
+        SetLiveText(UpdateStatusText, $"更新交接失败：{message}");
+        SettingsOverlay.UpdateStatus = UpdateStatusText.Text;
         SetLiveText(MandatoryUpdateErrorText, message);
         RetryMandatoryUpdateButton.IsEnabled = checkForUpdates is not null;
         ApplyMandatoryUpdateButton.IsEnabled = applyUpdate is not null;
@@ -1206,6 +1208,7 @@ public partial class MainWindow : Window
         OpenChannelOverlay(restoreTarget);
         UpdateMemberDrawerLayout();
         ChannelMemberSearchTextBox.Clear();
+        ChannelMemberSearchTextBox.Focus();
         UpdateChannelPanelState();
         await LoadChannelUserDirectoryAsync();
         if (SelectedConversationId is { } conversationId)
@@ -1213,7 +1216,6 @@ public partial class MainWindow : Window
             await LoadConversationParticipantsAsync(conversationId);
         }
 
-        ChannelNameInput.Focus();
     }
 
     private void OnCloseChannelPanelClicked(object sender, RoutedEventArgs e)
@@ -1312,6 +1314,7 @@ public partial class MainWindow : Window
                 Type: ConversationType.PrivateChannel,
                 CanManageMembers: true,
             } participants ||
+            participants.ConversationId != SelectedConversationId ||
             accountShell?.AdminCoordinator is not { } coordinator ||
             channelOperationRunning)
         {
@@ -1328,6 +1331,11 @@ public partial class MainWindow : Window
                 new UpsertConversationMemberRequest(
                     user.UserId,
                     ConversationMemberRole.Member));
+            if (!IsCurrentChannelMemberOperation(participants, coordinator))
+            {
+                return;
+            }
+
             SetLiveText(
                 ChannelLiveRegionText,
                 result.Status == ClientAdminRequestStatus.Completed
@@ -1355,6 +1363,7 @@ public partial class MainWindow : Window
                 Type: ConversationType.PrivateChannel,
                 CanManageMembers: true,
             } participants ||
+            participants.ConversationId != SelectedConversationId ||
             accountShell?.AdminCoordinator is not { } coordinator ||
             channelOperationRunning)
         {
@@ -1369,6 +1378,11 @@ public partial class MainWindow : Window
             var result = await coordinator.RemoveConversationMemberForChatAsync(
                 participants.ConversationId,
                 user.UserId);
+            if (!IsCurrentChannelMemberOperation(participants, coordinator))
+            {
+                return;
+            }
+
             SetLiveText(
                 ChannelLiveRegionText,
                 result.Status == ClientAdminRequestStatus.Completed
@@ -1386,6 +1400,13 @@ public partial class MainWindow : Window
         }
     }
 
+    private bool IsCurrentChannelMemberOperation(
+        ConversationParticipantListResponse participants,
+        ClientAdminCoordinator coordinator) =>
+        ChannelOverlay.Visibility == Visibility.Visible &&
+        SelectedConversationId == participants.ConversationId &&
+        ReferenceEquals(accountShell?.AdminCoordinator, coordinator);
+
     private async Task LoadChannelUserDirectoryAsync()
     {
         var coordinator = accountShell?.AdminCoordinator;
@@ -1394,6 +1415,10 @@ public partial class MainWindow : Window
             return;
         }
 
+        channelUserDirectory = Array.Empty<UserDirectoryEntryDto>();
+        ChannelUserDirectoryList.ItemsSource = null;
+        SetLiveText(ChannelUserDirectoryStatusText, "正在读取团队成员目录…");
+        UpdateChannelPanelState();
         var result = await coordinator.GetUserDirectoryAsync();
         if (!ReferenceEquals(accountShell?.AdminCoordinator, coordinator))
         {
@@ -1403,10 +1428,18 @@ public partial class MainWindow : Window
         if (result.Status == ClientAdminRequestStatus.Completed && result.Value is not null)
         {
             channelUserDirectory = result.Value;
+            SetLiveText(
+                ChannelUserDirectoryStatusText,
+                result.Value.Count == 0 ? "暂时没有可添加的团队成员。" : string.Empty);
             ApplyChannelParticipantPresentation();
         }
         else if (ChannelOverlay.Visibility == Visibility.Visible)
         {
+            channelUserDirectory = Array.Empty<UserDirectoryEntryDto>();
+            ChannelUserDirectoryList.ItemsSource = null;
+            SetLiveText(
+                ChannelUserDirectoryStatusText,
+                "暂时无法读取团队成员目录，请关闭后重新打开此面板重试。");
             SetLiveText(
                 ChannelLiveRegionText,
                 $"团队成员目录加载失败：{DescribeAdminStatus(result.Status)}。");
@@ -1424,6 +1457,9 @@ public partial class MainWindow : Window
         channelParticipantCancellationSource?.Cancel();
         using var cancellationSource = new CancellationTokenSource();
         channelParticipantCancellationSource = cancellationSource;
+        channelParticipants = null;
+        ChannelParticipantList.ItemsSource = null;
+        SetLiveText(ChannelParticipantStatusText, "正在读取当前会话成员…");
         SetChatHeaderMembersSummary("成员：正在加载…");
         var result = await coordinator.GetConversationParticipantsAsync(
             conversationId,
@@ -1440,6 +1476,9 @@ public partial class MainWindow : Window
         if (result.Status == ClientAdminRequestStatus.Completed && result.Value is not null)
         {
             channelParticipants = result.Value;
+            SetLiveText(
+                ChannelParticipantStatusText,
+                result.Value.Participants.Count == 0 ? "当前会话暂时没有可显示的成员。" : string.Empty);
             SetChatHeaderMembersSummary(
                 result.Value.Participants.Count == 0
                     ? "成员：暂无正常成员"
@@ -1450,6 +1489,10 @@ public partial class MainWindow : Window
         else
         {
             channelParticipants = null;
+            ChannelParticipantList.ItemsSource = null;
+            SetLiveText(
+                ChannelParticipantStatusText,
+                "暂时无法读取当前会话成员，请稍后重新打开成员面板。");
             SetChatHeaderMembersSummary("成员：暂时无法加载");
             ApplyChannelParticipantPresentation();
         }
@@ -1579,6 +1622,8 @@ public partial class MainWindow : Window
         channelUserDirectory = Array.Empty<UserDirectoryEntryDto>();
         ChannelParticipantList.ItemsSource = null;
         ChannelUserDirectoryList.ItemsSource = null;
+        SetLiveText(ChannelParticipantStatusText, string.Empty);
+        SetLiveText(ChannelUserDirectoryStatusText, string.Empty);
         SetChatHeaderMembersSummary("成员：请选择会话");
         SetLiveText(ChannelLiveRegionText, string.Empty);
     }
@@ -2126,7 +2171,7 @@ public partial class MainWindow : Window
         if (outcome.Status == ClientSearchStatus.Completed)
         {
             messageSearchResults = outcome.Results
-                .Select(ClientSearchResultPresentation.Create)
+                .Select((result, index) => ClientSearchResultPresentation.Create(result, index + 1))
                 .ToList()
                 .AsReadOnly();
             MessageSearchResultList.ItemsSource = messageSearchResults;
@@ -2400,7 +2445,28 @@ public partial class MainWindow : Window
             hasValidKeyword &&
             (scope == ClientSearchScope.Global || hasCurrentConversation);
         CloseSearchButton.IsEnabled = true;
+        SetLiveText(
+            MessageSearchEmptyTitleText,
+            searchNavigationRunning
+                ? "正在打开消息上下文"
+                : messageSearchRunning
+                    ? "正在搜索聊天记录"
+                    : messageSearchResults.Count > 0
+                        ? string.Empty
+                        : MessageSearchStatusText.Text.StartsWith("没有找到", StringComparison.Ordinal)
+                            ? "没有找到匹配的消息"
+                            : IsMessageSearchError(MessageSearchStatusText.Text)
+                                ? "暂时无法完成搜索"
+                                : "搜索结果将在这里显示");
     }
+
+    private static bool IsMessageSearchError(string status) =>
+        status.StartsWith("登录已失效", StringComparison.Ordinal) ||
+        status.StartsWith("会话访问", StringComparison.Ordinal) ||
+        status.StartsWith("当前账户", StringComparison.Ordinal) ||
+        status.StartsWith("网络", StringComparison.Ordinal) ||
+        status.StartsWith("搜索响应", StringComparison.Ordinal) ||
+        status.StartsWith("搜索失败", StringComparison.Ordinal);
 
     private static string DescribeUpdateFailure(ClientUpdateFailure failure) => failure switch
     {
@@ -3826,6 +3892,9 @@ public partial class MainWindow : Window
         attachmentImageViewerRestoreFocus = button;
         AttachmentImageViewerTitleText.Text = state.DisplayName;
         AttachmentImageViewerImage.Source = null;
+        SetAttachmentImageViewerEmptyState(
+            "正在准备图片预览",
+            "加载完成后会在这里显示。安全限制会在显示前完成检查。");
         AttachmentImageViewerStatusText.Text = "正在加载受限图片预览…";
         AttachmentImageViewerOverlay.Visibility = Visibility.Visible;
         CloseAttachmentImageViewerButton.Focus();
@@ -3845,6 +3914,7 @@ public partial class MainWindow : Window
                 outcome.Image is { IsFrozen: true } image)
             {
                 AttachmentImageViewerImage.Source = image;
+                SetAttachmentImageViewerEmptyState(string.Empty, string.Empty);
                 AttachmentImageViewerStatusText.Text = outcome.WasDownsampled
                     ? "受限预览：图片已按 2560 像素与 25 MiB 安全上限缩放。"
                     : "图片预览已加载；显示仍受 25 MiB 安全上限保护。";
@@ -3852,6 +3922,9 @@ public partial class MainWindow : Window
             else
             {
                 AttachmentImageViewerImage.Source = null;
+                SetAttachmentImageViewerEmptyState(
+                    "无法预览此图片",
+                    "图片未通过安全显示检查，或暂时无法从本地缓存读取。请关闭后稍后重试。");
                 AttachmentImageViewerStatusText.Text = DescribeAttachmentImageOutcome(
                     outcome.Status);
             }
@@ -3868,6 +3941,9 @@ public partial class MainWindow : Window
             if (IsCurrentAttachmentImageViewerOperation(operation))
             {
                 AttachmentImageViewerImage.Source = null;
+                SetAttachmentImageViewerEmptyState(
+                    "图片预览已取消",
+                    "你可以关闭预览后，稍后再次打开图片。");
                 AttachmentImageViewerStatusText.Text = "图片预览已取消。";
             }
         }
@@ -3876,6 +3952,9 @@ public partial class MainWindow : Window
             if (IsCurrentAttachmentImageViewerOperation(operation))
             {
                 AttachmentImageViewerImage.Source = null;
+                SetAttachmentImageViewerEmptyState(
+                    "无法继续预览",
+                    "当前账户已结束，无法读取此图片。请关闭预览。");
                 AttachmentImageViewerStatusText.Text = "账户已结束，无法查看图片。";
             }
         }
@@ -3886,6 +3965,9 @@ public partial class MainWindow : Window
             if (IsCurrentAttachmentImageViewerOperation(operation))
             {
                 AttachmentImageViewerImage.Source = null;
+                SetAttachmentImageViewerEmptyState(
+                    "无法加载图片预览",
+                    "请关闭预览后稍后重试；当前聊天内容不会受到影响。");
                 AttachmentImageViewerStatusText.Text = "无法加载图片预览，请稍后重试。";
             }
         }
@@ -3907,6 +3989,12 @@ public partial class MainWindow : Window
         _ = sender;
         _ = e;
         CloseAttachmentImageViewer(restoreFocus: true);
+    }
+
+    private void SetAttachmentImageViewerEmptyState(string title, string detail)
+    {
+        AttachmentImageViewerEmptyTitleText.Text = title;
+        AttachmentImageViewerEmptyDetailText.Text = detail;
     }
 
     private void OnMainWindowPreviewKeyDown(
@@ -3933,6 +4021,15 @@ public partial class MainWindow : Window
             (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control &&
             AccountPanel.Visibility == Visibility.Visible)
         {
+            if (AttachmentImageViewerOverlay.Visibility == Visibility.Visible ||
+                ChannelOverlay.Visibility == Visibility.Visible ||
+                SettingsOverlay.Visibility == Visibility.Visible ||
+                SearchPanel.Visibility == Visibility.Visible)
+            {
+                e.Handled = true;
+                return;
+            }
+
             FocusConversationSearch();
             e.Handled = true;
             return;
@@ -4215,6 +4312,7 @@ public partial class MainWindow : Window
         AttachmentImageViewerImage.Source = null;
         AttachmentImageViewerTitleText.Text = string.Empty;
         AttachmentImageViewerStatusText.Text = string.Empty;
+        SetAttachmentImageViewerEmptyState("正在准备图片预览", "加载完成后会在这里显示。");
         AttachmentImageViewerOverlay.Visibility = Visibility.Collapsed;
         var restoreTarget = attachmentImageViewerRestoreFocus;
         attachmentImageViewerRestoreFocus = null;

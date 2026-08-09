@@ -23,6 +23,9 @@ public sealed class ClientSearchPresentationTests
 
         Assert.Same(result, presentation.Result);
         Assert.Equal("私密频道 · 测试发送者", presentation.ConversationAndSender);
+        Assert.Equal(
+            $"打开搜索结果：{presentation.ConversationAndSender}，{presentation.Timestamp}，结果 1",
+            presentation.AutomationName);
         Assert.Equal("机密正文命中", presentation.Snippet);
         Assert.Equal("匹配附件：季度机密报告.xlsx", presentation.AttachmentLabel);
         Assert.True(presentation.HasMatchedAttachment);
@@ -60,6 +63,23 @@ public sealed class ClientSearchPresentationTests
         Assert.Equal("仅正文命中", presentation.Snippet);
         Assert.Equal(string.Empty, presentation.AttachmentLabel);
         Assert.False(presentation.HasMatchedAttachment);
+    }
+
+    [Fact]
+    public void Create_WhenTwoResultsShareVisibleMetadata_UsesDistinctSafeAutomationNames()
+    {
+        var first = ClientSearchResultPresentation.Create(CreateResult(
+            snippet: "第一条",
+            matchedAttachmentFileName: null),
+            resultOrdinal: 1);
+        var second = ClientSearchResultPresentation.Create(CreateResult(
+            snippet: "第二条",
+            matchedAttachmentFileName: null),
+            resultOrdinal: 2);
+
+        Assert.NotEqual(first.AutomationName, second.AutomationName);
+        Assert.DoesNotContain(first.Result.MessageId.ToString(), first.AutomationName, StringComparison.Ordinal);
+        Assert.DoesNotContain(second.Result.MessageId.ToString(), second.AutomationName, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -119,7 +139,7 @@ public sealed class ClientSearchPresentationTests
                 var resultButton = Assert.Single(
                     FindVisualDescendants<Button>(window.MessageSearchResultList),
                     button => ReferenceEquals(button.DataContext, presentation));
-                Assert.Equal("打开搜索结果", AutomationProperties.GetName(resultButton));
+                Assert.Equal(presentation.AutomationName, AutomationProperties.GetName(resultButton));
                 Assert.DoesNotContain(
                     result.MessageId.ToString(),
                     AutomationProperties.GetName(resultButton),
