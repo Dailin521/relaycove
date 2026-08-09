@@ -147,4 +147,31 @@ public sealed class ClientMessageScrollPolicyTests
         Assert.Null(decision.ScrollToMessageId);
         Assert.False(decision.ShowNewMessageIndicator);
     }
+
+    [Theory]
+    [InlineData(true, true, false, 102L)]
+    [InlineData(false, false, true, null)]
+    public void Decide_WhenPendingConfirmationAndNewMessageArriveTogether_PreservesRealAppendBehavior(
+        bool wasNearBottom,
+        bool expectedScrollToEnd,
+        bool expectedIndicator,
+        long? expectedObservedThrough)
+    {
+        var decision = ClientMessageScrollPolicy.Decide(
+            sameConversation: true,
+            previousOldestMessageId: 51,
+            previousLatestMessageId: 100,
+            nextOldestMessageId: 51,
+            nextLatestMessageId: 102,
+            wasNearBottom,
+            targetMessageId: null,
+            targetChanged: false,
+            contentAppended: true,
+            hasNextItems: true,
+            replacesExistingLocalItem: true);
+
+        Assert.Equal(expectedScrollToEnd, decision.ScrollToEnd);
+        Assert.Equal(expectedIndicator, decision.ShowNewMessageIndicator);
+        Assert.Equal(expectedObservedThrough, decision.ObservedThroughMessageId);
+    }
 }

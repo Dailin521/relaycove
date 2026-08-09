@@ -87,6 +87,7 @@ git diff --check
 - S19 聊天体验收口：`@` 浮层改为显式关闭（`StaysOpen=True`），由工具栏、Esc、候选选择和上下文变化管理，避免外部按钮点击打开后被 WPF 自动失焦关闭；工具栏点击立即打开，候选搜索只对实际新查询启动 200ms 防抖，保留上一批候选避免输入闪烁。候选浮层移除独立搜索框/按钮，使用方形默认头像、显示名和 `@username` 的紧凑成员行。消息改为头像与气泡分离的左右行：所有默认头像为方形、他人白色细边框气泡在左、本人品牌浅蓝气泡在右；单图继续保持比例的直接预览，圆角统一 12px。消息连续追加只在用户靠近底部时 `ScrollToEnd`，不再对新消息 `ScrollIntoView` 单个容器；同窗重发布与图片高度变化仍不重定位，真实历史 prepend 保留锚定补偿。
 - S21：移除消息列表在容器物化、尺寸变化和滚动期间动态写入 `Padding` 的逻辑。该逻辑会把虚拟化产生的 `ItemsChanged` 再次变成布局变更，形成布局反馈和 Dispatcher 积压风险；保留像素级回收虚拟化与仅在真实历史 prepend 时执行的视口锚定。私聊筛选在账户真正进入 Active 后读取一次服务端全员目录（排除自身），并按当前 coordinator 缓存，避免会话/连接快照重发时重复读取；服务器 `/api/users` 已有普通登录用户的全员目录回归证明。
 - S22：聊天 Header 收敛为仅显示会话标题；原有加载说明和成员摘要仍保留展示数据边界，但始终隐藏，成员仅经右上按钮进入既有覆盖式抽屉。会话栏改为紧凑扁平的列表，去除默认 `Expander` 箭头与选中整行的生硬高亮，保留可折叠分组和创建频道入口。私聊筛选在登录尚未完成、请求中和失败时清理旧目录并给出可重试状态，成功时按服务端全员目录显示并排除当前用户。服务器确认本地 pending 消息时不再被误判为新消息追加，避免第二次置底造成发送后的视口闪频。
+- S22 独立复核：修复“pending 确认与真实新消息同批发布”会错误抑制真实追加的 P1；现在逐条识别新 client ID，并仅将 server ID 高于上一窗口最新项的远端消息视为追加，历史 prepend 仍不触发置底。成员目录异常处理改为遵循现有致命异常边界并输出诊断。新增两种近底状态的同批回执/真实追加回归。
 - 图片链路：补充 Alice/Bob 独立账户的真实 Kestrel 单 PNG 测试；双方分别以自身账号、缓存和认证下载规范消息附件，并通过既有受限解码器生成冻结缩略图。可见图片行的 UI 自动下载→缩略图触发仍由既有 `Image.Loaded` 链路持有，自动行为限定为会话已打开且图片项已物化。
 - 组件化：SettingsPanelControl 与 ChatHeaderControl 已以展示 DP + RoutedEvent 形式接入；MainWindow 继续持有更新、会话、搜索、成员与生命周期协调。
 - 收口：独立代码复核确认未触及 Server/Shared、消息可靠发送、附件安全或更新交接；修复窄窗口成员提示曾落入隐藏抽屉的 P2，并完成干净 HEAD 的 Release 双构建与离线校验。
@@ -143,8 +144,8 @@ git diff --check
 | `已验证` | S21 定向滚动、会话与目录 | `MessageListControlPresentationTests`、`ClientConversationPanelPresentationTests`、`ClientMessageScrollPolicyTests` 19/19；普通用户读取全员目录端到端回归 1/1；快照、图片与附件呈现 57/57 通过。 |
 | `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast` / `-Mode Full`（S21） | Debug/Release 均 0 警告、0 错误；Shared 70、Server 353、Client 1,267、Updater 38，共 1,728 项；Full 同时通过 format 与 `git diff --check`。 |
 | `已验证` | S22 主界面、滚动与快照定向回归 | Header、会话分组、消息滚动策略、消息呈现与全部 WPF 快照共 50/50 通过；`after-s22-final/` 覆盖最新主窗口与全部次级界面。普通用户目录端到端 1/1、双端 PNG/附件呈现 31/31 通过。 |
-| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast`（S22） | Debug 0 警告、0 错误；Shared 70、Server 353、Client 1,270、Updater 38，共 1,731 项通过。 |
-| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full`（S22） | format、Release 0 警告/错误、Release 全量 Shared 70、Server 353、Client 1,270、Updater 38（共 1,731 项）及 `git diff --check` 均通过。 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast`（S22 复核修正后） | Debug 0 警告、0 错误；Shared 70、Server 353、Client 1,272、Updater 38，共 1,733 项通过。 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full`（S22 复核修正后） | format、Release 0 警告/错误、Release 全量 Shared 70、Server 353、Client 1,272、Updater 38（共 1,733 项）及 `git diff --check` 均通过。 |
 
 ### 文件范围
 

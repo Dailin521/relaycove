@@ -849,8 +849,9 @@ public partial class MainWindow : Window
         catch (ObjectDisposedException)
         {
         }
-        catch (Exception)
+        catch (Exception exception) when (!IsCriticalException(exception))
         {
+            Debug.WriteLine($"Loading direct-contact directory failed: {exception}");
             if (ReferenceEquals(accountShell?.AdminCoordinator, coordinator) &&
                 conversationFilter == ClientConversationFilter.Direct)
             {
@@ -1168,10 +1169,11 @@ public partial class MainWindow : Window
         var nextLatest = snapshot.LatestMessageId;
         var sameConversation = displayedMessageConversationId == snapshot.ConversationId;
         var contentAppended = sameConversation &&
-            snapshot.Messages.Count != 0 &&
-            (previousItems.Length == 0 ||
-             !previousItems.Any(item =>
-                 item.ClientMessageId == snapshot.Messages[^1].ClientMessageId));
+            snapshot.Messages.Any(next =>
+                !previousItems.Any(previous => previous.ClientMessageId == next.ClientMessageId) &&
+                (next.ServerMessageId is not { } serverMessageId ||
+                 previousLatest is not { } previousLatestMessageId ||
+                 serverMessageId > previousLatestMessageId));
         var replacesExistingLocalItem = sameConversation &&
             snapshot.Messages.Any(next =>
                 next.ServerMessageId.HasValue &&
