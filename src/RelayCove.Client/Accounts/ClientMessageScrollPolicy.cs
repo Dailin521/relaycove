@@ -12,7 +12,8 @@ internal static class ClientMessageScrollPolicy
         long? targetMessageId,
         bool targetChanged,
         bool contentAppended = false,
-        bool hasNextItems = true)
+        bool hasNextItems = true,
+        bool replacesExistingLocalItem = false)
     {
         if (targetMessageId is { } target && targetChanged)
         {
@@ -38,7 +39,8 @@ internal static class ClientMessageScrollPolicy
             previousOldestMessageId is { } previousOldest &&
             nextOldest < previousOldest;
         var appended = contentAppended ||
-            (nextLatestMessageId is { } nextLatest &&
+            (!replacesExistingLocalItem &&
+            nextLatestMessageId is { } nextLatest &&
             previousLatestMessageId is { } previousLatest &&
             nextLatest > previousLatest);
         var sameWindow = previousOldestMessageId == nextOldestMessageId &&

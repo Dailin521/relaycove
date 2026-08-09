@@ -4,7 +4,7 @@
              Background="{DynamicResource RcSurfaceBrush}"
              BorderBrush="{DynamicResource RcBorderBrush}"
              BorderThickness="1">
-    <Border Padding="8,10,10,8"
+    <Border Padding="6,8,8,6"
             Background="{Binding Background, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
             BorderBrush="{Binding BorderBrush, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
             BorderThickness="{Binding BorderThickness, RelativeSource={RelativeSource AncestorType={x:Type UserControl}}}"
@@ -16,15 +16,15 @@
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
-            <Grid Margin="8,8,8,7">
+            <Grid Margin="6,6,6,4">
                 <Border Background="{DynamicResource RcSurfaceBrush}"
                         BorderBrush="{DynamicResource RcBorderBrush}"
                         BorderThickness="1"
-                        CornerRadius="10">
+                        CornerRadius="9">
                     <Grid>
-                        <Path Width="17" Height="17" Margin="12,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
+                        <Path Width="16" Height="16" Margin="11,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center"
                               Data="{DynamicResource RcIconSearch}" Stretch="Uniform" Stroke="{DynamicResource RcTextSecondaryBrush}" StrokeThickness="1.6" IsHitTestVisible="False" />
-                        <TextBox x:Name="ConversationSearchTextBox" MinHeight="42" Padding="38,7,66,7" Background="Transparent" BorderThickness="0"
+                        <TextBox x:Name="ConversationSearchTextBox" MinHeight="38" Padding="36,6,60,6" Background="Transparent" BorderThickness="0"
                                  AutomationProperties.Name="搜索会话" ToolTip="按会话名称或消息预览筛选。Ctrl+K 聚焦。" TextChanged="OnSearchTextChanged" />
                         <TextBlock Margin="39,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" Foreground="{DynamicResource RcTextSecondaryBrush}"
                                    FontSize="13" IsHitTestVisible="False" Text="搜索会话">
@@ -45,7 +45,7 @@
                     </Grid>
                 </Border>
             </Grid>
-            <UniformGrid Grid.Row="1" Margin="8,5,8,6" Columns="4">
+            <UniformGrid Grid.Row="1" Margin="6,2,6,4" Columns="4">
                 <Button x:Name="AllConversationFilterButton" Margin="0,0,4,0" Style="{DynamicResource ConversationFilterButtonStyle}" Content="全部" Tag="All" Click="OnFilterClicked" />
                 <Button x:Name="UnreadConversationFilterButton" Margin="0,0,4,0" Style="{DynamicResource ConversationFilterButtonStyle}" Content="未读" Tag="Unread" Click="OnFilterClicked" />
                 <Button x:Name="ChannelConversationFilterButton" Margin="0,0,4,0" Style="{DynamicResource ConversationFilterButtonStyle}" Content="频道" Tag="Channels" Click="OnFilterClicked" />
@@ -64,6 +64,37 @@
                                             <ControlTemplate TargetType="{x:Type GroupItem}">
                                                 <Expander Tag="{Binding Name}" IsExpanded="True" BorderThickness="0"
                                                           Loaded="OnGroupLoaded" Expanded="OnGroupExpanded" Collapsed="OnGroupCollapsed">
+                                                    <Expander.Template>
+                                                        <ControlTemplate TargetType="Expander">
+                                                            <StackPanel>
+                                                                <ToggleButton x:Name="GroupHeaderToggle"
+                                                                              IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                                                                              Background="Transparent"
+                                                                              BorderBrush="Transparent"
+                                                                              BorderThickness="0"
+                                                                              Padding="0"
+                                                                              Content="{TemplateBinding Header}"
+                                                                              ContentTemplate="{TemplateBinding HeaderTemplate}"
+                                                                              HorizontalContentAlignment="Stretch">
+                                                                    <ToggleButton.Template>
+                                                                        <ControlTemplate TargetType="ToggleButton">
+                                                                            <ContentPresenter Content="{TemplateBinding Content}"
+                                                                                              ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                                                              HorizontalAlignment="Stretch" />
+                                                                        </ControlTemplate>
+                                                                    </ToggleButton.Template>
+                                                                </ToggleButton>
+                                                                <ContentPresenter x:Name="GroupContent"
+                                                                                  ContentSource="Content"
+                                                                                  Visibility="Collapsed" />
+                                                            </StackPanel>
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsExpanded" Value="True">
+                                                                    <Setter TargetName="GroupContent" Property="Visibility" Value="Visible" />
+                                                                </Trigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Expander.Template>
                                                     <Expander.Header>
                                                         <ContentPresenter Content="{Binding}" ContentTemplate="{Binding RelativeSource={RelativeSource TemplatedParent}, Path=HeaderTemplate}" />
                                                     </Expander.Header>
@@ -76,10 +107,10 @@
                             </GroupStyle.ContainerStyle>
                             <GroupStyle.HeaderTemplate>
                                 <DataTemplate>
-                                    <Grid Margin="6,12,4,5">
+                                    <Grid Margin="8,11,6,4">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                         <TextBlock Text="{Binding Name}" Foreground="{DynamicResource RcTextSecondaryBrush}" FontSize="11" FontWeight="SemiBold" />
-                                        <Button Grid.Column="1" Width="24" Height="24" MinHeight="0" Padding="0" Content="+" FontSize="16" ToolTip="创建频道"
+                                        <Button Grid.Column="1" Width="22" Height="22" MinHeight="0" Padding="0" Content="+" FontSize="15" ToolTip="创建频道"
                                                 AutomationProperties.Name="创建频道" Click="OnCreateChannelClicked">
                                             <Button.Style>
                                                 <Style TargetType="Button" BasedOn="{DynamicResource SubtleButtonStyle}">
@@ -94,22 +125,29 @@
                     </ListBox.GroupStyle>
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="0" /><Setter Property="Margin" Value="0,2" />
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="0" /><Setter Property="Margin" Value="0,1" />
                             <Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" />
-                            <Style.Triggers>
-                                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#FFF5F6F8" /></Trigger>
-                                <Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="{DynamicResource RcPrimarySoftBrush}" /><Setter Property="Foreground" Value="{DynamicResource RcPrimaryBrush}" /></Trigger>
-                            </Style.Triggers>
                         </Style>
                     </ListBox.ItemContainerStyle>
                     <ListBox.ItemTemplate>
                         <DataTemplate>
-                            <Grid Margin="9,6">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <Border Width="26" Height="26" VerticalAlignment="Top" Background="{DynamicResource RcPrimarySoftBrush}" BorderBrush="#FFD5E1EE" BorderThickness="1" CornerRadius="4"><TextBlock Text="{Binding TypeIcon}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource RcPrimaryBrush}" FontWeight="SemiBold" /></Border>
-                                <StackPanel Grid.Column="1" Margin="0,0,8,0"><TextBlock Text="{Binding Name}" Foreground="{DynamicResource RcTextPrimaryBrush}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding Preview}" Margin="0,2,0,0" Foreground="{DynamicResource RcTextSecondaryBrush}" FontSize="11" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding MutedLabel}" Margin="0,2,0,0" Foreground="{DynamicResource RcTextSecondaryBrush}" FontSize="11" /></StackPanel>
-                                <StackPanel Grid.Column="2" HorizontalAlignment="Right"><TextBlock Text="{Binding Timestamp}" Foreground="{DynamicResource RcTextSecondaryBrush}" FontSize="10" /><Border Margin="0,4,0,0" Padding="6,2" HorizontalAlignment="Right" Background="{DynamicResource RcPrimaryBrush}" CornerRadius="8"><Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Visible" /><Style.Triggers><DataTrigger Binding="{Binding HasUnread}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></Border.Style><TextBlock Text="{Binding UnreadText}" Foreground="White" FontSize="10" FontWeight="SemiBold" /></Border></StackPanel>
-                            </Grid>
+                            <Border Margin="5,0" Padding="8,7" CornerRadius="8">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="Transparent" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType={x:Type ListBoxItem}}}" Value="True"><Setter Property="Background" Value="#FFF5F7FA" /></DataTrigger>
+                                            <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType={x:Type ListBoxItem}}}" Value="True"><Setter Property="Background" Value="{DynamicResource RcPrimarySoftBrush}" /></DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="30" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Border Width="24" Height="24" VerticalAlignment="Top" Background="{DynamicResource RcPrimarySoftBrush}" BorderBrush="#FFD5E1EE" BorderThickness="1" CornerRadius="5"><TextBlock Text="{Binding TypeIcon}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource RcPrimaryBrush}" FontSize="12" FontWeight="SemiBold" /></Border>
+                                    <StackPanel Grid.Column="1" Margin="0,0,7,0"><TextBlock Text="{Binding Name}" Foreground="{DynamicResource RcTextPrimaryBrush}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding Preview}" Margin="0,2,0,0" Foreground="{DynamicResource RcTextSecondaryBrush}" FontSize="11" MaxHeight="16" TextTrimming="CharacterEllipsis" /></StackPanel>
+                                    <StackPanel Grid.Column="2" HorizontalAlignment="Right"><TextBlock Text="{Binding Timestamp}" Foreground="{DynamicResource RcTextSecondaryBrush}" FontSize="10" /><Border Margin="0,4,0,0" Padding="5,1" HorizontalAlignment="Right" Background="{DynamicResource RcPrimaryBrush}" CornerRadius="7"><Border.Style><Style TargetType="Border"><Setter Property="Visibility" Value="Visible" /><Style.Triggers><DataTrigger Binding="{Binding HasUnread}" Value="False"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></Border.Style><TextBlock Text="{Binding UnreadText}" Foreground="White" FontSize="9" FontWeight="SemiBold" /></Border></StackPanel>
+                                </Grid>
+                            </Border>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>

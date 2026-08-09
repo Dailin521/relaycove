@@ -126,4 +126,25 @@ public sealed class ClientMessageScrollPolicyTests
         Assert.Equal(expectedIndicator, decision.ShowNewMessageIndicator);
         Assert.Equal(wasNearBottom ? 100 : null, decision.ObservedThroughMessageId);
     }
+
+    [Fact]
+    public void Decide_WhenLocalPendingMessageIsConfirmed_DoesNotScrollOrFlashViewport()
+    {
+        var decision = ClientMessageScrollPolicy.Decide(
+            sameConversation: true,
+            previousOldestMessageId: 51,
+            previousLatestMessageId: 100,
+            nextOldestMessageId: 51,
+            nextLatestMessageId: 101,
+            wasNearBottom: true,
+            targetMessageId: null,
+            targetChanged: false,
+            contentAppended: false,
+            hasNextItems: true,
+            replacesExistingLocalItem: true);
+
+        Assert.False(decision.ScrollToEnd);
+        Assert.Null(decision.ScrollToMessageId);
+        Assert.False(decision.ShowNewMessageIndicator);
+    }
 }

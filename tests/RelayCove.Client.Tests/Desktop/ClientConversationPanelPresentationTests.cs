@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Media;
 using System.Windows.Threading;
 using RelayCove.Client;
 using RelayCove.Client.Controls;
@@ -93,6 +95,63 @@ public sealed class ClientConversationPanelPresentationTests
 
                 Assert.Equal(Visibility.Collapsed, window.SettingsOverlay.Visibility);
                 Assert.Equal(ClientNavigationSection.Chat, window.ApplicationNavigation.SelectedSection);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task ChatHeader_WhenConversationIsSelected_ShowsOnlyConversationTitle()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateVisibleWindow();
+            try
+            {
+                window.ConversationHeadingText.Text = "公开测试频道";
+                window.NavigationNoticeText.Text = "正在读取真实消息。";
+                window.ConversationMembersSummaryText.Text = "成员（5）：dal、lq";
+                window.UpdateLayout();
+
+                Assert.Equal(Visibility.Visible, window.ConversationHeadingText.Visibility);
+                Assert.Equal(Visibility.Collapsed, window.NavigationNoticeText.Visibility);
+                Assert.Equal(Visibility.Collapsed, window.ConversationMembersSummaryText.Visibility);
+                Assert.True(window.OpenChannelPanelButton.IsVisible);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task ConversationGroupHeader_WhenCheckedStateChanges_TogglesTheMatchingGroup()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var window = CreateVisibleWindow();
+            try
+            {
+                window.ApplyConversationListSnapshot(new LocalConversationListReadOutcome(
+                    LocalCacheOperationStatus.Ready,
+                    [CreateConversation(Guid.NewGuid(), ConversationType.PublicChannel, "General")],
+                    TotalUnreadCount: 0,
+                    Revision: 1));
+                window.UpdateLayout();
+
+                var group = FindVisualDescendants<Expander>(window.ConversationList)
+                    .Single(candidate => string.Equals(candidate.Tag as string, "公开频道", StringComparison.Ordinal));
+                var header = FindVisualDescendants<ToggleButton>(group).Single();
+
+                Assert.True(group.IsExpanded);
+                header.IsChecked = false;
+                Assert.False(group.IsExpanded);
+                header.IsChecked = true;
+                Assert.True(group.IsExpanded);
             }
             finally
             {
@@ -226,6 +285,24 @@ public sealed class ClientConversationPanelPresentationTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic) ??
             throw new InvalidOperationException($"Expected method '{methodName}'.");
         method.Invoke(window, arguments);
+    }
+
+    private static IEnumerable<T> FindVisualDescendants<T>(DependencyObject root)
+        where T : DependencyObject
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is T typed)
+            {
+                yield return typed;
+            }
+
+            foreach (var descendant in FindVisualDescendants<T>(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 
     private static Task RunOnStaAsync(Action action)

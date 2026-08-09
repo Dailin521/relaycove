@@ -789,6 +789,13 @@ public partial class MainWindow : Window
         if (showContacts)
         {
             ConversationEmptyText.Visibility = Visibility.Collapsed;
+            if (accountShell?.AdminCoordinator is null)
+            {
+                DirectContactsList.ItemsSource = null;
+                SetLiveText(DirectContactsStatusText, "登录完成后将显示服务端所有成员。");
+                return;
+            }
+
             if (!directContactOperationRunning &&
                 !ReferenceEquals(directContactsLoadedCoordinator, accountShell?.AdminCoordinator))
             {
@@ -808,6 +815,7 @@ public partial class MainWindow : Window
         }
 
         directContactOperationRunning = true;
+        DirectContactsList.ItemsSource = null;
         SetLiveText(DirectContactsStatusText, "正在读取所有成员…");
         try
         {
@@ -834,6 +842,20 @@ public partial class MainWindow : Window
             SetLiveText(
                 DirectContactsStatusText,
                 directContacts.Count == 0 ? "暂时没有其他可私聊成员。" : "选择成员即可开始或回到私聊。");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception)
+        {
+            if (ReferenceEquals(accountShell?.AdminCoordinator, coordinator) &&
+                conversationFilter == ClientConversationFilter.Direct)
+            {
+                SetLiveText(DirectContactsStatusText, "成员目录加载失败；点击“私聊”可重试。");
+            }
         }
         finally
         {
@@ -950,7 +972,7 @@ public partial class MainWindow : Window
             conversationFilter == filter ? "RcPrimaryBrush" : "RcTextSecondaryBrush");
         button.SetResourceReference(
             System.Windows.Controls.Control.BorderBrushProperty,
-            conversationFilter == filter ? "RcPrimaryBrush" : "RcTransparentBrush");
+            "RcTransparentBrush");
     }
 
     private void OnNavigationRequested(
@@ -1150,6 +1172,12 @@ public partial class MainWindow : Window
             (previousItems.Length == 0 ||
              !previousItems.Any(item =>
                  item.ClientMessageId == snapshot.Messages[^1].ClientMessageId));
+        var replacesExistingLocalItem = sameConversation &&
+            snapshot.Messages.Any(next =>
+                next.ServerMessageId.HasValue &&
+                previousItems.Any(previous =>
+                    previous.ClientMessageId == next.ClientMessageId &&
+                    !previous.ServerMessageId.HasValue));
         var scrollViewer = FindVisualChild<ScrollViewer>(MessageList);
         var oldOffset = scrollViewer?.VerticalOffset ?? 0;
         var wasNearBottom = IsNearBottom(scrollViewer);
@@ -1166,7 +1194,8 @@ public partial class MainWindow : Window
             snapshot.TargetMessageId,
             targetChanged,
             contentAppended,
-            snapshot.Messages.Count != 0);
+            snapshot.Messages.Count != 0,
+            replacesExistingLocalItem);
         var searchTargetOwnsAcknowledgment = IsSearchHighlightTarget(snapshot);
         var searchTargetMaterializedNow = false;
 

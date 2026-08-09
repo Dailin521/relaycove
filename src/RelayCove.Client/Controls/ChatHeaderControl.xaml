@@ -59,7 +59,7 @@
             <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
 
-        <StackPanel VerticalAlignment="Top">
+        <StackPanel VerticalAlignment="Center">
             <TextBlock x:Name="HeadingTextElement"
                        Text="{Binding Heading, ElementName=Root}"
                        AutomationProperties.LiveSetting="Polite"
@@ -73,7 +73,8 @@
                        AutomationProperties.LiveSetting="Polite"
                        Foreground="{DynamicResource RcTextSecondaryBrush}"
                        FontSize="13"
-                       TextWrapping="Wrap" />
+                       TextWrapping="Wrap"
+                       Visibility="Collapsed" />
             <TextBlock x:Name="MembersSummaryTextElement"
                        Margin="0,2,0,0"
                        Text="{Binding MembersSummary, ElementName=Root}"
@@ -81,7 +82,8 @@
                        Foreground="{DynamicResource RcTextSecondaryBrush}"
                        FontSize="12"
                        TextWrapping="Wrap"
-                       TextTrimming="CharacterEllipsis" />
+                       TextTrimming="CharacterEllipsis"
+                       Visibility="Collapsed" />
         </StackPanel>
 
         <Button x:Name="MembersButtonElement"
