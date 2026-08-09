@@ -202,6 +202,43 @@ public sealed class MessageListControlPresentationTests
         });
     }
 
+    [Fact]
+    public async Task MessageListControl_WhenContainersVirtualize_DoesNotMutateScrollLayoutPadding()
+    {
+        await RunOnStaAsync(() =>
+        {
+            var control = new MessageListControl();
+            AddRc25Resources(control);
+            control.List.ItemsSource = new[]
+            {
+                CreateMessage(Guid.NewGuid(), false, [], false),
+            };
+            var host = CreateHost(control);
+            try
+            {
+                host.Show();
+                host.UpdateLayout();
+
+                Assert.Equal(new Thickness(0), control.List.Padding);
+
+                control.List.ItemsSource = Enumerable.Range(0, 160)
+                    .Select(_ => CreateMessage(Guid.NewGuid(), false, [], false))
+                    .ToArray();
+                host.UpdateLayout();
+
+                var scrollViewer = Assert.Single(FindVisualDescendants<ScrollViewer>(control));
+                scrollViewer.ScrollToVerticalOffset(72);
+                host.UpdateLayout();
+
+                Assert.Equal(new Thickness(0), control.List.Padding);
+            }
+            finally
+            {
+                host.Close();
+            }
+        });
+    }
+
     private static ClientMessageListItemPresentation CreateMessage(
         Guid clientMessageId,
         bool canRetry,

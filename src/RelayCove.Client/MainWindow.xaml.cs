@@ -110,6 +110,7 @@ public partial class MainWindow : Window
     private bool optionalUpdateActionCancels;
     private string? updateHandoffFailure;
     private Guid? pendingConversationSelectionId;
+    private ClientAdminCoordinator? directContactsLoadedCoordinator;
     private long lastConversationRevision;
     private long lastMessageRevision;
     private Guid? displayedMessageConversationId;
@@ -215,6 +216,7 @@ public partial class MainWindow : Window
         ClearMessageSearchPresentation(closePanel: true, clearKeyword: true);
         SetConversationFilter(ClientConversationFilter.All);
         directContacts = Array.Empty<UserDirectoryEntryDto>();
+        directContactsLoadedCoordinator = null;
         directContactOperationRunning = false;
         DirectContactsList.ItemsSource = null;
         SetLiveText(DirectContactsStatusText, "选择成员即可开始私聊。");
@@ -434,6 +436,9 @@ public partial class MainWindow : Window
             ClearMessageSearchPresentation(closePanel: true, clearKeyword: true);
             CloseChannelPanel(clearPresentation: true);
             CloseSettingsOverlay(restoreFocus: false);
+            directContacts = Array.Empty<UserDirectoryEntryDto>();
+            directContactsLoadedCoordinator = null;
+            DirectContactsList.ItemsSource = null;
         }
 
         var presentation = ClientAccountShellPresenter.Present(snapshot);
@@ -487,6 +492,7 @@ public partial class MainWindow : Window
             snapshot.ServerBaseUri is not null && !mandatoryUpdateGate;
         SynchronizeSettingsPanelPresentation();
         UpdateMessageSearchState();
+        UpdateDirectContactsPresentation();
     }
 
     internal void ApplyConversationListSnapshot(LocalConversationListReadOutcome outcome)
@@ -783,7 +789,8 @@ public partial class MainWindow : Window
         if (showContacts)
         {
             ConversationEmptyText.Visibility = Visibility.Collapsed;
-            if (!directContactOperationRunning)
+            if (!directContactOperationRunning &&
+                !ReferenceEquals(directContactsLoadedCoordinator, accountShell?.AdminCoordinator))
             {
                 _ = LoadDirectContactsAsync();
             }
@@ -823,6 +830,7 @@ public partial class MainWindow : Window
                 .ThenBy(user => user.UserName, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             DirectContactsList.ItemsSource = directContacts;
+            directContactsLoadedCoordinator = coordinator;
             SetLiveText(
                 DirectContactsStatusText,
                 directContacts.Count == 0 ? "暂时没有其他可私聊成员。" : "选择成员即可开始或回到私聊。");

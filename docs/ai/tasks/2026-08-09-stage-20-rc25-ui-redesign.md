@@ -85,6 +85,7 @@ git diff --check
 - S17 交互回归：消息发送引发的会话列表重发布不再被当作一次重新选择，只有会话 ID 实际变化才刷新成员；成员抽屉打开和成员增删成功仍保留显式刷新。提及候选成功选中后会取消候选搜索、关闭面板并把焦点交还输入框。消息同窗口重绘不再按“顶部补历史”补偿滚动偏移，消息行被点击选中时维持中性外观，避免默认蓝色整行高亮。
 - S18 聊天体验：首次获得 Ready 会话快照时选择按活动时间排序的首项；私聊筛选展示正常成员目录（排除自身），点击复用既有 Direct 创建/获取并选中返回会话；bootstrap 空库与管理员在同一事务内创建 `general` 公开频道及其创建者成员关系。消息列表保持回收虚拟化，短历史贴近 Composer；他人消息左侧浅灰、本人消息右侧品牌浅蓝。`@` 改为锚定输入框上方的浮层，正文键入 `@prefix` 即筛选候选，候选选择时重新验证完整 token 替换范围，Esc/选择或点击外部后收起并回焦输入框。独立复核的四个 P2（光标中段替换、默认筛选、目录刷新、Popup 键盘关闭）均已修复。
 - S19 聊天体验收口：`@` 浮层改为显式关闭（`StaysOpen=True`），由工具栏、Esc、候选选择和上下文变化管理，避免外部按钮点击打开后被 WPF 自动失焦关闭；工具栏点击立即打开，候选搜索只对实际新查询启动 200ms 防抖，保留上一批候选避免输入闪烁。候选浮层移除独立搜索框/按钮，使用方形默认头像、显示名和 `@username` 的紧凑成员行。消息改为头像与气泡分离的左右行：所有默认头像为方形、他人白色细边框气泡在左、本人品牌浅蓝气泡在右；单图继续保持比例的直接预览，圆角统一 12px。消息连续追加只在用户靠近底部时 `ScrollToEnd`，不再对新消息 `ScrollIntoView` 单个容器；同窗重发布与图片高度变化仍不重定位，真实历史 prepend 保留锚定补偿。
+- S21：移除消息列表在容器物化、尺寸变化和滚动期间动态写入 `Padding` 的逻辑。该逻辑会把虚拟化产生的 `ItemsChanged` 再次变成布局变更，形成布局反馈和 Dispatcher 积压风险；保留像素级回收虚拟化与仅在真实历史 prepend 时执行的视口锚定。私聊筛选在账户真正进入 Active 后读取一次服务端全员目录（排除自身），并按当前 coordinator 缓存，避免会话/连接快照重发时重复读取；服务器 `/api/users` 已有普通登录用户的全员目录回归证明。
 - 图片链路：补充 Alice/Bob 独立账户的真实 Kestrel 单 PNG 测试；双方分别以自身账号、缓存和认证下载规范消息附件，并通过既有受限解码器生成冻结缩略图。可见图片行的 UI 自动下载→缩略图触发仍由既有 `Image.Loaded` 链路持有，自动行为限定为会话已打开且图片项已物化。
 - 组件化：SettingsPanelControl 与 ChatHeaderControl 已以展示 DP + RoutedEvent 形式接入；MainWindow 继续持有更新、会话、搜索、成员与生命周期协调。
 - 收口：独立代码复核确认未触及 Server/Shared、消息可靠发送、附件安全或更新交接；修复窄窗口成员提示曾落入隐藏抽屉的 P2，并完成干净 HEAD 的 Release 双构建与离线校验。
@@ -138,6 +139,8 @@ git diff --check
 | `已验证` | S19 WPF 快照 | `ClientUiSnapshotTests` 28/28 通过；`artifacts/rc25/ui-snapshots/after-s19-chat-polish/` 覆盖主窗口、登录、成员、设置、搜索、强制更新、查看器和横/方/竖单图直接预览。已人工检查 1920×1080 主聊天与 1280×720 单图预览：短历史贴近 Composer，方形头像与气泡分离，图片无文件卡片外框。 |
 | `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast`（S19） | Debug 0 警告、0 错误；Shared 70、Server 353、Client 1,266、Updater 38，共 1,727 项通过。首轮 Server 发布脚本安全断言受并行临时文件时序影响失败；单独重跑及最终 Fast 均通过。 |
 | `已验证` | `pwsh ./scripts/verify.ps1 -Mode Full`（S19） | format、Release 构建 0 警告/错误、Release 全量 Shared 70、Server 353、Client 1,266、Updater 38（共 1,727 项）及 `git diff --check` 均通过。 |
+| `已验证` | S21 定向滚动、会话与目录 | `MessageListControlPresentationTests`、`ClientConversationPanelPresentationTests`、`ClientMessageScrollPolicyTests` 19/19；普通用户读取全员目录端到端回归 1/1；快照、图片与附件呈现 57/57 通过。 |
+| `已验证` | `pwsh ./scripts/verify.ps1 -Mode Fast` / `-Mode Full`（S21） | Debug/Release 均 0 警告、0 错误；Shared 70、Server 353、Client 1,267、Updater 38，共 1,728 项；Full 同时通过 format 与 `git diff --check`。 |
 
 ### 文件范围
 
