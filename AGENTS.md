@@ -1,53 +1,48 @@
-# Repository Guidelines
+# RelayCove Agent Guide
 
-## Read Order and Scope
+## Read order
 
-Before changing the repository, read this file, the relevant section of
-`RelayCove_工程落地方案.md`, `docs/ai/STATUS.md`, and the active task record.
-The specification is the product and architecture source of truth. Follow
-`docs/ai/WORKFLOW.md` for execution, evidence, review, and handoff rules.
-Implement one independently verifiable vertical slice at a time; do not add
-unrequested infrastructure, abstractions, or placeholder directories.
+Before editing, read:
 
-## Project Structure
+1. `RelayCove_Zulip_MAUI_重建开发计划.md` — product, architecture, security and acceptance source of truth.
+2. `docs/ai/STATUS.md` — verified current state and open gates.
+3. `docs/ai/WORKFLOW.md` — execution and evidence rules.
+4. The active record under `docs/ai/tasks/`.
 
-RelayCove is currently design-first. Planned modules are:
+Repository evidence outranks official documentation; official Zulip 12.1/OpenAPI evidence outranks assumptions. Mark results as verified only after running the named command against the current tree.
 
-- `src/RelayCove.Client/` — Windows WPF UI, notifications, and local cache.
-- `src/RelayCove.Server/` — ASP.NET Core API, SignalR, and persistence.
-- `src/RelayCove.Shared/` — DTOs, enums, constants, and protocol contracts.
-- `src/RelayCove.Updater/` — minimal Windows update launcher.
-- `tests/<Project>.Tests/` — tests mirroring source projects.
-- `docs/`, `scripts/`, and `installer/` — guidance, automation, and packaging.
+## Architecture boundaries
 
-## Build, Test, and Style
+- `RelayCove.App`: MAUI Views/ViewModels, Windows composition root and platform credential/config adapters.
+- `RelayCove.Core`: domain models, reducer, use cases and public interfaces; no MAUI, JSON, HTTP or SQLite references.
+- `RelayCove.Zulip.Client`: Zulip REST/event protocol and DTO mapping; no persistence or UI.
+- `RelayCove.Data`: SQLite cache and migrations; no credentials or network calls.
+- `RelayCove.Zulip.LiveTests` never runs as part of ordinary build/test commands.
 
-No runnable solution exists yet. After stage 0 scaffolding, use
-`pwsh ./scripts/verify.ps1 -Mode Fast` during development and `-Mode Full`
-before commits. Until then, do not claim that the project builds or tests.
+Do not introduce a RelayCove server, proxy, BFF, obsolete Zulip .NET SDK, WebView message renderer, alternate credential file, SQLCipher, installer, updater, mobile target or frozen visual system in Stage 21.
 
-Use four-space indentation, file-scoped namespaces, nullable reference types,
-and one public type per file. Use `PascalCase` for types and public members,
-`camelCase` for locals, `I` for interfaces, and `Async` for asynchronous
-methods. Keep I/O asynchronous and logged; never block the WPF UI thread.
-Name xUnit tests `Method_WhenCondition_ExpectedResult`. Bug fixes require
-regression tests.
+## Code style
 
-## Agent Evidence and Safety
+Use four-space indentation, file-scoped namespaces, nullable reference types, one public type per file, async I/O, cancellation tokens and deterministic tests. Public types/members use PascalCase, locals use camelCase, interfaces use `I`, and async methods end in `Async`. xUnit names follow `Method_WhenCondition_ExpectedResult`. Bug fixes require a regression test.
 
-Work on `agent/stage-<number>-<slug>` branches. Inspect `git status` and the
-baseline before editing. Repository facts outrank official documentation,
-which outranks explicitly labeled assumptions. Mark conclusions as
-`已验证`, `未验证`, or `假设`; report a check as passing only after running it.
-Stop for unrelated dirty changes, failing baselines, secrets, destructive
-actions, ambiguous acceptance criteria, compatibility changes, or new major
-dependencies. Local commits are allowed after validation; pushing and merging
-require explicit user approval.
+Secrets must never appear in `ToString`, exceptions, logs, snapshots, fixtures or packages. Production HTTP redirects stay disabled. Non-idempotent message sends are never automatically retried.
 
-## Commits and Pull Requests
+## Validation
 
-Use short imperative commits such as `Add message deduplication`. Keep unrelated
-changes separate. Pull requests must explain the reason, impact, verification,
-limitations, and development stage; link issues and include screenshots for
-WPF changes. Authentication, migrations, synchronization, notifications,
-updates, and deployment require an independent review.
+During development:
+
+```powershell
+pwsh ./scripts/verify.ps1 -Mode Fast
+```
+
+Before a delivery commit:
+
+```powershell
+pwsh ./scripts/verify.ps1 -Mode Full
+```
+
+`Live` requires explicit isolated test credentials and write confirmation; missing configuration must fail closed. Never substitute a personal account or production channel.
+
+Inspect `git status` before and after work. Preserve unrelated user changes. Do not use destructive Git commands, force-push, push, tag, publish, alter the Zulip host, delete legacy local data or run external writes without explicit authorization.
+
+Authentication, protocol, synchronization, data, outbox and packaging changes require an independent read-only review. Record unresolved P0/P1 findings and unverified VM/Live gates in STATUS rather than weakening the acceptance criteria.

@@ -1,7 +1,9 @@
 <Project>
   <PropertyGroup>
+    <AnalysisLevel>latest</AnalysisLevel>
     <Deterministic>true</Deterministic>
     <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>

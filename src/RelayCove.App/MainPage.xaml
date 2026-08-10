@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
+             x:Class="RelayCove.App.MainPage"
+             x:DataType="viewModels:ShellViewModel"
+             Title="RelayCove">
+    <Grid Padding="20" RowDefinitions="Auto,*">
+        <Label Grid.Row="0" Text="RelayCove" FontSize="24" />
+
+        <ScrollView Grid.Row="1" IsVisible="{Binding LoginVisible}">
+            <VerticalStackLayout Spacing="12" MaximumWidthRequest="480">
+                <Label Text="使用 Zulip 邮箱密码登录" FontSize="18" />
+                <Entry Placeholder="Realm" Text="{Binding Realm}" Keyboard="Url" />
+                <Entry Placeholder="邮箱" Text="{Binding Email}" Keyboard="Email" />
+                <Entry Placeholder="密码" Text="{Binding Password}" IsPassword="True" />
+                <Button Text="登录" Command="{Binding LoginCommand}" />
+                <Button Text="取消登录" Command="{Binding LoginCancelCommand}" />
+                <Label Text="{Binding LoginError}" TextColor="DarkRed" />
+            </VerticalStackLayout>
+        </ScrollView>
+
+        <Grid Grid.Row="1" IsVisible="{Binding MainVisible}" ColumnDefinitions="180,180,180,*" RowDefinitions="Auto,*,Auto" ColumnSpacing="12" RowSpacing="8">
+            <VerticalStackLayout Grid.ColumnSpan="4" Spacing="2">
+                <Label Text="{Binding ConnectionStatus}" />
+                <Label Text="{Binding LoginError}" TextColor="DarkRed" />
+            </VerticalStackLayout>
+
+            <Grid Grid.Row="1" Grid.Column="0" RowDefinitions="Auto,*" RowSpacing="6">
+                <Label Text="频道" FontAttributes="Bold" />
+                <CollectionView Grid.Row="1" ItemsSource="{Binding Channels}" SelectedItem="{Binding SelectedChannel}" SelectionMode="Single">
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="viewModels:ChannelItem">
+                            <Label Text="{Binding Name}" Padding="4" />
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+            </Grid>
+
+            <Grid Grid.Row="1" Grid.Column="1" RowDefinitions="Auto,*" RowSpacing="6">
+                <Label Text="话题" FontAttributes="Bold" />
+                <CollectionView Grid.Row="1" ItemsSource="{Binding Topics}" SelectedItem="{Binding SelectedTopic}" SelectionMode="Single">
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="viewModels:TopicItem">
+                            <Label Text="{Binding Topic}" Padding="4" />
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+            </Grid>
+
+            <Grid Grid.Row="1" Grid.Column="2" RowDefinitions="Auto,*" RowSpacing="6">
+                <Label Text="私信" FontAttributes="Bold" />
+                <CollectionView Grid.Row="1" ItemsSource="{Binding DirectMessages}" SelectedItem="{Binding SelectedDirectMessage}" SelectionMode="Single">
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="viewModels:NavigationItem">
+                            <Label Text="{Binding Title}" Padding="4" />
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+            </Grid>
+
+            <Grid Grid.Row="1" Grid.Column="3" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="8">
+                <Button Text="加载更早消息" Command="{Binding LoadOlderCommand}" IsEnabled="{Binding HasSelectedConversation}" />
+                <CollectionView Grid.Row="1" ItemsSource="{Binding Messages}" SelectionMode="None">
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="viewModels:MessageItem">
+                            <VerticalStackLayout Padding="6" Spacing="2">
+                                <Label Text="{Binding Sender}" FontAttributes="Bold" />
+                                <Label Text="{Binding Content}" LineBreakMode="WordWrap" />
+                                <Label Text="{Binding DeliveryState}" FontSize="12" TextColor="DarkOrange" />
+                                <Button Text="恢复到输入框"
+                                        IsVisible="{Binding CanRecover}"
+                                        Command="{Binding RecoverCommand}"
+                                        CommandParameter="{Binding .}" />
+                                <Label Text="{Binding Timestamp}" FontSize="12" />
+                            </VerticalStackLayout>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+                <Entry Grid.Row="2" Placeholder="输入原始 Markdown 文本" Text="{Binding ComposerText}" IsEnabled="{Binding HasSelectedConversation}" />
+                <HorizontalStackLayout Grid.Row="3" Spacing="8">
+                    <Button Text="发送" Command="{Binding SendCommand}" IsEnabled="{Binding HasSelectedConversation}" />
+                    <Button Text="标记当前页已读" Command="{Binding MarkReadCommand}" IsEnabled="{Binding HasSelectedConversation}" />
+                </HorizontalStackLayout>
+            </Grid>
+
+            <HorizontalStackLayout Grid.Row="2" Grid.ColumnSpan="4" Spacing="8">
+                <Button Text="注销" Command="{Binding LogoutCommand}" />
+                <Button Text="清除本地缓存" Command="{Binding RequestClearCacheCommand}" />
+                <Label Text="此操作会删除当前账号的本地缓存，无法恢复。" IsVisible="{Binding ClearCacheConfirmationVisible}" VerticalTextAlignment="Center" />
+                <Button Text="确认清除" Command="{Binding ConfirmClearCacheCommand}" IsVisible="{Binding ClearCacheConfirmationVisible}" />
+                <Button Text="取消" Command="{Binding CancelClearCacheCommand}" IsVisible="{Binding ClearCacheConfirmationVisible}" />
+            </HorizontalStackLayout>
+        </Grid>
+    </Grid>
+</ContentPage>

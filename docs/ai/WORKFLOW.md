@@ -1,115 +1,62 @@
-# AI 开发工作流
+# Stage 21 Engineering Workflow
 
-本文定义 RelayCove 的 AI 执行协议。工程范围和架构以
-[`RelayCove_工程落地方案.md`](../../RelayCove_工程落地方案.md) 为准；本文只规定如何安全、高效地完成任务。
+## 1. Orient
 
-## 1. 信息来源与必读顺序
+Read the root plan, STATUS and active task. Run `git status --short`, confirm the expected branch, and identify unrelated user changes before editing. The current reset is authorized directly on local `main`; this does not authorize pushing or future direct-main work.
 
-每个任务开始前按顺序读取：
+## 2. Implement a vertical slice
 
-1. 根目录 `AGENTS.md`
-2. 工程落地方案中与当前阶段直接相关的章节
-3. [`STATUS.md`](STATUS.md)
-4. 当前任务文件
-5. 实际代码、配置、测试和 Git 状态
+Keep changes inside one independently testable path:
 
-可信度顺序为：**仓库事实 > 官方文档 > 明确标注的假设**。使用外部库或平台 API 时，只引用官方文档，并在任务日志中记录版本或访问日期。不得凭记忆编造文件、类型、命令、接口或测试结果。
+1. contract/domain;
+2. adapter/storage;
+3. session/use case;
+4. ViewModel/View;
+5. tests and documentation.
 
-## 2. 标准执行循环
+Do not add speculative services, placeholder projects or features outside the frozen MVP. Use official Zulip 12.1 OpenAPI/Docs for protocol decisions and record intentional product restrictions separately from server protocol restrictions.
 
-### 检查
+## 3. Verify locally
 
-- 执行 `git status -sb`，记录当前分支和基准提交。
-- 用 `rg`、项目文件、实际类型和现有测试确认实现现状。
-- 如果已有代码，先执行适合当前阶段的基线验证。
-- 发现不相关修改时不得覆盖、暂存或提交它们。
-
-### 计划
-
-- 从 [`TASK_TEMPLATE.md`](TASK_TEMPLATE.md) 创建任务文件。
-- 明确目标、范围、非目标、允许修改区域、验收标准和停止条件。
-- 将任务限制为一个可独立验收的纵向切片。
-- 默认分支名为 `agent/stage-<编号>-<slug>`。
-
-### 实现
-
-- 只修改完成验收标准所必需的内容。
-- 不顺手重构，不预建空目录，不加入未来阶段功能。
-- 新依赖、协议或数据库变化必须有明确需求与决策记录。
-- 网络、文件和数据库操作必须可诊断；不得隐藏异常或伪造回退结果。
-
-### 验证
-
-阶段 0 脚手架完成后统一使用：
+Run the narrowest relevant tests first. Then run:
 
 ```powershell
 pwsh ./scripts/verify.ps1 -Mode Fast
+```
+
+Fast must be deterministic, offline-safe and exclude `RelayCove.Zulip.LiveTests`.
+
+Before delivery, run:
+
+```powershell
 pwsh ./scripts/verify.ps1 -Mode Full
 ```
 
-- `Fast` 用于开发循环：依赖还原、Debug 构建、自动化测试。
-- `Full` 用于提交和阶段验收：格式检查、Release 构建、全部自动化测试、`git diff --check`。
-- 没有脚手架前不得创建“总是成功”的占位验证脚本，也不得声称项目已构建。
-- Windows 通知、托盘、断网恢复等人工场景必须记录环境、步骤、预期和实际结果。
+Full performs Release build/tests, app-project-only publish, ZIP creation, content checks and secret scan. A solution-level `dotnet publish` is prohibited.
 
-### 自审
+Run Live only with explicit authorization and complete isolated configuration:
 
-提交前检查完整差异以及：
+```powershell
+pwsh ./scripts/verify.ps1 -Mode Live
+```
 
-- 认证与会话权限
-- 异常、取消、日志和 UI 线程
-- 消息幂等、同步和通知去重
-- 附件路径安全与敏感信息
-- 调试代码、无关改动和遗漏测试
+Missing host, two dedicated account credentials, recipient allowlist or write confirmation is a failure, not a skip.
 
-只有实际执行成功的检查才能标记为 `已验证`。未执行的检查必须写成 `未验证` 并说明原因；推断必须写成 `假设`。
+## 4. Review high-risk changes
 
-### 记录与提交
+Authentication, network protocol, event synchronization, database/migrations, cache authorization, outbox and packaging each require an independent read-only review. Verify findings against repository evidence and the frozen plan; advisory findings that contradict an explicit product decision must be documented and rejected with evidence, not implemented blindly.
 
-- 更新任务日志的修改摘要、命令、结果、限制和下一步。
-- 只有状态真实变化时才更新 `STATUS.md`。
-- 同一任务只要改变公共协议、数据库语义、迁移或兼容性前提，就必须同步更新 [`DECISIONS.md`](DECISIONS.md)；不能把决定只留在代码、任务记录或聊天中。
-- 改变已接受决策的前提时必须新增决策并链接被替代项，不得直接改写历史决定。尤其是增加服务端写实例、更换数据库、允许消息变更或改变消息 ID 与提交顺序时，必须重新评审 `DEC-003` 的同步协议。
-- 验证通过后可以创建本地提交，提交信息使用简短祈使句。
-- 未经用户明确授权，不得推送、创建 PR、合并、发布或部署。
+Resolve all P0/P1 findings or record a genuine blocker. Re-run the affected narrow tests and Fast after fixes.
 
-## 3. 停止并询问
+## 5. Evidence and handoff
 
-出现以下任一情况时停止实现，保留现场并请求用户决定：
+Update STATUS and the active task with:
 
-- 基线验证失败，且原因不是本任务范围内的已知问题
-- 工作区存在会被覆盖或混入提交的不相关修改
-- 验收标准有多种会显著改变结果的解释
-- 需要修改架构边界、公共协议、数据库兼容策略或加入大型依赖
-- 发现密钥、生产数据、破坏性操作或不可逆外部写入
-- 无法运行必要验证，且缺少证据证明修改安全
+- exact commands and pass/fail counts;
+- icon/package SHA-256 values;
+- review scope and resolution;
+- external writes performed (normally none);
+- VM, Live or UI gates not run;
+- known limitations.
 
-## 4. 分级复核
-
-普通任务由执行者完成差异自审。以下任务在本地提交后必须使用
-[`REVIEW_TEMPLATE.md`](REVIEW_TEMPLATE.md) 做独立复核：
-
-- 认证、授权和密钥处理
-- 数据库迁移与数据兼容
-- 消息幂等、断线同步和通知去重
-- 自动更新、部署和生产配置
-
-审查者默认只报告问题，不修改文件。问题必须包含严重级别、文件位置、触发条件、影响和验证证据。执行者修复后重新运行对应验证。
-
-## 5. 速度原则
-
-- Codex 全局和项目默认启用 Fast；Fast 只提高服务速度，不替代 reasoning effort 或验证。
-- 开发循环运行 `Fast`，提交前再运行 `Full`。
-- 提示词只引用必要章节，不粘贴整份工程方案。
-- 日志只保留决策和证据，不保存思考过程或完整终端输出。
-- 新任务从状态页和任务日志恢复，不依赖历史聊天。
-- 并行工作只用于只读调查、独立测试或互不重叠的模块；共享协议、迁移和同一文件不得并行编辑。
-
-## 6. 模型路由与第二意见
-
-- 主代理继承用户全局配置：`gpt-5.6-sol + xhigh`，负责需求、决策、实现和最终验证。
-- 普通子代理默认使用 `gpt-5.6-terra + high`，处理只读探索、资料压缩和独立测试。
-- `reviewer` 使用 `gpt-5.6-sol + high`，处理正确性、安全性和可靠性复核；极关键任务可在调用时显式提升到 `xhigh`。
-- `claude_second_brain` 只由主代理在取得仓库证据后，对每项重大架构、安全、数据库、协议或可靠性决策调用一次；默认 Claude Sonnet High，不用于普通代码审查或可由搜索、测试直接确认的事实。
-- 每项重大决策只发起一次：默认选择 Sonnet/High；若调用前的仓库证据已经留下未解决的高风险问题，该次可直接选择 Opus/XHigh，`max` 仅用于输入已经缩小的狭窄终局争议。答案返回后不为同一决策追加升级调用，除非用户另有明确指示；正在运行的只读任务不因耗时、费用、空闲或输出量取消。
-- 子代理不得调用 Claude；普通审查使用 Codex `reviewer`。子代理与 Claude 均默认只读，只有主代理拥有实现职责，避免并行修改同一文件。
+A local commit is allowed only after relevant validation. Push, merge, tag, publish, server changes, secret use and destructive cleanup require separate explicit user authorization.

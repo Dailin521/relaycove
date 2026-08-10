@@ -2,20 +2,18 @@ root = true
 
 [*]
 charset = utf-8
-end_of_line = lf
+end_of_line = crlf
 insert_final_newline = true
 trim_trailing_whitespace = true
 
-[*.cs]
+[*.{cs,csproj,props,targets,xaml,xml}]
 indent_style = space
 indent_size = 4
-csharp_style_namespace_declarations = file_scoped:warning
-dotnet_sort_system_directives_first = true
 
-[*.{csproj,props,json,xaml}]
+[*.{json,md,yml,yaml}]
 indent_style = space
 indent_size = 2
 
-[*.ps1]
-indent_style = space
-indent_size = 4
+[*.cs]
+dotnet_sort_system_directives_first = true
+csharp_style_namespace_declarations = file_scoped:suggestion
