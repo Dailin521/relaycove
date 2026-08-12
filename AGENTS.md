@@ -13,19 +13,22 @@ Repository evidence outranks official documentation; official Zulip 12.1/OpenAPI
 
 ## Architecture boundaries
 
+- `RelayCove.Web`: independently deployable TypeScript/React/Vite client; browser Zulip HTTP/session adapters and UI only, no MAUI runtime or .NET UI dependency.
 - `RelayCove.App`: MAUI Views/ViewModels, Windows composition root and platform credential/config adapters.
 - `RelayCove.Core`: domain models, reducer, use cases and public interfaces; no MAUI, JSON, HTTP or SQLite references.
 - `RelayCove.Zulip.Client`: Zulip REST/event protocol and DTO mapping; no persistence or UI.
 - `RelayCove.Data`: SQLite cache and migrations; no credentials or network calls.
 - `RelayCove.Zulip.LiveTests` never runs as part of ordinary build/test commands.
 
-Do not introduce a RelayCove server, proxy, BFF, obsolete Zulip .NET SDK, WebView message renderer, alternate credential file, SQLCipher, installer, updater, mobile target or frozen visual system in Stage 21.
+The official Zulip Web remains untouched. `RelayCove.Web` and `RelayCove.App` both connect directly to the same Zulip Realm; never introduce a RelayCove server, proxy, BFF, second message backend, obsolete Zulip .NET SDK or WebView renderer. The two frontends share tokens, interaction specifications, capability matrices and acceptance scenarios, but not UI runtime code.
 
 ## Code style
 
 Use four-space indentation, file-scoped namespaces, nullable reference types, one public type per file, async I/O, cancellation tokens and deterministic tests. Public types/members use PascalCase, locals use camelCase, interfaces use `I`, and async methods end in `Async`. xUnit names follow `Method_WhenCondition_ExpectedResult`. Bug fixes require a regression test.
 
 Secrets must never appear in `ToString`, exceptions, logs, snapshots, fixtures or packages. Production HTTP redirects stay disabled. Non-idempotent message sends are never automatically retried.
+
+Web users may opt to persist the API key in browser local storage and remember-login is the product default. Logout must remove persistent and session credentials; keys never enter URLs, logs, UI text or test snapshots.
 
 ## Validation
 

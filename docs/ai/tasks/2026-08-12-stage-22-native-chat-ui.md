@@ -1,178 +1,253 @@
-# Stage 22 — Native Chat UI
+# Stage 22 — RelayCove 双前端（22W Web / 22M Native MAUI）
 
-- Status: planned
-- Design baseline: `docs/ui/baselines/chat-ui-v1/`
+- Status: Stage 22W / Slice 1, Slice 2 and Slice 3 complete on the current uncommitted review tree; local gates, independent review and fixed-entry deployment passed; Stage 22M planned
+- Execution branch: `codex/stage-22w-web-foundation`
+- Starting point: clean `main` at `1374985197aca39806b8780f2e9f17799ffe3abe`
+- Design source: immutable `docs/ui/baselines/chat-ui-v1/`
 - Interaction source: `docs/ui/INTERACTION_SPEC.md`
-- Execution branch: not created
 
-## Objective
+## Confirmed product decision
 
-把用户确认的 `chat-ui-v1` 视觉和交互结构转换为 Windows-first 原生 .NET MAUI 界面，同时继续通过 `IClientSession` 使用 Zulip 权威状态。禁止把冻结 HTML 放入 WebView，禁止为了匹配原型重新引入服务端、私有协议或第二套业务状态。
+1. 现有 Zulip 官方 Web 保留，不修改、不替换。
+2. `RelayCove.Web` 是可以独立部署和正式使用的 Web 客户端。
+3. `RelayCove.App` 继续使用 .NET MAUI，以原生 XAML/ViewModel 复刻冻结后的 Web 交互，不使用 WebView。
+4. Web 与 MAUI 都直接连接同一个 Zulip Realm；Zulip 是唯一业务事实源。
+5. 不新增 RelayCove server、BFF、代理协议或第二套消息后端。
+6. 两端共享视觉 Token、交互规格、功能矩阵和验收场景，但不共享 UI 运行时代码。
+7. Web 默认“记住登录”，允许把 API Key 保存在当前浏览器 local storage；注销清除 local/session storage。
 
-Stage 22 目前只登记为 planned。Stage 21 的 Live、人工密码登录和干净 Windows 11 VM 门禁仍未完成；本任务不能被用来把 Stage 21 标记为完成。
+Stage 21 的真实 Realm Live、MAUI 人工密码登录和干净 Windows 11 x64 VM 门禁仍未完成。本任务不能被用来把 Stage 21 标记为完成。
 
-## Activation gate
+## Stage split
 
-开始改 MAUI 前必须满足：
+### Stage 22W — RelayCove Web
 
-- 用户确认 `chat-ui-v1` 作为首个原生转换基线；
-- 交互规格中的范围归属和已知差异无 P0/P1 歧义；
-- 确认首个交付只做原生视觉迁移，还是同时启用某个新能力门；
-- 创建 `codex/` 前缀执行分支，除非用户另有明确指示；
-- 记录变更前 `git status` 和 Stage 21 外部门禁状态。
+先实现、测试和验收正式 Web。每个交互版本通过浏览器门禁后记录截图、Token、功能矩阵、验收场景与已知差异，再作为 Stage 22M 输入。
 
-## Scope split
+### Stage 22M — MAUI native parity
 
-### 22A — App-only 原生外壳
+状态：planned。只在相应 Web 交互版本冻结后启动；使用原生 XAML、ResourceDictionary、ViewModel、Behavior 和 Windows adapter，不引用 React runtime，不加载 WebView。
 
-不新增网络、存储或领域契约：
+## Stage 22W / Slice 1 — production foundation
 
-- Windows 标题栏与置顶、最小化、最大化/还原、关闭。
-- 主导航、频道与 1:1/群组/self-DM 分组、聊天头部、消息列表、底部输入区、详情和设置视图。
-- 浅色/深色 token、密度、字号、圆角和 1440×900/1024×768 布局。
-- 将 `MainPage.xaml` 拆为可测试的私有 App 组件。
-- 继续显示 raw Markdown，不引入 WebView 或 HTML 渲染。
-- 详情和导航只显示当前契约能证明的数据；频道成员/人数、共同频道、presence、saved flags 和 capability 在能力门前隐藏或标为不可用。
+### Production project
 
-### 22B — 现有 Stage 21 状态保真
+- `src/RelayCove.Web/`：TypeScript 7、React 19、Vite 8。
+- 本地 bundle：React、Lucide 图标与全部运行依赖；生产 HTML 无运行时 CDN。
+- `package-lock.json` 固定依赖；NuGet、npm 和 Chromium 由单独 bootstrap 显式预置，普通 Fast/Full 不恢复/安装依赖或下载浏览器。
+- 生产构建排除集中在 `src/fixtures/` 的演示数据；E2E 专用构建才启用 `?fixture=chat`。
 
-- 把 Connected、Offline、Reconnecting、RateLimited、Locked、ReauthRequired 映射到明确 UI。
-- 把 Hidden、Waiting、WaitExpired、Failed 映射到消息气泡和恢复入口。
-- 从 Core `UnreadState` 实时投影会话红点和主导航总数。
-- 使用 keyed reconcile 保持选择、滚动、草稿和焦点。
-- 将单行 `Entry` 替换为多行 `Editor`；原生拖柄范围 72–300 px，键盘步进 16 px。
-- 只保留 Stage 21 可执行的文本发送；上传按钮在附件能力门前必须禁用或明确标为后续。
-- 完整保留 Stage 21 的 1:1、群组和 self-DM 导航、分页、未读、草稿、发送与 outbox；群组收件人来自 `DirectMessage` 规范 ID 集合。
+### Component boundaries
 
-### 22C+ — 独立能力门
-
-下列能力逐项实施，不能合并成一个无边界“大 UI”提交：
-
-1. 频道成员关系、共同频道、presence 与已保存消息读取。
-2. 全局搜索。
-3. 图片上传、预览和授权下载。
-4. 频道 `@` 成员候选。
-5. 频道重命名、归档/删除语义、成员移除和主动退出。
-6. 反应与其他富消息能力。
-
-每项在开始前补充官方 Zulip 12.1/OpenAPI 证据、契约、数据迁移影响、安全审查范围和确定性测试。
-
-## Concrete implementation order
-
-### Slice 1 — Token 和窗口骨架
-
-- 新建 App 内部颜色、间距、字号、圆角和尺寸 token。
-- 实现 Windows 标题栏 adapter 和原生窗口按钮。
-- 建立四列布局及收窄 VisualState。
-- 验收：1440×900 与 1024×768 浅/深色截图，无横向滚动。
-
-### Slice 2 — 导航与会话投影
-
-- 拆分 `NavigationRailView` 与 `ConversationPaneView`。
-- 新建纯 `ShellStateProjector`，从 `ClientState` 生成 keyed UI 项。
-- 保留 `ChannelTopic` 和 `DirectMessage` 的真实会话键，并覆盖 1:1、群组和 self-DM 的稳定标题/选择。
-- 通过未读事件增减、read flag、消息移动/删除和撤权回归测试。
-- 验收：未读变化不清空列表、不丢失选中会话。
-
-### Slice 3 — 消息列表与状态
-
-- 拆分 `ChatHeaderView` 和虚拟化 `MessageListView`。
-- 实现正常、加载、空、离线、锁定和 outbox 状态模板。
-- 保持分页锚点，切换会话取消旧请求。
-- 验收：频道、1:1、群组、self-DM 的 50 条分页、长文本、连续快速切换和失败恢复。
-
-### Slice 4 — Composer 和草稿
-
-- 新建 `ComposerView`，使用多行 `Editor`。
-- App 层保存每会话草稿；View/Behavior 管理光标、拖拽和高度 clamp。
-- 离线时保留草稿，不触发发送；模糊失败不自动重试。
-- 群组 DM 必须从选中 `DirectMessage` 的规范参与者集合发送，不能解析显示标题。
-- 用提交 token/草稿版本隔离发送快照；成功确认不能清除发送后的新输入，也不能在会话切换后恢复已发送正文或图片。
-- 验收：1:1/群组/self-DM 草稿隔离、发送中切换的 success/WaitExpired/Failed（正文与图片）、指针、键盘、窗口收窄、焦点恢复和 Ctrl+Enter。
-
-### Slice 5 — 详情与设置
-
-- 新建 `DetailsPaneView` 和原生设置页。
-- 只显示当前已有数据能诚实支撑的频道/话题、DM 参与者、缓存、账户和外观信息；成员关系、共同频道、presence、saved flags 和 capability 在能力门前隐藏或标为不可用。
-- 清缓存与注销继续复用现有安全命令和确认状态。
-- 新能力入口按 capability/feature gate 禁用或隐藏。
-
-### Slice 6 — Windows UI 验收
-
-- 1440×900、1024×768，浅色、深色，100% 和 200% 缩放。
-- 鼠标、全键盘、滚轮、拖拽、窗口最大化/还原。
-- 长列表、空会话、离线、Waiting、WaitExpired、Failed、Locked。
-- Fast、Full 与真实窗口证据分别记录。
-
-## Proposed code landing points
-
-| 责任 | 目标位置 |
+| Responsibility | Landing point |
 |---|---|
-| App views | `src/RelayCove.App/Views/` |
-| App components | `src/RelayCove.App/Controls/` |
-| UI state/projectors | `src/RelayCove.App/ViewModels/` |
-| Windows window behavior | `src/RelayCove.App/Platforms/Windows/` |
-| Theme/tokens | `src/RelayCove.App/Resources/Styles/` |
-| App regression tests | `tests/RelayCove.App.Tests/` |
+| application/auth routing | `src/RelayCove.Web/src/App.tsx` |
+| product bar/window shell | `src/RelayCove.Web/src/components/ProductBar.tsx` |
+| primary navigation | `src/RelayCove.Web/src/components/NavigationRail.tsx` |
+| channel/DM groups | `src/RelayCove.Web/src/components/ConversationPane.tsx` |
+| chat header/messages | `src/RelayCove.Web/src/components/ChatHeader.tsx`, `MessageList.tsx` |
+| message actions/media | `src/RelayCove.Web/src/components/MessageContextMenu.tsx`, `MessageImage.tsx`, `RealmMedia.tsx` |
+| multiline composer | `src/RelayCove.Web/src/components/Composer.tsx` |
+| collapsible details | `src/RelayCove.Web/src/components/DetailsPane.tsx` |
+| settings/account | `src/RelayCove.Web/src/components/SettingsPage.tsx` |
+| shared visual tokens | `src/RelayCove.Web/src/styles/tokens.css` |
+| deterministic demo state | `src/RelayCove.Web/src/fixtures/` |
 
-不得因为目录规划而新增不需要的公共 API；每个切片只创建当下被使用的类型。
+Implemented shell behavior in this Slice:
 
-## New capability gates
+- top product bar and browser-safe window-control visual states;
+- primary navigation and explicit unavailable capability states;
+- channel/direct-message grouping and deterministic fixture filtering;
+- chat header, raw-text message skeleton, day/unread separators;
+- per-conversation draft state and 72–300 px multiline Composer sizing;
+- collapsible details with no inferred membership/presence/capability;
+- settings skeleton, light/dark themes and 1440×900 / 1024×768 / narrow layout;
+- below 720 px, conversation-list/chat single-pane navigation.
 
-### Membership and saved-data gate
+The fixture is visual evidence only. It does not represent a Zulip register snapshot, does not enter production builds, and never shares the formal API/session path.
 
-- 分开建模 Realm 用户、频道成员关系、共同频道、presence 和频道 capability，禁止从 Realm 用户列表推断频道成员。
-- 为 saved/starred flags 增加协议、Core 投影、账号隔离缓存和撤权清理测试；启用前不声称“已保存”可用。
-- 只读成员能力不授权频道管理写入；管理命令仍需独立 gate 和服务端复核。
+### Zulip browser API and credential boundary
 
-### Search gate
+- Realm validation accepts only a canonical HTTPS origin without userinfo, path, query or fragment.
+- `GET /api/v1/server_settings` is sent without credentials and checks feature level 500, compatibility and email authentication.
+- `POST /api/v1/fetch_api_key` sends username/password as form data; password is not persisted.
+- `createAuthenticatedRequest` applies HTTP Basic `email:apiKey` while keeping the key out of the URL.
+- fetch uses `redirect: error`, `credentials: omit`, `cache: no-store` and `no-referrer`.
+- remember-login defaults to true: local storage when checked, session storage when unchecked.
+- logout clears both browser stores; corrupted credential JSON fails closed.
+- errors expose only fixed categories/status, not request body, password, API key or server body.
 
-- Core：`SearchQuery`、`SearchResult`、来源和取消语义。
-- Data：缓存搜索、特殊字符和账号隔离。
-- Zulip.Client：在线 narrow/search。
-- App：分组、部分/单数字匹配、绿色 spans、上下键和过期结果抑制。
+All current login/API tests use fake HTTP. No real account or credential is required for this Slice. The selected same-origin `/relaycove-web/` static deployment has passed its browser/HTTPS/security-header check; moving to another origin would reopen the CORS gate, which must not be bypassed with a new proxy.
 
-### Attachment gate
+## Stage 22W / Slice 2 — formal Zulip message client
 
-- 上传、授权下载和重定向/脱敏安全复核。
-- 图片选择取消、类型/大小、预览移除和失败恢复测试。
-- 消息 POST 仍只发送一次；模糊结果不自动重发。
+Implemented production path:
 
-### Mention gate
+- login completes `server_settings -> fetch_api_key -> users/me`, verifies the returned user ID before persisting a complete browser session;
+- `POST /register` publishes subscriptions, users, recent DMs, unread and limits as one reducer snapshot; queue ID/cursor remain private in-memory session fields;
+- `GET /events` long-polls with the server timeout, handles heartbeat/unknown events, message/edit/delete/move/flags, subscription/stream/user/restart, 401, 429, network backoff and `BAD_EVENT_QUEUE_ID` re-registration;
+- subscribed channel topics, known active contacts, 1:1/group/self-DM and new channel-topic entry use canonical conversation keys; no display title is parsed back into Zulip identity;
+- newest/older history uses exact channel/topic or DM narrow, raw Markdown and 50-message paging; stale selection responses are aborted and rejected by lifecycle/selection epochs;
+- mark-read changes the projection only after the server confirms the current narrow;
+- text sends are serialized, carry queue/local identity, never auto-resend, reconcile through realtime local echo or one read-only message lookup, and expose Hidden/Waiting/WaitExpired/Failed recovery states;
+- logout aborts event/history/send work, best-effort deletes the queue and then clears both credential stores; 401 fails closed to the login page;
+- message projection, queue/cursor and outbox are page-memory only. Only confirmed credentials and non-sensitive appearance preferences persist in browser storage.
 
-- 决定候选是频道成员还是 Realm 用户，并取得可靠数据。
-- 频道可用，任何 DM 不弹候选。
-- 解析光标、重名用户和 Zulip Markdown 格式测试。
+Production `App.tsx` imports this session/store/projector path and never imports `src/fixtures` or `src/test`. The local fixture still reuses the same visual components through the development/E2E-only Vite entry.
 
-### Channel management gate
+## Stage 22W / Slice 3 — complete message affordances and image media
 
-- 建模服务器 capability，不只使用 `IsAdmin`。
-- 重命名、归档/删除、移出成员和退出分别确认 API 语义。
-- 403/权限变化刷新、危险确认和外部写入授权。
+Implemented production path:
 
-## Validation
+- right-click, keyboard menu key/`Shift+F10` and mobile “more” expose one accessible message menu; its current actions only mutate local UI/clipboard or open the official Zulip permalink and never issue a Realm write;
+- users, conversations and messages map Zulip `avatar_url`, fallback `/avatar/{user_id}` and bot identity through a same-Realm Blob loader with deterministic initials/Bot fallback;
+- same-Realm PNG/JPEG/WebP/GIF/AVIF upload Markdown becomes a controlled thumbnail, Blob download and focus-trapped viewer; unsafe, SVG, cross-Realm and overflow links remain literal raw Markdown;
+- Composer validates type/zero length/server/product size, keeps per-conversation text/image drafts, supports remove without losing text, uploads once and then submits the returned Markdown once;
+- upload/message POST never auto-retry; a confirmed upload is reused only after an explicit subsequent send. Confirmed logout aborts upload, invalidates its epoch and releases draft URLs before clearing the session;
+- resource limits are four previews per message, four concurrent Realm media reads and 64 MiB loaded Blob budget.
 
-开发中：
+Formal automation covers avatar/media Basic boundaries, temporary upload URLs without Authorization on the final Blob request, image MIME/size rejection, context-menu keyboard/focus/clipboard, viewer close/download/focus, exact multipart upload + Markdown send, logout/late-result cancellation and production fixture exclusion. No real Realm upload or message write is used.
+
+## Remaining independent capability gates
+
+- global/server search, non-image attachments, reactions, mentions, membership, saved messages, presence or channel management;
+- formal Web service worker or offline cache;
+- automatic scroll-threshold paging, long-list virtualization and cross-page visual-anchor preservation;
+- any Stage 22M MAUI visual conversion.
+
+Visual buttons for remaining capabilities stay disabled, hidden or explicitly marked unavailable. A fixture-only affordance is not production capability evidence. Real-account authenticated reads and message writes also remain external acceptance gates; fake HTTP does not satisfy them.
+
+## Validation matrix
+
+### Web offline Fast
+
+```powershell
+cd src/RelayCove.Web
+npm run typecheck
+npm run test:unit
+npm run build
+```
+
+Expected: TypeScript passes; login, API, mapping, reducer, lifecycle, unread, queue rebuild and ambiguous-send unit tests pass; production bundle exists, contains no runtime CDN and excludes fixture content.
+
+### Web browser Full
+
+```powershell
+cd src/RelayCove.Web
+npm run test:e2e
+```
+
+Expected on local production preview with mock/fake HTTP:
+
+- console errors/warnings: zero;
+- 1440×900 light and dark screenshots;
+- 1024×768 light screenshot and no horizontal overflow;
+- keyboard focus from search to conversation;
+- Composer Arrow/Home/End clamp;
+- details Escape dismissal;
+- below-720 list/chat switching;
+- default remember-login, refresh restore and confirmed logout clearing both stores;
+- password/API key absent from URL and password absent from stored credential.
+- formal fake-HTTP journey: users/me, register, topic/DM history, server-confirmed read, one text send, read-only reconciliation, refresh restore and queue cleanup;
+- message actions, protected avatar fallback/success, controlled image viewer/download, image draft remove, one upload + one Markdown send and logout-during-upload cancellation;
+- group-DM participant identity and production components remain stable without fixture imports.
+
+The production-path deployment preview separately checks `/relaycove-web/` asset URLs, favicon, security/cache headers, strict missing-asset 404, same-prefix SPA fallback and zero console errors.
+
+### Repository gates
 
 ```powershell
 pwsh ./scripts/verify.ps1 -Mode Fast
-```
-
-交付提交前：
-
-```powershell
 pwsh ./scripts/verify.ps1 -Mode Full
 ```
 
-任何协议、同步、数据、outbox 或打包变更必须独立只读复核。真实 Zulip 写入、Live、推送、标签和发布仍按当次授权执行。
+Fast runs the existing .NET gate with already-provisioned NuGet assets and `--no-restore`, plus Web typecheck/unit/production build. Full preserves the MAUI Release/package gate and adds Web Playwright. Neither mode restores/installs packages, downloads browsers, uses a real credential, accesses the target Realm or otherwise requires external network.
 
-## Completion criteria
+## Evidence paths
 
-- 22A/22B 原生 UI 与冻结规格一致，差异有用户确认记录。
-- 不使用 WebView，不新增 RelayCove server，不越过四层依赖边界。
-- App 测试覆盖投影、未读、选择保持、composer clamp 和状态模板。
-- App/Session 测试覆盖 1:1、群组和 self-DM 的稳定会话键、标题、草稿、收件人和 outbox。
-- Fast/Full 在交付提交上通过。
-- Windows 真实窗口完成目标视口、主题、键盘、缩放和长列表验收。
-- 未启用的成员/已保存读取、搜索、附件、mention、频道管理和反应保持明确 capability gate。
-- Stage 21 的 Live、人工登录和干净 VM 状态继续按各自证据报告。
+- `artifacts/web/screenshots/desktop-1440-light.png`
+- `artifacts/web/screenshots/desktop-1440-dark.png`
+- `artifacts/web/screenshots/desktop-1024-light.png`
+- `artifacts/web/screenshots/formal-client-fake-1440-light.png`
+- `artifacts/web/screenshots/message-actions-1024-light.png`
+- `artifacts/web/screenshots/image-preview-1024-light.png`
+- `artifacts/web/screenshots/composer-image-1440-light.png`
+- `artifacts/web/playwright/report/`
+- `output/playwright/relaycove-web-formal-login-1440x900.png`
+
+Artifacts are intentionally ignored by Git; their dimensions and results are recorded in STATUS at handoff.
+
+## Slice 1 completion evidence — 2026-08-12
+
+- Final `pwsh ./scripts/verify.ps1 -Mode Fast`: passed with zero build warnings/errors, .NET Debug 135/135, deployment-tool regression, Web typecheck, Web unit 22/22, production build and expanded subpath/favicon/fixture/CDN output scan.
+- Final `pwsh ./scripts/verify.ps1 -Mode Full`: passed; Fast repeated, .NET Release 135/135, Windows app package produced locally, fixture Playwright 5/5 and deployment-path Playwright 1/1.
+- Production Web output: `224.60 kB` JavaScript and `20.63 kB` CSS before gzip; fixture account, label and business payload markers absent.
+- Windows package SHA-256: `2067E791B1AB6FA678EBB2D4C2FC7939C2EA391017A5F4DF3B7A0635B9A93E49` (not published).
+- `npm audit --omit=dev --audit-level=high`: zero vulnerabilities.
+- Screenshot dimensions/hashes and known differences are recorded in `docs/ai/STATUS.md`.
+- Independent authentication and UI/build/documentation reviews found no P0. Three confirmed P1 findings were fixed: non-overridable authenticated transport defaults, removal of restore/network behavior from ordinary Fast/Full, and complete fixture-only production-module exclusion. Both reviewers rechecked the fixes and reported no remaining P0/P1.
+- Frozen `chat-ui-v1` files were not modified and all four SHA-256 values still match.
+- `start-web-dev.cmd` was exercised through real `cmd.exe`; it started Vite and opened the full local fixture with zero browser errors/warnings. `deploy-web.cmd` is the deliberate large-version path and does not run on save.
+- The Slice 1 fixed-entry deployment succeeded at `https://hklight.2000521.xyz/relaycove-web/`: Nginx backup `20260812T073422Z`, Slice 1 release `20260812T073929Z-1374985197ac-worktree`, public Chromium console 0/0 and strict asset/cache/security checks passed. The later Slice 2 release is recorded below. Official Zulip `/` and legacy `/relaycove/` remain outside the new prefix.
+- No real credential, authenticated API call, message write, commit, push or tag occurred.
+
+## Slice 2 local evidence — 2026-08-12
+
+- `npm run typecheck`: passed.
+- `npm run test:unit`: 48/48 passed across 9 files, including current-user mismatch/no-persist, distinct authentication/profile email preservation, register/narrow/event/send/queue forms, reducer authorization and unread cleanup, ambiguous/hanging POST one-attempt recovery, bad-queue/restart rebuild with jitter, mark-read failure preservation and stop/start lifecycle races.
+- `npm run test:e2e`: formal fake-HTTP journey plus UI/responsive/visual scenarios 5/5; production fixed-subpath preview 1/1; console error/warning guard clean apart from explicitly classified lifecycle cancellation of the event long-poll.
+- Production bundle before gzip: JavaScript `272.68 kB` (`83.82 kB` gzip), CSS `24.22 kB` (`5.47 kB` gzip); icons/dependencies remain bundled and fixture content remains excluded.
+- Formal fake-HTTP screenshot: `artifacts/web/screenshots/formal-client-fake-1440-light.png`. It is protocol/UI evidence only, not a real-account Realm acceptance.
+- Final `pwsh ./scripts/verify.ps1 -Mode Fast` and `-Mode Full` both passed after the last lifecycle fix: .NET Debug/Release 135/135, Web 47/47, typecheck/build, Playwright 5/5 and deployment-path 1/1. Independent authentication, protocol/session/outbox, UI/test/document and deployment reviews report no remaining P0/P1.
+- The authorized versioned sync deployed release `20260812T085727Z-1374985197ac-worktree` (archive SHA-256 `D043E6ADF8B5F931CBD18B619419AEBBCBC0589503A0A91A932C57DA4A1CB1AB`) to `https://hklight.2000521.xyz/relaycove-web/`. Public Chromium showed 0 errors/warnings; local and public `index.html`, JS, CSS and favicon hashes match. No real credential or message write was used.
+
+### Post-deployment authentication hotfix — 2026-08-12
+
+- Public access logs proved the reported logout sequence: `fetch_api_key` and the first `users/me` returned 200, then the restored session used the different `users/me.email` profile address as the Basic username and received 401 before register.
+- `WebAuthService` now retains the canonical `fetch_api_key.email` for Basic authentication and persists `users/me` only as authoritative user ID/full name. Unit and Playwright regressions deliberately return different authentication/profile addresses and verify login, refresh restore and later authenticated requests keep the former.
+- A narrowly scoped target-Realm protocol check using the user-selected member account returned 200 for `fetch_api_key`, `users/me`, `register` and test-queue deletion. A separate fresh headless Chromium then loaded the deployed UI, stayed signed in, completed identity/register/topic and one initial history read with 200, opened/cancelled the event long-poll, logged out with queue deletion 200 and recorded zero console issues. No send or mark-read request occurred, and no message content was written to evidence.
+- Final Fast/Full passed with .NET Debug/Release 135/135, Web 48/48, Playwright 5/5 and deployment-path 1/1. Independent authentication review found no P0/P1.
+- Hotfix release `20260812T092322Z-1374985197ac-worktree`, archive SHA-256 `F0F83C1EE24E3BC618F1D43A71049B717D7101B7B585BAE5A267328639903B59`, was current when that hotfix closed and remains retained for rollback. Its public HTML/JS/CSS/favicon byte-matched its local `dist`; Nginx and the legacy service remained active. Event-delivery continuity, read-state mutation and message-write Live gates remain open.
+
+## Slice 3 completion evidence — 2026-08-12
+
+- Final `pwsh ./scripts/verify.ps1 -Mode Fast`: passed with zero .NET warnings/errors, Debug 135/135, Web typecheck, deployment-tool regression, unit 63/63 and production build.
+- Final `pwsh ./scripts/verify.ps1 -Mode Full`: passed on the final code/text tree; Debug/Release 135/135, Web unit 63/63, Playwright 6/6 plus deployment path 1/1, and local Windows package SHA-256 `362D5D19995DA0CD5ED933641B383DD266B24077C477DABAA3A9E127AA932A0F`.
+- Production bundle before gzip: JavaScript `295.77 kB` (`90.61 kB` gzip), CSS `29.88 kB` (`6.43 kB` gzip); no runtime CDN or fixture marker/import.
+- Evidence adds `message-actions-1024-light.png`, `image-preview-1024-light.png`, `composer-image-1440-light.png` and the public formal-login capture. Exact dimensions and hashes are recorded in STATUS.
+- Independent reviews confirmed and closed two P1 findings: logout now invalidates and aborts an in-flight image submission before session cleanup, and per-message/concurrent/total Blob budgets prevent unbounded image reads. Re-review reported no remaining P0/P1.
+- Current fixed-entry release is `20260812T105302Z-1374985197ac-worktree`, archive SHA-256 `DB1A2948B2E70E3CE2F30104E44E46E18E99E9C52CA7ADE8E94E243E9CFAE8E3`. Fresh anonymous Chromium returned 200, rendered the corrected formal-client login copy, logged no error/warning, had no horizontal overflow and byte-matched the deployed JavaScript to local `dist`.
+- All media/upload/send automation used fake HTTP. No real account was entered during Slice 3 deployment verification; no real upload, send, mark-read, commit, push or tag occurred.
+
+## Stage 22M planned slices
+
+1. native tokens/window and responsive skeleton;
+2. navigation and keyed `ClientState` projection;
+3. virtualized message list and connection/outbox states;
+4. multiline Composer, drafts, focus and exact send snapshot semantics;
+5. details/settings backed only by current contracts;
+6. real Windows 1440×900 / 1024×768, light/dark, 100%/200%, mouse/keyboard acceptance.
+
+Proposed MAUI landing points remain:
+
+| Responsibility | Target |
+|---|---|
+| views | `src/RelayCove.App/Views/` |
+| controls | `src/RelayCove.App/Controls/` |
+| UI state/projectors | `src/RelayCove.App/ViewModels/` |
+| Windows behavior | `src/RelayCove.App/Platforms/Windows/` |
+| native tokens | `src/RelayCove.App/Resources/Styles/` |
+| tests | `tests/RelayCove.App.Tests/` |
+
+## Review and completion
+
+Authentication, protocol, synchronization, outbox and browser credential changes require independent read-only review. Confirmed P0/P1 findings must be fixed and the affected narrow tests plus Fast/Full rerun.
+
+The active Stage 22W delivery is complete only when:
+
+- frozen `chat-ui-v1` files still match all four recorded SHA-256 values;
+- Web typecheck, unit, production build and all Playwright scenarios pass;
+- Fast and Full pass on the current tree;
+- independent review has no unresolved confirmed P0/P1;
+- STATUS reports screenshots, implemented formal message synchronization, the exact narrow scope of real-account evidence, remaining capability/Live gates, Stage 21 external gates and final Git state;
+- any server synchronization is explicit, versioned and verified; no commit, push, tag, real message send or read-state write occurs in this handoff.

@@ -1,0 +1,62 @@
+:root {
+    color-scheme: light dark;
+    --rc-accent: #2f9bff;
+    --rc-accent-strong: #1686ee;
+    --rc-danger: #f04f59;
+    --rc-success: #209765;
+    --rc-warning: #d48719;
+    --rc-radius-xs: 4px;
+    --rc-radius-sm: 7px;
+    --rc-radius-md: 10px;
+    --rc-radius-lg: 16px;
+    --rc-space-1: 4px;
+    --rc-space-2: 8px;
+    --rc-space-3: 12px;
+    --rc-space-4: 16px;
+    --rc-space-5: 20px;
+    --rc-space-6: 24px;
+    --rc-product-height: 40px;
+    --rc-navigation-width: 60px;
+    --rc-detail-width: 284px;
+    --rc-control-height: 36px;
+    --rc-font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    --rc-shadow-float: 0 16px 40px rgb(0 0 0 / 18%);
+}
+
+[data-theme="light"] {
+    color-scheme: light;
+    --rc-ground: #f4f4f5;
+    --rc-surface: #ffffff;
+    --rc-surface-raised: #ffffff;
+    --rc-surface-soft: #f7f7f8;
+    --rc-surface-hover: #eef1f5;
+    --rc-surface-selected: #e8eef5;
+    --rc-text: #202124;
+    --rc-muted: #74777d;
+    --rc-tertiary: #a0a3a8;
+    --rc-border: #e1e2e4;
+    --rc-strong-border: #cfd2d6;
+    --rc-bubble: #f1f2f3;
+    --rc-own-bubble: #e2f1ff;
+    --rc-focus: #0078d4;
+    --rc-overlay: rgb(22 26 31 / 42%);
+}
+
+[data-theme="dark"] {
+    color-scheme: dark;
+    --rc-ground: #17181b;
+    --rc-surface: #202125;
+    --rc-surface-raised: #25262b;
+    --rc-surface-soft: #1b1c1f;
+    --rc-surface-hover: #292b30;
+    --rc-surface-selected: #303f3d;
+    --rc-text: #f3f3f4;
+    --rc-muted: #a7a9af;
+    --rc-tertiary: #797c83;
+    --rc-border: #34363c;
+    --rc-strong-border: #4a4d55;
+    --rc-bubble: #2a2b30;
+    --rc-own-bubble: #24394a;
+    --rc-focus: #5ab2ff;
+    --rc-overlay: rgb(0 0 0 / 66%);
+}

@@ -5,6 +5,7 @@
 .idea/
 .vscode/
 artifacts/
+output/
 publish/
 *.user
 *.suo
@@ -17,3 +18,8 @@ securestorage.dat
 .env
 .env.*
 !.env.example
+**/node_modules/
+**/dist/
+**/dist-e2e/
+**/playwright-report/
+**/test-results/

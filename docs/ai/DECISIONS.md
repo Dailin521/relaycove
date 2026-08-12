@@ -1,4 +1,4 @@
-# Stage 21 Decisions
+# RelayCove Architecture Decisions
 
 ## D21-01 — Zulip is the only chat server
 
@@ -30,4 +30,24 @@ Normal restart with a valid SecureStorage envelope can unlock offline cache. Exp
 
 ## D21-08 — UI design-first, native implementation
 
-RelayCove UI changes follow `Web UI -> frozen interaction specification -> native MAUI implementation`. Frozen HTML and screenshots are review artifacts, not runtime assets: production uses native XAML/ViewModel and never embeds the prototype in a WebView. The root plan remains authoritative for scope, security and Zulip semantics; a clickable prototype cannot manufacture unavailable data, permissions or implemented capability.
+Superseded for future UI delivery by D22-01 through D22-04. The frozen `chat-ui-v1` HTML and screenshots remain immutable design evidence; they are not embedded in either product runtime.
+
+## D22-01 — Two first-class frontends
+
+RelayCove.Web is an independently deployable product, while RelayCove.App remains a native .NET MAUI product. The official Zulip Web is retained unchanged. Both RelayCove frontends connect directly to the same Zulip Realm, and no RelayCove server, BFF, proxy protocol or second message backend is introduced.
+
+## D22-02 — Web first, then native parity
+
+Interaction work lands and is accepted in RelayCove.Web first. A versioned interaction contract is then frozen and reproduced natively in MAUI without WebView. The two products share visual tokens, interaction specifications, capability matrices and acceptance scenarios, but no UI runtime code.
+
+## D22-03 — Browser-local credentials are an explicit product choice
+
+RelayCove.Web defaults to remember-login and may store Realm, email and API key in browser local storage for private-realm convenience. Turning remember-login off uses session storage. Logout clears both; secrets never enter URLs, logs, UI text or test snapshots. This browser XSS/storage risk is accepted and documented separately from MAUI SecureStorage.
+
+## D22-04 — Fixtures and live Zulip state are separate
+
+Deterministic Web visual data lives only under the development fixture boundary and is excluded from the production build. Formal API tests use fake HTTP. A fixture must never be treated as a Zulip snapshot or shared with the production data path.
+
+## D22-05 — Local daily loop, versioned server acceptance
+
+Daily Web implementation and fast visual checks run locally through the deterministic fixture. Deliberate large-version manual acceptance uses the fixed same-origin `https://hklight.2000521.xyz/relaycove-web/` static entrance and a one-click verified atomic deployment. The official Zulip root and legacy `/relaycove/` routes remain unchanged. Server synchronization is explicit, not deploy-on-save.

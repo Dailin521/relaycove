@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-RelayCove is licensed under the MIT License. Its build uses third-party packages whose licenses remain with their respective owners; the authoritative package graph and license metadata are the restored NuGet assets for the released source revision.
+RelayCove is licensed under the MIT License. Its build uses third-party packages whose licenses remain with their respective owners; the authoritative package graphs are the restored NuGet assets and `src/RelayCove.Web/package-lock.json` for the released source revision.
 
 ## Zulip
 
@@ -19,5 +19,10 @@ Zulip is a trademark of Zulip, Inc. This descriptive reference does not imply en
 - [Microsoft.Data.Sqlite](https://learn.microsoft.com/dotnet/standard/data/sqlite/) — MIT License
 - [SQLite / SQLitePCLRaw native e_sqlite3](https://www.sqlite.org/copyright.html) — SQLite public-domain dedication and package-specific notices
 - [xUnit.net](https://github.com/xunit/xunit) — Apache License 2.0 (test-only)
+- [React](https://github.com/facebook/react) — MIT License
+- [Vite](https://github.com/vitejs/vite) — MIT License
+- [Lucide](https://github.com/lucide-icons/lucide) — ISC License
+- [Vitest](https://github.com/vitest-dev/vitest) — MIT License (test-only)
+- [Playwright](https://github.com/microsoft/playwright) — Apache License 2.0 (test-only)
 
 Before any public binary release, generate and archive an exact dependency/license inventory from the locked restore graph and include every notice required by the versions actually packaged.

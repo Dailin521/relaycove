@@ -1,6 +1,6 @@
-# RelayCove 重建计划：.NET MAUI 客户端 + Zulip 服务端
+# RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：Stage 21 执行基线
+文档状态：Stage 21 外部门禁保留；Stage 22W Slice 1/2/3 已在当前审查树完成并部署；Stage 22M 待启动
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
@@ -8,7 +8,16 @@
 
 ## 1. 决策摘要
 
-RelayCove 放弃自研聊天服务端、ASP.NET Core/SignalR 协议、旧 Shared DTO、Updater 与安装器，重建为直接连接 Zulip 的纯客户端。Zulip Server 是用户、权限、频道、消息和实时事件的唯一事实源；RelayCove 只负责客户端体验、本地缓存和平台集成。
+RelayCove 放弃自研聊天服务端、ASP.NET Core/SignalR 协议、旧 Shared DTO、Updater 与安装器，重建为直接连接 Zulip 的双前端客户端。Zulip Server 是用户、权限、频道、消息和实时事件的唯一事实源；RelayCove 只负责客户端体验、本地状态/缓存和平台集成。
+
+2026-08-12 已确认真正双前端路线：
+
+- 现有 Zulip 官方 Web 保留，不修改、不替换。
+- `RelayCove.Web` 是可独立部署和正式使用的 Web 客户端，优先实现并完成浏览器验收。
+- `RelayCove.App` 继续使用 .NET MAUI；在 Web 交互版本冻结后用原生 XAML/ViewModel 复刻，不使用 WebView。
+- Web 与 MAUI 都直接连接同一个 Zulip Realm；不新增 RelayCove server、BFF、代理协议或第二套消息后端。
+- 两端共享视觉 Token、交互规格、功能矩阵和验收场景，不共享 UI 运行时代码。
+- Web 面向私域使用便利，默认“记住登录”，允许将 API Key 保存在当前浏览器本地；注销必须清除。
 
 Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-08-12 用户另行授权提交并推送冻结 UI 与文档；该授权不包含创建版本标签、发布、修改目标 Zulip 主机或未来继续直推 `main`。旧 Git 历史和 `v1.0.0-rc.25` 标签保留为回滚点。删除使用普通 Git 变更，不使用 orphan、`reset --hard`、force-push。
 
@@ -36,7 +45,7 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 | 目标 Realm | `https://hklight.2000521.xyz` 返回 Zulip 12.1、feature level 500、邮箱密码认证可用 |
 | 图标完整性 | 迁移前后字节数与 SHA-256 一致 |
 
-目标主机的部署、Nginx、备份和恢复事实以 [主机配置索引](E:/GitHubProject/server-admin/servers/zulip-hklight/README.md) 及其链接文档为准。本项目不复制主机秘密，也不修改主机配置。
+目标主机的部署、Nginx、备份和恢复事实以 [主机配置索引](E:/GitHubProject/server-admin/servers/zulip-hklight/README.md) 及其链接文档为准。本项目不复制主机秘密；显式大版本部署只通过 host-key-pinned 的私有运维入口执行版本化静态发布，不在普通开发验证中修改主机。
 
 ### 2.2 未验证，禁止误报通过
 
@@ -45,7 +54,8 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 | 干净 Windows 11 x64 VM 启动 | 未验证 | 在未安装 .NET 与 Windows App SDK Runtime 的 VM 中运行最终 ZIP |
 | 真实 Realm Live 测试 | 未验证 | 两个专用账号 API key、隔离私有频道和显式写入授权齐全 |
 | 人工密码登录 | 未验证 | 专用测试账号在最终 MAUI UI 中完成一次登录 |
-| 最终视觉验收 | 已冻结 Web UI 参考，MAUI 未开始 | 按 `docs/ui/INTERACTION_SPEC.md` 另立 Stage 22 并完成原生 Windows 验收 |
+| Stage 22W Web 验收 | Slice 1/2/3 已完成组件化、正式 fake-HTTP 旅程、消息菜单/头像/图片、Fast/Full、独立复核和固定入口部署；完整真实账号验收仍未执行 | 固定 Chromium 下 typecheck/unit/build、目标视口、正式 login→register→history→send→logout 旅程、主题、键盘、响应式和控制台检查通过；真实消息/已读/上传写入仍需专用账号与明确授权 |
+| Stage 22M MAUI 视觉验收 | 未开始 | Web 交互版本冻结后完成原生 Windows 真实窗口验收 |
 | 签名/安装器/公开发布 | 不在范围 | 需要单独授权和发布方案 |
 
 任何门禁失败都必须保留证据并停止对应交付声明，不得静默切换凭据后端、关闭 TLS 校验或扩大测试目标。
@@ -65,15 +75,47 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 9. 被动处理其他客户端产生的消息编辑、频道/话题移动和批量删除事件。
 10. 明确确认的清除本地缓存操作。
 
-### 3.2 本阶段明确不做
+### 3.2 当前共享消息能力明确不做
 
-频道管理、附件、反应、主动编辑/删除入口、搜索、typing、presence、通知、push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux。
+频道管理、非图片附件、反应、主动编辑/删除入口、搜索、typing、presence、通知、push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux。Stage 22W 已单独实现图片能力门，不表示 Stage 21/MAUI 已拥有或验收图片能力。
 
 后续平台可以复用 Core、Zulip.Client 与 Data，但必须另行增加目标框架、图标、签名、后台生命周期和发布验证。本阶段不声称可交付这些平台；Linux 不支持。
+
+### 3.3 Stage 22W 已实施范围
+
+Slice 1 建立正式 Web 工程、组件化 UI 外壳以及登录/API 基础：
+
+- TypeScript、React、Vite 与本地 bundle；生产运行时不依赖 CDN。
+- 顶部产品栏、主导航、频道/私信分组、聊天骨架、多行 Composer、可折叠详情、设置、浅/深色和收窄布局。
+- `GET /api/v1/server_settings`、`POST /api/v1/fetch_api_key`、邮箱 + API Key HTTP Basic 构造边界。
+- Realm、邮箱和 API Key 浏览器恢复；默认记住登录；注销清除 local/session storage。
+- 确定性开发 fixture 与正式 Zulip API/session 路径隔离，且 fixture 数据从生产构建排除。
+
+Slice 2 在同一正式运行时补齐首个可用消息纵切片：
+
+- `/users/me` 权威身份核对，`/register` 原子快照，`/events` 长轮询、退避、重启探测和坏队列重建；
+- 已订阅频道/话题、1:1、群组和 self-DM、已知 Realm 联系人、新私信/频道话题入口；
+- newest/older 每页 50 条 raw Markdown 历史、会话切换取消、服务器确认后标已读；
+- 频道/DM 文本发送、`queue_id` + `local_id` 对账、500 ms Waiting、10 s WaitExpired、明确失败与正文恢复；
+- message/edit/delete/move/flags、subscription/stream/user/restart 事件投影和撤权清理；
+- 业务投影、queue、cursor 和 outbox 只保存在当前页面内存；不承诺刷新后离线历史。
+
+Slice 3 完成首批完整交互能力，而不是只添加视觉按钮：
+
+- 消息右键、`Shift+F10`/菜单键和触屏“更多”统一打开无 Realm 写入的操作菜单，支持回复草稿、复制正文/链接/ID和打开官方 Zulip；
+- 用户/消息头像按同 Realm 白名单路径以受控 Blob 加载，失败回退首字母/Bot，不把 API Key 放入 URL 或 DOM；
+- 同 Realm 图片 Markdown 通过 Zulip 临时授权 URL 读取，支持缩略图、下载、遮罩预览、三种关闭方式与焦点恢复；
+- Composer 校验图片类型/大小，保留正文和分会话草稿，执行一次 upload + 一次 message POST；两阶段均不自动重试；
+- 每消息最多 4 个预览，全局 4 个媒体并发、64 MiB Blob 预算；注销同步 abort 上传、释放 URL，并拒绝晚到结果继续发送。
+
+所有仓库自动门禁继续只使用 mock/fake HTTP。初始 Slice 交付未使用真实账号；后续为诊断用户报告的登录后退出，使用用户指定成员账号执行了限定协议检查，并在临时 Chromium 中验证线上 UI 保持登录、identity/register/topic/一页历史读取、event long-poll 启动和正常队列注销。没有发起消息发送、图片上传或标记已读。非图片附件、反应、全局/服务端搜索、mention 候选、saved、presence、通知和频道管理仍是独立能力门。
 
 ## 4. 架构和依赖边界
 
 ```text
+RelayCove.Web ───────────────────────────────> Zulip Realm
+  TypeScript/React/Vite + browser HTTP/session
+
 RelayCove.App
   ├─> RelayCove.Core
   ├─> RelayCove.Zulip.Client ─> RelayCove.Core
@@ -82,12 +124,13 @@ RelayCove.App
 
 | 工程 | 责任 | 禁止事项 |
 |---|---|---|
+| `RelayCove.Web` | 正式 React UI、浏览器 Zulip HTTP/session、内存 reducer/store/outbox、Web 交互状态 | 不引用 MAUI UI runtime、不导入生产 fixture、不新增 server/BFF/proxy、不把业务投影伪装成持久离线缓存 |
 | `RelayCove.App` | MAUI XAML、ViewModel、Windows composition root、SecureStorage、Preferences | 不直接使用 HttpClient/SQLiteConnection/Zulip DTO |
 | `RelayCove.Core` | 领域模型、公共契约、单通道 reducer、会话/同步用例 | 不引用 MAUI、SQLite、JSON DTO |
 | `RelayCove.Zulip.Client` | 安全 HttpClient、Basic Auth、REST/事件队列、DTO 映射 | 不保存凭据、不操作数据库、不暴露 JSON 给 UI |
 | `RelayCove.Data` | 每账号 SQLite、迁移、事务、mutation lane | 不存 API key、queue_id、last_event_id 或 outbox |
 
-UI 只依赖 `IClientSession`。所有 register、历史、实时事件、发送对账和 SQLite 写入通过单一 mutation lane；UI 线程不执行数据库 I/O。
+MAUI UI 只依赖 `IClientSession`。所有 register、历史、实时事件、发送对账和 SQLite 写入通过单一 mutation lane；UI 线程不执行数据库 I/O。Web 使用独立的 TypeScript API/session、纯 reducer/store 和 React 投影，不复用 .NET UI runtime；两端只共享书面合同和验收输入。Web 当前不引入 SQLite/IndexedDB/Service Worker，持久化仅限经确认的凭据与非敏感外观偏好。
 
 Windows 应用标识固定为 `com.relaycove.client`。MAUI/Windows 资源元数据只接受数字版 `ApplicationDisplayVersion`，因此资源显示版本使用 `2.0.0`，程序集 `InformationalVersion` 保留完整预发布语义 `2.0.0-alpha.1`；ZIP 文件名也使用完整预发布版本。
 
@@ -161,7 +204,16 @@ DeleteQueueAsync
 - 凭据存在的正常重启允许离线读取该账号缓存。
 - 显式注销先停止事件循环，再删除凭据并锁缓存；缓存保留但 UI 不可浏览。
 
-### 6.3 网络安全
+### 6.3 Web 浏览器凭据
+
+- Realm 只接受无 userinfo、path、query、fragment 的规范 HTTPS origin。
+- `/server_settings` 无凭据；密码只进入 `/fetch_api_key` 的 form body，成功后不持久化密码。
+- 默认勾选“记住登录”：Realm、邮箱、API Key 写入当前 origin 的 local storage；取消勾选时只写 session storage。
+- 注销同时清除 local/session storage；损坏或不完整的 envelope 删除并要求重新登录。
+- API Key 不进入 URL、UI、日志、异常、测试快照或构建产物。浏览器本地保存 Key 是已确认的私域便利取舍，不宣称等同 MAUI SecureStorage。
+- 正式部署必须验证目标 Realm 的浏览器同源/CORS 策略和静态托管安全响应头；当前选择同源 `/relaycove-web/` 静态入口并已验证。若未来更换 origin，CORS 门禁重新打开；不得为绕过浏览器限制新增 RelayCove proxy/BFF。
+
+### 6.4 网络安全
 
 - 生产构造器内部固定 `AllowAutoRedirect=false`；测试 handler 不向 App 暴露。
 - 重定向只显示“请输入规范 Realm”，绝不把密码/API key 转发到新 origin。
@@ -253,9 +305,9 @@ unread_state
 7. 清缓存只删除经过 64 位 AccountId、父路径、非 reparse-point 校验的精确账号目录。
 8. `SQLitePCLRaw.bundle_e_sqlite3` 显式固定为 `2.1.12`；本地测试要求实际加载的 SQLite 不低于 `3.50.2`，避免重新引入 `CVE-2025-6965` 影响的原生版本。
 
-## 9. 最小 MAUI Shell
+## 9. 双前端 UI 路线
 
-本阶段 UI 只冻结功能，不冻结最终视觉：
+Stage 21 的 MAUI Shell 已冻结功能但尚未完成最终视觉：
 
 ```text
 LoginPage
@@ -275,9 +327,26 @@ ViewModel 使用 CommunityToolkit.Mvvm，只调用 `IClientSession`。code-behin
 
 登录错误分类：不兼容 Realm、认证失败、限流、离线、凭据存储失败。最后 Realm 可用 Preferences 保存为非敏感配置；密码字段完成登录后立即清空。
 
-用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/` 作为后续视觉与交互参考。冻结 Web UI、截图和交互规格不改变本节的 Stage 21 范围，也不代表当前 MAUI 已完成视觉验收。后续转换必须遵循 `docs/ui/DEVELOPMENT_WORKFLOW.md`，使用原生 XAML/ViewModel，不得用 WebView 承载 HTML。附件、搜索、反应、`@` 候选和频道管理仍需独立能力门。
+用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/`。该目录保持不可变，现作为正式 Web 与后续 MAUI 的初始视觉/交互来源，而不是运行时资产。Stage 22W 在 `src/RelayCove.Web/` 以生产组件实现并验收；交互版本冻结后，Stage 22M 使用原生 XAML/ViewModel 复刻，不得以 WebView 承载 Web。图片已由 Web Slice 3 独立实现；非图片附件、搜索、反应、`@` 候选和频道管理仍需独立能力门。
 
 ## 10. 实施切片与完成定义
+
+### Stage 22W：RelayCove Web 正式客户端
+
+1. **Slice 1 — 生产基础与原生组件化**：工程/锁文件、Token、UI 外壳、fixture 隔离、登录/API/session 边界、typecheck/unit/build/Playwright、固定视口截图。
+2. **Slice 2 — 正式消息纵切片**：实现 users/me、register、events、topics、历史、正式频道/DM/联系人投影、权威未读/标已读、文本发送/outbox、重连和坏队列重建；生产路径保持与 fixture 隔离。
+3. **Slice 3 — 消息操作、头像与图片**：实现完整菜单键盘/触屏入口、同 Realm 头像 Blob、受控图片读取/预览/下载、Composer 图片上传发送、资源预算和注销竞态保护；自动化只使用 fake HTTP。
+
+截至 2026-08-12，Slice 1/2/3 已在未提交审查树通过 Fast/Full 与独立只读复核，并以版本化原子切换同步至固定 `/relaycove-web/` 入口。Slice 3 的 fake-HTTP 自动化覆盖菜单、头像、图片读取/上传和注销竞态；没有执行真实图片上传或消息写入。后续登录热修复另以用户指定成员账号验证了目标 Realm 的密码交换、身份/register/topic/首屏历史读取、event long-poll 启动和队列注销；事件实际交付连续性、标已读、消息写入和真实图片上传仍是需要专用账号、隔离目标及明确写入授权的独立门禁。
+
+开发节奏固定为：日常双击 `start-web-dev.cmd` 在本机启动 `npm run dev` 并打开 fixture；只有需要大版本人工验收时才显式双击 `deploy-web.cmd`，执行完整 Web 门禁、版本化上传、SHA-256 校验和原子 `current` 切换，并打开固定 `https://hklight.2000521.xyz/relaycove-web/`。不启用 deploy-on-save；官方 Zulip `/` 与旧 `/relaycove/` 均保持原路由。
+3. **交互冻结**：每个已验收版本记录 Token、规格、功能矩阵、场景、截图与差异，作为 22M 输入。
+
+### Stage 22M：MAUI 原生视觉与交互对齐
+
+Web 对应交互版本冻结后，按 Token/规格/功能矩阵/场景用原生 MAUI 复刻。不得共享 React 运行时代码或使用 WebView；MAUI 继续通过 `IClientSession` 使用 Zulip 权威状态。Web 浏览器验收不能替代 Windows 真实窗口、200% 缩放、人工登录或干净 VM 验收。
+
+### Stage 21 历史实施切片
 
 ### Slice A：删除与平台门禁
 
@@ -310,7 +379,7 @@ ViewModel 使用 CommunityToolkit.Mvvm，只调用 `IClientSession`。code-behin
 - 当前展示页已读、最小 MAUI Shell、ViewModel 取消/去重。
 - Fast、Full、一次显式 Live、干净 VM、独立复核、ZIP/SHA-256。
 
-每个切片只有在代码、测试、文档、独立复核和限制说明齐全时完成。真实写入、推送、合并、标签和发布必须另行授权。
+每个切片只有在代码、测试、文档、独立复核和限制说明齐全时完成。两端状态分别报告，不能用一端的通过替代另一端或 Stage 21 外部门禁。真实写入、推送、合并、标签和发布按当轮明确授权执行。
 
 ## 11. 自动化验证
 
@@ -320,7 +389,7 @@ ViewModel 使用 CommunityToolkit.Mvvm，只调用 `IClientSession`。code-behin
 pwsh ./scripts/verify.ps1 -Mode Fast
 ```
 
-执行格式/静态检查、Debug build、Core/Zulip/Data/App 单元测试。不得连接外部网络或运行 LiveTests。
+执行 .NET 格式/静态检查、Debug build、Core/Zulip/Data/App 单元测试，以及 Web typecheck、unit 和 production build。NuGet assets、npm 依赖和 Chromium 必须在单独 bootstrap 中显式预置；Fast 只走 `--no-restore` .NET 命令。Web 构建检查无运行时 CDN且不含开发 fixture。Fast 不得恢复/安装依赖、下载浏览器、连接外部网络、使用真实凭据或运行 LiveTests。
 
 ### 11.2 Full
 
@@ -328,7 +397,7 @@ pwsh ./scripts/verify.ps1 -Mode Fast
 pwsh ./scripts/verify.ps1 -Mode Full
 ```
 
-执行 Fast、Release build、本地全部测试、仅 MAUI app 项目 publish、ZIP 内容检查、icon/native runtime 检查和秘密扫描。禁止对 solution 执行 `dotnet publish`。
+执行 Fast、Release build、本地全部 .NET 测试、仅 MAUI app 项目 publish、ZIP 内容检查、icon/native runtime 检查和秘密扫描，并在 E2E 专用本地构建上运行 Web Playwright。Playwright 只访问 `127.0.0.1` 和被拦截的 fake HTTP；禁止对 solution 执行 `dotnet publish`。
 
 每个交付快照另执行 `dotnet list RelayCove.sln package --vulnerable --include-transitive` 并保存结果；任何已知漏洞都阻断交付。该检查依赖 NuGet 在线公告，不伪装成离线 Fast 门禁。
 
@@ -360,6 +429,10 @@ pwsh ./scripts/verify.ps1 -Mode Live
 
 | 层 | 必测场景 |
 |---|---|
+| Web API/session | Realm origin、无凭据 probe、密码只进 form、users/me 身份核对、Basic Auth、register/events/topics/history narrow、read flag、send form、queue cleanup/rebuild、固定脱敏错误、remember local/session、损坏恢复、logout 双清除 |
+| Web state | register 原子替换、同事件 patch 组、撤权清理、选会话取消、50 条分页、权威 unread、local echo、500 ms/10 s outbox、模糊发送零自动重试、401 清凭据 |
+| Web UI | 正式频道话题、1:1/group/self-DM、联系人、新会话、raw Markdown、Composer 发送/恢复、连接状态、设置；浅/深主题、1440×900、1024×768、低于 720 单栏、键盘焦点、Composer clamp、详情 Escape、console 0 error/warning |
+| Web build | 锁定依赖、生产 bundle、无 runtime CDN、开发 fixture 从 production 排除、E2E 只用 fake HTTP |
 | Core | Realm 规范化、AccountId、DM 值语义、同 ID 原子组、跳号/重放、撤权、移动/编辑/删除、flags、outbox 计时/失败 |
 | Zulip.Client | 无凭据 probe、重定向拒绝、Basic Auth 脱敏、12.1 DTO、未知字段、narrow、self/group DM、401/429/BAD queue、local echo |
 | Data | schema/WAL/FK、迁移、事务回滚、账号隔离、锁定、相同账号解锁、撤权级联、并发 mutation、精确清缓存、无 secret、SQLite 原生版本安全下限 |
@@ -387,6 +460,9 @@ ZIP 不得包含 API key、密码、Live 环境变量、SQLite 数据库、日�
 | 风险 | 级别 | 控制 |
 |---|---|---|
 | API key 泄露等同账号接管 | 高 | SecureStorage、日志/包 secret scan、单 envelope、401 清理 |
+| Web local storage API key 被 XSS/本机访问 | 高 | 已确认私域便利取舍、严格 CSP/依赖锁、最小渲染面、默认记住可取消、logout 双清除、Key 不进 URL/日志/UI/快照 |
+| 独立 Web origin 受 Zulip CORS 限制 | 高 | 当前固定同源子路径已验证；若更换 origin，重新执行 CORS 门禁；不新增 proxy/BFF，不把 mock 结果误报为部署通过 |
+| Web/MAUI 交互漂移 | 中高 | Web 先验收并冻结版本；共享 Token/规格/矩阵/场景，分别跑浏览器与 Windows 门禁，不共享 UI runtime |
 | 自动重定向泄露凭据 | 高 | 生产 handler 固定禁用 redirect，3xx fail-closed |
 | 模糊发送结果导致重复 | 高 | 不自动重发、local echo 对账、明确用户提示 |
 | 队列过期/服务器重启 | 高 | 丢弃旧 queue/cursor、re-register、事务 reconcile、退避抖动 |
@@ -410,7 +486,9 @@ Stage 21 只有在下列条件全部满足时才能标记完成：
 - README、本文、STATUS、WORKFLOW、Stage 21 记录与实际命令一致。
 - 所有未验证项显式列出，不用“预计”“应当”代替证据。
 
-除 2026-08-12 冻结 UI 与文档这一次已明确授权的 `main` 提交/推送外，以下动作不在当前授权内：后续直推 `main`、合并远端、创建标签、上传/公开发布 ZIP、修改或停用 Zulip/旧服务、使用生产凭据、删除旧 `%LOCALAPPDATA%\RelayCove`。如需执行，必须获得新的明确授权并先解析、展示和确认精确目标。
+Stage 22W 每个 Slice 只有在 production build、typecheck、unit、Playwright、固定视口截图、fixture 排除以及对应认证/协议/同步/outbox 独立复核全部通过时才能标记完成。Slice 2 的 fake-HTTP 证据证明正式代码路径和协议编排；后续目标 Realm 的窄认证/register 检查只证明该边界，不证明完整浏览器读写。任何这些证据都不能代替 Stage 22M 或 Stage 21 外部门禁。
+
+Stage 22W 在 `codex/stage-22w-web-foundation` 本地分支实施；本轮不提交、不推送、不创建标签，也不执行真实消息或已读写入。用户已明确授权把大版本静态产物同步到固定 `/relaycove-web/` 入口及补充一键工具；该授权不包含修改/停用 Zulip 或旧服务。登录故障诊断仅使用用户指定账号完成限定认证、读取和队列清理。后续直推 `main`、合并远端、完整 Live 写入、删除旧 `%LOCALAPPDATA%\RelayCove` 仍需单独确认精确目标。
 
 ## 16. 官方依据
 

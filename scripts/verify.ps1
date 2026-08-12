@@ -11,8 +11,22 @@ Set-StrictMode -Version Latest
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $solution = Join-Path $repoRoot "RelayCove.sln"
 $iconPath = Join-Path $repoRoot "src/RelayCove.App/Resources/AppIcon/RelayCove.ico"
+$webRoot = Join-Path $repoRoot "src/RelayCove.Web"
+$webPackageLock = Join-Path $webRoot "package-lock.json"
+$webDist = Join-Path $webRoot "dist"
 $expectedIconLength = 65044
 $expectedIconSha256 = "07906CE7D87860C4A15DDD6F904DA722F7BBC3C882DC32FD1D285A78B1161B52"
+$solutionProjects = @(
+    "src/RelayCove.App/RelayCove.App.csproj",
+    "src/RelayCove.Core/RelayCove.Core.csproj",
+    "src/RelayCove.Data/RelayCove.Data.csproj",
+    "src/RelayCove.Zulip.Client/RelayCove.Zulip.Client.csproj",
+    "tests/RelayCove.App.Tests/RelayCove.App.Tests.csproj",
+    "tests/RelayCove.Core.Tests/RelayCove.Core.Tests.csproj",
+    "tests/RelayCove.Data.Tests/RelayCove.Data.Tests.csproj",
+    "tests/RelayCove.Zulip.Client.Tests/RelayCove.Zulip.Client.Tests.csproj",
+    "tests/RelayCove.Zulip.LiveTests/RelayCove.Zulip.LiveTests.csproj"
+)
 $localTestProjects = @(
     "tests/RelayCove.Core.Tests/RelayCove.Core.Tests.csproj",
     "tests/RelayCove.Zulip.Client.Tests/RelayCove.Zulip.Client.Tests.csproj",
@@ -27,6 +41,132 @@ function Invoke-DotNet {
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
     }
+}
+
+function Invoke-Npm {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+
+    Push-Location $webRoot
+    try {
+        & npm @Arguments
+        if ($LASTEXITCODE -ne 0) {
+            throw "npm $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
+        }
+    }
+    finally {
+        Pop-Location
+    }
+}
+
+function Assert-DotNetRestoreState {
+    if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+        throw "RelayCove requires the repository-compatible .NET SDK."
+    }
+
+    foreach ($project in $solutionProjects) {
+        $projectDirectory = Split-Path -Parent (Join-Path $repoRoot $project)
+        $assets = Join-Path $projectDirectory "obj/project.assets.json"
+        if (-not (Test-Path -LiteralPath $assets -PathType Leaf)) {
+            throw "NuGet assets are not provisioned for $project. Run 'dotnet restore RelayCove.sln' explicitly before offline verification."
+        }
+    }
+}
+
+function Assert-WebToolchain {
+    if (-not (Get-Command node -ErrorAction SilentlyContinue) -or -not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        throw "RelayCove.Web requires repository-compatible Node.js and npm."
+    }
+    if (-not (Test-Path -LiteralPath $webPackageLock -PathType Leaf)) {
+        throw "RelayCove.Web package-lock.json is missing."
+    }
+
+    foreach ($command in @("tsc", "vitest", "vite", "playwright")) {
+        $windowsCommand = Join-Path $webRoot "node_modules/.bin/$command.cmd"
+        $portableCommand = Join-Path $webRoot "node_modules/.bin/$command"
+        if (-not (Test-Path -LiteralPath $windowsCommand -PathType Leaf) -and -not (Test-Path -LiteralPath $portableCommand -PathType Leaf)) {
+            throw "RelayCove.Web dependencies are not provisioned. Run 'npm ci' explicitly in src/RelayCove.Web before offline verification."
+        }
+    }
+}
+
+function Assert-WebBuildIntegrity {
+    $indexPath = Join-Path $webDist "index.html"
+    if (-not (Test-Path -LiteralPath $indexPath -PathType Leaf)) {
+        throw "RelayCove.Web production index.html is missing."
+    }
+    if (-not (Get-ChildItem -LiteralPath (Join-Path $webDist "assets") -File -Filter "*.js" -ErrorAction SilentlyContinue)) {
+        throw "RelayCove.Web production JavaScript bundle is missing."
+    }
+
+    $index = Get-Content -Raw -LiteralPath $indexPath
+    if ($index -match '(?i)(src|href)=["''][ ]*https?://') {
+        throw "RelayCove.Web production index contains a runtime CDN dependency."
+    }
+    if ($index -notmatch '(?i)(src|href)=["'']/relaycove-web/assets/index-[^"'']+\.(js|css)') {
+        throw "RelayCove.Web production index is not rooted at the fixed /relaycove-web/ deployment path."
+    }
+    if ($index -match '(?i)(src|href)=["'']/assets/') {
+        throw "RelayCove.Web production index contains a root-level asset URL that would bypass the fixed deployment path."
+    }
+    if ($index -notmatch '(?i)href=["'']/relaycove-web/relaycove\.svg["'']') {
+        throw "RelayCove.Web production index is missing its fixed-path bundled favicon."
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $webDist "relaycove.svg") -PathType Leaf)) {
+        throw "RelayCove.Web production favicon is missing."
+    }
+
+    foreach ($fixtureMarker in @(
+        "Maya Chen",
+        "顶部按微信",
+        "Acme Workspace",
+        "fixture.invalid",
+        "fixture@relaycove.invalid",
+        "本地演示数据",
+        "演示草稿只保存在当前页面"
+    )) {
+        $match = Get-ChildItem -LiteralPath $webDist -Recurse -File | Select-String -SimpleMatch -Pattern $fixtureMarker
+        if ($match) {
+            throw "RelayCove.Web production output contains development fixture data: $fixtureMarker"
+        }
+    }
+}
+
+function Assert-WebCommandLaunchers {
+    $launchers = @(
+        (Join-Path $repoRoot "start-web-dev.cmd"),
+        (Join-Path $repoRoot "deploy-web.cmd")
+    )
+    foreach ($launcher in $launchers) {
+        if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+            throw "RelayCove Web command launcher is missing: $launcher"
+        }
+        $content = [IO.File]::ReadAllText($launcher)
+        if ($content -match '(?<!\r)\n') {
+            throw "RelayCove Web command launcher must use Windows CRLF line endings: $launcher"
+        }
+    }
+
+    if ([IO.File]::ReadAllText($launchers[0]) -notmatch 'npm\.cmd run dev') {
+        throw "RelayCove Web local launcher no longer starts the repository Vite dev command."
+    }
+    if ([IO.File]::ReadAllText($launchers[1]) -notmatch 'scripts\\deploy-web\.ps1') {
+        throw "RelayCove Web deployment launcher no longer calls the verified deployment script."
+    }
+}
+
+function Invoke-WebFastVerification {
+    Assert-WebToolchain
+    Assert-WebCommandLaunchers
+    & (Join-Path $repoRoot "scripts/test-web-deployment-tools.ps1")
+    Invoke-Npm run typecheck
+    Invoke-Npm run test:unit
+    Invoke-Npm run build
+    Assert-WebBuildIntegrity
+}
+
+function Invoke-WebBrowserVerification {
+    Assert-WebToolchain
+    Invoke-Npm run test:e2e
 }
 
 function Invoke-LocalTests {
@@ -51,10 +191,11 @@ function Assert-IconIntegrity {
 
 function Invoke-FastVerification {
     Assert-IconIntegrity
-    Invoke-DotNet restore $solution --nologo
+    Assert-DotNetRestoreState
     Invoke-DotNet format $solution --verify-no-changes --no-restore --verbosity minimal
     Invoke-DotNet build $solution -c Debug --no-restore --nologo --verbosity minimal /p:ContinuousIntegrationBuild=true
     Invoke-LocalTests -Configuration Debug
+    Invoke-WebFastVerification
 }
 
 function Assert-ArtifactPath {
@@ -192,6 +333,7 @@ function Invoke-FullVerification {
     Set-Content -LiteralPath $manifestPath -Encoding ascii -NoNewline -Value "$hash  RelayCove-2.0.0-alpha.1-win-x64.zip"
     Write-Host "Windows package: $zipPath"
     Write-Host "SHA-256: $hash"
+    Invoke-WebBrowserVerification
 }
 
 function Invoke-LiveVerification {
