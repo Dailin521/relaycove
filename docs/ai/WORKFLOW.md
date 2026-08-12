@@ -1,8 +1,10 @@
-# Stage 21 Engineering Workflow
+# RelayCove Engineering Workflow
 
 ## 1. Orient
 
-Read the root plan, STATUS and active task. Run `git status --short`, confirm the expected branch, and identify unrelated user changes before editing. The current reset is authorized directly on local `main`; this does not authorize pushing or future direct-main work.
+Read the root plan, STATUS and active task. Run `git status --short`, confirm the expected branch, and identify unrelated user changes before editing. Stage 21 was authorized directly on local `main` as a one-time reset path; this does not authorize future direct-main work or external writes. Follow the current user authorization for each commit/push.
+
+For UI work, also read `docs/ui/README.md`, the frozen baseline manifest, `docs/ui/INTERACTION_SPEC.md` and `docs/ui/DEVELOPMENT_WORKFLOW.md`.
 
 ## 2. Implement a vertical slice
 
@@ -14,7 +16,9 @@ Keep changes inside one independently testable path:
 4. ViewModel/View;
 5. tests and documentation.
 
-Do not add speculative services, placeholder projects or features outside the frozen MVP. Use official Zulip 12.1 OpenAPI/Docs for protocol decisions and record intentional product restrictions separately from server protocol restrictions.
+Do not add speculative services, placeholder projects or features outside the active task. Use official Zulip 12.1 OpenAPI/Docs for protocol decisions and record intentional product restrictions separately from server protocol restrictions.
+
+UI implementation follows the mandatory order `Web UI -> user review -> frozen baseline -> interaction documentation -> native MAUI`. A frozen HTML baseline is a design artifact only; never embed it in a WebView. Search, attachments, mention candidates and channel management require explicit capability slices when they cross the current product/API boundary.
 
 ## 3. Verify locally
 

@@ -1,8 +1,8 @@
 # Stage 21 — Zulip MAUI Reset
 
 Status: in progress
-Execution branch: local `main` by explicit user instruction
-No push/server write authorized
+Execution branch: `main` by explicit user instruction
+Server write remains unauthorized; the 2026-08-12 UI documentation delivery separately authorized commit and push
 
 ## Objective
 
@@ -32,10 +32,13 @@ Replace the legacy WPF + custom server product with a clean Windows-first .NET 1
 - Live mode fail-closed behavior verified without credentials; no external write occurred.
 - Independent code/package review completed with no reproducible P0/P1; a prior protocol concern was rejected using the pinned Zulip 12.1 OpenAPI because long-poll and idle-queue timeouts have distinct semantics.
 - Icon hash preserved: `07906CE7D87860C4A15DDD6F904DA722F7BBC3C882DC32FD1D285A78B1161B52`.
+- User-approved Web UI reference is frozen under `docs/ui/baselines/chat-ui-v1/`; this is design evidence only and does not complete native MAUI visual acceptance.
+- Chat UI behavior, Stage 22 conversion slices and the mandatory `Web UI -> docs -> MAUI` workflow are documented without expanding Stage 21 search/attachment/channel-management scope.
+- UI freeze verification on 2026-08-12: `pwsh ./scripts/verify.ps1 -Mode Fast` and `-Mode Full` both passed; Debug/Release builds had zero warnings/errors and all 135 local tests passed in each configuration. No Live or server write ran.
 
 ## Open gates
 
 - Dedicated-account Live run, manual password login and clean Windows 11 VM launch.
-- Push, tag, upload and public release remain outside current authorization.
+- Tag, upload, public release and Zulip/server writes remain outside current authorization. This UI documentation delivery was explicitly authorized to commit and push only.
 
 Do not change this task to complete until every external acceptance gate has evidence.

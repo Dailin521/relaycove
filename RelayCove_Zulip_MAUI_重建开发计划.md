@@ -4,13 +4,13 @@
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
-最后更新：2026-08-10
+最后更新：2026-08-12
 
 ## 1. 决策摘要
 
 RelayCove 放弃自研聊天服务端、ASP.NET Core/SignalR 协议、旧 Shared DTO、Updater 与安装器，重建为直接连接 Zulip 的纯客户端。Zulip Server 是用户、权限、频道、消息和实时事件的唯一事实源；RelayCove 只负责客户端体验、本地缓存和平台集成。
 
-本阶段直接在本地 `main` 实施，但不推送、不创建版本标签、不发布、不修改目标 Zulip 主机。旧 Git 历史和 `v1.0.0-rc.25` 标签保留为回滚点。删除使用普通 Git 变更，不使用 orphan、`reset --hard`、force-push。
+Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-08-12 用户另行授权提交并推送冻结 UI 与文档；该授权不包含创建版本标签、发布、修改目标 Zulip 主机或未来继续直推 `main`。旧 Git 历史和 `v1.0.0-rc.25` 标签保留为回滚点。删除使用普通 Git 变更，不使用 orphan、`reset --hard`、force-push。
 
 唯一允许沿用的旧产品资产是原始 `RelayCove.ico`：
 
@@ -45,7 +45,7 @@ RelayCove 放弃自研聊天服务端、ASP.NET Core/SignalR 协议、旧 Shared
 | 干净 Windows 11 x64 VM 启动 | 未验证 | 在未安装 .NET 与 Windows App SDK Runtime 的 VM 中运行最终 ZIP |
 | 真实 Realm Live 测试 | 未验证 | 两个专用账号 API key、隔离私有频道和显式写入授权齐全 |
 | 人工密码登录 | 未验证 | 专用测试账号在最终 MAUI UI 中完成一次登录 |
-| 最终视觉验收 | 未开始 | 用户提供原型后另立阶段 |
+| 最终视觉验收 | 已冻结 Web UI 参考，MAUI 未开始 | 按 `docs/ui/INTERACTION_SPEC.md` 另立 Stage 22 并完成原生 Windows 验收 |
 | 签名/安装器/公开发布 | 不在范围 | 需要单独授权和发布方案 |
 
 任何门禁失败都必须保留证据并停止对应交付声明，不得静默切换凭据后端、关闭 TLS 校验或扩大测试目标。
@@ -275,6 +275,8 @@ ViewModel 使用 CommunityToolkit.Mvvm，只调用 `IClientSession`。code-behin
 
 登录错误分类：不兼容 Realm、认证失败、限流、离线、凭据存储失败。最后 Realm 可用 Preferences 保存为非敏感配置；密码字段完成登录后立即清空。
 
+用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/` 作为后续视觉与交互参考。冻结 Web UI、截图和交互规格不改变本节的 Stage 21 范围，也不代表当前 MAUI 已完成视觉验收。后续转换必须遵循 `docs/ui/DEVELOPMENT_WORKFLOW.md`，使用原生 XAML/ViewModel，不得用 WebView 承载 HTML。附件、搜索、反应、`@` 候选和频道管理仍需独立能力门。
+
 ## 10. 实施切片与完成定义
 
 ### Slice A：删除与平台门禁
@@ -408,7 +410,7 @@ Stage 21 只有在下列条件全部满足时才能标记完成：
 - README、本文、STATUS、WORKFLOW、Stage 21 记录与实际命令一致。
 - 所有未验证项显式列出，不用“预计”“应当”代替证据。
 
-以下动作不在当前授权内：推送 `main`、合并远端、创建标签、上传/公开发布 ZIP、修改或停用 Zulip/旧服务、使用生产凭据、删除旧 `%LOCALAPPDATA%\RelayCove`。如需执行，必须获得新的明确授权并先解析、展示和确认精确目标。
+除 2026-08-12 冻结 UI 与文档这一次已明确授权的 `main` 提交/推送外，以下动作不在当前授权内：后续直推 `main`、合并远端、创建标签、上传/公开发布 ZIP、修改或停用 Zulip/旧服务、使用生产凭据、删除旧 `%LOCALAPPDATA%\RelayCove`。如需执行，必须获得新的明确授权并先解析、展示和确认精确目标。
 
 ## 16. 官方依据
 

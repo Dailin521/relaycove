@@ -27,3 +27,7 @@ The client requests `apply_markdown=false` and displays raw text without a WebVi
 ## D21-07 — Cache locking on credential loss
 
 Normal restart with a valid SecureStorage envelope can unlock offline cache. Explicit logout, credential corruption and 401 delete/ignore credentials and lock cached content until the same account reauthenticates.
+
+## D21-08 — UI design-first, native implementation
+
+RelayCove UI changes follow `Web UI -> frozen interaction specification -> native MAUI implementation`. Frozen HTML and screenshots are review artifacts, not runtime assets: production uses native XAML/ViewModel and never embeds the prototype in a WebView. The root plan remains authoritative for scope, security and Zulip semantics; a clickable prototype cannot manufacture unavailable data, permissions or implemented capability.

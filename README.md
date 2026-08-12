@@ -2,7 +2,7 @@
 
 RelayCove 是一个正在重建中的 Windows 聊天客户端。它不再包含自研聊天服务端、代理或 BFF，而是直接连接既有的 Zulip Server，通过 Zulip REST API 与长轮询事件队列完成登录、同步、历史查询和文本消息收发。
 
-当前版本：`2.0.0-alpha.1`。这是功能壳阶段，不代表最终视觉设计或可公开发布版本。
+当前版本：`2.0.0-alpha.1`。Stage 21 仍是功能壳阶段，不代表原生 MAUI 最终视觉或可公开发布版本；下一阶段采用已冻结 Web UI 作为原生转换参考。
 
 ## 冻结范围
 
@@ -64,6 +64,10 @@ pwsh ./scripts/verify.ps1 -Mode Full
 ## 文档
 
 - [完整重建开发计划](RelayCove_Zulip_MAUI_重建开发计划.md)
+- [UI 文档与冻结基线](docs/ui/README.md)
+- [Chat UI 交互规格](docs/ui/INTERACTION_SPEC.md)
+- [Web UI → 文档 → MAUI 开发工作流](docs/ui/DEVELOPMENT_WORKFLOW.md)
+- [Stage 22 原生 Chat UI 实施计划](docs/ai/tasks/2026-08-12-stage-22-native-chat-ui.md)
 - [目标 Zulip 主机配置索引](E:/GitHubProject/server-admin/servers/zulip-hklight/README.md)
 - [Zulip API 文档](https://docs.zulip.com/api/)
 - [Zulip 12.1 OpenAPI](https://github.com/zulip/zulip/blob/12.1/zerver/openapi/zulip.yaml)
