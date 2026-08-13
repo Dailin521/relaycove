@@ -2,7 +2,10 @@
   "profiles": {
     "Windows Machine": {
       "commandName": "Project",
-      "nativeDebugging": false
+      "nativeDebugging": false,
+      "environmentVariables": {
+        "RELAYCOVE_NATIVE_UI_PREVIEW": "1"
+      }
     }
   }
 }

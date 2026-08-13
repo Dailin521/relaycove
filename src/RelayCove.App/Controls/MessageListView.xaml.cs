@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Windows.Input;
 using RelayCove.App.ViewModels;
+using WinPoint = Windows.Foundation.Point;
+using WinUiFrameworkElement = Microsoft.UI.Xaml.FrameworkElement;
 
 namespace RelayCove.App.Controls;
 
@@ -35,9 +37,32 @@ public partial class MessageListView : ContentView
 
     private void OnOpenMessageMenuClicked(object? sender, EventArgs eventArgs)
     {
-        if (sender is not Button { BindingContext: MessageItem message } button) return;
-        _messageMenuTrigger = button;
-        Execute(_viewModel?.OpenMessageMenuCommand, message);
+        if (sender is not VisualElement { BindingContext: MessageItem message } trigger) return;
+        _messageMenuTrigger = trigger;
+        var request = CreateMenuRequest(trigger, message);
+        if (request is null) Execute(_viewModel?.OpenMessageMenuCommand, message);
+        else Execute(_viewModel?.OpenMessageMenuAtCommand, request);
+    }
+
+    private static MessageMenuRequest? CreateMenuRequest(VisualElement trigger, MessageItem message)
+    {
+        var source = trigger.Handler?.PlatformView as WinUiFrameworkElement;
+        var pageRoot = Application.Current?.Windows
+            .Select(window => window.Page?.Handler?.PlatformView)
+            .OfType<WinUiFrameworkElement>()
+            .FirstOrDefault();
+        if (source is null || pageRoot is null) return null;
+        try
+        {
+            var localX = message.IsOwn ? 0d : source.ActualWidth;
+            var point = source.TransformToVisual(pageRoot)
+                .TransformPoint(new WinPoint(localX, source.ActualHeight));
+            return new MessageMenuRequest(message, point.X, point.Y);
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     private void OnQuoteMessageClicked(object? sender, EventArgs eventArgs) =>
@@ -48,6 +73,12 @@ public partial class MessageListView : ContentView
 
     private void OnOpenReactionPickerClicked(object? sender, EventArgs eventArgs) =>
         ExecuteMessageCommand(sender, _viewModel?.OpenReactionPickerCommand);
+
+    private void OnEditMessageClicked(object? sender, EventArgs eventArgs) =>
+        ExecuteMessageCommand(sender, _viewModel?.OpenEditDialogCommand);
+
+    private void OnToggleMessageStarClicked(object? sender, EventArgs eventArgs) =>
+        ExecuteMessageCommand(sender, _viewModel?.ToggleMessageStarCommand);
 
     private void OnToggleReactionClicked(object? sender, EventArgs eventArgs)
     {
@@ -70,7 +101,7 @@ public partial class MessageListView : ContentView
 
     private void ExecuteMessageCommand(object? sender, ICommand? command)
     {
-        if (sender is Button { BindingContext: MessageItem message }) Execute(command, message);
+        if (sender is VisualElement { BindingContext: MessageItem message }) Execute(command, message);
     }
 
     private static void Execute(ICommand? command, object? parameter)

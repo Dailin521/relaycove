@@ -6,6 +6,8 @@ public sealed class MauiUiPreferencesService : IUiPreferencesService
     private const string FontScaleKey = "relaycove.ui.font-scale";
     private const string ConversationWidthKey = "relaycove.ui.conversation-width";
     private const string DetailsDefaultKey = "relaycove.ui.details-default";
+    private const string ChannelsExpandedKey = "relaycove.ui.channels-expanded";
+    private const string DirectMessagesExpandedKey = "relaycove.ui.direct-messages-expanded";
 
     public MauiUiPreferencesService()
     {
@@ -13,7 +15,9 @@ public sealed class MauiUiPreferencesService : IUiPreferencesService
             Parse(Preferences.Default.Get(DensityKey, nameof(UiDensityMode.Comfortable)), UiDensityMode.Comfortable),
             Parse(Preferences.Default.Get(FontScaleKey, nameof(UiFontScaleMode.Default)), UiFontScaleMode.Default),
             Parse(Preferences.Default.Get(ConversationWidthKey, nameof(UiConversationWidthMode.Standard)), UiConversationWidthMode.Standard),
-            Preferences.Default.Get(DetailsDefaultKey, false));
+            Preferences.Default.Get(DetailsDefaultKey, false),
+            Preferences.Default.Get(ChannelsExpandedKey, true),
+            Preferences.Default.Get(DirectMessagesExpandedKey, true));
         Apply(Current);
     }
 
@@ -34,6 +38,8 @@ public sealed class MauiUiPreferencesService : IUiPreferencesService
         Preferences.Default.Set(FontScaleKey, preferences.FontScale.ToString());
         Preferences.Default.Set(ConversationWidthKey, preferences.ConversationWidth.ToString());
         Preferences.Default.Set(DetailsDefaultKey, preferences.OpenDetailsByDefault);
+        Preferences.Default.Set(ChannelsExpandedKey, preferences.ChannelsExpanded);
+        Preferences.Default.Set(DirectMessagesExpandedKey, preferences.DirectMessagesExpanded);
         Apply(preferences);
     }
 

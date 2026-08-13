@@ -1,8 +1,8 @@
 # Stage 22 — RelayCove 双前端（22W Web / 22M Native MAUI）
 
-- Status: Stage 22W message-interaction follow-up and Stage 22M native shell/message-interaction parity implemented, independently reviewed and integrated into `main`; final combined Full passed before the authorized push
-- Integration branch: `main`; owning branches `codex/stage-22w-message-interactions` and `codex/stage-22m-native-shell`
-- Starting point: both owning branches began from `main@53a4f1a643031d9eef801e52ab8b20456ea8773c`
+- Status: Stage 22W and the first Stage 22M slice are integrated; the isolated native Web-parity follow-up passed current-tree Full and independent pre-push review and is ready for fast-forward integration
+- Active branch/worktree: `codex/stage-22m-web-parity` under `E:\WorkSpace\RelayCove-Stage22MParity`; existing integration branch remains `main`
+- Starting point: the integrated Web/first native slices descend from `main@53a4f1a`; this follow-up starts from integrated `main@46e5608`
 - Design source: immutable `docs/ui/baselines/chat-ui-v1/`
 - Interaction source: `docs/ui/INTERACTION_SPEC.md`
 
@@ -26,7 +26,9 @@ Stage 21 的真实 Realm Live、MAUI 人工密码登录和干净 Windows 11 x64 
 
 ### Stage 22M — MAUI native parity
 
-状态：Slice 1 and message-interaction parity implemented in isolated worktree。使用原生 XAML、ResourceDictionary、ViewModel、Behavior 和 Windows adapter，不引用 React runtime，不加载 WebView。当前实现包含可运行原生壳、既有 session 投影、reaction/edit/delete/star/附件写能力以及确定性 App/Core/Zulip/Data 测试；真实 Realm 写入和完整 Windows 人工验收仍是独立未验证门禁。
+状态：Slice 1 and message-interaction parity implemented；Web-parity follow-up active。使用原生 XAML、ResourceDictionary、ViewModel、Behavior 和 Windows adapter，不引用 React runtime，不加载 WebView。当前 follow-up 对齐正式 Web 的区域表面层级、310 DIP 会话栏、1121/720 响应式断点、连续可折叠分组、消息/引用/附件/Composer、浮动快捷操作、详情、设置和真实深色切换；真实 Realm 写入和完整 Windows 人工验收仍是独立未验证门禁。
+
+当前 follow-up 的 Full 门禁已通过：Debug/Release 均为 0 warning/error，Core 85/85、Zulip.Client 40/40、Data 17/17、App 45/45（每配置 187/187），Web 86/86/typecheck/build、Playwright 6/6 与部署路径 1/1 通过；最终 Windows 包 SHA-256 为 `65900B913C0CD5AAC169ED6383BAF0DCD2A0441520F38C2466415BABE0D7B505`。Live 未运行。证据截图和 SHA-256 记录在 `docs/ai/STATUS.md`，这些均为无网络 Debug preview，不替代真实 Realm、人工登录、100%/200%、高对比度或干净 VM 验收。
 
 ## Stage 22W / Slice 1 — production foundation
 
@@ -269,6 +271,8 @@ Proposed MAUI landing points remain:
 - The final combined-main Full passed after integrating both owning commits: Debug/Release .NET 178/178 per configuration, Web typecheck and 86/86 unit tests, production build, Playwright 6/6 plus deployment path 1/1, Windows package generation and zero build warnings/errors. `Live` did not run.
 
 Native screenshot evidence is Debug-only, deterministic and no-network: `RELAYCOVE_NATIVE_UI_PREVIEW=1` selects a `#if DEBUG` in-memory `IClientSession`. Send/reaction/edit/delete/star/upload interactions modify only its local memory and cannot reach a Realm. `PrintWindow(PW_RENDERFULLCONTENT)` rendered only the complete RelayCove top-level window on `DISPLAY2`, 150%/DPI 144, dated 2026-08-13:
+
+The reusable local preview workflow is documented in `docs/ui/MAUI_PREVIEW_WORKFLOW.md`. The current Visual Studio 2026 toolchain is pinned to .NET SDK `10.0.400`, workload set `10.0.400.1`, MAUI `10.0.20` and Windows `win-x64`; `Windows Machine` remains the MAUI-aware profile. The upgraded SDK/MAUI/RID graph requires one explicit dependency provisioning step, after which ordinary Fast/Full remain no-restore. Visual Studio-saved XAML may Hot Reload, while external Codex edits use a batched App-only no-restore build and one restart because neither VS external-file pickup nor the current `dotnet watch` XAML coverage is treated as deterministic. Debug preview startup selects a non-primary monitor with target-monitor DPI conversion and safe single-monitor fallback; production startup is unchanged. The post-Fast narrow follow-up passed App 45/45 and a Debug App build with zero warnings/errors.
 
 | Evidence | Target/equivalent DIP | Actual PNG pixels | SHA-256 |
 |---|---:|---:|---|

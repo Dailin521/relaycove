@@ -5,6 +5,7 @@
     <RootNamespace>RelayCove.App</RootNamespace>
     <UseMaui>true</UseMaui>
     <SingleProject>true</SingleProject>
+    <MauiVersion>10.0.20</MauiVersion>
     <ApplicationTitle>RelayCove</ApplicationTitle>
     <ApplicationId>com.relaycove.client</ApplicationId>
     <!-- MAUI Windows resource metadata accepts only numeric major.minor.patch. -->
@@ -18,14 +19,19 @@
     <MauiEnableXamlCBindingWithSourceCompilation>true</MauiEnableXamlCBindingWithSourceCompilation>
   </PropertyGroup>
 
-  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows' and '$(RuntimeIdentifierOverride)' != ''">
-    <RuntimeIdentifier>$(RuntimeIdentifierOverride)</RuntimeIdentifier>
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifierOverride)' == ''">win-x64</RuntimeIdentifier>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifierOverride)' != ''">$(RuntimeIdentifierOverride)</RuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <MauiImage Include="Resources\Images\*.svg" />
   </ItemGroup>
 
   <ItemGroup>

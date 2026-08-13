@@ -9,36 +9,66 @@
           Title="RelayCove"
           Subtitle="{Binding WorkspaceDisplayName}"
           HeightRequest="{StaticResource ProductBarHeight}"
-          BackgroundColor="{AppThemeBinding Light={StaticResource LightSurfaceColor}, Dark={StaticResource DarkSurfaceColor}}"
+          BackgroundColor="{AppThemeBinding Light={StaticResource LightGroundColor}, Dark={StaticResource DarkGroundColor}}"
           ForegroundColor="{AppThemeBinding Light={StaticResource LightTextColor}, Dark={StaticResource DarkTextColor}}">
+    <TitleBar.LeadingContent>
+        <Border WidthRequest="24"
+                HeightRequest="24"
+                Padding="0"
+                Margin="3,0,0,0"
+                Background="{StaticResource AccentBrush}"
+                StrokeThickness="0">
+            <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
+            <Label Text="R"
+                   TextColor="White"
+                   FontSize="12"
+                   FontAttributes="Bold"
+                   HorizontalTextAlignment="Center"
+                   VerticalTextAlignment="Center" />
+        </Border>
+    </TitleBar.LeadingContent>
+
     <TitleBar.Content>
-        <Border Padding="10,4"
+        <Border x:Name="ConnectionStatusBorder"
+                Padding="9,3"
                 HorizontalOptions="Center"
                 VerticalOptions="Center"
+                IsVisible="{Binding ShowConnectionStatus}"
                 Background="{StaticResource SurfaceSoftBrush}"
                 Stroke="{StaticResource BorderBrush}"
                 StrokeThickness="1">
-            <Border.StrokeShape>
-                <RoundRectangle CornerRadius="10" />
-            </Border.StrokeShape>
+            <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
             <Label x:Name="ConnectionStatusLabel"
                    Style="{StaticResource MutedLabelStyle}"
+                   FontSize="11"
                    VerticalTextAlignment="Center" />
         </Border>
     </TitleBar.Content>
+
     <TitleBar.TrailingContent>
-        <Button Text="⌃"
-                Style="{StaticResource IconButtonStyle}"
-                Clicked="OnPinClicked"
-                SemanticProperties.Description="置顶窗口">
-            <Button.Triggers>
-                <DataTrigger TargetType="Button"
-                             Binding="{Binding IsPinned, Source={x:Reference Root}, x:DataType=controls:ProductBarView}"
-                             Value="True">
-                    <Setter Property="BackgroundColor" Value="{StaticResource AccentColor}" />
-                    <Setter Property="TextColor" Value="White" />
-                </DataTrigger>
-            </Button.Triggers>
-        </Button>
+        <HorizontalStackLayout Spacing="2">
+            <ImageButton x:Name="ThemeButton"
+                         Source="icon_moon.png"
+                         Style="{StaticResource ImageIconButtonStyle}"
+                         WidthRequest="32"
+                         HeightRequest="32"
+                         Padding="8"
+                         SemanticProperties.Description="切换浅色或深色主题" />
+            <ImageButton Source="icon_pin.png"
+                         Style="{StaticResource ImageIconButtonStyle}"
+                         WidthRequest="32"
+                         HeightRequest="32"
+                         Padding="8"
+                         Clicked="OnPinClicked"
+                         SemanticProperties.Description="置顶窗口">
+                <ImageButton.Triggers>
+                    <DataTrigger TargetType="ImageButton"
+                                 Binding="{Binding IsPinned, Source={x:Reference Root}, x:DataType=controls:ProductBarView}"
+                                 Value="True">
+                        <Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
+                    </DataTrigger>
+                </ImageButton.Triggers>
+            </ImageButton>
+        </HorizontalStackLayout>
     </TitleBar.TrailingContent>
 </TitleBar>

@@ -10,8 +10,8 @@ namespace RelayCove.App.ViewModels;
 
 public sealed partial class ShellViewModel : ObservableObject, IDisposable
 {
-    private const double WideLayoutMinimum = 1200d;
-    private const double NarrowLayoutMaximum = 819d;
+    private const double WideLayoutMinimum = 1121d;
+    private const double NarrowLayoutMaximum = 720d;
     private const double DefaultComposerHeight = 112d;
     private const double MinimumComposerHeight = 72d;
     private const double MaximumComposerHeight = 300d;
@@ -35,6 +35,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private long? _loadedTopicsChannelId;
     private string? _activeDraftKey;
     private double _composerHeight = DefaultComposerHeight;
+    private double _viewportWidth = 1440d;
     private int _initialized;
     private int _loginInFlight;
     private bool _suppressDraftTracking;
@@ -127,6 +128,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial bool IsNewConversationOpen { get; set; }
 
     [ObservableProperty]
+    public partial bool IsAccountMenuOpen { get; set; }
+
+    [ObservableProperty]
     public partial string NewConversationQuery { get; set; } = string.Empty;
 
     [ObservableProperty]
@@ -148,6 +152,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial bool IsMessageMenuOpen { get; set; }
 
     [ObservableProperty]
+    public partial double MessageMenuAnchorX { get; set; }
+
+    [ObservableProperty]
+    public partial double MessageMenuAnchorY { get; set; }
+
+    [ObservableProperty]
     public partial bool IsEditDialogOpen { get; set; }
 
     [ObservableProperty]
@@ -167,6 +177,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial string? AttachmentError { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsFileDragActive { get; set; }
 
     [ObservableProperty]
     public partial MessageAttachmentItem? ActiveImageAttachment { get; set; }
@@ -211,6 +224,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial ShellSection SelectedSection { get; set; } = ShellSection.Messages;
 
     [ObservableProperty]
+    public partial SettingsCategory SelectedSettingsCategory { get; set; } = SettingsCategory.Appearance;
+
+    [ObservableProperty]
     public partial ShellLayoutMode LayoutMode { get; set; } = ShellLayoutMode.Wide;
 
     [ObservableProperty]
@@ -233,6 +249,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial bool OpenDetailsByDefault { get; set; }
+
+    [ObservableProperty]
+    public partial bool AreChannelsExpanded { get; set; } = true;
+
+    [ObservableProperty]
+    public partial bool AreDirectMessagesExpanded { get; set; } = true;
 
     [ObservableProperty]
     public partial string? UnavailableFeatureMessage { get; set; }
@@ -278,16 +300,17 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool IsWideLayout => LayoutMode == ShellLayoutMode.Wide;
     public bool IsCompactLayout => LayoutMode == ShellLayoutMode.Compact;
     public bool IsNarrowLayout => LayoutMode == ShellLayoutMode.Narrow;
+    public bool IsNotNarrowLayout => !IsNarrowLayout;
     public bool IsConversationPaneVisible =>
         IsMessagesSection && (!IsNarrowLayout || IsConversationListVisibleOnNarrow);
     public bool IsChatPaneVisible =>
         IsMessagesSection && (!IsNarrowLayout || !IsConversationListVisibleOnNarrow);
     public bool IsInlineDetailsVisible => IsMessagesSection && IsWideLayout && IsDetailsOpen;
     public bool IsOverlayDetailsVisible => IsMessagesSection && !IsWideLayout && IsDetailsOpen;
-    public bool IsModalOverlayVisible => IsOverlayDetailsVisible || IsSearchOpen || IsMessageMenuOpen ||
+    public bool IsModalOverlayVisible => IsOverlayDetailsVisible || IsSearchOpen || IsMessageMenuOpen || IsAccountMenuOpen ||
         IsComposerEmojiPickerOpen || IsReactionPickerOpen || IsEditDialogOpen ||
         IsDeleteConfirmationOpen || IsImageViewerOpen || IsNewConversationOpen || LogoutConfirmationVisible;
-    public bool IsPrimaryShellEnabled => !IsModalOverlayVisible;
+    public bool IsPrimaryShellEnabled => !IsModalOverlayVisible || IsMessageMenuOpen || IsAccountMenuOpen;
     public bool CanCompose =>
         HasSelectedConversation && _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
     public bool CanSend => CanCompose && (!string.IsNullOrWhiteSpace(ComposerText) || HasAttachments) &&
@@ -322,7 +345,72 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool IsNarrowConversationWidth => ConversationWidthMode == UiConversationWidthMode.Narrow;
     public bool IsStandardConversationWidth => ConversationWidthMode == UiConversationWidthMode.Standard;
     public bool IsWideConversationWidth => ConversationWidthMode == UiConversationWidthMode.Wide;
-    public string WorkspaceDisplayName => TryGetRealmHost(Realm) ?? "RelayCove";
+    public bool IsAppearanceSettings => SelectedSettingsCategory == SettingsCategory.Appearance;
+    public bool IsGeneralSettings => SelectedSettingsCategory == SettingsCategory.General;
+    public bool IsNotificationSettings => SelectedSettingsCategory == SettingsCategory.Notifications;
+    public bool IsStorageSettings => SelectedSettingsCategory == SettingsCategory.Storage;
+    public bool IsAccountSettings => SelectedSettingsCategory == SettingsCategory.Account;
+    public double FontScaleSliderValue
+    {
+        get => FontScaleMode switch
+        {
+            UiFontScaleMode.Small => 12d,
+            UiFontScaleMode.Large => 16d,
+            _ => 14d
+        };
+        set => FontScaleMode = value <= 13d
+            ? UiFontScaleMode.Small
+            : value >= 15d
+                ? UiFontScaleMode.Large
+                : UiFontScaleMode.Default;
+    }
+    public string CurrentFontSizeLabel => $"{FontScaleSliderValue:0} px";
+    public double ConversationWidthSliderValue
+    {
+        get => ConversationWidthMode switch
+        {
+            UiConversationWidthMode.Narrow => 264d,
+            UiConversationWidthMode.Wide => 352d,
+            _ => 310d
+        };
+        set => ConversationWidthMode = value < 288d
+            ? UiConversationWidthMode.Narrow
+            : value >= 336d
+                ? UiConversationWidthMode.Wide
+                : UiConversationWidthMode.Standard;
+    }
+    public string CurrentConversationWidthLabel => $"{ConversationWidthSliderValue:0} px";
+    public string ChannelGroupCountLabel => Channels.Count.ToString();
+    public string DirectMessageGroupCountLabel => $"{DirectMessages.Count} 个会话";
+    public double ChannelListHeight => AreChannelsExpanded ? Math.Min(Channels.Count * 67d, 268d) : 0d;
+    public double TopicListHeight => AreChannelsExpanded && HasSelectedChannel
+        ? Math.Min(Topics.Count * 36d, 144d)
+        : 0d;
+    public string CurrentUserDisplayName => _session.CurrentUserId is { } currentUserId &&
+        _projectedState.Users.TryGetValue(currentUserId, out var currentUser)
+            ? currentUser.FullName
+            : "当前账户";
+    public string CurrentUserInitial => string.IsNullOrWhiteSpace(CurrentUserDisplayName)
+        ? "我"
+        : CurrentUserDisplayName.Trim()[0].ToString().ToUpperInvariant();
+    public string? CurrentUserAvatarUrl => _session.CurrentUserId is { } currentUserId &&
+        _projectedState.Users.TryGetValue(currentUserId, out var currentUser)
+            ? currentUser.AvatarUrl
+            : null;
+    public string WorkspaceDisplayName
+    {
+        get
+        {
+            var host = _session.ActiveRealm?.Uri.Host ?? TryGetRealmHost(Realm);
+            return string.Equals(host, "preview.invalid", StringComparison.OrdinalIgnoreCase)
+                ? "本地预览"
+                : host ?? "RelayCove";
+        }
+    }
+    public bool ShowConnectionStatus => IsLoggedIn &&
+        _projectedState.Connection.Status != RelayCove.Core.ConnectionStatus.Connected;
+    public bool HasCurrentConversationUnread => _session.SelectedConversation is { } selected &&
+        GetConversationUnread(_projectedState.Unread, selected) > 0;
     public string MessageEmptyTitle => !HasSelectedConversation
         ? "从左侧选择频道话题或私信"
         : _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Offline
@@ -336,7 +424,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             {
                 UiConversationWidthMode.Narrow => 264,
                 UiConversationWidthMode.Wide => 352,
-                _ => 304
+                _ => 310
             });
     public GridLength ChatPaneWidth =>
         IsNarrowLayout
@@ -381,6 +469,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public void UpdateViewport(double width)
     {
         if (!double.IsFinite(width) || width <= 0) return;
+        _viewportWidth = width;
         var next = width >= WideLayoutMinimum
             ? ShellLayoutMode.Wide
             : width <= NarrowLayoutMaximum
@@ -562,7 +651,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ExecuteSessionActionAsync(() => _session.MarkDisplayedReadAsync(cancellationToken));
 
     [RelayCommand]
-    private void RequestLogout() => LogoutConfirmationVisible = true;
+    private void RequestLogout()
+    {
+        IsAccountMenuOpen = false;
+        LogoutConfirmationVisible = true;
+    }
 
     [RelayCommand]
     private void CancelLogout() => LogoutConfirmationVisible = false;
@@ -605,6 +698,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void ShowMessages()
     {
+        CloseTransientOverlays();
         SelectedSection = ShellSection.Messages;
         UnavailableFeatureMessage = null;
     }
@@ -612,6 +706,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void ShowContacts()
     {
+        CloseTransientOverlays();
         SelectedSection = ShellSection.Contacts;
         IsDetailsOpen = false;
         UnavailableFeatureMessage = null;
@@ -620,7 +715,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void ShowSettings()
     {
+        CloseTransientOverlays();
         SelectedSection = ShellSection.Settings;
+        SelectedSettingsCategory = SettingsCategory.Appearance;
         IsDetailsOpen = false;
         UnavailableFeatureMessage = null;
     }
@@ -628,6 +725,38 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void ShowSavedUnavailable() =>
         UnavailableFeatureMessage = "已保存消息尚未接入真实 saved/starred 读取契约。";
+
+    [RelayCommand]
+    private void ToggleAccountMenu()
+    {
+        var open = !IsAccountMenuOpen;
+        CloseTransientOverlays();
+        IsAccountMenuOpen = open;
+    }
+
+    [RelayCommand]
+    private void CloseAccountMenu() => IsAccountMenuOpen = false;
+
+    [RelayCommand]
+    private void ToggleChannels() => AreChannelsExpanded = !AreChannelsExpanded;
+
+    [RelayCommand]
+    private void ToggleDirectMessages() => AreDirectMessagesExpanded = !AreDirectMessagesExpanded;
+
+    [RelayCommand]
+    private void ShowAppearanceSettings() => SelectedSettingsCategory = SettingsCategory.Appearance;
+
+    [RelayCommand]
+    private void ShowGeneralSettings() => SelectedSettingsCategory = SettingsCategory.General;
+
+    [RelayCommand]
+    private void ShowNotificationSettings() => SelectedSettingsCategory = SettingsCategory.Notifications;
+
+    [RelayCommand]
+    private void ShowStorageSettings() => SelectedSettingsCategory = SettingsCategory.Storage;
+
+    [RelayCommand]
+    private void ShowAccountSettings() => SelectedSettingsCategory = SettingsCategory.Account;
 
     [RelayCommand]
     private void OpenSearch()
@@ -725,6 +854,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         AttachmentError = null;
         var selected = await _fileSelectionService.PickMultipleAsync(cancellationToken);
+        AddAttachmentSelection(selected);
+    }
+
+    [RelayCommand]
+    private void AddDroppedAttachments(IReadOnlyList<SelectedAttachmentFile>? selected)
+    {
+        IsFileDragActive = false;
+        AddAttachmentSelection(selected ?? []);
+    }
+
+    private void AddAttachmentSelection(IReadOnlyList<SelectedAttachmentFile> selected)
+    {
         if (selected.Count == 0) return;
         var error = ValidateAttachmentSelection(Attachments, selected, _session.MaxFileUploadBytes);
         if (error is not null)
@@ -840,8 +981,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void OpenMessageMenu(MessageItem? message)
     {
         if (message?.MessageId is null) return;
+        OpenMessageMenuAt(new MessageMenuRequest(message, Math.Max(12d, _viewportWidth - 232d), 68d));
+    }
+
+    [RelayCommand]
+    private void OpenMessageMenuAt(MessageMenuRequest? request)
+    {
+        if (request?.Message.MessageId is null ||
+            !double.IsFinite(request.AnchorX) || !double.IsFinite(request.AnchorY)) return;
         CloseTransientOverlays();
-        ActiveMessageAction = message;
+        ActiveMessageAction = request.Message;
+        MessageMenuAnchorX = Math.Max(0d, request.AnchorX);
+        MessageMenuAnchorY = Math.Max(0d, request.AnchorY);
         IsMessageMenuOpen = true;
     }
 
@@ -1030,6 +1181,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void SetDarkTheme() => AppearanceMode = AppAppearanceMode.Dark;
 
     [RelayCommand]
+    private void ToggleTheme() => AppearanceMode = AppearanceMode == AppAppearanceMode.Dark
+        ? AppAppearanceMode.Light
+        : AppAppearanceMode.Dark;
+
+    [RelayCommand]
     private void SetComfortableDensity() => DensityMode = UiDensityMode.Comfortable;
 
     [RelayCommand]
@@ -1079,6 +1235,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void CloseTransientOverlays()
     {
         IsSearchOpen = false;
+        IsAccountMenuOpen = false;
+        IsFileDragActive = false;
         IsComposerEmojiPickerOpen = false;
         IsReactionPickerOpen = false;
         IsMessageMenuOpen = false;
@@ -1129,6 +1287,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasMessageLoadError));
 
     partial void OnIsSearchOpenChanged(bool value) => NotifyOverlayProperties();
+    partial void OnIsAccountMenuOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsNewConversationOpenChanged(bool value)
     {
         if (!value) ClearNewConversationChoices();
@@ -1157,6 +1316,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsContactsSection));
         OnPropertyChanged(nameof(IsSettingsSection));
         NotifyLayoutProperties();
+    }
+
+    partial void OnSelectedSettingsCategoryChanged(SettingsCategory value)
+    {
+        OnPropertyChanged(nameof(IsAppearanceSettings));
+        OnPropertyChanged(nameof(IsGeneralSettings));
+        OnPropertyChanged(nameof(IsNotificationSettings));
+        OnPropertyChanged(nameof(IsStorageSettings));
+        OnPropertyChanged(nameof(IsAccountSettings));
     }
 
     partial void OnLayoutModeChanged(ShellLayoutMode value) => NotifyLayoutProperties();
@@ -1192,6 +1360,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsSmallFont));
         OnPropertyChanged(nameof(IsDefaultFont));
         OnPropertyChanged(nameof(IsLargeFont));
+        OnPropertyChanged(nameof(FontScaleSliderValue));
+        OnPropertyChanged(nameof(CurrentFontSizeLabel));
         SaveUiPreferences();
     }
 
@@ -1201,10 +1371,21 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsStandardConversationWidth));
         OnPropertyChanged(nameof(IsWideConversationWidth));
         OnPropertyChanged(nameof(ConversationPaneWidth));
+        OnPropertyChanged(nameof(ConversationWidthSliderValue));
+        OnPropertyChanged(nameof(CurrentConversationWidthLabel));
         SaveUiPreferences();
     }
 
     partial void OnOpenDetailsByDefaultChanged(bool value) => SaveUiPreferences();
+
+    partial void OnAreChannelsExpandedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ChannelListHeight));
+        OnPropertyChanged(nameof(TopicListHeight));
+        SaveUiPreferences();
+    }
+
+    partial void OnAreDirectMessagesExpandedChanged(bool value) => SaveUiPreferences();
 
     partial void OnUnavailableFeatureMessageChanged(string? value) =>
         OnPropertyChanged(nameof(HasUnavailableFeatureMessage));
@@ -1212,6 +1393,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     partial void OnSelectedChannelChanged(ChannelItem? value)
     {
         OnPropertyChanged(nameof(HasSelectedChannel));
+        OnPropertyChanged(nameof(TopicListHeight));
         if (value?.ChannelId == _loadedTopicsChannelId) return;
         _ = SelectChannelAsync(value);
     }
@@ -1364,7 +1546,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 .Select(subscription => new ChannelItem(
                     subscription.ChannelId,
                     subscription.Name,
-                    GetChannelUnread(state.Unread, subscription.ChannelId))),
+                    GetChannelUnread(state.Unread, subscription.ChannelId),
+                    state.Topics.Values
+                        .Where(topic => topic.ChannelId == subscription.ChannelId)
+                        .OrderByDescending(topic => topic.MaxMessageId)
+                        .Select(topic => topic.Topic)
+                        .FirstOrDefault())),
             item => item.ChannelId);
 
         Reconcile(
@@ -1375,13 +1562,20 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 .Select(item =>
                 {
                     var avatar = GetDirectMessageAvatar(item, state.Users);
+                    var latestMessage = state.Messages.Values
+                        .Where(message => message.Conversation == item)
+                        .OrderByDescending(message => message.Id)
+                        .FirstOrDefault();
                     return new NavigationItem(
                         item,
                         DescribeDirectMessage(item, state.Users),
-                        DescribeDirectMessageKind(item),
+                        latestMessage is null
+                            ? DescribeDirectMessageKind(item)
+                            : TruncateForSearch(latestMessage.Content),
                         GetConversationUnread(state.Unread, item),
                         avatar?.AvatarUrl,
-                        avatar?.IsBot ?? false);
+                        avatar?.IsBot ?? false,
+                        latestMessage?.Timestamp.LocalDateTime.ToString("H:mm"));
                 }),
             item => item.Conversation.CanonicalKey);
 
@@ -1758,6 +1952,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanSend));
         OnPropertyChanged(nameof(CanMarkRead));
         OnPropertyChanged(nameof(MessageEmptyTitle));
+        OnPropertyChanged(nameof(WorkspaceDisplayName));
+        OnPropertyChanged(nameof(ShowConnectionStatus));
+        OnPropertyChanged(nameof(ChannelGroupCountLabel));
+        OnPropertyChanged(nameof(DirectMessageGroupCountLabel));
+        OnPropertyChanged(nameof(CurrentUserDisplayName));
+        OnPropertyChanged(nameof(CurrentUserInitial));
+        OnPropertyChanged(nameof(CurrentUserAvatarUrl));
+        OnPropertyChanged(nameof(ChannelListHeight));
+        OnPropertyChanged(nameof(TopicListHeight));
+        OnPropertyChanged(nameof(HasCurrentConversationUnread));
         NotifyLayoutProperties();
     }
 
@@ -1766,6 +1970,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsWideLayout));
         OnPropertyChanged(nameof(IsCompactLayout));
         OnPropertyChanged(nameof(IsNarrowLayout));
+        OnPropertyChanged(nameof(IsNotNarrowLayout));
         OnPropertyChanged(nameof(IsConversationPaneVisible));
         OnPropertyChanged(nameof(IsChatPaneVisible));
         OnPropertyChanged(nameof(IsInlineDetailsVisible));
@@ -1792,6 +1997,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             FontScaleMode = preferences.FontScale;
             ConversationWidthMode = preferences.ConversationWidth;
             OpenDetailsByDefault = preferences.OpenDetailsByDefault;
+            AreChannelsExpanded = preferences.ChannelsExpanded;
+            AreDirectMessagesExpanded = preferences.DirectMessagesExpanded;
         }
         finally
         {
@@ -1807,7 +2014,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             DensityMode,
             FontScaleMode,
             ConversationWidthMode,
-            OpenDetailsByDefault));
+            OpenDetailsByDefault,
+            AreChannelsExpanded,
+            AreDirectMessagesExpanded));
     }
 
     private void SetComposerTextWithoutTracking(string value)

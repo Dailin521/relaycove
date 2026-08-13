@@ -24,6 +24,8 @@ UI implementation follows the mandatory order `formal RelayCove.Web -> browser/u
 
 Keep the Web delivery cadence explicit. Daily UI work uses repository-root `start-web-dev.cmd`, opens `/` and exercises the formal client against real Realm data by default; do not perform real writes unless the current task explicitly authorizes their exact scope. Deterministic fixtures are automation-only and require explicit fixture/E2E mode. A large-version manual-acceptance sync uses `deploy-web.cmd`, which must complete local verification, versioned archive/SHA-256 checks, atomic switch and HTTPS smoke checks before opening the fixed `/relaycove-web/` entrance. Never add deploy-on-save behavior. Server connection material stays in the private `server-admin` checkout and must not enter this repository or logs.
 
+MAUI visual work follows `docs/ui/MAUI_PREVIEW_WORKFLOW.md`: use the MAUI-aware Visual Studio `Windows Machine` profile and the Debug-only offline preview session. XAML saved inside Visual Studio may use Hot Reload; Codex/external file edits are batched, followed by an App-only no-restore build and one preview restart. The preview may auto-place itself on a non-primary display only under the Debug preview gate. Neither Hot Reload, a secondary-display screenshot nor the in-memory preview can replace XamlC/Release, real Realm, package or clean-VM evidence.
+
 ## 3. Verify locally
 
 Run the narrowest relevant tests first. Then run:

@@ -1,20 +1,50 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:controls="clr-namespace:RelayCove.App.Controls"
              xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
              x:Class="RelayCove.App.Controls.NavigationRailView"
              x:DataType="viewModels:ShellViewModel"
-             Background="{StaticResource SurfaceSoftBrush}">
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Padding="4,10" RowSpacing="4">
-        <Grid Grid.Row="0">
+             Background="{StaticResource GroundBrush}">
+    <Grid RowDefinitions="50,Auto,Auto,Auto,*,Auto" Padding="6,10,6,8" RowSpacing="4">
+        <Border Grid.Row="0"
+                WidthRequest="42"
+                HeightRequest="42"
+                Padding="0"
+                HorizontalOptions="Center"
+                Background="{StaticResource AccentBrush}"
+                StrokeThickness="0"
+                SemanticProperties.Description="{Binding CurrentUserDisplayName, StringFormat='账户 {0}'}">
+            <Border.StrokeShape><RoundRectangle CornerRadius="21" /></Border.StrokeShape>
+            <Grid>
+                <Label Text="{Binding CurrentUserInitial}"
+                       Style="{StaticResource BaseLabelStyle}"
+                       FontAttributes="Bold"
+                       TextColor="White"
+                       HorizontalTextAlignment="Center"
+                       VerticalTextAlignment="Center" />
+                <controls:RealmMediaImageView SourceUrl="{Binding CurrentUserAvatarUrl}"
+                                              MediaKind="Avatar"
+                                              Aspect="AspectFill"
+                                              ShowFailureText="False" />
+                <Button x:Name="AccountMenuButton"
+                        BackgroundColor="Transparent"
+                        BorderWidth="0"
+                        Padding="0"
+                        Command="{Binding ToggleAccountMenuCommand}"
+                        SemanticProperties.Description="打开账户菜单" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1">
             <Button Text="消息"
+                    ImageSource="icon_messages.png"
                     Style="{StaticResource NavigationButtonStyle}"
                     Command="{Binding ShowMessagesCommand}"
                     SemanticProperties.Description="消息">
                 <Button.Triggers>
                     <DataTrigger TargetType="Button" Binding="{Binding IsMessagesSection}" Value="True">
-                        <Setter Property="BackgroundColor"
-                                Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
+                        <Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
                     </DataTrigger>
                 </Button.Triggers>
             </Button>
@@ -25,64 +55,42 @@
                     IsVisible="{Binding HasNavigationUnread}"
                     Background="{StaticResource DangerBrush}"
                     StrokeThickness="0">
-                <Border.StrokeShape>
-                    <RoundRectangle CornerRadius="8" />
-                </Border.StrokeShape>
-                <Label Text="{Binding NavigationUnreadLabel}"
-                       FontSize="9"
-                       TextColor="White"
-                       SemanticProperties.Description="{Binding NavigationUnreadLabel, StringFormat='未读 {0}'}" />
+                <Border.StrokeShape><RoundRectangle CornerRadius="8" /></Border.StrokeShape>
+                <Label Text="{Binding NavigationUnreadLabel}" FontSize="9" TextColor="White" />
             </Border>
         </Grid>
 
-        <Button Grid.Row="1"
+        <Button Grid.Row="2"
                 Text="联系人"
+                ImageSource="icon_contacts.png"
                 Style="{StaticResource NavigationButtonStyle}"
                 Command="{Binding ShowContactsCommand}"
                 SemanticProperties.Description="当前客户端已知联系人">
             <Button.Triggers>
                 <DataTrigger TargetType="Button" Binding="{Binding IsContactsSection}" Value="True">
-                    <Setter Property="BackgroundColor"
-                            Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
+                    <Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
                 </DataTrigger>
             </Button.Triggers>
         </Button>
 
-        <Button Grid.Row="2"
+        <Button Grid.Row="3"
                 Text="已保存"
+                ImageSource="icon_bookmark.png"
                 Style="{StaticResource NavigationButtonStyle}"
                 Command="{Binding ShowSavedUnavailableCommand}"
                 SemanticProperties.Description="已保存消息，暂不可用" />
 
-        <Button Grid.Row="3"
+        <Button Grid.Row="5"
                 Text="设置"
+                ImageSource="icon_settings.png"
                 Style="{StaticResource NavigationButtonStyle}"
                 Command="{Binding ShowSettingsCommand}"
                 SemanticProperties.Description="设置">
             <Button.Triggers>
                 <DataTrigger TargetType="Button" Binding="{Binding IsSettingsSection}" Value="True">
-                    <Setter Property="BackgroundColor"
-                            Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
+                    <Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
                 </DataTrigger>
             </Button.Triggers>
         </Button>
-
-        <Border Grid.Row="5"
-                WidthRequest="36"
-                HeightRequest="36"
-                Padding="0"
-                HorizontalOptions="Center"
-                Background="{StaticResource AccentBrush}"
-                StrokeThickness="0"
-                SemanticProperties.Description="当前账户；presence 未提供">
-            <Border.StrokeShape>
-                <RoundRectangle CornerRadius="18" />
-            </Border.StrokeShape>
-            <Label Text="我"
-                   Style="{StaticResource BaseLabelStyle}"
-                   TextColor="White"
-                   HorizontalTextAlignment="Center"
-                   VerticalTextAlignment="Center" />
-        </Border>
     </Grid>
 </ContentView>

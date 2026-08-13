@@ -4,43 +4,55 @@
              xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
              x:Class="RelayCove.App.Controls.ChatHeaderView"
              x:DataType="viewModels:ShellViewModel"
+             HeightRequest="59"
              Background="{StaticResource SurfaceBrush}">
-    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto"
-          Padding="12,8"
-          ColumnSpacing="8">
-        <Button Grid.Column="0"
-                Text="‹"
-                Style="{StaticResource IconButtonStyle}"
-                Command="{Binding BackToConversationListCommand}"
-                IsVisible="{Binding IsNarrowLayout}"
-                SemanticProperties.Description="返回会话列表" />
+    <Grid RowDefinitions="*,1">
+        <Grid Grid.Row="0"
+              ColumnDefinitions="Auto,*,39,39,39"
+              Padding="18,0,13,0"
+              ColumnSpacing="3">
+            <ImageButton Grid.Column="0"
+                         Source="icon_back.png"
+                         Style="{StaticResource ImageIconButtonStyle}"
+                         Margin="0,0,6,0"
+                         Command="{Binding BackToConversationListCommand}"
+                         IsVisible="{Binding IsNarrowLayout}"
+                         SemanticProperties.Description="返回会话列表" />
 
-        <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
-            <Label Text="{Binding ConversationTitle}"
-                   Style="{StaticResource BaseLabelStyle}"
-                   FontSize="16"
-                   FontAttributes="Bold" />
-            <Label Text="{Binding ConversationSubtitle}"
-                   Style="{StaticResource MutedLabelStyle}" />
-        </VerticalStackLayout>
+            <VerticalStackLayout Grid.Column="1" Spacing="0" VerticalOptions="Center">
+                <Label Text="{Binding ConversationTitle}"
+                       Style="{StaticResource BaseLabelStyle}"
+                       FontSize="15"
+                       FontAttributes="Bold" />
+                <Label Text="{Binding ConversationSubtitle}"
+                       Style="{StaticResource MutedLabelStyle}"
+                       FontSize="11" />
+            </VerticalStackLayout>
 
-        <Button Grid.Column="2"
-                Text="已读"
-                Style="{StaticResource BaseButtonStyle}"
-                Command="{Binding MarkReadCommand}"
-                IsEnabled="{Binding CanMarkRead}"
-                SemanticProperties.Description="标记当前显示页已读；仅服务器确认后更新" />
-        <Button Grid.Column="3"
-                Text="⌕"
-                Style="{StaticResource IconButtonStyle}"
-                Command="{Binding OpenSearchCommand}"
-                SemanticProperties.Description="搜索当前已加载工作区" />
-        <Button x:Name="DetailsButton"
-                Grid.Column="4"
-                Text="ⓘ"
-                Style="{StaticResource IconButtonStyle}"
-                Command="{Binding ToggleDetailsCommand}"
-                IsEnabled="{Binding HasSelectedConversation}"
-                SemanticProperties.Description="{Binding DetailsButtonDescription}" />
+            <ImageButton Grid.Column="2"
+                         Source="icon_search.png"
+                         Style="{StaticResource ImageIconButtonStyle}"
+                         WidthRequest="39"
+                         HeightRequest="39"
+                         Command="{Binding OpenSearchCommand}"
+                         SemanticProperties.Description="搜索当前已加载工作区" />
+            <ImageButton x:Name="DetailsButton"
+                         Grid.Column="3"
+                         Source="icon_info.png"
+                         Style="{StaticResource ImageIconButtonStyle}"
+                         WidthRequest="39"
+                         HeightRequest="39"
+                         Command="{Binding ToggleDetailsCommand}"
+                         IsEnabled="{Binding HasSelectedConversation}"
+                         SemanticProperties.Description="{Binding DetailsButtonDescription}" />
+            <ImageButton Grid.Column="4"
+                         Source="icon_more.png"
+                         Style="{StaticResource ImageIconButtonStyle}"
+                         WidthRequest="39"
+                         HeightRequest="39"
+                         IsEnabled="False"
+                         SemanticProperties.Description="更多会话操作尚未进入能力门" />
+        </Grid>
+        <BoxView Grid.Row="1" Background="{StaticResource BorderBrush}" />
     </Grid>
 </ContentView>

@@ -6,4 +6,6 @@ public partial class NavigationRailView : ContentView
     {
         InitializeComponent();
     }
+
+    public void FocusAccountButton() => AccountMenuButton.Focus();
 }

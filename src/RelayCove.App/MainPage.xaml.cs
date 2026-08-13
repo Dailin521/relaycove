@@ -62,6 +62,9 @@ public partial class MainPage : ContentPage
             case nameof(ShellViewModel.IsSearchOpen) when _viewModel.IsSearchOpen:
                 Dispatcher.Dispatch(() => SearchEntry.Focus());
                 break;
+            case nameof(ShellViewModel.IsAccountMenuOpen) when _viewModel.IsAccountMenuOpen:
+                Dispatcher.Dispatch(() => FirstAccountMenuButton.Focus());
+                break;
             case nameof(ShellViewModel.IsNewConversationOpen) when _viewModel.IsNewConversationOpen:
                 Dispatcher.Dispatch(() => NewConversationSearchEntry.Focus());
                 break;
@@ -108,6 +111,7 @@ public partial class MainPage : ContentPage
         if (_viewModel.IsSearchOpen && HandleSearchKey(eventArgs.Key) ||
             _viewModel.IsComposerEmojiPickerOpen && HandleEmojiKey(eventArgs.Key, reaction: false) ||
             _viewModel.IsReactionPickerOpen && HandleEmojiKey(eventArgs.Key, reaction: true) ||
+            _viewModel.IsAccountMenuOpen && HandleAccountMenuKey(eventArgs.Key) ||
             _viewModel.IsMessageMenuOpen && HandleMessageMenuKey(eventArgs.Key))
         {
             eventArgs.Handled = true;
@@ -122,6 +126,11 @@ public partial class MainPage : ContentPage
         else if (_viewModel.IsEditDialogOpen) _viewModel.CancelEditDialogCommand.Execute(null);
         else if (_viewModel.IsReactionPickerOpen) _viewModel.CloseReactionPickerCommand.Execute(null);
         else if (_viewModel.IsMessageMenuOpen) _viewModel.CloseMessageMenuCommand.Execute(null);
+        else if (_viewModel.IsAccountMenuOpen)
+        {
+            _viewModel.CloseAccountMenuCommand.Execute(null);
+            NavigationRail.FocusAccountButton();
+        }
         else if (_viewModel.IsComposerEmojiPickerOpen) _viewModel.ToggleComposerEmojiPickerCommand.Execute(null);
         else if (_viewModel.IsSearchOpen) _viewModel.CloseSearchCommand.Execute(null);
         else if (_viewModel.LogoutConfirmationVisible) _viewModel.CancelLogoutCommand.Execute(null);
@@ -200,6 +209,11 @@ public partial class MainPage : ContentPage
 
     private bool HandleMessageMenuKey(VirtualKey key)
     {
+        if (key == VirtualKey.Tab)
+        {
+            _viewModel.CloseMessageMenuCommand.Execute(null);
+            return true;
+        }
         if (key == VirtualKey.Home)
         {
             FirstMessageMenuButton.Focus();
@@ -208,6 +222,31 @@ public partial class MainPage : ContentPage
         if (key == VirtualKey.End)
         {
             (_viewModel.CanDeleteActiveMessage ? LastMessageMenuButton : StarMessageMenuButton).Focus();
+            return true;
+        }
+        if (key is not (VirtualKey.Up or VirtualKey.Down)) return false;
+        FocusManager.TryMoveFocus(key == VirtualKey.Up
+            ? FocusNavigationDirection.Up
+            : FocusNavigationDirection.Down);
+        return true;
+    }
+
+    private bool HandleAccountMenuKey(VirtualKey key)
+    {
+        if (key == VirtualKey.Tab)
+        {
+            _viewModel.CloseAccountMenuCommand.Execute(null);
+            NavigationRail.FocusAccountButton();
+            return true;
+        }
+        if (key == VirtualKey.Home)
+        {
+            FirstAccountMenuButton.Focus();
+            return true;
+        }
+        if (key == VirtualKey.End)
+        {
+            LastAccountMenuButton.Focus();
             return true;
         }
         if (key is not (VirtualKey.Up or VirtualKey.Down)) return false;

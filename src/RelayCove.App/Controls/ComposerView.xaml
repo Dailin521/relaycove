@@ -8,39 +8,50 @@
              x:Name="Root"
              x:DataType="viewModels:ShellViewModel"
              IsVisible="{Binding HasSelectedConversation}">
-    <Border Margin="12,0,12,12"
+    <Border Margin="15,0,15,14"
             HeightRequest="{Binding ComposerHeight}"
-            Background="{StaticResource SurfaceBrush}"
+            Background="{StaticResource SurfaceSoftBrush}"
             Stroke="{StaticResource StrongBorderBrush}"
             StrokeThickness="1">
-        <Border.StrokeShape>
-            <RoundRectangle CornerRadius="10" />
-        </Border.StrokeShape>
-        <Grid RowDefinitions="16,*,Auto,Auto">
+        <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+        <Border.Behaviors>
+            <windowsBehaviors:FileDropBehavior
+                Command="{Binding ViewModel.AddDroppedAttachmentsCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
+                IsDragActive="{Binding ViewModel.IsFileDragActive, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}" />
+        </Border.Behaviors>
+
+        <Grid RowDefinitions="10,*,Auto,40">
             <Button Grid.Row="0"
-                    Text="━"
+                    Text=""
                     Padding="0"
                     Margin="0"
-                    HeightRequest="16"
-                    MinimumHeightRequest="16"
+                    HeightRequest="10"
+                    MinimumHeightRequest="10"
                     BackgroundColor="Transparent"
                     BorderWidth="0"
-                    FontSize="11"
                     SemanticProperties.Description="调整输入区高度；上下键每次 16，Home 最小，End 最大">
                 <Button.Behaviors>
                     <windowsBehaviors:ComposerResizeBehavior
                         Height="{Binding ViewModel.ComposerHeight, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}" />
                 </Button.Behaviors>
             </Button>
+            <BoxView Grid.Row="0"
+                     WidthRequest="40"
+                     HeightRequest="3"
+                     CornerRadius="2"
+                     HorizontalOptions="Center"
+                     VerticalOptions="Center"
+                     Background="{StaticResource StrongBorderBrush}"
+                     InputTransparent="True" />
 
             <Editor x:Name="ComposerEditor"
                     Grid.Row="1"
-                    Margin="10,0"
+                    Margin="12,2,12,0"
                     Style="{StaticResource ComposerEditorStyle}"
                     Text="{Binding ComposerText, Mode=TwoWay}"
-                    Placeholder="输入 raw Markdown；Ctrl+Enter 发送，Enter 换行"
+                    Placeholder="发送到当前会话"
                     IsEnabled="{Binding CanCompose}"
-                    SemanticProperties.Description="多行消息输入框">
+                    SemanticProperties.Description="多行消息输入框；Ctrl+Enter 发送，Enter 换行">
                 <Editor.Behaviors>
                     <windowsBehaviors:CtrlEnterBehavior
                         Command="{Binding ViewModel.SendCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}" />
@@ -51,41 +62,45 @@
                 </Editor.Behaviors>
             </Editor>
 
-            <VerticalStackLayout Grid.Row="2"
-                                 Margin="8,2"
-                                 Spacing="3">
+            <VerticalStackLayout Grid.Row="2" Margin="9,2,9,0" Spacing="3">
                 <CollectionView ItemsSource="{Binding Attachments}"
                                 IsVisible="{Binding HasAttachments}"
                                 HeightRequest="58"
-                                SelectionMode="None">
-                    <CollectionView.ItemsLayout>
-                        <LinearItemsLayout Orientation="Horizontal" ItemSpacing="6" />
-                    </CollectionView.ItemsLayout>
+                                SelectionMode="None"
+                                ItemsUpdatingScrollMode="KeepItemsInView">
+                    <CollectionView.ItemsLayout><LinearItemsLayout Orientation="Horizontal" ItemSpacing="6" /></CollectionView.ItemsLayout>
                     <CollectionView.ItemTemplate>
                         <DataTemplate x:DataType="viewModels:AttachmentDraftItem">
-                            <Border Padding="8,5"
-                                    MinimumWidthRequest="180"
-                                    MaximumWidthRequest="260"
-                                    Background="{StaticResource SurfaceSoftBrush}"
+                            <Border Padding="7,5"
+                                    WidthRequest="220"
+                                    Background="{StaticResource SurfaceBrush}"
                                     Stroke="{StaticResource BorderBrush}"
                                     StrokeThickness="1">
                                 <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
-                                <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
-                                    <Label Text="{Binding KindLabel}" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" />
-                                    <Label Grid.Column="1" Margin="7,0" Text="{Binding FileName}" Style="{StaticResource BaseLabelStyle}" LineBreakMode="TailTruncation" />
-                                    <Button Grid.Column="2" Grid.RowSpan="2" Text="×" Style="{StaticResource IconButtonStyle}"
-                                            HeightRequest="28" WidthRequest="28" MinimumHeightRequest="28" MinimumWidthRequest="28"
-                                            IsEnabled="{Binding CanRemove}"
-                                            Command="{Binding ViewModel.RemoveAttachmentCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
-                                            CommandParameter="{Binding .}" />
-                                    <HorizontalStackLayout Grid.Row="1" Grid.Column="1" Spacing="6" Margin="7,0,0,0">
-                                        <Label Text="{Binding SizeLabel}" Style="{StaticResource MutedLabelStyle}" />
-                                        <Label Text="{Binding StatusLabel}" Style="{StaticResource MutedLabelStyle}" TextColor="{StaticResource WarningColor}" />
-                                        <Button Text="显式重试" Style="{StaticResource MessageQuickButtonStyle}"
+                                <Grid ColumnDefinitions="34,*,28" RowDefinitions="Auto,Auto" ColumnSpacing="7">
+                                    <Border Grid.RowSpan="2" WidthRequest="34" HeightRequest="34" Padding="7"
+                                            VerticalOptions="Center" Background="{StaticResource SurfaceSelectedBrush}" StrokeThickness="0">
+                                        <Border.StrokeShape><RoundRectangle CornerRadius="6" /></Border.StrokeShape>
+                                        <Image Source="icon_attachment.png" />
+                                    </Border>
+                                    <Label Grid.Column="1" Text="{Binding FileName}" Style="{StaticResource BaseLabelStyle}"
+                                           FontSize="12" FontAttributes="Bold" LineBreakMode="TailTruncation" />
+                                    <HorizontalStackLayout Grid.Row="1" Grid.Column="1" Spacing="5">
+                                        <Label Text="{Binding SizeLabel}" Style="{StaticResource MutedLabelStyle}" FontSize="10" />
+                                        <Label Text="{Binding StatusLabel}" Style="{StaticResource MutedLabelStyle}" FontSize="10"
+                                               TextColor="{StaticResource WarningColor}" />
+                                        <Button Text="重试" Style="{StaticResource MessageQuickButtonStyle}"
+                                                HeightRequest="23" MinimumHeightRequest="23" Padding="5,0"
                                                 IsVisible="{Binding CanRetry}"
                                                 Command="{Binding ViewModel.RetryAttachmentCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
                                                 CommandParameter="{Binding .}" />
                                     </HorizontalStackLayout>
+                                    <ImageButton Grid.Column="2" Grid.RowSpan="2" Source="icon_close.png"
+                                                 Style="{StaticResource MessageQuickImageButtonStyle}"
+                                                 IsEnabled="{Binding CanRemove}"
+                                                 Command="{Binding ViewModel.RemoveAttachmentCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
+                                                 CommandParameter="{Binding .}"
+                                                 SemanticProperties.Description="移除附件草稿" />
                                 </Grid>
                             </Border>
                         </DataTemplate>
@@ -98,29 +113,49 @@
                        LineBreakMode="WordWrap" />
             </VerticalStackLayout>
 
-            <Grid Grid.Row="3" ColumnDefinitions="Auto,Auto,*,Auto" Padding="8,4,8,8" ColumnSpacing="6">
-                <Button Grid.Column="0"
-                        Text="☺"
-                        Style="{StaticResource IconButtonStyle}"
-                        Command="{Binding ToggleComposerEmojiPickerCommand}"
-                        SemanticProperties.Description="打开表情选择器" />
-                <Button Grid.Column="1"
-                        Text="＋"
-                        Style="{StaticResource IconButtonStyle}"
-                        Command="{Binding PickAttachmentsCommand}"
-                        IsEnabled="{Binding CanCompose}"
-                        SemanticProperties.Description="选择最多 10 个图片或文件附件" />
+            <Grid Grid.Row="3" ColumnDefinitions="34,34,*,Auto" Padding="8,3,8,5" ColumnSpacing="3">
+                <ImageButton Grid.Column="0"
+                             Source="icon_smile.png"
+                             Style="{StaticResource ImageIconButtonStyle}"
+                             WidthRequest="32" HeightRequest="32" Padding="7"
+                             Command="{Binding ToggleComposerEmojiPickerCommand}"
+                             SemanticProperties.Description="打开表情选择器" />
+                <ImageButton Grid.Column="1"
+                             Source="icon_attachment.png"
+                             Style="{StaticResource ImageIconButtonStyle}"
+                             WidthRequest="32" HeightRequest="32" Padding="7"
+                             Command="{Binding PickAttachmentsCommand}"
+                             IsEnabled="{Binding CanCompose}"
+                             SemanticProperties.Description="选择最多 10 个图片或文件附件" />
                 <Label Grid.Column="2"
-                       Text="raw Markdown · 附件逐个上传后只发送一次消息"
+                       Text="拖放文件到这里 · Ctrl+Enter 发送"
                        Style="{StaticResource MutedLabelStyle}"
+                       FontSize="10"
                        VerticalTextAlignment="Center"
                        LineBreakMode="TailTruncation" />
                 <Button Grid.Column="3"
                         Text="发送"
+                        ImageSource="icon_send.png"
+                        ContentLayout="Left,5"
                         Style="{StaticResource PrimaryButtonStyle}"
+                        HeightRequest="32"
+                        MinimumHeightRequest="32"
                         Command="{Binding SendCommand}"
                         IsEnabled="{Binding CanSend}"
                         SemanticProperties.Description="发送当前会话草稿" />
+            </Grid>
+
+            <Grid Grid.RowSpan="4"
+                  IsVisible="{Binding IsFileDragActive}"
+                  Background="{AppThemeBinding Light=#EAF5FF, Dark=#D923394A}"
+                  InputTransparent="True">
+                <Border Margin="6" Stroke="{StaticResource AccentBrush}" StrokeThickness="2" Background="Transparent">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="8" /></Border.StrokeShape>
+                    <VerticalStackLayout HorizontalOptions="Center" VerticalOptions="Center" Spacing="6">
+                        <Image Source="icon_attachment.png" WidthRequest="30" HeightRequest="30" />
+                        <Label Text="松开即可添加附件" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                    </VerticalStackLayout>
+                </Border>
             </Grid>
         </Grid>
     </Border>

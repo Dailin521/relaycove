@@ -20,6 +20,7 @@
     <Color x:Key="LightStrongBorderColor">#CFD2D6</Color>
     <Color x:Key="LightBubbleColor">#F1F2F3</Color>
     <Color x:Key="LightOwnBubbleColor">#E2F1FF</Color>
+    <Color x:Key="LightOwnBubbleBorderColor">#ACCDEC</Color>
     <Color x:Key="LightFocusColor">#0078D4</Color>
     <Color x:Key="LightOverlayColor">#6B161A1F</Color>
 
@@ -36,6 +37,7 @@
     <Color x:Key="DarkStrongBorderColor">#4A4D55</Color>
     <Color x:Key="DarkBubbleColor">#2A2B30</Color>
     <Color x:Key="DarkOwnBubbleColor">#24394A</Color>
+    <Color x:Key="DarkOwnBubbleBorderColor">#335477</Color>
     <Color x:Key="DarkFocusColor">#5AB2FF</Color>
     <Color x:Key="DarkOverlayColor">#A8000000</Color>
 
@@ -59,6 +61,8 @@
                      Color="{AppThemeBinding Light={StaticResource LightBubbleColor}, Dark={StaticResource DarkBubbleColor}}" />
     <SolidColorBrush x:Key="OwnBubbleBrush"
                      Color="{AppThemeBinding Light={StaticResource LightOwnBubbleColor}, Dark={StaticResource DarkOwnBubbleColor}}" />
+    <SolidColorBrush x:Key="OwnBubbleBorderBrush"
+                     Color="{AppThemeBinding Light={StaticResource LightOwnBubbleBorderColor}, Dark={StaticResource DarkOwnBubbleBorderColor}}" />
     <SolidColorBrush x:Key="OverlayBrush"
                      Color="{AppThemeBinding Light={StaticResource LightOverlayColor}, Dark={StaticResource DarkOverlayColor}}" />
     <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />

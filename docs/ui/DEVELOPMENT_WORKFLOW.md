@@ -141,6 +141,16 @@
 - 频道管理按 capability 控制可见性和命令，提交时仍处理 403。
 - Web fixture 占位数据不自动映射成生产数据；成员关系、共同频道、presence、saved flags 或 capability 缺少契约时两端均隐藏/标为不可用。
 
+### 6.5 原生 UI 快速预览循环
+
+- 完整操作与排障基线见 [MAUI 原生 UI 快速预览手册](MAUI_PREVIEW_WORKFLOW.md)。当前工具链显式锁定 .NET SDK `10.0.400`、MAUI `10.0.20`、Windows `win-x64`；Visual Studio 更新后先核对 SDK/workload，再调整仓库版本，并为新 SDK/MAUI/RID 显式准备一次依赖。不能删除版本门禁来规避错误。
+- 使用 MAUI-aware 的 `Windows Machine` 启动配置和 Debug 会话；该配置只额外设置 `RELAYCOVE_NATIVE_UI_PREVIEW=1`，继续使用不能联网的内存 preview session。不要用固定 exe 路径创建自定义 profile。
+- Visual Studio 内保存的 XAML 优先走 XAML Hot Reload、Live Visual Tree；Codex 或其他外部工具修改 XAML 时不能假定 VS 会接管。当前 `dotnet watch` 也不监听原始 XAML，外部修改应先成批完成，再运行 App-only `dotnet build ... --no-restore` 并只重启一次预览。
+- C# 类型、Behavior、新资源项、DI、项目文件、编译绑定和窗口启动逻辑必须增量编译/重启。编译失败时保留旧预览，不得先误杀其他 worktree 的同名进程。
+- Debug preview 每次启动自动选择非主显示器，无副屏时安全回退；生产窗口不强制移动。副屏定位按目标 monitor 的物理缩放换算 DIP，不能使用移动前的窗口 DPI。
+- 一个组件或响应式状态完成后才运行最窄 App/ViewModel 测试并保留一张证据图；一个完整 Slice 完成后才运行 Fast。Release/Full、全视口截图和独立复核仍留在提交门禁。
+- 不得为预览速度绕过 XAML 编译、切换到 WebView、把 fixture 接入生产会话，或用预览截图替代真实 Realm、安装包和干净 VM 验收。
+
 ## 7. 新能力门
 
 以下视觉入口不能只靠 React 或 XAML 实现，必须单独立项并在两端功能矩阵中标记：

@@ -7,7 +7,8 @@
              x:Class="RelayCove.App.Controls.MessageListView"
              x:Name="Root"
              x:DataType="viewModels:ShellViewModel"
-             Background="{StaticResource GroundBrush}">
+             IsClippedToBounds="True"
+             Background="{StaticResource SurfaceBrush}">
     <Grid RowDefinitions="Auto,Auto,*">
         <HorizontalStackLayout Grid.Row="0"
                                Margin="18,8,18,0"
@@ -15,12 +16,15 @@
                                HorizontalOptions="Center">
             <Button Text="加载更早消息"
                     Style="{StaticResource BaseButtonStyle}"
+                    HeightRequest="30"
+                    MinimumHeightRequest="30"
+                    FontSize="11"
                     Command="{Binding LoadOlderCommand}"
                     IsEnabled="{Binding HasSelectedConversation}"
                     SemanticProperties.Description="加载更早的 50 条消息" />
             <ActivityIndicator IsVisible="{Binding IsLoadingOlder}"
                                IsRunning="{Binding IsLoadingOlder}"
-                               WidthRequest="24"
+                               WidthRequest="22"
                                SemanticProperties.Description="正在加载更早消息" />
         </HorizontalStackLayout>
 
@@ -28,91 +32,153 @@
                 Margin="18,6,18,0"
                 Padding="10,7"
                 IsVisible="{Binding HasMessageLoadError}"
-                Background="{StaticResource SurfaceRaisedBrush}"
+                Background="{StaticResource SurfaceSoftBrush}"
                 Stroke="{StaticResource DangerBrush}"
                 StrokeThickness="1">
             <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                <Label Text="{Binding MessageLoadError}"
-                       Style="{StaticResource DangerLabelStyle}"
-                       LineBreakMode="WordWrap" />
-                <Button Grid.Column="1"
-                        Text="重试"
-                        Style="{StaticResource BaseButtonStyle}"
-                        Command="{Binding LoadOlderCommand}" />
+                <Label Text="{Binding MessageLoadError}" Style="{StaticResource DangerLabelStyle}" LineBreakMode="WordWrap" />
+                <Button Grid.Column="1" Text="重试" Style="{StaticResource BaseButtonStyle}" Command="{Binding LoadOlderCommand}" />
             </Grid>
         </Border>
 
         <CollectionView x:Name="MessageCollection"
                         Grid.Row="2"
-                        Margin="18,8,18,12"
+                        Margin="20,8,20,14"
                         ItemsSource="{Binding Messages}"
                         IsVisible="{Binding HasMessages}"
                         SelectionMode="None"
                         ItemsUpdatingScrollMode="KeepScrollOffset">
             <CollectionView.ItemTemplate>
                 <DataTemplate x:DataType="viewModels:MessageItem">
-                    <Grid Padding="0,3"
-                          SemanticProperties.Description="{Binding AccessibleLabel}">
+                    <Grid Padding="0,0,0,10" SemanticProperties.Description="{Binding AccessibleLabel}">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
 
-                        <Grid Grid.Row="0"
-                              Margin="0,8,0,5"
-                              ColumnDefinitions="*,Auto,*"
-                              IsVisible="{Binding ShowDateDivider}">
-                            <BoxView Grid.Column="0" HeightRequest="1" VerticalOptions="Center" Color="{StaticResource LightBorderColor}" />
+                        <Grid Grid.Row="0" Margin="0,8,0,6" ColumnDefinitions="*,Auto,*" IsVisible="{Binding ShowDateDivider}">
+                            <BoxView Grid.Column="0" HeightRequest="1" VerticalOptions="Center" Background="{StaticResource BorderBrush}" />
                             <Label Grid.Column="1" Margin="10,0" Text="{Binding DateDividerLabel}" Style="{StaticResource MutedLabelStyle}" />
-                            <BoxView Grid.Column="2" HeightRequest="1" VerticalOptions="Center" Color="{StaticResource LightBorderColor}" />
+                            <BoxView Grid.Column="2" HeightRequest="1" VerticalOptions="Center" Background="{StaticResource BorderBrush}" />
                         </Grid>
 
-                        <Grid Grid.Row="1"
-                              Margin="0,4"
-                              ColumnDefinitions="*,Auto,*"
-                              IsVisible="{Binding ShowUnreadDivider}">
+                        <Grid Grid.Row="1" Margin="0,4,0,8" ColumnDefinitions="*,Auto,*" IsVisible="{Binding ShowUnreadDivider}">
                             <BoxView Grid.Column="0" HeightRequest="1" VerticalOptions="Center" Color="{StaticResource DangerColor}" />
                             <Label Grid.Column="1" Margin="10,0" Text="未读消息" Style="{StaticResource DangerLabelStyle}" FontSize="11" />
                             <BoxView Grid.Column="2" HeightRequest="1" VerticalOptions="Center" Color="{StaticResource DangerColor}" />
                         </Grid>
 
-                        <Grid Grid.Row="2" ColumnDefinitions="Auto,*" ColumnSpacing="8">
-                            <Grid.Triggers>
-                                <DataTrigger TargetType="Grid" Binding="{Binding IsOwn}" Value="True">
-                                    <Setter Property="FlowDirection" Value="RightToLeft" />
-                                </DataTrigger>
-                            </Grid.Triggers>
+                        <Border x:Name="MessageRow" Grid.Row="2" Padding="0" StrokeThickness="0" Background="Transparent">
+                            <Border.Behaviors>
+                                <windowsBehaviors:MessageContextBehavior RevealElement="{x:Reference QuickActions}" />
+                            </Border.Behaviors>
+                            <Grid ColumnDefinitions="40,*,40" ColumnSpacing="10">
 
-                            <Border Grid.Column="0"
-                                    WidthRequest="32"
-                                    HeightRequest="32"
-                                    Margin="0,3,0,0"
-                                    Padding="0"
-                                    VerticalOptions="Start"
-                                    Background="{StaticResource SurfaceSelectedBrush}"
-                                    Stroke="{StaticResource BorderBrush}"
-                                    StrokeThickness="1">
-                                <Border.StrokeShape>
-                                    <RoundRectangle CornerRadius="16" />
-                                </Border.StrokeShape>
-                                <Grid>
-                                    <Label Text="{Binding AvatarInitial}"
-                                           Style="{StaticResource BaseLabelStyle}"
-                                           FontSize="10"
-                                           FontAttributes="Bold"
-                                           HorizontalTextAlignment="Center"
-                                           VerticalTextAlignment="Center" />
-                                    <controls:RealmMediaImageView SourceUrl="{Binding SenderAvatarUrl}"
-                                                                  MediaKind="Avatar"
-                                                                  Aspect="AspectFill"
-                                                                  ShowFailureText="False" />
-                                </Grid>
-                            </Border>
+                                <Border Grid.Column="{Binding AvatarColumn}"
+                                        WidthRequest="40"
+                                        HeightRequest="40"
+                                        Padding="0"
+                                        VerticalOptions="Start"
+                                        Background="{StaticResource SurfaceSelectedBrush}"
+                                        StrokeThickness="0">
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="20" /></Border.StrokeShape>
+                                    <Grid>
+                                        <Label Text="{Binding AvatarInitial}"
+                                               Style="{StaticResource BaseLabelStyle}"
+                                               FontSize="11"
+                                               FontAttributes="Bold"
+                                               HorizontalTextAlignment="Center"
+                                               VerticalTextAlignment="Center" />
+                                        <controls:RealmMediaImageView SourceUrl="{Binding SenderAvatarUrl}"
+                                                                      MediaKind="Avatar"
+                                                                      Aspect="AspectFill"
+                                                                      ShowFailureText="False" />
+                                    </Grid>
+                                </Border>
 
-                            <VerticalStackLayout Grid.Column="1" Spacing="4">
-                                <Grid MaximumWidthRequest="690" HorizontalOptions="Start">
+                                <VerticalStackLayout Grid.Column="1"
+                                                     Spacing="4"
+                                                     MaximumWidthRequest="690"
+                                                     HorizontalOptions="Start"
+                                                     FlowDirection="LeftToRight">
+                                    <VerticalStackLayout.Triggers>
+                                        <DataTrigger TargetType="VerticalStackLayout" Binding="{Binding IsOwn}" Value="True">
+                                            <Setter Property="HorizontalOptions" Value="End" />
+                                        </DataTrigger>
+                                    </VerticalStackLayout.Triggers>
+
+                                    <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="7" Margin="2,0,2,1" HorizontalOptions="Start">
+                                        <Grid.Triggers>
+                                            <DataTrigger TargetType="Grid" Binding="{Binding IsOwn}" Value="True">
+                                                <Setter Property="HorizontalOptions" Value="End" />
+                                                <Setter Property="FlowDirection" Value="RightToLeft" />
+                                            </DataTrigger>
+                                        </Grid.Triggers>
+                                        <HorizontalStackLayout Grid.Column="0" Spacing="7">
+                                            <HorizontalStackLayout.Triggers>
+                                                <DataTrigger TargetType="HorizontalStackLayout" Binding="{Binding IsOwn}" Value="True">
+                                                    <Setter Property="FlowDirection" Value="RightToLeft" />
+                                                </DataTrigger>
+                                            </HorizontalStackLayout.Triggers>
+                                            <Label Text="{Binding Sender}"
+                                                   Style="{StaticResource BaseLabelStyle}"
+                                                   FontSize="11"
+                                                   FontAttributes="Bold"
+                                                   VerticalTextAlignment="Center" />
+                                            <Label Text="{Binding Timestamp}"
+                                                   Style="{StaticResource MutedLabelStyle}"
+                                                   FontSize="10"
+                                                   VerticalTextAlignment="Center" />
+                                            <Label Text="★"
+                                                   IsVisible="{Binding IsStarred}"
+                                                   TextColor="{StaticResource WarningColor}"
+                                                   FontSize="12"
+                                                   VerticalTextAlignment="Center"
+                                                   SemanticProperties.Description="已收藏" />
+                                        </HorizontalStackLayout>
+                                        <Border x:Name="QuickActions"
+                                                Grid.Column="1"
+                                                Padding="1"
+                                                FlowDirection="LeftToRight"
+                                                Opacity="0"
+                                                IsEnabled="False"
+                                                Background="{StaticResource SurfaceRaisedBrush}"
+                                                Stroke="{StaticResource BorderBrush}"
+                                                StrokeThickness="1">
+                                            <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
+                                            <HorizontalStackLayout Spacing="0">
+                                                <ImageButton Source="icon_smile.png"
+                                                             Style="{StaticResource MessageQuickImageButtonStyle}"
+                                                             IsVisible="{Binding IsOther}"
+                                                             Clicked="OnOpenReactionPickerClicked"
+                                                             SemanticProperties.Description="添加表情反应" />
+                                                <ImageButton Source="icon_edit.png"
+                                                             Style="{StaticResource MessageQuickImageButtonStyle}"
+                                                             IsVisible="{Binding CanEditOrDelete}"
+                                                             Clicked="OnEditMessageClicked"
+                                                             SemanticProperties.Description="编辑消息" />
+                                                <ImageButton Source="icon_star.png"
+                                                             Style="{StaticResource MessageQuickImageButtonStyle}"
+                                                             Clicked="OnToggleMessageStarClicked"
+                                                             SemanticProperties.Description="收藏或取消收藏消息" />
+                                                <ImageButton Source="icon_quote.png"
+                                                             Style="{StaticResource MessageQuickImageButtonStyle}"
+                                                             Clicked="OnQuoteMessageClicked"
+                                                             SemanticProperties.Description="引用消息" />
+                                                <ImageButton Source="icon_copy.png"
+                                                             Style="{StaticResource MessageQuickImageButtonStyle}"
+                                                             Clicked="OnCopyMessageClicked"
+                                                             SemanticProperties.Description="复制消息" />
+                                                <ImageButton Source="icon_more.png"
+                                                             Style="{StaticResource MessageQuickImageButtonStyle}"
+                                                             Clicked="OnOpenMessageMenuClicked"
+                                                             SemanticProperties.Description="打开消息操作菜单" />
+                                            </HorizontalStackLayout>
+                                        </Border>
+                                    </Grid>
+
                                     <Border x:Name="Bubble"
                                             Padding="12,10"
                                             Background="{StaticResource BubbleBrush}"
@@ -121,48 +187,31 @@
                                         <Border.Triggers>
                                             <DataTrigger TargetType="Border" Binding="{Binding IsOwn}" Value="True">
                                                 <Setter Property="Background" Value="{StaticResource OwnBubbleBrush}" />
+                                                <Setter Property="Stroke" Value="{StaticResource OwnBubbleBorderBrush}" />
+                                                <Setter Property="StrokeShape">
+                                                    <Setter.Value>
+                                                        <RoundRectangle CornerRadius="10,0,10,10" />
+                                                    </Setter.Value>
+                                                </Setter>
                                             </DataTrigger>
                                         </Border.Triggers>
-                                        <Border.StrokeShape>
-                                            <RoundRectangle CornerRadius="10" />
-                                        </Border.StrokeShape>
-                                        <Border.Behaviors>
-                                            <windowsBehaviors:MessageContextBehavior />
-                                        </Border.Behaviors>
-                                        <VerticalStackLayout Spacing="5">
-                                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" FlowDirection="LeftToRight">
-                                                <Label Text="{Binding Sender}"
-                                                       Style="{StaticResource BaseLabelStyle}"
-                                                       FontAttributes="Bold" />
-                                                <Label Grid.Column="1"
-                                                       Text="★"
-                                                       IsVisible="{Binding IsStarred}"
-                                                       TextColor="{StaticResource WarningColor}"
-                                                       SemanticProperties.Description="已收藏" />
-                                                <Label Grid.Column="2"
-                                                       Text="{Binding Timestamp}"
-                                                       Style="{StaticResource MutedLabelStyle}" />
-                                            </Grid>
-
-                                            <Border Padding="9,7"
-                                                    IsVisible="{Binding HasQuote}"
-                                                    Background="{StaticResource SurfaceSoftBrush}"
-                                                    Stroke="{StaticResource AccentColor}"
-                                                    StrokeThickness="1">
-                                                <Border.StrokeShape>
-                                                    <RoundRectangle CornerRadius="7" />
-                                                </Border.StrokeShape>
-                                                <VerticalStackLayout Spacing="2" FlowDirection="LeftToRight">
-                                                    <Label Text="{Binding QuoteSender, StringFormat='引用 {0}'}"
+                                        <Border.StrokeShape><RoundRectangle CornerRadius="0,10,10,10" /></Border.StrokeShape>
+                                        <VerticalStackLayout Spacing="6">
+                                            <Grid IsVisible="{Binding HasQuote}" ColumnDefinitions="2,*" Background="{StaticResource SurfaceSoftBrush}">
+                                                <BoxView Grid.Column="0" Background="{StaticResource AccentBrush}" />
+                                                <VerticalStackLayout Grid.Column="1" Padding="9,7" Spacing="2">
+                                                    <Label Text="{Binding QuoteSender, StringFormat='↩ {0} 写道'}"
                                                            Style="{StaticResource MutedLabelStyle}"
+                                                           FontSize="11"
                                                            FontAttributes="Bold"
                                                            TextColor="{StaticResource AccentStrongColor}" />
                                                     <Label Text="{Binding QuoteBody}"
                                                            Style="{StaticResource BaseLabelStyle}"
+                                                           FontSize="12"
                                                            MaxLines="4"
                                                            LineBreakMode="TailTruncation" />
                                                 </VerticalStackLayout>
-                                            </Border>
+                                            </Grid>
 
                                             <Label Text="{Binding Body}"
                                                    IsVisible="{Binding HasBody}"
@@ -172,45 +221,40 @@
 
                                             <VerticalStackLayout BindableLayout.ItemsSource="{Binding Attachments}"
                                                                  IsVisible="{Binding HasAttachments}"
-                                                                 Spacing="5"
-                                                                 FlowDirection="LeftToRight">
+                                                                 Spacing="6">
                                                 <BindableLayout.ItemTemplate>
                                                     <DataTemplate x:DataType="viewModels:MessageAttachmentItem">
-                                                        <Border Padding="9,7"
+                                                        <Border Padding="0"
+                                                                MaximumWidthRequest="360"
                                                                 Background="{StaticResource SurfaceSoftBrush}"
                                                                 Stroke="{StaticResource BorderBrush}"
                                                                 StrokeThickness="1"
                                                                 SemanticProperties.Description="{Binding AccessibleLabel}">
                                                             <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
-                                                            <VerticalStackLayout Spacing="7">
-                                                                <Border HeightRequest="176"
+                                                            <VerticalStackLayout Spacing="0">
+                                                                <Border HeightRequest="220"
+                                                                        MaximumWidthRequest="360"
                                                                         Padding="0"
                                                                         IsVisible="{Binding IsImage}"
                                                                         Background="{StaticResource GroundBrush}"
                                                                         StrokeThickness="0">
                                                                     <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
                                                                     <Border.GestureRecognizers>
-                                                                        <TapGestureRecognizer
-                                                                            Tapped="OnImageTapped"
-                                                                            CommandParameter="{Binding .}" />
+                                                                        <TapGestureRecognizer Tapped="OnImageTapped" CommandParameter="{Binding .}" />
                                                                     </Border.GestureRecognizers>
-                                                                    <controls:RealmMediaImageView SourceUrl="{Binding SourceUrl}"
-                                                                                                  Aspect="AspectFit" />
+                                                                    <controls:RealmMediaImageView SourceUrl="{Binding SourceUrl}" Aspect="AspectFit" />
                                                                 </Border>
-                                                                <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="9">
-                                                                    <Border Grid.RowSpan="2" WidthRequest="42" HeightRequest="42" Padding="0"
+                                                                <Grid Padding="9,7" ColumnDefinitions="40,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="9">
+                                                                    <Border Grid.RowSpan="2" WidthRequest="40" HeightRequest="40" Padding="9"
                                                                             Background="{StaticResource SurfaceSelectedBrush}" StrokeThickness="0">
                                                                         <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
-                                                                        <Label Text="{Binding KindLabel}" Style="{StaticResource MutedLabelStyle}"
-                                                                               FontAttributes="Bold" HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
+                                                                        <Image Source="icon_attachment.png" />
                                                                     </Border>
-                                                                    <Label Grid.Column="1" Text="{Binding Name}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
-                                                                    <Label Grid.Row="1" Grid.Column="1"
-                                                                           Text="同 Realm 受控附件；不会把 API Key 放入 URL"
-                                                                           Style="{StaticResource MutedLabelStyle}" />
-                                                                    <Button Grid.Column="2" Grid.RowSpan="2"
-                                                                            Text="下载"
-                                                                            Style="{StaticResource BaseButtonStyle}"
+                                                                    <Label Grid.Column="1" Text="{Binding Name}" Style="{StaticResource BaseLabelStyle}"
+                                                                           FontSize="12" FontAttributes="Bold" />
+                                                                    <Label Grid.Row="1" Grid.Column="1" Text="{Binding KindLabel}" Style="{StaticResource MutedLabelStyle}" />
+                                                                    <Button Grid.Column="2" Grid.RowSpan="2" Text="下载" Style="{StaticResource BaseButtonStyle}"
+                                                                            HeightRequest="30" MinimumHeightRequest="30"
                                                                             Clicked="OnDownloadAttachmentClicked" />
                                                                 </Grid>
                                                             </VerticalStackLayout>
@@ -224,8 +268,7 @@
                                                         Wrap="Wrap"
                                                         Direction="Row"
                                                         JustifyContent="Start"
-                                                        AlignItems="Start"
-                                                        FlowDirection="LeftToRight">
+                                                        AlignItems="Start">
                                                 <BindableLayout.ItemTemplate>
                                                     <DataTemplate x:DataType="viewModels:ReactionItem">
                                                         <Button Text="{Binding ButtonLabel}"
@@ -235,7 +278,7 @@
                                                             <Button.Triggers>
                                                                 <DataTrigger TargetType="Button" Binding="{Binding CurrentUserReacted}" Value="True">
                                                                     <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
-                                                                    <Setter Property="BackgroundColor" Value="{StaticResource LightOwnBubbleColor}" />
+                                                                    <Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightOwnBubbleColor}, Dark={StaticResource DarkOwnBubbleColor}}" />
                                                                 </DataTrigger>
                                                             </Button.Triggers>
                                                         </Button>
@@ -243,47 +286,19 @@
                                                 </BindableLayout.ItemTemplate>
                                             </FlexLayout>
 
-                                            <Label Text="{Binding MutationState}"
-                                                   IsVisible="{Binding HasMutationState}"
-                                                   Style="{StaticResource MutedLabelStyle}"
-                                                   TextColor="{StaticResource WarningColor}"
-                                                   LineBreakMode="WordWrap" />
-                                            <Label Text="{Binding DeliveryState}"
-                                                   IsVisible="{Binding HasDeliveryState}"
-                                                   Style="{StaticResource MutedLabelStyle}"
-                                                   TextColor="{StaticResource WarningColor}"
-                                                   LineBreakMode="WordWrap" />
-                                            <Button Text="恢复到输入框"
-                                                    IsVisible="{Binding CanRecover}"
-                                                    Style="{StaticResource BaseButtonStyle}"
-                                                    HorizontalOptions="Start"
-                                                    Command="{Binding RecoverCommand}"
-                                                    CommandParameter="{Binding .}"
+                                            <Label Text="{Binding MutationState}" IsVisible="{Binding HasMutationState}"
+                                                   Style="{StaticResource MutedLabelStyle}" TextColor="{StaticResource WarningColor}" LineBreakMode="WordWrap" />
+                                            <Label Text="{Binding DeliveryState}" IsVisible="{Binding HasDeliveryState}"
+                                                   Style="{StaticResource MutedLabelStyle}" TextColor="{StaticResource WarningColor}" LineBreakMode="WordWrap" />
+                                            <Button Text="恢复到输入框" IsVisible="{Binding CanRecover}"
+                                                    Style="{StaticResource BaseButtonStyle}" HorizontalOptions="Start"
+                                                    Command="{Binding RecoverCommand}" CommandParameter="{Binding .}"
                                                     SemanticProperties.Description="恢复失败消息到输入框；再次发送可能重复" />
                                         </VerticalStackLayout>
                                     </Border>
-                                </Grid>
-
-                                <HorizontalStackLayout Spacing="2"
-                                                       FlowDirection="LeftToRight"
-                                                       HorizontalOptions="Start"
-                                                       IsVisible="{Binding CanMutate}">
-                                    <Button Text="引用"
-                                            Style="{StaticResource MessageQuickButtonStyle}"
-                                            Clicked="OnQuoteMessageClicked" />
-                                    <Button Text="复制"
-                                            Style="{StaticResource MessageQuickButtonStyle}"
-                                            Clicked="OnCopyMessageClicked" />
-                                    <Button Text="反应"
-                                            Style="{StaticResource MessageQuickButtonStyle}"
-                                            Clicked="OnOpenReactionPickerClicked" />
-                                    <Button Text="更多 ···"
-                                            Style="{StaticResource MessageQuickButtonStyle}"
-                                            Clicked="OnOpenMessageMenuClicked"
-                                            SemanticProperties.Description="打开消息操作菜单" />
-                                </HorizontalStackLayout>
-                            </VerticalStackLayout>
-                        </Grid>
+                                </VerticalStackLayout>
+                            </Grid>
+                        </Border>
                     </Grid>
                 </DataTemplate>
             </CollectionView.ItemTemplate>
@@ -295,11 +310,10 @@
                              HorizontalOptions="Center"
                              VerticalOptions="Center"
                              IsVisible="{Binding IsMessageListEmpty}">
-            <Label Text="○" Style="{StaticResource BaseLabelStyle}" FontSize="34" HorizontalTextAlignment="Center" />
+            <Image Source="icon_messages.png" WidthRequest="34" HeightRequest="34" HorizontalOptions="Center" />
             <Label Text="{Binding MessageEmptyTitle}" Style="{StaticResource BaseLabelStyle}" FontSize="15" HorizontalTextAlignment="Center" />
             <Label Text="消息正文使用原生文本与结构化引用呈现；不会使用 WebView。"
-                   Style="{StaticResource MutedLabelStyle}"
-                   HorizontalTextAlignment="Center" />
+                   Style="{StaticResource MutedLabelStyle}" HorizontalTextAlignment="Center" />
         </VerticalStackLayout>
 
         <ActivityIndicator Grid.Row="2"

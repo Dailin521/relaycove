@@ -99,6 +99,7 @@ public sealed record MessageItem
     public bool HasDeliveryState => !string.IsNullOrWhiteSpace(DeliveryState);
     public bool CanMutate => MessageId is not null && !MutationBlocksActions;
     public bool CanEditOrDelete => CanMutate && IsOwn;
+    public int AvatarColumn => IsOwn ? 2 : 0;
     public string AvatarInitial => IsBot
         ? "BOT"
         : string.IsNullOrWhiteSpace(Sender)

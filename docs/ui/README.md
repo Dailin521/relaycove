@@ -7,7 +7,7 @@
 先区分“当前实现事实”和“目标要求”：
 
 - 判断已经实现什么时，仓库当前代码、测试和实际运行证据优先于文档与基线；冻结 HTML 中能点击不代表正式 Web 数据能力或 MAUI 已实现。
-- 判断下一步应实现什么时，根目录的 [重建开发计划](../../RelayCove_Zulip_MAUI_重建开发计划.md) 决定产品范围、架构、安全和 Zulip 协议边界；[交互规格](INTERACTION_SPEC.md) 决定两端共享行为；[UI 开发工作流](DEVELOPMENT_WORKFLOW.md) 决定 Web 先行、冻结版本、MAUI 原生对齐的顺序；[冻结基线](baselines/chat-ui-v1/README.md) 只保留初始视觉历史与哈希证据，正式 Web 当前实现才是后续交互事实来源。
+- 判断下一步应实现什么时，根目录的 [重建开发计划](../../RelayCove_Zulip_MAUI_重建开发计划.md) 决定产品范围、架构、安全和 Zulip 协议边界；[交互规格](INTERACTION_SPEC.md) 决定两端共享行为；[UI 开发工作流](DEVELOPMENT_WORKFLOW.md) 决定 Web 先行、冻结版本、MAUI 原生对齐的顺序；[MAUI 快速预览手册](MAUI_PREVIEW_WORKFLOW.md) 记录 Visual Studio、SDK、Hot Reload、外部编辑、副屏与 DPI 的本地操作；[冻结基线](baselines/chat-ui-v1/README.md) 只保留初始视觉历史与哈希证据，正式 Web 当前实现才是后续交互事实来源。
 
 代码与目标规格发生偏差时，应明确记录“当前行为”和“目标行为”，修复后用当前测试/运行证据确认，不能用文档声明覆盖仓库事实。
 

@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:local="clr-namespace:RelayCove.App"
              xmlns:controls="clr-namespace:RelayCove.App.Controls"
+             xmlns:windowsBehaviors="clr-namespace:RelayCove.App.Platforms.Windows.Behaviors"
              xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
              x:Class="RelayCove.App.MainPage"
              x:Name="RootPage"
@@ -71,8 +72,13 @@
         <Grid
               IsVisible="{Binding MainVisible}"
               ColumnDefinitions="60,*">
-            <controls:NavigationRailView Grid.Column="0"
+            <controls:NavigationRailView x:Name="NavigationRail"
+                                         Grid.Column="0"
                                          IsEnabled="{Binding IsPrimaryShellEnabled}" />
+            <BoxView Grid.Column="0"
+                     WidthRequest="1"
+                     HorizontalOptions="End"
+                     Background="{StaticResource BorderBrush}" />
 
             <Grid Grid.Column="1">
                 <Grid IsVisible="{Binding IsMessagesSection}">
@@ -82,8 +88,14 @@
                             <ColumnDefinition Width="{Binding ChatPaneWidth}" />
                             <ColumnDefinition Width="{Binding InlineDetailsWidth}" />
                         </Grid.ColumnDefinitions>
-                        <controls:ConversationPaneView Grid.Column="0"
-                                                       IsVisible="{Binding IsConversationPaneVisible}" />
+                        <Border Grid.Column="0"
+                                Padding="0"
+                                IsVisible="{Binding IsConversationPaneVisible}"
+                                Background="{StaticResource GroundBrush}"
+                                Stroke="{StaticResource BorderBrush}"
+                                StrokeThickness="1">
+                            <controls:ConversationPaneView />
+                        </Border>
 
                         <Grid Grid.Column="1"
                               IsVisible="{Binding IsChatPaneVisible}"
@@ -95,7 +107,7 @@
 
                         <Border Grid.Column="2"
                                 IsVisible="{Binding IsInlineDetailsVisible}"
-                                Background="{StaticResource SurfaceRaisedBrush}"
+                                Background="{StaticResource SurfaceSoftBrush}"
                                 Stroke="{StaticResource BorderBrush}"
                                 StrokeThickness="1">
                             <controls:DetailsPaneView />
@@ -110,7 +122,7 @@
                         </BoxView>
                         <Border WidthRequest="284"
                                 HorizontalOptions="End"
-                                Background="{StaticResource SurfaceRaisedBrush}"
+                                Background="{StaticResource SurfaceSoftBrush}"
                                 Stroke="{StaticResource StrongBorderBrush}"
                                 StrokeThickness="1">
                             <controls:DetailsPaneView x:Name="OverlayDetails"
@@ -121,6 +133,40 @@
 
                 <controls:ContactsPageView IsVisible="{Binding IsContactsSection}" />
                 <controls:SettingsPageView IsVisible="{Binding IsSettingsSection}" />
+
+                <Grid IsVisible="{Binding IsAccountMenuOpen}">
+                    <BoxView Background="Transparent">
+                        <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseAccountMenuCommand}" /></BoxView.GestureRecognizers>
+                    </BoxView>
+                    <Border WidthRequest="220"
+                            Margin="0,8,0,0"
+                            Style="{StaticResource PopoverBorderStyle}"
+                            HorizontalOptions="Start"
+                            VerticalOptions="Start">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                        <VerticalStackLayout Spacing="4">
+                            <Grid Margin="6,6,6,8" ColumnDefinitions="40,*" ColumnSpacing="10">
+                                <Border WidthRequest="40" HeightRequest="40" Padding="0"
+                                        Background="{StaticResource AccentBrush}" StrokeThickness="0">
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="20" /></Border.StrokeShape>
+                                    <Grid>
+                                        <Label Text="{Binding CurrentUserInitial}" TextColor="White" FontAttributes="Bold"
+                                               HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
+                                        <controls:RealmMediaImageView SourceUrl="{Binding CurrentUserAvatarUrl}"
+                                                                      MediaKind="Avatar" Aspect="AspectFill" ShowFailureText="False" />
+                                    </Grid>
+                                </Border>
+                                <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
+                                    <Label Text="{Binding CurrentUserDisplayName}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                    <Label Text="{Binding WorkspaceDisplayName}" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
+                            </Grid>
+                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                            <Button x:Name="FirstAccountMenuButton" Text="账户设置" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding ShowSettingsCommand}" />
+                            <Button x:Name="LastAccountMenuButton" Text="注销" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding RequestLogoutCommand}" />
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
 
                 <Grid IsVisible="{Binding IsSearchOpen}">
                     <BoxView Background="{StaticResource OverlayBrush}">
@@ -395,28 +441,32 @@
                 </Grid>
 
                 <Grid IsVisible="{Binding IsMessageMenuOpen}">
-                    <BoxView Background="{StaticResource OverlayBrush}">
+                    <BoxView BackgroundColor="Transparent">
                         <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseMessageMenuCommand}" /></BoxView.GestureRecognizers>
                     </BoxView>
-                    <Border Style="{StaticResource DialogBorderStyle}" HorizontalOptions="End" Margin="24">
-                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
-                        <VerticalStackLayout Spacing="6">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <VerticalStackLayout>
-                                    <Label Text="消息操作" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
-                                    <Label Text="{Binding ActiveMessageTitle}" Style="{StaticResource MutedLabelStyle}" />
-                                </VerticalStackLayout>
-                                <Button Grid.Column="1" Text="×" Style="{StaticResource IconButtonStyle}" Command="{Binding CloseMessageMenuCommand}" />
-                            </Grid>
-                            <Button x:Name="FirstMessageMenuButton" Text="添加反应" Style="{StaticResource BaseButtonStyle}" Command="{Binding OpenReactionPickerCommand}" />
-                            <Button Text="引用回复" Style="{StaticResource BaseButtonStyle}" Command="{Binding QuoteMessageCommand}" />
-                            <Button Text="复制 raw Markdown" Style="{StaticResource BaseButtonStyle}" Command="{Binding CopyMessageRawCommand}" />
-                            <Button Text="复制消息链接" Style="{StaticResource BaseButtonStyle}" Command="{Binding CopyMessageLinkCommand}" />
-                            <Button Text="复制消息 ID" Style="{StaticResource BaseButtonStyle}" Command="{Binding CopyMessageIdCommand}" />
-                            <Button Text="在官方 Zulip 打开" Style="{StaticResource BaseButtonStyle}" Command="{Binding OpenMessageInZulipCommand}" />
-                            <Button x:Name="StarMessageMenuButton" Text="收藏 / 取消收藏" Style="{StaticResource BaseButtonStyle}" Command="{Binding ToggleMessageStarCommand}" IsEnabled="{Binding CanStarActiveMessage}" />
-                            <Button Text="编辑本人消息" Style="{StaticResource BaseButtonStyle}" Command="{Binding OpenEditDialogCommand}" IsVisible="{Binding CanEditActiveMessage}" />
-                            <Button x:Name="LastMessageMenuButton" Text="永久删除本人消息" Style="{StaticResource BaseButtonStyle}" Command="{Binding RequestDeleteMessageCommand}" IsVisible="{Binding CanDeleteActiveMessage}" TextColor="{StaticResource DangerColor}" />
+                    <Border Style="{StaticResource PopoverBorderStyle}"
+                            MinimumWidthRequest="0"
+                            WidthRequest="214"
+                            MaximumWidthRequest="214"
+                            HorizontalOptions="Start"
+                            VerticalOptions="Start"
+                            Margin="0">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="8" /></Border.StrokeShape>
+                        <Border.Behaviors>
+                            <windowsBehaviors:PopoverAnchorBehavior
+                                AnchorX="{Binding ViewModel.MessageMenuAnchorX, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                AnchorY="{Binding ViewModel.MessageMenuAnchorY, Source={x:Reference RootPage}, x:DataType=local:MainPage}" />
+                        </Border.Behaviors>
+                        <VerticalStackLayout Spacing="4">
+                            <Button x:Name="FirstMessageMenuButton" Text="添加反应" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding OpenReactionPickerCommand}" />
+                            <Button Text="引用回复" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding QuoteMessageCommand}" />
+                            <Button Text="复制 raw Markdown" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding CopyMessageRawCommand}" />
+                            <Button Text="复制消息链接" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding CopyMessageLinkCommand}" />
+                            <Button Text="复制消息 ID" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding CopyMessageIdCommand}" />
+                            <Button Text="在官方 Zulip 打开" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding OpenMessageInZulipCommand}" />
+                            <Button x:Name="StarMessageMenuButton" Text="收藏 / 取消收藏" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding ToggleMessageStarCommand}" IsEnabled="{Binding CanStarActiveMessage}" />
+                            <Button Text="编辑本人消息" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding OpenEditDialogCommand}" IsVisible="{Binding CanEditActiveMessage}" />
+                            <Button x:Name="LastMessageMenuButton" Text="永久删除本人消息" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding RequestDeleteMessageCommand}" IsVisible="{Binding CanDeleteActiveMessage}" TextColor="{StaticResource DangerColor}" />
                         </VerticalStackLayout>
                     </Border>
                 </Grid>

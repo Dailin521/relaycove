@@ -1,9 +1,9 @@
 # RelayCove Status — Stage 21 / 22W / 22M
 
 Updated: 2026-08-13
-Branch: `main`
+Branch: `codex/stage-22m-web-parity` (isolated worktree `E:\WorkSpace\RelayCove-Stage22MParity`)
 Integration commits: Web `573a33d`; MAUI `c1c4da9`
-Current delivery: Stage 22W message actions/attachments/navigation and Stage 22M native shell/message-interaction parity are integrated into `main`; the combined tree passed the final Full gate and is ready for the authorized push
+Current delivery: Stage 22W and the first Stage 22M implementation are integrated. The second native Web-parity pass has passed its current-tree Full gate and independent pre-push review; this branch is the intended fast-forward integration content.
 
 ## Product direction
 
@@ -12,6 +12,39 @@ Current delivery: Stage 22W message actions/attachments/navigation and Stage 22M
 - Both frontends connect directly to the same Zulip Realm. Zulip remains the only business source of truth; there is no RelayCove server, BFF, proxy protocol or second message backend.
 - Web is implemented and accepted first. A versioned interaction contract then becomes the input for Stage 22M native parity.
 - The two frontends share visual tokens, interaction specifications, capability matrices and acceptance scenarios, but no UI runtime code.
+
+## Stage 22M native Web-parity follow-up — 2026-08-13
+
+- This pass is isolated from the concurrently dirty primary worktree on `codex/stage-22m-web-parity`, based on `46e5608`. No primary-worktree file, Web runtime, Zulip protocol, credential, deployment or frozen baseline was changed.
+- The native shell now follows the formal Web surface hierarchy: product bar/navigation/conversation pane use `Ground`, chat uses `Surface`, Composer/details use `SurfaceSoft`, and 1 px borders separate the large regions. Shared token values remain unchanged; the fix is semantic token assignment rather than a second palette.
+- Wide/compact/narrow breakpoints are aligned at `>=1121`, `721–1120` and `<=720`; standard conversation width is 310 DIP. The minimum Windows width permits a real 640 DIP narrow capture at 150% scaling.
+- Product/navigation/chat headers, continuous collapsible channel/DM groups, 67 DIP conversation rows, own/other messages, structured quotes, attachment cards, multiline Composer, details and settings were rebuilt with bundled native SVG resources. No WebView or runtime UI code is shared with React.
+- Pointer/focus quick actions now mirror Web capability choice: other messages expose reaction/star/quote/copy/more, own messages expose edit/star/quote/copy/more. Right-click/`Shift+F10` opens the complete menu next to its trigger and flips/clamps at viewport edges; the message menu and account panel are non-dimming popovers with Escape/Tab/arrow-key exits and focus restoration.
+- Composer selection and Windows file drop share one validation path for up to ten image or non-image attachments. Native previews remain limited to safe image types; all eventual network/write behavior continues to flow only through `IClientSession`.
+- Appearance settings now use the Web 218 DIP sidebar on standard/wide layouts and a horizontally scrollable top category bar at `<=720` DIP, with an up-to-820 DIP card, device-only theme/font/conversation-width/default-details preferences and real light/dark switching. Unsupported server capabilities remain explicitly unavailable rather than being visually fabricated.
+- Deterministic Debug screenshots used only `RELAYCOVE_NATIVE_UI_PREVIEW=1`; that session is in-memory and cannot contact or write to a Realm.
+- The current Visual Studio 2026 baseline is now explicit: `global.json` selects SDK `10.0.400` with `latestPatch`; the installed workload set is `10.0.400.1`; `maui-windows` is `10.0.20/10.0.100`; `RelayCove.App` pins MAUI `10.0.20` and Windows `win-x64`. The upgraded SDK/MAUI/RID graph was explicitly provisioned once; ordinary Fast/Full remain no-restore.
+- On this UI-parity branch, `RelayCove.App/Properties/launchSettings.json` keeps the MAUI-aware `Windows Machine` profile and only adds `RELAYCOVE_NATIVE_UI_PREVIEW=1`. This preserves Visual Studio's TFM/RID launch handling; the previously attempted fixed-executable profile was rejected because it looked for a nonexistent no-RID output.
+- XAML saved in Visual Studio can use XAML Hot Reload/Live Visual Tree. External Codex file edits are not assumed to hot reload, and current `dotnet watch --list` does not include raw XAML. The stable agent loop is a coherent batch, App-only Debug `--no-restore` build, then one preview restart; screenshots and Fast remain component/Slice checkpoints.
+- The Windows adapter now places only the Debug offline preview on a non-primary display, falls back safely when none exists and converts the target 1440×900 DIP using that monitor's scale. The placement does not run in production and does not change the Realm/session boundary. Narrow evidence passed App 45/45 before the delivery gate; no Live or real Realm request ran.
+- Final current-tree `pwsh ./scripts/verify.ps1 -Mode Full` passed after explicit one-time SDK/MAUI/Release-RID provisioning: Debug and Release builds had zero warnings/errors; Core 85/85, Zulip.Client 40/40, Data 17/17 and App 45/45 passed in each configuration (187/187 each); Web deployment-template checks, typecheck, 86/86 unit tests and production build passed; Playwright passed 6/6 plus fixed deployment path 1/1. The final Windows package SHA-256 is `65900B913C0CD5AAC169ED6383BAF0DCD2A0441520F38C2466415BABE0D7B505`. Full did not run Live, use credentials or contact a Realm.
+
+Current native evidence on `DISPLAY2` at 150% / DPI 144:
+
+| Evidence | Target DIP | Actual pixels | SHA-256 |
+|---|---:|---:|---|
+| `artifacts/maui/screenshots/stage22m-web-parity/maui-shell-1440-light-final.png` | 1440×900 | 2160×1350 | `149BF35FC4BE4ED6EFD0EE7DBB0A2D37F59A03103FEE0769B5BEB943C3EDD604` |
+| `artifacts/maui/screenshots/stage22m-web-parity/maui-shell-1440-dark-final.png` | 1440×900 | 2160×1350 | `BECF517F4D634ED349B8D84092265C99C4E5A7B8CF1B507F9DAAA74399382C78` |
+| `artifacts/maui/screenshots/stage22m-web-parity/maui-shell-1024-light-final.png` | 1024×768 | 1536×1152 | `4AE8EFDA4C7ACD2838D538A1DAA5D091584E0537BB544186B862074757A1CD5A` |
+| `artifacts/maui/screenshots/stage22m-web-parity/maui-shell-640-chat-light-final.png` | 640×900 | 960×1350 | `248A717655BD95D875AC3B0609EE7B8BC1DFA1B6228EE761FE68A2A3D7D31E7F` |
+| `artifacts/maui/screenshots/stage22m-web-parity/maui-shell-640-list-light-final.png` | 640×900 | 960×1350 | `53CFE90E20E2659C1E54CC0F32F049F303BFDE05583F767AF952201B6B6FA291` |
+| `artifacts/maui/screenshots/stage22m-web-parity/maui-shell-hover-actions-final.png` | 1440×900 | 2160×1350 | `818DF5693F6C321D21F891675BC930BA3D4D7B78FCE6B1BC3F7D1380A6FA5FF5` |
+| `artifacts/maui/screenshots/stage22m-web-parity/maui-message-menu-1440-light-final.png` | 1440×900 | 2160×1350 | `32B2401EA467E53631DB3E83E6A7DB97B91DFE3A28E704C964E3ECEAF957CF18` |
+| `artifacts/maui/screenshots/stage22m-web-parity/maui-details-1440-light-final.png` | 1440×900 | 2160×1350 | `F70DA7E235410FA84D8A023D3AF1822D9A8151CD4AFD7452B90EA6F1B061CACD` |
+| `artifacts/maui/screenshots/stage22m-web-parity/maui-settings-1440-light-final.png` | 1440×900 | 2160×1350 | `A79F7F73C817BAE26444C8153FEA748219302823F23ABC6460F8DF5E0B50CEF7` |
+| `artifacts/maui/screenshots/stage22m-web-parity/maui-settings-640-light-final.png` | 640×900 | 960×1350 | `3D57B1C4F27AB70ED2CAFE15A566E7AD1247F3615E8C64A94BF0683D338358B2` |
+
+These captures prove deterministic native composition and responsive/theme behavior, not Live Zulip behavior. Stage 21 Live, native manual password login, real-Realm message/file writes, 100%/200%, high-contrast, package/install and clean-VM gates remain unverified.
 
 ## Stage 22M native shell and message interactions — 2026-08-13
 

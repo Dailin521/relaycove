@@ -191,7 +191,7 @@ public sealed class ShellViewModelTests
         using var viewModel = CreateViewModel(session);
         session.Publish();
 
-        viewModel.UpdateViewport(800);
+        viewModel.UpdateViewport(700);
 
         Assert.Equal(ShellLayoutMode.Narrow, viewModel.LayoutMode);
         Assert.True(viewModel.IsChatPaneVisible);
@@ -244,7 +244,83 @@ public sealed class ShellViewModelTests
         Assert.True(viewModel.IsComfortableDensity);
         Assert.True(viewModel.IsDefaultFont);
         Assert.True(viewModel.IsStandardConversationWidth);
+        Assert.Equal(310d, viewModel.ConversationPaneWidth.Value);
         Assert.False(viewModel.OpenDetailsByDefault);
+    }
+
+    [Fact]
+    public void UpdateViewport_WhenCrossingWebBreakpoints_UsesMatchingLayoutModes()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        viewModel.UpdateViewport(720);
+        Assert.Equal(ShellLayoutMode.Narrow, viewModel.LayoutMode);
+
+        viewModel.UpdateViewport(721);
+        Assert.Equal(ShellLayoutMode.Compact, viewModel.LayoutMode);
+
+        viewModel.UpdateViewport(1120);
+        Assert.Equal(ShellLayoutMode.Compact, viewModel.LayoutMode);
+
+        viewModel.UpdateViewport(1121);
+        Assert.Equal(ShellLayoutMode.Wide, viewModel.LayoutMode);
+    }
+
+    [Fact]
+    public void ConversationGroupCommands_WhenToggled_PersistIndependentPreferences()
+    {
+        var preferences = new FakeUiPreferencesService();
+        using var viewModel = CreateViewModel(new FakeSession(), uiPreferencesService: preferences);
+
+        viewModel.ToggleChannelsCommand.Execute(null);
+        Assert.False(viewModel.AreChannelsExpanded);
+        Assert.True(viewModel.AreDirectMessagesExpanded);
+        Assert.False(preferences.Current.ChannelsExpanded);
+
+        viewModel.ToggleDirectMessagesCommand.Execute(null);
+        Assert.False(viewModel.AreDirectMessagesExpanded);
+        Assert.False(preferences.Current.DirectMessagesExpanded);
+    }
+
+    [Fact]
+    public void AccountMenu_WhenOpeningSettings_ClosesOverlayAndSelectsAppearance()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        viewModel.ToggleAccountMenuCommand.Execute(null);
+        Assert.True(viewModel.IsAccountMenuOpen);
+        Assert.True(viewModel.IsPrimaryShellEnabled);
+
+        viewModel.ShowSettingsCommand.Execute(null);
+        Assert.False(viewModel.IsAccountMenuOpen);
+        Assert.True(viewModel.IsSettingsSection);
+        Assert.True(viewModel.IsAppearanceSettings);
+    }
+
+    [Fact]
+    public void MessageMenu_WhenOpen_RemainsAPopoverWithoutDisablingTheShell()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        var message = new MessageItem("message-1", 1, 7, "Ada", "hello", "10:00", isOwn: true);
+
+        viewModel.OpenMessageMenuCommand.Execute(message);
+
+        Assert.True(viewModel.IsMessageMenuOpen);
+        Assert.True(viewModel.IsPrimaryShellEnabled);
+    }
+
+    [Fact]
+    public void OpenMessageMenuAtCommand_WhenInvoked_StoresTheRequestedAnchor()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        var message = new MessageItem("message-1", 1, 7, "Ada", "hello", "10:00", isOwn: true);
+
+        viewModel.OpenMessageMenuAtCommand.Execute(new MessageMenuRequest(message, 812.5d, 244d));
+
+        Assert.True(viewModel.IsMessageMenuOpen);
+        Assert.Same(message, viewModel.ActiveMessageAction);
+        Assert.Equal(812.5d, viewModel.MessageMenuAnchorX);
+        Assert.Equal(244d, viewModel.MessageMenuAnchorY);
     }
 
     [Fact]
@@ -579,6 +655,24 @@ public sealed class ShellViewModelTests
 
         Assert.NotNull(viewModel.LoginError);
         Assert.DoesNotContain(sentinel, viewModel.LoginError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AddDroppedAttachments_WhenWindowsDropSuppliesFiles_UsesTheSameValidatedDraftPath()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        var dropped = new SelectedAttachmentFile(
+            "notes.txt",
+            "text/plain",
+            3,
+            _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3])));
+        viewModel.IsFileDragActive = true;
+
+        viewModel.AddDroppedAttachmentsCommand.Execute(new[] { dropped });
+
+        Assert.False(viewModel.IsFileDragActive);
+        Assert.Equal("notes.txt", Assert.Single(viewModel.Attachments).FileName);
+        Assert.True(viewModel.HasAttachments);
     }
 
     [Fact]

@@ -30,9 +30,13 @@ public partial class ProductBarView : TitleBar
     {
         ArgumentNullException.ThrowIfNull(viewModel);
         BindingContext = viewModel;
+        ThemeButton.Command = viewModel.ToggleThemeCommand;
         ConnectionStatusLabel.SetBinding(
             Label.TextProperty,
             new Binding(nameof(ShellViewModel.ConnectionStatus), source: viewModel));
+        ConnectionStatusBorder.SetBinding(
+            IsVisibleProperty,
+            new Binding(nameof(ShellViewModel.ShowConnectionStatus), source: viewModel));
     }
 
     private void OnPinClicked(object? sender, EventArgs eventArgs)
