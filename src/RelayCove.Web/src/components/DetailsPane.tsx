@@ -1,13 +1,16 @@
-import { ChevronRight, LockKeyhole, Pin, Users, X } from 'lucide-react';
-import { useEffect } from 'react';
+import { ChevronRight, LockKeyhole, LogOut, Pin, Users, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import type { ConversationDetail } from '../models/ui';
 
 interface DetailsPaneProps {
     conversation?: ConversationDetail;
     onClose(): void;
+    onUnsubscribeChannel?(channelId: number): Promise<void>;
 }
 
-export function DetailsPane({ conversation, onClose }: DetailsPaneProps) {
+export function DetailsPane({ conversation, onClose, onUnsubscribeChannel }: DetailsPaneProps) {
+    const [unsubscribing, setUnsubscribing] = useState(false);
+    const [unsubscribeError, setUnsubscribeError] = useState<string>();
     useEffect(() => {
         function handleKeyDown(event: globalThis.KeyboardEvent) {
             if (event.key === 'Escape') {
@@ -20,6 +23,28 @@ export function DetailsPane({ conversation, onClose }: DetailsPaneProps) {
 
     if (!conversation) {
         return null;
+    }
+
+    async function unsubscribeChannel() {
+        if (!conversation?.channelId || !onUnsubscribeChannel || unsubscribing) {
+            return;
+        }
+        const confirmed = window.confirm(
+            `退出 #${conversation.channelName}？\n\n本客户端会移除这个频道的已加载消息、话题和未读；私有频道可能需要再次获邀。`,
+        );
+        if (!confirmed) {
+            return;
+        }
+        setUnsubscribing(true);
+        setUnsubscribeError(undefined);
+        try {
+            await onUnsubscribeChannel(conversation.channelId);
+            onClose();
+        } catch (error) {
+            setUnsubscribeError(error instanceof Error ? error.message : '退订没有完成。');
+        } finally {
+            setUnsubscribing(false);
+        }
     }
 
     return (
@@ -45,7 +70,21 @@ export function DetailsPane({ conversation, onClose }: DetailsPaneProps) {
             <section className="detail-actions">
                 <button type="button" aria-disabled="true"><Pin aria-hidden="true" /><span>固定会话</span><ChevronRight aria-hidden="true" /></button>
                 <button type="button" aria-disabled="true"><LockKeyhole aria-hidden="true" /><span>权限能力待接入</span><ChevronRight aria-hidden="true" /></button>
+                {conversation.kind === 'channel' && (
+                    <button
+                        className="danger-action"
+                        type="button"
+                        disabled={unsubscribing || !onUnsubscribeChannel}
+                        aria-describedby={unsubscribeError ? 'unsubscribe-error' : undefined}
+                        onClick={() => void unsubscribeChannel()}
+                    >
+                        <LogOut aria-hidden="true" />
+                        <span>{unsubscribing ? '正在退出频道…' : '退出频道'}</span>
+                        <ChevronRight aria-hidden="true" />
+                    </button>
+                )}
             </section>
+            {unsubscribeError && <p className="detail-error" id="unsubscribe-error" role="alert">{unsubscribeError}</p>}
         </aside>
     );
 }

@@ -39,13 +39,21 @@ interface RealmMediaCache {
 }
 
 const RealmMediaContext = createContext<RealmMediaCache | undefined>(undefined);
+const RealmMediaPolicyContext = createContext<{
+    realm?: string;
+    allowCrossOriginLoader: boolean;
+}>({ allowCrossOriginLoader: false });
 
 export function RealmMediaProvider({
     children,
     loader,
+    realm,
+    allowCrossOriginLoader = false,
 }: {
     children: ReactNode;
     loader?: RealmImageLoader;
+    realm?: string;
+    allowCrossOriginLoader?: boolean;
 }) {
     const entries = useRef(new Map<string, MediaEntry>());
     const activeLoads = useRef(0);
@@ -162,7 +170,16 @@ export function RealmMediaProvider({
         cachedBytes.current = 0;
     }, [loader]);
 
-    return <RealmMediaContext.Provider value={cache}>{children}</RealmMediaContext.Provider>;
+    const policy = useMemo(() => ({ realm, allowCrossOriginLoader }), [allowCrossOriginLoader, realm]);
+    return (
+        <RealmMediaPolicyContext.Provider value={policy}>
+            <RealmMediaContext.Provider value={cache}>{children}</RealmMediaContext.Provider>
+        </RealmMediaPolicyContext.Provider>
+    );
+}
+
+export function useRealmMediaPolicy() {
+    return useContext(RealmMediaPolicyContext);
 }
 
 export function useRealmImage(sourceUrl: string | undefined, kind: RealmMediaKind) {
@@ -200,5 +217,39 @@ export function useRealmImage(sourceUrl: string | undefined, kind: RealmMediaKin
         objectUrl: state.sourceUrl === sourceUrl ? state.objectUrl : undefined,
         status: state.sourceUrl === sourceUrl ? state.status : 'loading',
         retry: useCallback(() => setRetryVersion((value) => value + 1), []),
+    };
+}
+
+export function useRealmFileDownload(sourceUrl: string) {
+    const cache = useContext(RealmMediaContext);
+    const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle');
+
+    const download = useCallback(async (filename: string) => {
+        if (!cache || status === 'loading') {
+            return;
+        }
+        setStatus('loading');
+        try {
+            const objectUrl = await cache.acquire(sourceUrl, 'file');
+            const anchor = document.createElement('a');
+            anchor.href = objectUrl;
+            anchor.download = filename.replace(/[\u0000-\u001f\u007f]/gu, '_').slice(0, 256) || 'download';
+            anchor.rel = 'noopener';
+            document.body.append(anchor);
+            anchor.click();
+            anchor.remove();
+            window.setTimeout(() => cache.release(sourceUrl, 'file'), 1_000);
+            setStatus('idle');
+        } catch {
+            cache.release(sourceUrl, 'file');
+            setStatus('error');
+        }
+    }, [cache, sourceUrl, status]);
+
+    return {
+        download,
+        loading: status === 'loading',
+        error: status === 'error',
+        retry: useCallback(() => setStatus('idle'), []),
     };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isPreviewableImageName, resolveRealmMediaUrl } from './realmMedia';
+import { isPreviewableImageName, isPublicRealmAvatarUrl, resolveRealmMediaUrl } from './realmMedia';
 
 describe('resolveRealmMediaUrl', () => {
     it('accepts only same-Realm approved media paths', () => {
@@ -17,6 +17,18 @@ describe('resolveRealmMediaUrl', () => {
             .toBeUndefined();
         expect(resolveRealmMediaUrl('https://chat.example.test', '/user_uploads/%2e%2e/api/v1/users/me', 'upload'))
             .toBeUndefined();
+    });
+});
+
+describe('isPublicRealmAvatarUrl', () => {
+    it('uses direct loading only for HTTPS Zulip public avatar paths', () => {
+        const realm = 'https://chat.example.test';
+        expect(isPublicRealmAvatarUrl('https://chat.example.test/user_avatars/2/avatar.png', realm)).toBe(true);
+        expect(isPublicRealmAvatarUrl('https://chat.example.test/static/generated/avatars/2.png', realm)).toBe(true);
+        expect(isPublicRealmAvatarUrl('https://chat.example.test/avatar/2', realm)).toBe(false);
+        expect(isPublicRealmAvatarUrl('https://evil.example/user_avatars/2/avatar.png', realm)).toBe(false);
+        expect(isPublicRealmAvatarUrl('http://chat.example.test/user_avatars/2/avatar.png', realm)).toBe(false);
+        expect(isPublicRealmAvatarUrl('not-a-url', realm)).toBe(false);
     });
 });
 

@@ -1,10 +1,10 @@
 import type { ConversationDetail, PersonSummary, WorkspaceViewState } from '../models/ui';
 
 const lin: PersonSummary = { id: 'lin', name: '林远', initials: '林', tone: 'blue' };
-const maya: PersonSummary = { id: 'maya', name: 'Maya Chen', initials: 'MC', tone: 'orange', avatarUrl: 'https://fixture.invalid/user_avatars/maya.svg' };
-const alex: PersonSummary = { id: 'alex', name: 'Alex Wu', initials: 'AW', tone: 'green', avatarUrl: 'https://fixture.invalid/user_avatars/alex.svg' };
-const daniel: PersonSummary = { id: 'daniel', name: 'Daniel Okafor', initials: 'DO', tone: 'slate', avatarUrl: 'https://fixture.invalid/user_avatars/daniel.svg' };
-const sarah: PersonSummary = { id: 'sarah', name: 'Sarah Li', initials: 'SL', tone: 'violet', avatarUrl: 'https://fixture.invalid/user_avatars/sarah.svg' };
+const maya: PersonSummary = { id: 'maya', name: 'Maya Chen', initials: 'MC', tone: 'orange', avatarUrl: 'https://fixture.invalid/avatars/maya.svg' };
+const alex: PersonSummary = { id: 'alex', name: 'Alex Wu', initials: 'AW', tone: 'green', avatarUrl: 'https://fixture.invalid/avatars/alex.svg' };
+const daniel: PersonSummary = { id: 'daniel', name: 'Daniel Okafor', initials: 'DO', tone: 'slate', avatarUrl: 'https://fixture.invalid/avatars/daniel.svg' };
+const sarah: PersonSummary = { id: 'sarah', name: 'Sarah Li', initials: 'SL', tone: 'violet', avatarUrl: 'https://fixture.invalid/avatars/sarah.svg' };
 
 const uiDesign: ConversationDetail = {
     id: 'design',
@@ -30,7 +30,14 @@ const uiDesign: ConversationDetail = {
             sender: maya,
             sentAt: '09:29',
             body: '中栏不要再加额外工具区，只要搜索、新建，以及清楚区分的频道和私信列表。',
-            reaction: '👍 3',
+            reactions: [{
+                emoji: '👍',
+                emojiName: '+1',
+                emojiCode: '1f44d',
+                reactionType: 'unicode_emoji',
+                count: 3,
+                reactedByCurrentUser: false,
+            }],
         },
         {
             id: 'm3',

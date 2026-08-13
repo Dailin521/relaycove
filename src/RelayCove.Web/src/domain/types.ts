@@ -45,6 +45,16 @@ export interface TopicSummary {
     maxMessageId?: number;
 }
 
+export interface EmojiReactionIdentity {
+    emojiName: string;
+    emojiCode: string;
+    reactionType: string;
+}
+
+export interface EmojiReaction extends EmojiReactionIdentity {
+    userIds: readonly number[];
+}
+
 export interface ChatMessage {
     id: number;
     conversation: ConversationKey;
@@ -54,7 +64,35 @@ export interface ChatMessage {
     content: string;
     timestamp: number;
     isRead: boolean;
+    isStarred: boolean;
+    reactions: readonly EmojiReaction[];
 }
+
+export type MessageMutationKind = 'reaction' | 'edit' | 'delete' | 'star';
+export type MessageMutationPhase = 'submitting' | 'uncertain' | 'failed';
+
+interface MessageMutationBase {
+    operationId: string;
+    messageId: number;
+    phase: MessageMutationPhase;
+    error?: string;
+}
+
+export type MessageMutation =
+    | (MessageMutationBase & {
+        kind: 'reaction';
+        reaction: EmojiReactionIdentity;
+        active: boolean;
+    })
+    | (MessageMutationBase & {
+        kind: 'edit';
+        content: string;
+    })
+    | (MessageMutationBase & { kind: 'delete' })
+    | (MessageMutationBase & {
+        kind: 'star';
+        starred: boolean;
+    });
 
 export interface UnreadState {
     counts: Readonly<Record<string, number>>;
@@ -118,6 +156,7 @@ export interface WebClientState {
     recentDirectMessages: readonly DirectMessageConversation[];
     unread: UnreadState;
     outbox: Readonly<Record<string, OutboxEntry>>;
+    messageMutations: Readonly<Record<number, MessageMutation>>;
     pages: Readonly<Record<string, ConversationPageState>>;
     selectedConversation?: ConversationKey;
     maxMessageLength?: number;
@@ -137,6 +176,14 @@ export type EventPatch =
     | { type: 'messageDeleted'; messageIds: readonly number[] }
     | { type: 'messageMoved'; messageIds: readonly number[]; destination: ChannelTopicConversation }
     | { type: 'messageFlags'; messageIds: readonly number[]; all: boolean; read: boolean }
+    | { type: 'messageStarred'; messageIds: readonly number[]; all: boolean; starred: boolean }
+    | {
+        type: 'reactionChanged';
+        messageId: number;
+        operation: 'add' | 'remove';
+        userId: number;
+        reaction: EmojiReactionIdentity;
+    }
     | { type: 'subscriptionUpsert'; subscription: Subscription }
     | { type: 'subscriptionRemoved'; channelId: number }
     | { type: 'subscriptionPatched'; channelId: number; name?: string; isActive?: boolean }

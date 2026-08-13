@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig(({ command, mode, isPreview }) => {
-    const fixtureRuntime = (command === 'serve' && !isPreview) || mode === 'e2e';
+    const fixtureRuntime = mode === 'e2e' || mode === 'fixture';
     const runtimeApp = fixtureRuntime ? './src/fixtures/FixtureRuntimeApp.tsx' : './src/App.tsx';
     const base = (command === 'build' || isPreview) && mode !== 'e2e' ? '/relaycove-web/' : '/';
 

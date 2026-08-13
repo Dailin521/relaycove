@@ -27,7 +27,8 @@ if %errorlevel% equ 0 (
 
 cd /d "%RELAYCOVE_WEB%"
 echo [RelayCove] 正在启动本地 Web UI...
-echo [RelayCove] 浏览器入口：http://127.0.0.1:5173/?fixture=chat
+echo [RelayCove] 浏览器入口：http://127.0.0.1:5173/
+echo [RelayCove] 此入口连接真实 Zulip Realm；测试 fixture 不作为日常入口。
 echo [RelayCove] 停止服务请按 Ctrl+C。
 echo.
 call npm.cmd run dev

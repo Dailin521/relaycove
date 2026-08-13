@@ -3,9 +3,11 @@ import type {
     ChatMessage,
     ConnectionStatus,
     ConversationKey,
+    EmojiReactionIdentity,
     EventPatch,
     EventPatchGroup,
     HistoryResult,
+    MessageMutation,
     OutboxEntry,
     OutboxFailure,
     RegisterSnapshot,
@@ -27,6 +29,14 @@ export type WebClientAction =
     | { type: 'outboxQueued'; entry: OutboxEntry }
     | { type: 'outboxStatus'; localId: string; status: OutboxEntry['status']; failure?: OutboxFailure; messageId?: number }
     | { type: 'outboxRemoved'; localId: string }
+    | { type: 'messageMutationStarted'; mutation: MessageMutation }
+    | {
+        type: 'messageMutationFailed';
+        messageId: number;
+        operationId: string;
+        phase: Extract<MessageMutation['phase'], 'uncertain' | 'failed'>;
+        error: string;
+    }
     | { type: 'reset' };
 
 export const initialWebClientState: WebClientState = {
@@ -38,6 +48,7 @@ export const initialWebClientState: WebClientState = {
     recentDirectMessages: [],
     unread: { counts: {}, isTruncated: false },
     outbox: {},
+    messageMutations: {},
     pages: {},
 };
 
@@ -58,6 +69,9 @@ export function webClientReducer(state: WebClientState, action: WebClientAction)
             const topics = Object.fromEntries(Object.entries(state.topics).filter(([, topic]) => (
                 authorizedChannelIds.has(topic.channelId)
             )));
+            const messageMutations = Object.fromEntries(Object.entries(state.messageMutations).filter(([messageId]) => (
+                messages[Number(messageId)] !== undefined
+            )));
             const stateWithSnapshot: WebClientState = {
                 ...state,
                 connection: 'connected',
@@ -69,6 +83,7 @@ export function webClientReducer(state: WebClientState, action: WebClientAction)
                 topics,
                 recentDirectMessages: action.snapshot.recentDirectMessages,
                 unread: action.snapshot.unread,
+                messageMutations,
                 maxMessageLength: action.snapshot.maxMessageLength,
                 maxTopicLength: action.snapshot.maxTopicLength,
                 maxFileUploadSizeMiB: action.snapshot.maxFileUploadSizeMiB,
@@ -120,7 +135,7 @@ export function webClientReducer(state: WebClientState, action: WebClientAction)
             for (const message of action.history.messages) {
                 messages[message.id] = message;
             }
-            return {
+            let next: WebClientState = {
                 ...state,
                 messages,
                 pages: {
@@ -132,6 +147,10 @@ export function webClientReducer(state: WebClientState, action: WebClientAction)
                     },
                 },
             };
+            for (const message of action.history.messages) {
+                next = settleMessageMutation(next, message.id);
+            }
+            return next;
         }
         case 'historyFailed':
             return {
@@ -191,6 +210,31 @@ export function webClientReducer(state: WebClientState, action: WebClientAction)
             delete outbox[action.localId];
             return { ...state, outbox };
         }
+        case 'messageMutationStarted':
+            return {
+                ...state,
+                messageMutations: {
+                    ...state.messageMutations,
+                    [action.mutation.messageId]: action.mutation,
+                },
+            };
+        case 'messageMutationFailed': {
+            const mutation = state.messageMutations[action.messageId];
+            if (!mutation || mutation.operationId !== action.operationId) {
+                return state;
+            }
+            return {
+                ...state,
+                messageMutations: {
+                    ...state.messageMutations,
+                    [action.messageId]: {
+                        ...mutation,
+                        phase: action.phase,
+                        error: action.error,
+                    },
+                },
+            };
+        }
         case 'reset':
             return initialWebClientState;
     }
@@ -199,35 +243,38 @@ export function webClientReducer(state: WebClientState, action: WebClientAction)
 function applyPatch(state: WebClientState, patch: EventPatch): WebClientState {
     switch (patch.type) {
         case 'messageUpsert': {
+            const message = patch.message.senderId === state.currentUser?.userId && !patch.message.isRead
+                ? { ...patch.message, isRead: true }
+                : patch.message;
             let unread = state.unread;
-            const existing = state.messages[patch.message.id];
+            const existing = state.messages[message.id];
             if (existing && !existing.isRead) {
                 unread = adjustUnread(unread, existing.conversation.canonicalKey, -1);
             }
-            if (!patch.message.isRead) {
-                unread = adjustUnread(unread, patch.message.conversation.canonicalKey, 1);
+            if (!message.isRead) {
+                unread = adjustUnread(unread, message.conversation.canonicalKey, 1);
             }
             const outbox = { ...state.outbox };
             if (patch.localId) {
                 delete outbox[patch.localId];
             }
-            const recentDirectMessages = patch.message.conversation.kind === 'dm'
-                ? mergeDirect(state.recentDirectMessages, patch.message.conversation)
+            const recentDirectMessages = message.conversation.kind === 'dm'
+                ? mergeDirect(state.recentDirectMessages, message.conversation)
                 : state.recentDirectMessages;
-            return {
+            return settleMessageMutation({
                 ...state,
                 unread,
                 outbox,
                 recentDirectMessages,
-                messages: { ...state.messages, [patch.message.id]: patch.message },
-            };
+                messages: { ...state.messages, [message.id]: message },
+            }, message.id);
         }
         case 'messageContent': {
             const message = state.messages[patch.messageId];
-            return message ? {
+            return message ? settleMessageMutation({
                 ...state,
                 messages: { ...state.messages, [patch.messageId]: { ...message, content: patch.content } },
-            } : state;
+            }, patch.messageId) : state;
         }
         case 'messageDeleted': {
             const messages = { ...state.messages };
@@ -239,7 +286,11 @@ function applyPatch(state: WebClientState, patch: EventPatch): WebClientState {
                 }
                 delete messages[messageId];
             }
-            return { ...state, messages, unread };
+            const messageMutations = { ...state.messageMutations };
+            for (const messageId of patch.messageIds) {
+                delete messageMutations[messageId];
+            }
+            return { ...state, messages, unread, messageMutations };
         }
         case 'messageMoved': {
             const messages = { ...state.messages };
@@ -275,13 +326,67 @@ function applyPatch(state: WebClientState, patch: EventPatch): WebClientState {
             const messageIds = patch.all ? Object.keys(messages).map(Number) : patch.messageIds;
             for (const messageId of messageIds) {
                 const message = messages[messageId];
-                if (!message || message.isRead === patch.read) {
+                if (!message || message.isRead === patch.read
+                    || (!patch.read && message.senderId === state.currentUser?.userId)) {
                     continue;
                 }
                 messages[messageId] = { ...message, isRead: patch.read };
                 unread = adjustUnread(unread, message.conversation.canonicalKey, patch.read ? -1 : 1);
             }
             return { ...state, messages, unread };
+        }
+        case 'messageStarred': {
+            const messages = { ...state.messages };
+            const messageIds = patch.all ? Object.keys(messages).map(Number) : patch.messageIds;
+            let current: WebClientState = state;
+            for (const messageId of messageIds) {
+                const message = messages[messageId];
+                if (message) {
+                    messages[messageId] = { ...message, isStarred: patch.starred };
+                }
+            }
+            current = { ...state, messages };
+            for (const messageId of messageIds) {
+                current = settleMessageMutation(current, messageId);
+            }
+            return current;
+        }
+        case 'reactionChanged': {
+            const message = state.messages[patch.messageId];
+            if (!message) {
+                return state;
+            }
+            const key = reactionKey(patch.reaction);
+            const reactions = message.reactions.map((reaction) => ({ ...reaction, userIds: [...reaction.userIds] }));
+            const index = reactions.findIndex((reaction) => reactionKey(reaction) === key);
+            if (patch.operation === 'add') {
+                if (index >= 0) {
+                    const existing = reactions[index]!;
+                    if (!existing.userIds.includes(patch.userId)) {
+                        reactions[index] = {
+                            ...existing,
+                            userIds: [...existing.userIds, patch.userId].sort((left, right) => left - right),
+                        };
+                    }
+                } else {
+                    reactions.push({ ...patch.reaction, userIds: [patch.userId] });
+                }
+            } else if (index >= 0) {
+                const existing = reactions[index]!;
+                const userIds = existing.userIds.filter((userId) => userId !== patch.userId);
+                if (userIds.length === 0) {
+                    reactions.splice(index, 1);
+                } else {
+                    reactions[index] = { ...existing, userIds };
+                }
+            }
+            return settleMessageMutation({
+                ...state,
+                messages: {
+                    ...state.messages,
+                    [patch.messageId]: { ...message, reactions },
+                },
+            }, patch.messageId);
         }
         case 'subscriptionUpsert':
             return { ...state, subscriptions: { ...state.subscriptions, [patch.subscription.channelId]: patch.subscription } };
@@ -333,11 +438,13 @@ function removeChannel(state: WebClientState, channelId: number): WebClientState
     const messages = { ...state.messages };
     const topics = { ...state.topics };
     const counts = { ...state.unread.counts };
+    const messageMutations = { ...state.messageMutations };
     let removedUnread = 0;
     delete subscriptions[channelId];
     for (const [id, message] of Object.entries(messages)) {
         if (message.conversation.kind === 'channel' && message.conversation.channelId === channelId) {
             delete messages[Number(id)];
+            delete messageMutations[Number(id)];
         }
     }
     for (const [key, topic] of Object.entries(topics)) {
@@ -355,6 +462,7 @@ function removeChannel(state: WebClientState, channelId: number): WebClientState
         ...state,
         subscriptions,
         messages,
+        messageMutations,
         topics,
         unread: {
             ...state.unread,
@@ -364,6 +472,45 @@ function removeChannel(state: WebClientState, channelId: number): WebClientState
                 : Math.max(0, state.unread.reportedTotal - removedUnread),
         },
     };
+}
+
+function settleMessageMutation(state: WebClientState, messageId: number): WebClientState {
+    const mutation = state.messageMutations[messageId];
+    const message = state.messages[messageId];
+    if (!mutation || !message) {
+        return state;
+    }
+    let settled = false;
+    switch (mutation.kind) {
+        case 'edit':
+            settled = message.content === mutation.content;
+            break;
+        case 'star':
+            settled = message.isStarred === mutation.starred;
+            break;
+        case 'reaction': {
+            const currentUserId = state.currentUser?.userId;
+            if (currentUserId !== undefined) {
+                const reaction = message.reactions.find((candidate) => (
+                    reactionKey(candidate) === reactionKey(mutation.reaction)
+                ));
+                settled = reaction?.userIds.includes(currentUserId) === mutation.active;
+            }
+            break;
+        }
+        case 'delete':
+            break;
+    }
+    if (!settled) {
+        return state;
+    }
+    const messageMutations = { ...state.messageMutations };
+    delete messageMutations[messageId];
+    return { ...state, messageMutations };
+}
+
+function reactionKey(reaction: EmojiReactionIdentity): string {
+    return `${reaction.reactionType}:${reaction.emojiCode}`;
 }
 
 function sanitizeSelection(state: WebClientState): WebClientState {

@@ -8,6 +8,7 @@ export function FixtureApp() {
             session={{ realm: 'https://fixture.invalid', email: 'fixture@relaycove.invalid' }}
             workspace={chatFixture}
             loadRealmImage={fixtureImageLoader}
+            allowCrossOriginMediaLoader
             presentation={{
                 conversationSearchEnabled: true,
                 dataSourceNotice: '本地演示数据 · 不连接 Zulip',

@@ -1,5 +1,6 @@
 import type { WebSession } from '../api/types';
 import { resolveRealmMediaUrl } from '../api/realmMedia';
+import { directMessage } from '../domain/conversation';
 import type { ConversationKey, DirectMessageConversation, WebClientState } from '../domain/types';
 import type {
     ConversationDetail,
@@ -20,7 +21,7 @@ export interface ProjectedWebClient {
 
 export function projectWebClient(session: WebSession, state: WebClientState): ProjectedWebClient {
     const channelConversations = projectChannels(state, session.realm);
-    const directConversations = projectDirects(state, session.realm);
+    const directConversations = projectDirects(state, session.realm, session.userId);
     const all = [...channelConversations, ...directConversations];
     const conversations = Object.fromEntries(all.map((conversation) => [conversation.id, conversation]));
     const currentUser = state.currentUser ?? {
@@ -64,7 +65,8 @@ export function projectWebClient(session: WebSession, state: WebClientState): Pr
                 && (entry.status === 'hidden' || entry.status === 'waiting')
             )),
             conversationSearchTitle: '仅筛选当前已加载的会话列表',
-            maxImageUploadBytes: Math.min(10, state.maxFileUploadSizeMiB ?? 10) * 1024 * 1024,
+            maxAttachmentUploadBytes: (state.maxFileUploadSizeMiB ?? 10) * 1024 * 1024,
+            maxMessageLength: state.maxMessageLength,
         },
     };
 }
@@ -91,8 +93,10 @@ function projectChannels(state: WebClientState, realm: string): ConversationDeta
         .sort(compareConversations);
 }
 
-function projectDirects(state: WebClientState, realm: string): ConversationDetail[] {
+function projectDirects(state: WebClientState, realm: string, currentUserId: number): ConversationDetail[] {
     const directs = new Map<string, DirectMessageConversation>();
+    const self = directMessage([currentUserId], currentUserId);
+    directs.set(self.canonicalKey, self);
     for (const direct of state.recentDirectMessages) {
         directs.set(direct.canonicalKey, direct);
     }
@@ -147,6 +151,7 @@ function projectConversation(state: WebClientState, conversation: ConversationKe
         time: latest ? formatRelativeTime(latest.timestamp) : '',
         unread: state.unread.counts[conversation.canonicalKey] ?? 0,
         channelName,
+        channelId: conversation.kind === 'channel' ? conversation.channelId : undefined,
         topic: conversation.kind === 'channel' ? conversation.topic : undefined,
         avatar: avatarText,
         tone: toneFor(conversation.canonicalKey),
@@ -175,8 +180,24 @@ function projectConversation(state: WebClientState, conversation: ConversationKe
                 body: content.body,
                 rawContent: message.content,
                 attachments: content.attachments,
+                quote: content.quote,
                 permalink: `${realm}/#narrow/near/${message.id}`,
                 own: message.senderId === state.currentUser?.userId,
+                isStarred: message.isStarred,
+                reactions: message.reactions.map((reaction) => ({
+                    emoji: reactionEmoji(reaction.emojiName, reaction.emojiCode, reaction.reactionType),
+                    emojiName: reaction.emojiName,
+                    emojiCode: reaction.emojiCode,
+                    reactionType: reaction.reactionType,
+                    count: reaction.userIds.length,
+                    reactedByCurrentUser: state.currentUser !== undefined
+                        && reaction.userIds.includes(state.currentUser.userId),
+                })),
+                mutation: state.messageMutations[message.id] ? {
+                    kind: state.messageMutations[message.id]!.kind,
+                    phase: state.messageMutations[message.id]!.phase,
+                    error: state.messageMutations[message.id]!.error,
+                } : undefined,
             };
         }),
         pendingMessages,
@@ -184,6 +205,21 @@ function projectConversation(state: WebClientState, conversation: ConversationKe
         foundOldest: page?.foundOldest,
         loadError: page?.error,
     };
+}
+
+function reactionEmoji(name: string, code: string, type: string): string {
+    if (type !== 'unicode_emoji') {
+        return `:${name}:`;
+    }
+    const points = code.split(/[-_]/u).map((part) => Number.parseInt(part, 16));
+    if (points.length === 0 || points.some((point) => !Number.isSafeInteger(point) || point <= 0 || point > 0x10ffff)) {
+        return `:${name}:`;
+    }
+    try {
+        return String.fromCodePoint(...points);
+    } catch {
+        return `:${name}:`;
+    }
 }
 
 function directTitle(state: WebClientState, conversation: DirectMessageConversation): string {

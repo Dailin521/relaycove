@@ -1,8 +1,8 @@
 import { CSSProperties, useEffect, useMemo, useRef, useState } from 'react';
 import type {
+    AttachmentDraft,
     NavigationSection,
     ChatMessage,
-    ImageDraft,
     NewConversationRequest,
     ShellPresentation,
     SessionSummary,
@@ -17,6 +17,12 @@ import { ProductBar } from './ProductBar';
 import { SettingsPage } from './SettingsPage';
 import { readWebPreferences, writeWebPreferences } from '../session/WebPreferenceStore';
 import { RealmMediaProvider, type RealmImageLoader } from './RealmMedia';
+import { buildMessageQuote } from '../workspace/messageQuote';
+import {
+    attachmentKind,
+    uploadedFileMarkdown,
+    validateAttachmentSelection,
+} from './attachmentDraft';
 
 interface RelayCoveShellProps {
     session: SessionSummary;
@@ -29,7 +35,17 @@ interface RelayCoveShellProps {
     onRecoverPending?(localId: string): { conversationId: string; content: string } | undefined;
     onCreateConversation?(request: NewConversationRequest): void;
     loadRealmImage?: RealmImageLoader;
-    onUploadImage?(file: File, signal: AbortSignal): Promise<{ url: string; filename: string }>;
+    allowCrossOriginMediaLoader?: boolean;
+    onUploadAttachment?(file: File, signal: AbortSignal): Promise<{ url: string; filename: string }>;
+    onToggleReaction?(
+        messageId: string,
+        reaction: { emojiName: string; emojiCode: string; reactionType: string },
+        active: boolean,
+    ): Promise<void>;
+    onEditMessage?(messageId: string, content: string): Promise<void>;
+    onDeleteMessage?(messageId: string): Promise<void>;
+    onToggleStar?(messageId: string, starred: boolean): Promise<void>;
+    onUnsubscribeChannel?(channelId: number): Promise<void>;
 }
 
 interface ShellStyle extends CSSProperties {
@@ -48,7 +64,13 @@ export function RelayCoveShell({
     onRecoverPending,
     onCreateConversation,
     loadRealmImage,
-    onUploadImage,
+    allowCrossOriginMediaLoader,
+    onUploadAttachment,
+    onToggleReaction,
+    onEditMessage,
+    onDeleteMessage,
+    onToggleStar,
+    onUnsubscribeChannel,
 }: RelayCoveShellProps) {
     const [initialPreferences] = useState(readWebPreferences);
     const [theme, setTheme] = useState<Theme>(initialPreferences.theme);
@@ -56,6 +78,8 @@ export function RelayCoveShell({
     const [selectedId, setSelectedId] = useState(workspace.selectedConversationId);
     const [detailsOpen, setDetailsOpen] = useState(initialPreferences.detailsDefault);
     const [detailsDefault, setDetailsDefault] = useState(initialPreferences.detailsDefault);
+    const [channelsCollapsed, setChannelsCollapsed] = useState(initialPreferences.channelsCollapsed);
+    const [directsCollapsed, setDirectsCollapsed] = useState(initialPreferences.directsCollapsed);
     const [mobileChatOpen, setMobileChatOpen] = useState(Boolean(workspace.selectedConversationId));
     const [listWidth, setListWidth] = useState(initialPreferences.listWidth);
     const [fontSize, setFontSize] = useState(initialPreferences.fontSize);
@@ -64,8 +88,9 @@ export function RelayCoveShell({
     const [sendError, setSendError] = useState<string>();
     const [sending, setSending] = useState(false);
     const [composerFocusRequest, setComposerFocusRequest] = useState(0);
-    const [imageDrafts, setImageDrafts] = useState<Record<string, ImageDraft>>({});
-    const imageDraftsRef = useRef(imageDrafts);
+    const [attachmentDrafts, setAttachmentDrafts] = useState<Record<string, AttachmentDraft[]>>({});
+    const attachmentDraftsRef = useRef(attachmentDrafts);
+    const nextAttachmentIdRef = useRef(0);
     const uploadControllerRef = useRef<AbortController | undefined>(undefined);
     const operationEpochRef = useRef(0);
     const selectedConversation = selectedId ? workspace.conversations[selectedId] : undefined;
@@ -90,20 +115,27 @@ export function RelayCoveShell({
     }, [onSelectConversation, workspace.selectedConversationId]);
 
     useEffect(() => {
-        writeWebPreferences({ theme, fontSize, listWidth, detailsDefault });
-    }, [detailsDefault, fontSize, listWidth, theme]);
+        writeWebPreferences({
+            theme,
+            fontSize,
+            listWidth,
+            detailsDefault,
+            channelsCollapsed,
+            directsCollapsed,
+        });
+    }, [channelsCollapsed, detailsDefault, directsCollapsed, fontSize, listWidth, theme]);
 
     useEffect(() => {
-        imageDraftsRef.current = imageDrafts;
-    }, [imageDrafts]);
+        attachmentDraftsRef.current = attachmentDrafts;
+    }, [attachmentDrafts]);
 
     useEffect(() => () => {
         operationEpochRef.current += 1;
         uploadControllerRef.current?.abort();
-        for (const draft of Object.values(imageDraftsRef.current)) {
-            URL.revokeObjectURL(draft.previewUrl);
+        for (const drafts of Object.values(attachmentDraftsRef.current)) {
+            releaseAttachmentDrafts(drafts);
         }
-        imageDraftsRef.current = {};
+        attachmentDraftsRef.current = {};
     }, []);
 
     function changeSection(section: NavigationSection) {
@@ -127,37 +159,46 @@ export function RelayCoveShell({
             return;
         }
         const snapshot = drafts[selectedId] ?? '';
-        const imageSnapshot = imageDrafts[selectedId];
-        if (!snapshot.trim() && !imageSnapshot) {
+        const attachmentSnapshot = [...(attachmentDrafts[selectedId] ?? [])];
+        if (!snapshot.trim() && attachmentSnapshot.length === 0) {
             return;
         }
         setSending(true);
         setSendError(undefined);
         const operationEpoch = operationEpochRef.current;
-        let phase: 'upload' | 'send' = imageSnapshot?.uploaded ? 'send' : 'upload';
+        let phase: 'upload' | 'send' = attachmentSnapshot.every((draft) => draft.uploaded) ? 'send' : 'upload';
         try {
-            let uploaded = imageSnapshot?.uploaded;
-            if (imageSnapshot && !uploaded) {
-                if (!onUploadImage) {
-                    throw new Error('当前客户端尚未启用图片上传。');
+            const uploadedFiles: Array<{ url: string; filename: string }> = [];
+            for (const attachment of attachmentSnapshot) {
+                let uploaded = attachment.uploaded;
+                if (!uploaded) {
+                    if (!onUploadAttachment) {
+                        throw new Error('当前客户端尚未启用附件上传。');
+                    }
+                    const controller = new AbortController();
+                    uploadControllerRef.current = controller;
+                    uploaded = await onUploadAttachment(attachment.file, controller.signal);
+                    if (controller.signal.aborted || operationEpoch !== operationEpochRef.current) {
+                        return;
+                    }
+                    const completedUpload = uploaded;
+                    setAttachmentDrafts((current) => ({
+                        ...current,
+                        [selectedId]: (current[selectedId] ?? []).map((draft) => (
+                            draft.id === attachment.id ? { ...draft, uploaded: completedUpload } : draft
+                        )),
+                    }));
                 }
-                const controller = new AbortController();
-                uploadControllerRef.current = controller;
-                uploaded = await onUploadImage(imageSnapshot.file, controller.signal);
-                if (controller.signal.aborted || operationEpoch !== operationEpochRef.current) {
-                    return;
-                }
-                setImageDrafts((current) => current[selectedId]?.file === imageSnapshot.file
-                    ? { ...current, [selectedId]: { ...current[selectedId], uploaded } }
-                    : current);
+                uploadedFiles.push(uploaded);
             }
             if (operationEpoch !== operationEpochRef.current) {
                 return;
             }
             phase = 'send';
-            const content = uploaded
-                ? [snapshot.trimEnd(), `[${uploaded.filename}](${uploaded.url})`].filter(Boolean).join('\n')
-                : snapshot;
+            const content = [
+                snapshot.trimEnd(),
+                ...uploadedFiles.map(uploadedFileMarkdown),
+            ].filter(Boolean).join('\n');
             await onSendMessage(selectedId, content);
             if (operationEpoch !== operationEpochRef.current) {
                 return;
@@ -165,14 +206,17 @@ export function RelayCoveShell({
             setDrafts((current) => current[selectedId] === snapshot
                 ? { ...current, [selectedId]: '' }
                 : current);
-            if (imageSnapshot) {
-                setImageDrafts((current) => {
-                    if (current[selectedId]?.file !== imageSnapshot.file) {
-                        return current;
-                    }
-                    URL.revokeObjectURL(current[selectedId].previewUrl);
+            if (attachmentSnapshot.length > 0) {
+                const sentIds = new Set(attachmentSnapshot.map((draft) => draft.id));
+                releaseAttachmentDrafts(attachmentSnapshot);
+                setAttachmentDrafts((current) => {
+                    const remaining = (current[selectedId] ?? []).filter((draft) => !sentIds.has(draft.id));
                     const next = { ...current };
-                    delete next[selectedId];
+                    if (remaining.length === 0) {
+                        delete next[selectedId];
+                    } else {
+                        next[selectedId] = remaining;
+                    }
                     return next;
                 });
             }
@@ -181,7 +225,7 @@ export function RelayCoveShell({
                 return;
             }
             setSendError(phase === 'upload'
-                ? '图片上传结果未确认；不会自动重试。请检查连接后再明确发送。'
+                ? '附件上传结果未确认；不会自动重试。已确认的附件会保留，请检查连接后再明确发送。'
                 : error instanceof Error ? error.message : '消息没有发送。');
         } finally {
             if (operationEpoch === operationEpochRef.current) {
@@ -195,44 +239,65 @@ export function RelayCoveShell({
         operationEpochRef.current += 1;
         uploadControllerRef.current?.abort();
         uploadControllerRef.current = undefined;
-        const imageDraftsToRelease = imageDraftsRef.current;
-        imageDraftsRef.current = {};
-        for (const draft of Object.values(imageDraftsToRelease)) {
-            URL.revokeObjectURL(draft.previewUrl);
+        const draftsToRelease = attachmentDraftsRef.current;
+        attachmentDraftsRef.current = {};
+        for (const drafts of Object.values(draftsToRelease)) {
+            releaseAttachmentDrafts(drafts);
         }
-        setImageDrafts({});
+        setAttachmentDrafts({});
         setSending(false);
         onLogout();
     }
 
-    function selectImage(file: File) {
+    function selectAttachments(files: readonly File[]) {
         if (!selectedId) {
             return;
         }
-        const previewUrl = URL.createObjectURL(file);
-        setImageDrafts((current) => {
-            const existing = current[selectedId];
-            if (existing) {
-                URL.revokeObjectURL(existing.previewUrl);
-            }
-            return { ...current, [selectedId]: { file, previewUrl } };
+        const existing = attachmentDrafts[selectedId] ?? [];
+        const validationError = validateAttachmentSelection(
+            existing,
+            files,
+            presentation.maxAttachmentUploadBytes ?? 10 * 1024 * 1024,
+        );
+        if (validationError) {
+            setSendError(validationError);
+            return;
+        }
+        const additions = files.map((file): AttachmentDraft => {
+            const kind = attachmentKind(file);
+            return {
+                id: `attachment-${++nextAttachmentIdRef.current}`,
+                file,
+                kind,
+                previewUrl: kind === 'image' ? URL.createObjectURL(file) : undefined,
+            };
         });
+        setAttachmentDrafts((current) => ({
+            ...current,
+            [selectedId]: [...(current[selectedId] ?? []), ...additions],
+        }));
         setSendError(undefined);
-        setComposerHeight((current) => Math.max(current, 180));
+        setComposerHeight((current) => Math.max(current, 200));
     }
 
-    function removeImage() {
+    function removeAttachment(attachmentId: string) {
         if (!selectedId) {
             return;
         }
-        setImageDrafts((current) => {
-            const existing = current[selectedId];
-            if (!existing) {
+        setAttachmentDrafts((current) => {
+            const existing = current[selectedId] ?? [];
+            const removed = existing.find((draft) => draft.id === attachmentId);
+            if (!removed) {
                 return current;
             }
-            URL.revokeObjectURL(existing.previewUrl);
+            releaseAttachmentDrafts([removed]);
+            const remaining = existing.filter((draft) => draft.id !== attachmentId);
             const next = { ...current };
-            delete next[selectedId];
+            if (remaining.length === 0) {
+                delete next[selectedId];
+            } else {
+                next[selectedId] = remaining;
+            }
             return next;
         });
     }
@@ -251,13 +316,7 @@ export function RelayCoveShell({
         if (!selectedId) {
             return;
         }
-        const fallback = message.attachments?.length
-            ? `[图片：${message.attachments.map((attachment) => attachment.name).join('、')}]`
-            : '';
-        const quotedContent = (message.body || fallback || '消息').split(/\r?\n/gu)
-            .map((line) => `> ${line}`)
-            .join('\n');
-        const quote = `> ${message.sender.name}：\n${quotedContent}\n\n`;
+        const quote = buildMessageQuote(message);
         setDrafts((current) => ({
             ...current,
             [selectedId]: current[selectedId]?.trim()
@@ -275,7 +334,11 @@ export function RelayCoveShell({
     }
 
     return (
-        <RealmMediaProvider loader={loadRealmImage}>
+        <RealmMediaProvider
+            loader={loadRealmImage}
+            realm={session.realm}
+            allowCrossOriginLoader={allowCrossOriginMediaLoader}
+        >
         <div
             className={`relaycove-app${presentation.connectionNotice ? ' has-connection-banner' : ''}`}
             data-theme={theme}
@@ -324,6 +387,10 @@ export function RelayCoveShell({
                             emptySearchText={presentation.emptySearchText}
                             onSelect={selectConversation}
                             onCreateConversation={onCreateConversation ? createConversation : undefined}
+                            channelsCollapsed={channelsCollapsed}
+                            directsCollapsed={directsCollapsed}
+                            onChannelsCollapsedChange={setChannelsCollapsed}
+                            onDirectsCollapsedChange={setDirectsCollapsed}
                         />
                         <ChatPanel
                             conversation={activeSection === 'messages' ? selectedConversation : undefined}
@@ -333,9 +400,9 @@ export function RelayCoveShell({
                             sendEnabled={presentation.sendEnabled === true && Boolean(onSendMessage)}
                             sending={sending}
                             draft={selectedId ? drafts[selectedId] ?? '' : ''}
-                            imageDraft={selectedId ? imageDrafts[selectedId] : undefined}
-                            maxImageUploadBytes={presentation.maxImageUploadBytes ?? 10 * 1024 * 1024}
-                            imageUploadEnabled={Boolean(onUploadImage)}
+                            attachmentDrafts={selectedId ? attachmentDrafts[selectedId] ?? [] : []}
+                            maxAttachmentUploadBytes={presentation.maxAttachmentUploadBytes ?? 10 * 1024 * 1024}
+                            attachmentUploadEnabled={Boolean(onUploadAttachment)}
                             composerHeight={composerHeight}
                             onBack={() => setMobileChatOpen(false)}
                             onToggleDetails={() => setDetailsOpen((value) => !value)}
@@ -346,16 +413,25 @@ export function RelayCoveShell({
                             }}
                             onComposerHeightChange={setComposerHeight}
                             onSend={() => void sendMessage()}
-                            onImageSelected={selectImage}
-                            onImageRemoved={removeImage}
-                            onImageError={setSendError}
+                            onAttachmentsSelected={selectAttachments}
+                            onAttachmentRemoved={removeAttachment}
+                            onAttachmentError={setSendError}
                             onLoadOlder={() => selectedId && onLoadOlder?.(selectedId)}
                             onRecoverPending={recoverPending}
                             onReply={replyToMessage}
+                            onToggleReaction={onToggleReaction}
+                            onEditMessage={onEditMessage}
+                            onDeleteMessage={onDeleteMessage}
+                            onToggleStar={onToggleStar}
+                            maxMessageLength={presentation.maxMessageLength}
                             composerFocusRequest={composerFocusRequest}
                         />
                         {detailsOpen && (
-                            <DetailsPane conversation={selectedConversation} onClose={() => setDetailsOpen(false)} />
+                            <DetailsPane
+                                conversation={selectedConversation}
+                                onClose={() => setDetailsOpen(false)}
+                                onUnsubscribeChannel={onUnsubscribeChannel}
+                            />
                         )}
                     </>
                 )}
@@ -363,4 +439,12 @@ export function RelayCoveShell({
         </div>
         </RealmMediaProvider>
     );
+}
+
+function releaseAttachmentDrafts(drafts: readonly AttachmentDraft[]): void {
+    for (const draft of drafts) {
+        if (draft.previewUrl) {
+            URL.revokeObjectURL(draft.previewUrl);
+        }
+    }
 }

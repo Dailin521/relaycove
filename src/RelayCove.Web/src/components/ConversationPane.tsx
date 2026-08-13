@@ -1,4 +1,4 @@
-import { Pin, Plus, Search } from 'lucide-react';
+import { ChevronRight, Pin, Plus, Search } from 'lucide-react';
 import { KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ConversationSummary, NavigationSection, NewConversationRequest, PersonSummary } from '../models/ui';
 import { Avatar } from './Avatar';
@@ -17,6 +17,10 @@ interface ConversationPaneProps {
     emptySearchText: string;
     onSelect(conversationId: string): void;
     onCreateConversation?(request: NewConversationRequest): void;
+    channelsCollapsed: boolean;
+    directsCollapsed: boolean;
+    onChannelsCollapsedChange(collapsed: boolean): void;
+    onDirectsCollapsedChange(collapsed: boolean): void;
 }
 
 function ConversationRow({
@@ -75,6 +79,10 @@ export function ConversationPane({
     emptySearchText,
     onSelect,
     onCreateConversation,
+    channelsCollapsed,
+    directsCollapsed,
+    onChannelsCollapsedChange,
+    onDirectsCollapsedChange,
 }: ConversationPaneProps) {
     const [query, setQuery] = useState('');
     const [newConversationOpen, setNewConversationOpen] = useState(false);
@@ -90,6 +98,8 @@ export function ConversationPane({
         || `${conversation.title} ${conversation.subtitle}`.toLocaleLowerCase().includes(normalizedQuery);
     const visibleChannels = useMemo(() => channels.filter(filter), [channels, normalizedQuery]);
     const visibleDirects = useMemo(() => directs.filter(filter), [directs, normalizedQuery]);
+    const channelsHidden = channelsCollapsed && !(normalizedQuery && visibleChannels.length > 0);
+    const directsHidden = directsCollapsed && !(normalizedQuery && visibleDirects.length > 0);
 
     useEffect(() => {
         if ((!selectedChannelId || !subscribedChannels.some((channel) => channel.channelId === selectedChannelId)) && subscribedChannels[0]) {
@@ -133,7 +143,7 @@ export function ConversationPane({
         if (event.key !== 'ArrowDown') {
             return;
         }
-        const firstConversation = paneRef.current?.querySelector<HTMLButtonElement>('.conversation-row');
+        const firstConversation = paneRef.current?.querySelector<HTMLButtonElement>('.conversation-list:not([hidden]) .conversation-row');
         if (firstConversation) {
             event.preventDefault();
             firstConversation.focus();
@@ -288,30 +298,48 @@ export function ConversationPane({
             {dataSourceNotice && <p className="data-source-notice">{dataSourceNotice}</p>}
             <div className="conversation-scroll">
                 <section className="conversation-group" aria-labelledby="channels-heading">
-                    <div className="group-heading" id="channels-heading">
-                        <span>频道</span><small>{channels.length}</small>
+                    <button
+                        className="group-heading"
+                        id="channels-heading"
+                        type="button"
+                        aria-expanded={!channelsHidden}
+                        aria-controls="channels-list"
+                        onClick={() => onChannelsCollapsedChange(!channelsCollapsed)}
+                    >
+                        <span><ChevronRight aria-hidden="true" />频道</span><small>{channels.length}</small>
+                    </button>
+                    <div className="conversation-list" id="channels-list" hidden={channelsHidden}>
+                        {visibleChannels.map((conversation) => (
+                            <ConversationRow
+                                key={conversation.id}
+                                conversation={conversation}
+                                selected={conversation.id === selectedId}
+                                onSelect={() => onSelect(conversation.id)}
+                            />
+                        ))}
                     </div>
-                    {visibleChannels.map((conversation) => (
-                        <ConversationRow
-                            key={conversation.id}
-                            conversation={conversation}
-                            selected={conversation.id === selectedId}
-                            onSelect={() => onSelect(conversation.id)}
-                        />
-                    ))}
                 </section>
                 <section className="conversation-group" aria-labelledby="directs-heading">
-                    <div className="group-heading" id="directs-heading">
-                        <span>私信</span><small>{directs.length} 个会话</small>
+                    <button
+                        className="group-heading"
+                        id="directs-heading"
+                        type="button"
+                        aria-expanded={!directsHidden}
+                        aria-controls="directs-list"
+                        onClick={() => onDirectsCollapsedChange(!directsCollapsed)}
+                    >
+                        <span><ChevronRight aria-hidden="true" />私信</span><small>{directs.length} 个会话</small>
+                    </button>
+                    <div className="conversation-list" id="directs-list" hidden={directsHidden}>
+                        {visibleDirects.map((conversation) => (
+                            <ConversationRow
+                                key={conversation.id}
+                                conversation={conversation}
+                                selected={conversation.id === selectedId}
+                                onSelect={() => onSelect(conversation.id)}
+                            />
+                        ))}
                     </div>
-                    {visibleDirects.map((conversation) => (
-                        <ConversationRow
-                            key={conversation.id}
-                            conversation={conversation}
-                            selected={conversation.id === selectedId}
-                            onSelect={() => onSelect(conversation.id)}
-                        />
-                    ))}
                 </section>
                 {visibleChannels.length === 0 && visibleDirects.length === 0 && (
                     <p className="no-results">{emptySearchText}</p>

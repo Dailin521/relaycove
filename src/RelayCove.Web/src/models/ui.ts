@@ -21,6 +21,7 @@ export interface ConversationSummary {
     pinned?: boolean;
     online?: boolean;
     channelName?: string;
+    channelId?: number;
     topic?: string;
     avatar: string;
     tone: PersonSummary['tone'];
@@ -29,14 +30,31 @@ export interface ConversationSummary {
 }
 
 export interface MessageAttachment {
-    kind: 'image';
+    kind: 'image' | 'file';
     name: string;
     sourceUrl: string;
 }
 
-export interface ImageDraft {
+export interface MessageReaction {
+    emoji: string;
+    emojiName: string;
+    emojiCode: string;
+    reactionType: string;
+    count: number;
+    reactedByCurrentUser: boolean;
+}
+
+export interface MessageMutationView {
+    kind: 'reaction' | 'edit' | 'delete' | 'star';
+    phase: 'submitting' | 'uncertain' | 'failed';
+    error?: string;
+}
+
+export interface AttachmentDraft {
+    id: string;
     file: File;
-    previewUrl: string;
+    kind: 'image' | 'file';
+    previewUrl?: string;
     uploaded?: {
         url: string;
         filename: string;
@@ -55,8 +73,11 @@ export interface ChatMessage {
     quote?: {
         sender: string;
         body: string;
+        permalink?: string;
     };
-    reaction?: string;
+    reactions?: MessageReaction[];
+    isStarred?: boolean;
+    mutation?: MessageMutationView;
 }
 
 export interface PendingMessage {
@@ -107,5 +128,6 @@ export interface ShellPresentation {
     composerStatusText: string;
     connectionNotice?: string;
     sendEnabled?: boolean;
-    maxImageUploadBytes?: number;
+    maxAttachmentUploadBytes?: number;
+    maxMessageLength?: number;
 }

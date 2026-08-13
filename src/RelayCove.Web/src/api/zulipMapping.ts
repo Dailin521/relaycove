@@ -1,6 +1,8 @@
 import { channelTopic, directMessage } from '../domain/conversation';
 import type {
     ChatMessage,
+    EmojiReaction,
+    EmojiReactionIdentity,
     EventBatch,
     EventPatch,
     EventPatchGroup,
@@ -43,6 +45,41 @@ function stringArray(value: unknown): readonly string[] {
 
 function numberArray(value: unknown): readonly number[] {
     return array(value).filter((item): item is number => typeof item === 'number' && Number.isSafeInteger(item));
+}
+
+function mapReactionIdentity(value: unknown): EmojiReactionIdentity | undefined {
+    const item = object(value);
+    const emojiName = string(item?.emoji_name);
+    const emojiCode = string(item?.emoji_code);
+    const reactionType = string(item?.reaction_type);
+    return emojiName && emojiCode && reactionType
+        ? { emojiName, emojiCode, reactionType }
+        : undefined;
+}
+
+function mapReactions(rawValue: unknown): readonly EmojiReaction[] {
+    const grouped = new Map<string, { identity: EmojiReactionIdentity; userIds: Set<number> }>();
+    for (const reactionValue of array(rawValue)) {
+        const item = object(reactionValue);
+        const identity = mapReactionIdentity(item);
+        const user = object(item?.user);
+        const userId = number(item?.user_id ?? user?.id ?? user?.user_id);
+        if (!identity || userId === undefined) {
+            continue;
+        }
+        const key = reactionKey(identity);
+        const existing = grouped.get(key) ?? { identity, userIds: new Set<number>() };
+        existing.userIds.add(userId);
+        grouped.set(key, existing);
+    }
+    return [...grouped.values()].map(({ identity, userIds }) => ({
+        ...identity,
+        userIds: [...userIds].sort((left, right) => left - right),
+    }));
+}
+
+function reactionKey(reaction: EmojiReactionIdentity): string {
+    return `${reaction.reactionType}:${reaction.emojiCode}`;
 }
 
 export function mapUser(value: unknown): UserProfile | undefined {
@@ -111,9 +148,8 @@ export function mapMessage(value: unknown, currentUserId: number, envelope?: unk
         return undefined;
     }
 
-    const flags = stringArray(item.flags).length > 0
-        ? stringArray(item.flags)
-        : stringArray(event?.flags);
+    const itemFlags = stringArray(item.flags);
+    const flags = itemFlags.length > 0 ? itemFlags : stringArray(event?.flags);
     return {
         id,
         conversation,
@@ -122,7 +158,13 @@ export function mapMessage(value: unknown, currentUserId: number, envelope?: unk
         senderAvatarUrl: string(item.avatar_url ?? item.sender_avatar_url),
         content: string(item.content) ?? '',
         timestamp: number(item.timestamp) ?? 0,
-        isRead: flags.some((flag) => flag.toLocaleLowerCase() === 'read'),
+        // Zulip clients with a custom client name are not guaranteed to receive a
+        // `read` flag on their own message echo. A message authored by the active
+        // user must never create an unread badge in this client.
+        isRead: senderId === currentUserId
+            || flags.some((flag) => flag.toLocaleLowerCase() === 'read'),
+        isStarred: flags.some((flag) => flag.toLocaleLowerCase() === 'starred'),
+        reactions: mapReactions(item.reactions),
     };
 }
 
@@ -241,11 +283,18 @@ function mapUpdateMessageEvent(event: JsonObject): readonly EventPatch[] {
         }
     }
     if (messageId !== undefined && Array.isArray(event.flags)) {
+        const flags = stringArray(event.flags).map((flag) => flag.toLocaleLowerCase());
         patches.push({
             type: 'messageFlags',
             messageIds: [messageId],
             all: false,
-            read: stringArray(event.flags).includes('read'),
+            read: flags.includes('read'),
+        });
+        patches.push({
+            type: 'messageStarred',
+            messageIds: [messageId],
+            all: false,
+            starred: flags.includes('starred'),
         });
     }
     if (event.subject !== undefined || event.new_stream_id !== undefined) {
@@ -259,6 +308,19 @@ function mapUpdateMessageEvent(event: JsonObject): readonly EventPatch[] {
         }
     }
     return patches.length > 0 ? patches : [{ type: 'ignored' }];
+}
+
+function mapReactionEvent(event: JsonObject): readonly EventPatch[] {
+    const messageId = number(event.message_id);
+    const userId = number(event.user_id);
+    const operation = string(event.op)?.toLocaleLowerCase();
+    const reaction = mapReactionIdentity(event);
+    return messageId !== undefined
+        && userId !== undefined
+        && (operation === 'add' || operation === 'remove')
+        && reaction
+        ? [{ type: 'reactionChanged', messageId, userId, operation, reaction }]
+        : [{ type: 'ignored' }];
 }
 
 function mapSubscriptionEvent(event: JsonObject): readonly EventPatch[] {
@@ -309,6 +371,9 @@ function mapEvent(value: unknown, currentUserId: number): EventPatchGroup {
         case 'message':
             patches = mapMessageEvent(event, currentUserId);
             break;
+        case 'reaction':
+            patches = mapReactionEvent(event);
+            break;
         case 'update_message':
             patches = mapUpdateMessageEvent(event);
             break;
@@ -319,16 +384,25 @@ function mapEvent(value: unknown, currentUserId: number): EventPatchGroup {
             patches = ids.length > 0 ? [{ type: 'messageDeleted', messageIds: ids }] : [{ type: 'ignored' }];
             break;
         }
-        case 'update_message_flags':
-            patches = string(event.flag)?.toLocaleLowerCase() === 'read'
+        case 'update_message_flags': {
+            const flag = string(event.flag)?.toLocaleLowerCase();
+            const active = string(event.op ?? event.operation)?.toLocaleLowerCase() === 'add';
+            patches = flag === 'read'
                 ? [{
                     type: 'messageFlags',
                     messageIds: numberArray(event.messages),
                     all: boolean(event.all) ?? false,
-                    read: string(event.op ?? event.operation)?.toLocaleLowerCase() === 'add',
+                    read: active,
+                }]
+                : flag === 'starred' ? [{
+                    type: 'messageStarred',
+                    messageIds: numberArray(event.messages),
+                    all: boolean(event.all) ?? false,
+                    starred: active,
                 }]
                 : [{ type: 'ignored' }];
             break;
+        }
         case 'realm_user': {
             const person = object(event.person);
             const user = mapUser(person);

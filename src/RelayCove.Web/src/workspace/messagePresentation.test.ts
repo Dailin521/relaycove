@@ -25,7 +25,7 @@ describe('presentMessageContent', () => {
         expect(result.attachments[0]?.name).toBe('team photo');
     });
 
-    it('keeps unsafe, active, and unrelated links as literal raw Markdown', () => {
+    it('keeps unsafe active links literal and presents non-previewable uploads as files', () => {
         const content = [
             '![x](https://evil.test/user_uploads/x.png)',
             '![x](javascript:alert(1))',
@@ -33,8 +33,17 @@ describe('presentMessageContent', () => {
             '<img src=x onerror=alert(1)>',
         ].join('\n');
         expect(presentMessageContent(content, 'https://chat.example.test')).toEqual({
-            body: content,
-            attachments: [],
+            body: [
+                '![x](https://evil.test/user_uploads/x.png)',
+                '![x](javascript:alert(1))',
+                '',
+                '<img src=x onerror=alert(1)>',
+            ].join('\n'),
+            attachments: [{
+                kind: 'file',
+                name: 'vector.svg',
+                sourceUrl: 'https://chat.example.test/user_uploads/a/vector.svg',
+            }],
         });
     });
 
@@ -49,5 +58,28 @@ describe('presentMessageContent', () => {
         expect(result.body).not.toContain('image-3.png');
         expect(result.body).toContain('![image-4.png](/user_uploads/a/image-4.png)');
         expect(result.body).toContain('![image-11.png](/user_uploads/a/image-11.png)');
+    });
+
+    it('presents an official-style quote separately from the reply body', () => {
+        const content = [
+            '@_**Grace Hopper|9** [said](https://chat.example.test/#narrow/near/42):',
+            '```quote',
+            '正文',
+            '![设计图](/user_uploads/1/design.png)',
+            '[需求文档](/user_uploads/1/spec.pdf)',
+            '```',
+            '',
+            '收到，我来处理。',
+        ].join('\n');
+
+        expect(presentMessageContent(content, 'https://chat.example.test')).toEqual({
+            body: '收到，我来处理。',
+            attachments: [],
+            quote: {
+                sender: 'Grace Hopper',
+                body: '正文\n![设计图](/user_uploads/1/design.png)\n[需求文档](/user_uploads/1/spec.pdf)',
+                permalink: 'https://chat.example.test/#narrow/near/42',
+            },
+        });
     });
 });

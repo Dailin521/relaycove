@@ -2,6 +2,7 @@ import { createBasicAuthorization } from './basicAuth';
 import { conversationNarrow } from '../domain/conversation';
 import type {
     ConversationKey,
+    EmojiReactionIdentity,
     EventBatch,
     HistoryResult,
     RegisterSnapshot,
@@ -40,10 +41,12 @@ const requestDefaults: Pick<RequestInit, 'cache' | 'credentials' | 'redirect' | 
 };
 
 const MAX_PREVIEW_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_ATTACHMENT_DOWNLOAD_BYTES = 100 * 1024 * 1024;
 const previewImageTypes = new Set(['image/avif', 'image/gif', 'image/jpeg', 'image/png', 'image/webp']);
 
 const DEFAULT_EVENT_TYPES = [
     'message',
+    'reaction',
     'subscription',
     'realm_user',
     'stream',
@@ -259,15 +262,18 @@ export class ZulipApiClient {
         sourceUrl: string,
         kind: RealmMediaKind,
         signal?: AbortSignal,
+        maxFileBytes = MAX_ATTACHMENT_DOWNLOAD_BYTES,
     ): Promise<Blob> {
         const approvedUrl = resolveRealmMediaUrl(session.realm, sourceUrl, kind);
         if (!approvedUrl) {
             throw new ZulipWebError('invalid_response');
         }
-        const fetchUrl = kind === 'upload'
+        const fetchUrl = kind === 'upload' || kind === 'file'
             ? await this.getTemporaryUploadUrl(session, approvedUrl, signal)
             : approvedUrl;
-        const headers = new Headers({ Accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif' });
+        const headers = new Headers({
+            Accept: kind === 'file' ? 'application/octet-stream,*/*;q=0.8' : 'image/avif,image/webp,image/png,image/jpeg,image/gif',
+        });
         if (kind === 'avatar') {
             headers.set('Authorization', createBasicAuthorization(session.email, session.apiKey));
         }
@@ -295,6 +301,13 @@ export class ZulipApiClient {
         }
 
         const contentType = response.headers.get('Content-Type')?.split(';', 1)[0]?.trim().toLocaleLowerCase();
+        if (kind === 'file') {
+            return readBlobWithLimit(
+                response,
+                'application/octet-stream',
+                Math.max(1, Math.min(MAX_ATTACHMENT_DOWNLOAD_BYTES, maxFileBytes)),
+            );
+        }
         if (!contentType || !previewImageTypes.has(contentType)) {
             throw new ZulipWebError('invalid_response', response.status);
         }
@@ -386,8 +399,9 @@ export class ZulipApiClient {
         if (file.size <= 0 || file.name.length === 0) {
             throw new TypeError('Invalid upload file.');
         }
+        const uploadFilename = sanitizeUploadFilename(file.name);
         const body = new FormData();
-        body.append('filename', file, file.name);
+        body.append('filename', file, uploadFilename);
         const response = await this.sendAuthenticated(session, 'user_uploads', {
             method: 'POST',
             body,
@@ -405,6 +419,114 @@ export class ZulipApiClient {
             typeof result.filename === 'string' ? result.filename : file.name,
         );
         return { url, filename };
+    }
+
+    public async unsubscribeChannel(
+        session: WebSession,
+        channelName: string,
+        signal?: AbortSignal,
+    ): Promise<{ removed: string[]; notRemoved: string[] }> {
+        if (!channelName.trim() || channelName.length > 200 || /[\u0000-\u001f\u007f]/u.test(channelName)) {
+            throw new TypeError('Invalid channel name.');
+        }
+        const response = await this.sendAuthenticated(session, 'users/me/subscriptions', {
+            method: 'DELETE',
+            headers: formHeaders(),
+            body: formBody({ subscriptions: JSON.stringify([channelName]) }),
+            signal,
+        }, true);
+        const result = await this.readJson<Record<string, unknown>>(response);
+        const removed = parseStringArray(result.removed);
+        const notRemoved = parseStringArray(result.not_removed);
+        if (!removed || !notRemoved) {
+            throw new ZulipWebError('invalid_response', response.status);
+        }
+        return { removed, notRemoved };
+    }
+
+    public async setReaction(
+        session: WebSession,
+        messageId: number,
+        reaction: EmojiReactionIdentity,
+        active: boolean,
+        signal?: AbortSignal,
+    ): Promise<void> {
+        validateMessageId(messageId);
+        validateReaction(reaction);
+        try {
+            const response = await this.sendAuthenticated(session, `messages/${messageId}/reactions`, {
+                method: active ? 'POST' : 'DELETE',
+                headers: formHeaders(),
+                body: formBody({
+                    emoji_name: reaction.emojiName,
+                    emoji_code: reaction.emojiCode,
+                    reaction_type: reaction.reactionType,
+                }),
+                signal,
+            }, true);
+            await this.readJson<unknown>(response);
+        } catch (error) {
+            if (error instanceof ZulipWebError && (
+                (active && error.serverCode === 'REACTION_ALREADY_EXISTS')
+                || (!active && error.serverCode === 'REACTION_DOES_NOT_EXIST')
+            )) {
+                return;
+            }
+            throw error;
+        }
+    }
+
+    public async editMessage(
+        session: WebSession,
+        messageId: number,
+        content: string,
+        previousContentSha256: string,
+        signal?: AbortSignal,
+    ): Promise<void> {
+        validateMessageId(messageId);
+        if (!content.trim() || !/^[a-f0-9]{64}$/u.test(previousContentSha256)) {
+            throw new TypeError('Invalid message edit.');
+        }
+        const response = await this.sendAuthenticated(session, `messages/${messageId}`, {
+            method: 'PATCH',
+            headers: formHeaders(),
+            body: formBody({ content, prev_content_sha256: previousContentSha256 }),
+            signal,
+        }, true);
+        await this.readJson<unknown>(response);
+    }
+
+    public async deleteMessage(
+        session: WebSession,
+        messageId: number,
+        signal?: AbortSignal,
+    ): Promise<void> {
+        validateMessageId(messageId);
+        const response = await this.sendAuthenticated(session, `messages/${messageId}`, {
+            method: 'DELETE',
+            signal,
+        }, true);
+        await this.readJson<unknown>(response);
+    }
+
+    public async setMessageStarred(
+        session: WebSession,
+        messageId: number,
+        starred: boolean,
+        signal?: AbortSignal,
+    ): Promise<void> {
+        validateMessageId(messageId);
+        const response = await this.sendAuthenticated(session, 'messages/flags', {
+            method: 'POST',
+            headers: formHeaders(),
+            body: formBody({
+                messages: JSON.stringify([messageId]),
+                op: starred ? 'add' : 'remove',
+                flag: 'starred',
+            }),
+            signal,
+        }, true);
+        await this.readJson<unknown>(response);
     }
 
     public async markConversationRead(
@@ -483,7 +605,7 @@ export class ZulipApiClient {
             throw new ZulipWebError('queue_expired', status);
         }
         if (isNonIdempotent && status >= 400 && status < 500) {
-            throw new ZulipWebError('rejected', status);
+            throw new ZulipWebError('rejected', status, undefined, serverCode);
         }
         if (isNonIdempotent && status >= 500) {
             throw new ZulipWebError('request_timed_out', status);
@@ -534,6 +656,25 @@ function withQuery(endpoint: string, fields: Readonly<Record<string, string>>): 
     return `${endpoint}?${new URLSearchParams(fields).toString()}`;
 }
 
+function validateMessageId(messageId: number): void {
+    if (!Number.isSafeInteger(messageId) || messageId <= 0) {
+        throw new TypeError('Invalid message identity.');
+    }
+}
+
+function validateReaction(reaction: EmojiReactionIdentity): void {
+    if (
+        !reaction.emojiName.trim()
+        || !reaction.emojiCode.trim()
+        || !reaction.reactionType.trim()
+        || reaction.emojiName.length > 128
+        || reaction.emojiCode.length > 128
+        || reaction.reactionType.length > 64
+    ) {
+        throw new TypeError('Invalid emoji reaction.');
+    }
+}
+
 async function readSafeErrorCode(response: Response): Promise<string | undefined> {
     try {
         const value = await response.clone().json() as { code?: unknown };
@@ -557,10 +698,16 @@ function parseRetryAfter(value: string | null): number | undefined {
 
 function sanitizeUploadFilename(value: string): string {
     const filename = value
-        .replace(/[\u0000-\u001f\u007f\[\]]/gu, '_')
+        .replace(/[\u0000-\u001f\u007f\\[\]()`]/gu, '_')
         .trim()
         .slice(0, 256);
-    return filename || 'image';
+    return filename || 'file';
+}
+
+function parseStringArray(value: unknown): string[] | undefined {
+    return Array.isArray(value) && value.every((item) => typeof item === 'string')
+        ? value
+        : undefined;
 }
 
 async function readBlobWithLimit(response: Response, contentType: string, maxBytes: number): Promise<Blob> {

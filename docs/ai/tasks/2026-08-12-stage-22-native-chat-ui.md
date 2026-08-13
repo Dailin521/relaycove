@@ -1,8 +1,8 @@
 # Stage 22 — RelayCove 双前端（22W Web / 22M Native MAUI）
 
-- Status: Stage 22W / Slice 1, Slice 2 and Slice 3 complete on the current uncommitted review tree; local gates, independent review and fixed-entry deployment passed; Stage 22M planned
-- Execution branch: `codex/stage-22w-web-foundation`
-- Starting point: clean `main` at `1374985197aca39806b8780f2e9f17799ffe3abe`
+- Status: Stage 22W Slice 1/2/3 merged and deployed; 2026-08-13 message-interaction follow-up implemented locally; Stage 22M planned
+- Execution branch: `codex/stage-22w-message-interactions`
+- Starting point: clean merged `main` at `53a4f1a643031d9eef801e52ab8b20456ea8773c`
 - Design source: immutable `docs/ui/baselines/chat-ui-v1/`
 - Interaction source: `docs/ui/INTERACTION_SPEC.md`
 
@@ -108,14 +108,31 @@ Implemented production path:
 
 Formal automation covers avatar/media Basic boundaries, temporary upload URLs without Authorization on the final Blob request, image MIME/size rejection, context-menu keyboard/focus/clipboard, viewer close/download/focus, exact multipart upload + Markdown send, logout/late-result cancellation and production fixture exclusion. No real Realm upload or message write is used.
 
+## Stage 22W — 2026-08-13 message-interaction write follow-up
+
+- Fixed own-message unread projection at the Zulip mapper boundary; current-user messages are read even when a custom-client echo omits the flag.
+- Added per-message Quote, Copy and More quick controls while retaining right-click, `Shift+F10` and touch behavior.
+- Replaced the lossy image-placeholder reply with a Zulip-style fenced quote sourced from complete raw Markdown, including text, images and other attachment links.
+- Added a keyboard-operable 24-item Unicode Composer emoji picker with caret insertion and focus restoration.
+- Implemented official Zulip reaction POST/DELETE, own-message PATCH edit with `prev_content_sha256`, own-message permanent DELETE and per-account starred flag add/remove. Reaction/update/delete/flag events and history are mapped through the shared reducer; one message has one serialized mutation lane and ambiguous results are never automatically retried.
+- Ordinary Vite and `start-web-dev.cmd` now open the formal `/` login and real Realm data; deterministic fixture state remains available only through explicit fixture/E2E mode and is excluded from production.
+- Self-DM is now a deterministic production navigation entry derived only from the authenticated current user ID; it remains available even with no recent self-DM history.
+- Channel and DM groups collapse independently and persist as non-sensitive browser preferences. Matching search results temporarily reveal their group.
+- Composer now accepts arbitrary files by multi-select or drag/drop, keeps up to 10 per-conversation attachment drafts, previews only safe raster images, uploads in order and sends one message containing escaped server-returned links. Non-image same-Realm uploads render as file cards and download through a temporary URL/Blob boundary rather than inline active content.
+- Channel details now allow the current user to unsubscribe through `DELETE /users/me/subscriptions`; success reuses the existing subscription-removal reducer cleanup, while an unknown result remains explicit and is never auto-retried.
+- Verification intentionally stayed narrow: typecheck, 86/86 unit tests and production build passed; Playwright passed 6/6 fixture/formal scenarios plus 1/1 fixed deployment-path scenario. A local Chromium loaded real conversations/messages and same-Realm public avatars with zero console errors.
+- With explicit user authorization, temporary self-DM message/reaction/star/edit/delete and focused flag-event probes passed against the target Realm and were deleted. No other user's message, channel, upload or mark-read was touched; channel unsubscribe and file upload remained fake-HTTP only.
+- Independent security, state/test and UI reviews confirmed no remaining P0/P1 after the public-avatar origin constraint and stale quote-action Playwright assertions were corrected.
+- The post-review repository `Full` gate passed on the exact follow-up tree: .NET Debug/Release 135/135, Web 86/86, Playwright 6/6 plus fixed deployment path 1/1, Windows package generation, and zero build warnings/errors. Commit, push and deployment had not been performed when this evidence was recorded.
+
 ## Remaining independent capability gates
 
-- global/server search, non-image attachments, reactions, mentions, membership, saved messages, presence or channel management;
+- global/server search, mentions, membership, saved-message list, presence, channel subscribe/create/rename/archive/member management, and resumable large-file upload;
 - formal Web service worker or offline cache;
 - automatic scroll-threshold paging, long-list virtualization and cross-page visual-anchor preservation;
 - any Stage 22M MAUI visual conversion.
 
-Visual buttons for remaining capabilities stay disabled, hidden or explicitly marked unavailable. A fixture-only affordance is not production capability evidence. Real-account authenticated reads and message writes also remain external acceptance gates; fake HTTP does not satisfy them.
+Visual buttons for remaining capabilities stay disabled, hidden or explicitly marked unavailable. A fixture-only affordance is not production capability evidence. The bounded self-DM write proves the implemented mutation endpoints on the target Realm but does not satisfy Stage 21 Live, two-account event delivery, mark-read or upload acceptance.
 
 ## Validation matrix
 
@@ -187,7 +204,7 @@ Artifacts are intentionally ignored by Git; their dimensions and results are rec
 - Screenshot dimensions/hashes and known differences are recorded in `docs/ai/STATUS.md`.
 - Independent authentication and UI/build/documentation reviews found no P0. Three confirmed P1 findings were fixed: non-overridable authenticated transport defaults, removal of restore/network behavior from ordinary Fast/Full, and complete fixture-only production-module exclusion. Both reviewers rechecked the fixes and reported no remaining P0/P1.
 - Frozen `chat-ui-v1` files were not modified and all four SHA-256 values still match.
-- `start-web-dev.cmd` was exercised through real `cmd.exe`; it started Vite and opened the full local fixture with zero browser errors/warnings. `deploy-web.cmd` is the deliberate large-version path and does not run on save.
+- `start-web-dev.cmd` now starts Vite and opens the formal local login at `/`; fixture execution is explicit automation-only. `deploy-web.cmd` remains the deliberate large-version path and does not run on save.
 - The Slice 1 fixed-entry deployment succeeded at `https://hklight.2000521.xyz/relaycove-web/`: Nginx backup `20260812T073422Z`, Slice 1 release `20260812T073929Z-1374985197ac-worktree`, public Chromium console 0/0 and strict asset/cache/security checks passed. The later Slice 2 release is recorded below. Official Zulip `/` and legacy `/relaycove/` remain outside the new prefix.
 - No real credential, authenticated API call, message write, commit, push or tag occurred.
 

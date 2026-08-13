@@ -1,10 +1,10 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：Stage 21 外部门禁保留；Stage 22W Slice 1/2/3 已在当前审查树完成并部署；Stage 22M 待启动
+文档状态：Stage 21 外部门禁保留；Stage 22W Slice 1/2/3 已合并并部署；消息交互快速修订在本地分支实施；Stage 22M 待启动
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
-最后更新：2026-08-12
+最后更新：2026-08-13
 
 ## 1. 决策摘要
 
@@ -19,7 +19,7 @@ RelayCove 放弃自研聊天服务端、ASP.NET Core/SignalR 协议、旧 Shared
 - 两端共享视觉 Token、交互规格、功能矩阵和验收场景，不共享 UI 运行时代码。
 - Web 面向私域使用便利，默认“记住登录”，允许将 API Key 保存在当前浏览器本地；注销必须清除。
 
-Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-08-12 用户另行授权提交并推送冻结 UI 与文档；该授权不包含创建版本标签、发布、修改目标 Zulip 主机或未来继续直推 `main`。旧 Git 历史和 `v1.0.0-rc.25` 标签保留为回滚点。删除使用普通 Git 变更，不使用 orphan、`reset --hard`、force-push。
+Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-08-12 用户另行授权提交、推送、合并和固定入口部署，形成 `main@53a4f1a`；2026-08-13 又明确授权当前消息交互分支使用指定账号做限定真实写验证。本轮授权不包含新的提交、推送、部署、标签或修改目标 Zulip 主机。旧 Git 历史和 `v1.0.0-rc.25` 标签保留为回滚点。删除使用普通 Git 变更，不使用 orphan、`reset --hard`、force-push。
 
 唯一允许沿用的旧产品资产是原始 `RelayCove.ico`：
 
@@ -54,7 +54,7 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 | 干净 Windows 11 x64 VM 启动 | 未验证 | 在未安装 .NET 与 Windows App SDK Runtime 的 VM 中运行最终 ZIP |
 | 真实 Realm Live 测试 | 未验证 | 两个专用账号 API key、隔离私有频道和显式写入授权齐全 |
 | 人工密码登录 | 未验证 | 专用测试账号在最终 MAUI UI 中完成一次登录 |
-| Stage 22W Web 验收 | Slice 1/2/3 已完成组件化、正式 fake-HTTP 旅程、消息菜单/头像/图片、Fast/Full、独立复核和固定入口部署；完整真实账号验收仍未执行 | 固定 Chromium 下 typecheck/unit/build、目标视口、正式 login→register→history→send→logout 旅程、主题、键盘、响应式和控制台检查通过；真实消息/已读/上传写入仍需专用账号与明确授权 |
+| Stage 22W Web 验收 | Slice 1/2/3 已完成并部署；当前分支另完成 reaction/edit/delete/star、任意附件、导航折叠、退订、真实本地入口、86 单测、构建/Playwright 和限定 self-DM 写闭环；本轮 Full 已通过，记录时尚未提交/部署 | 真实已读/上传/退订仍需隔离目标；Stage 21/22M 门禁不受此结果替代 |
 | Stage 22M MAUI 视觉验收 | 未开始 | Web 交互版本冻结后完成原生 Windows 真实窗口验收 |
 | 签名/安装器/公开发布 | 不在范围 | 需要单独授权和发布方案 |
 
@@ -77,7 +77,7 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 
 ### 3.2 当前共享消息能力明确不做
 
-频道管理、非图片附件、反应、主动编辑/删除入口、搜索、typing、presence、通知、push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux。Stage 22W 已单独实现图片能力门，不表示 Stage 21/MAUI 已拥有或验收图片能力。
+搜索、typing、presence、通知、push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux，以及频道订阅/创建/重命名/归档/成员管理。Stage 22W 已单独实现任意附件、当前用户退订、reaction、本人消息编辑/删除和收藏能力门，不表示 Stage 21/MAUI 已拥有或验收这些能力。
 
 后续平台可以复用 Core、Zulip.Client 与 Data，但必须另行增加目标框架、图标、签名、后台生命周期和发布验证。本阶段不声称可交付这些平台；Linux 不支持。
 
@@ -108,7 +108,20 @@ Slice 3 完成首批完整交互能力，而不是只添加视觉按钮：
 - Composer 校验图片类型/大小，保留正文和分会话草稿，执行一次 upload + 一次 message POST；两阶段均不自动重试；
 - 每消息最多 4 个预览，全局 4 个媒体并发、64 MiB Blob 预算；注销同步 abort 上传、释放 URL，并拒绝晚到结果继续发送。
 
-所有仓库自动门禁继续只使用 mock/fake HTTP。初始 Slice 交付未使用真实账号；后续为诊断用户报告的登录后退出，使用用户指定成员账号执行了限定协议检查，并在临时 Chromium 中验证线上 UI 保持登录、identity/register/topic/一页历史读取、event long-poll 启动和正常队列注销。没有发起消息发送、图片上传或标记已读。非图片附件、反应、全局/服务端搜索、mention 候选、saved、presence、通知和频道管理仍是独立能力门。
+2026-08-13 消息交互快速修订继续对齐 Zulip 12.1 官方 Web 源码：
+
+- 当前用户发送的消息回声即使没有 `read` flag，也不进入本客户端未读计数；其他用户消息仍以服务端 flag 为准。
+- 每条消息在悬停、键盘聚焦或触屏环境提供“引用、复制、更多”快捷操作；右键与键盘菜单继续共用完整动作集合。
+- 引用草稿使用发送者标识、消息永久链接和 fenced `quote`，来源始终是完整 raw Markdown，因此正文、图片与其他附件链接一并保留。
+- Composer 表情按钮提供本地 Unicode 表情选择器，按当前光标插入文本；每条消息另有真实 Zulip reaction 添加/移除入口。
+- Web 已实现 reaction、本人消息编辑、本人消息永久删除和当前账号私有收藏；HTTP 成功后本地收敛，Zulip event/history 继续作为跨客户端权威状态。每消息写入串行，网络/超时结果未知时不自动重试。
+- 日常 `npm run dev` 与双击入口默认打开正式登录并直连真实 Realm；fixture 只保留给确定性自动化，不再作为日常人工开发入口。
+- self-DM 始终从已认证 current user ID 生成稳定入口；频道和私信分组可独立折叠并保存为非敏感浏览器偏好。
+- Composer 支持多选或拖放最多 10 个任意附件；只有安全栅格图片生成本地缩略图，其他文件显示文件卡片。附件按顺序各上传一次，再用经过转义的服务端 `filename/url` 组成唯一一次消息 POST。
+- 同 Realm 非图片上传使用受控下载卡片：先以 Basic 换取临时 URL，再用无 Authorization、无 referrer 的请求读取有大小上限的 Blob；不内嵌 SVG/HTML/PDF/Office 等主动内容。
+- 频道详情支持当前用户按真实订阅名调用 `DELETE /users/me/subscriptions` 退订；确认成功或已退订都复用既有 `subscriptionRemoved` 清理，结果未知不自动重试。
+
+所有仓库自动门禁继续只使用 mock/fake HTTP。2026-08-13 在用户明确授权后，使用用户指定成员账号对发给自己的临时私信执行发送、reaction、收藏、编辑、事件 flags 核对和删除闭环，测试消息均已删除；没有操作其他用户消息、频道、上传或标记已读。本地 Chromium 另验证正式登录、真实会话和消息读取，控制台无错误。任意附件与退订已通过 fake HTTP/浏览器链路验证；真实上传和真实频道退订没有执行。全局/服务端搜索、mention 候选、saved 列表页、presence、通知和其余频道管理仍是独立能力门。
 
 ## 4. 架构和依赖边界
 
@@ -327,7 +340,7 @@ ViewModel 使用 CommunityToolkit.Mvvm，只调用 `IClientSession`。code-behin
 
 登录错误分类：不兼容 Realm、认证失败、限流、离线、凭据存储失败。最后 Realm 可用 Preferences 保存为非敏感配置；密码字段完成登录后立即清空。
 
-用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/`。该目录保持不可变，现作为正式 Web 与后续 MAUI 的初始视觉/交互来源，而不是运行时资产。Stage 22W 在 `src/RelayCove.Web/` 以生产组件实现并验收；交互版本冻结后，Stage 22M 使用原生 XAML/ViewModel 复刻，不得以 WebView 承载 Web。图片已由 Web Slice 3 独立实现；非图片附件、搜索、反应、`@` 候选和频道管理仍需独立能力门。
+用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/`。该目录继续保持不可变，只作为历史视觉基线和哈希证据，不再作为日常 Web 运行/验收入口。正式 RelayCove.Web 是后续 Web 交互事实基准；Stage 22M 使用原生 XAML/ViewModel 复刻，不得以 WebView 承载 Web。任意附件、当前用户退订、reaction、本人消息编辑/删除和收藏已由 Web 独立实现；搜索、`@` 候选及其余频道管理仍需独立能力门。
 
 ## 10. 实施切片与完成定义
 
@@ -336,10 +349,12 @@ ViewModel 使用 CommunityToolkit.Mvvm，只调用 `IClientSession`。code-behin
 1. **Slice 1 — 生产基础与原生组件化**：工程/锁文件、Token、UI 外壳、fixture 隔离、登录/API/session 边界、typecheck/unit/build/Playwright、固定视口截图。
 2. **Slice 2 — 正式消息纵切片**：实现 users/me、register、events、topics、历史、正式频道/DM/联系人投影、权威未读/标已读、文本发送/outbox、重连和坏队列重建；生产路径保持与 fixture 隔离。
 3. **Slice 3 — 消息操作、头像与图片**：实现完整菜单键盘/触屏入口、同 Realm 头像 Blob、受控图片读取/预览/下载、Composer 图片上传发送、资源预算和注销竞态保护；自动化只使用 fake HTTP。
+4. **消息交互正式写入**：修复本人消息误计未读，完善快捷工具、完整 raw Markdown 引用和 Composer Unicode 表情，并实现 reaction、本人消息编辑/删除、当前账号收藏及相应 realtime/history 收敛。
+5. **附件与导航写入跟进**：增加稳定 self-DM、频道/私信分组折叠、任意多附件选择/拖放/安全下载，以及当前用户频道退订；生产仍直连同一 Zulip Realm。
 
-截至 2026-08-12，Slice 1/2/3 已在未提交审查树通过 Fast/Full 与独立只读复核，并以版本化原子切换同步至固定 `/relaycove-web/` 入口。Slice 3 的 fake-HTTP 自动化覆盖菜单、头像、图片读取/上传和注销竞态；没有执行真实图片上传或消息写入。后续登录热修复另以用户指定成员账号验证了目标 Realm 的密码交换、身份/register/topic/首屏历史读取、event long-poll 启动和队列注销；事件实际交付连续性、标已读、消息写入和真实图片上传仍是需要专用账号、隔离目标及明确写入授权的独立门禁。
+截至 2026-08-12，Slice 1/2/3 已通过 Fast/Full 与独立只读复核，提交 `53a4f1a` 已合并至 `main`，并以版本化原子切换同步至固定 `/relaycove-web/` 入口。2026-08-13 本地跟进已完成 typecheck、86/86 单测、production build、Playwright 6/6 fixture/formal 场景与 1/1 固定部署路径场景、真实浏览器读取及限定自发私信写入/flag 闭环。后续对同一代码树运行的仓库级 Full 亦已通过：.NET Debug/Release 135/135、Web 86/86、Playwright 6/6 + 1/1、Windows 包生成且零构建警告/错误。记录该证据时尚未提交、推送或部署；真实附件上传、退订和标记已读仍未执行。
 
-开发节奏固定为：日常双击 `start-web-dev.cmd` 在本机启动 `npm run dev` 并打开 fixture；只有需要大版本人工验收时才显式双击 `deploy-web.cmd`，执行完整 Web 门禁、版本化上传、SHA-256 校验和原子 `current` 切换，并打开固定 `https://hklight.2000521.xyz/relaycove-web/`。不启用 deploy-on-save；官方 Zulip `/` 与旧 `/relaycove/` 均保持原路由。
+开发节奏固定为：日常双击 `start-web-dev.cmd` 在本机启动 `npm run dev` 并打开正式登录入口 `http://127.0.0.1:5173/`，直接使用真实 Realm 数据；fixture 仅由 `--mode fixture`/E2E 显式启用。只有需要大版本人工验收时才双击 `deploy-web.cmd`，执行完整 Web 门禁、版本化上传、SHA-256 校验和原子 `current` 切换，并打开固定 `https://hklight.2000521.xyz/relaycove-web/`。不启用 deploy-on-save；官方 Zulip `/` 与旧 `/relaycove/` 均保持原路由。
 3. **交互冻结**：每个已验收版本记录 Token、规格、功能矩阵、场景、截图与差异，作为 22M 输入。
 
 ### Stage 22M：MAUI 原生视觉与交互对齐
@@ -488,7 +503,7 @@ Stage 21 只有在下列条件全部满足时才能标记完成：
 
 Stage 22W 每个 Slice 只有在 production build、typecheck、unit、Playwright、固定视口截图、fixture 排除以及对应认证/协议/同步/outbox 独立复核全部通过时才能标记完成。Slice 2 的 fake-HTTP 证据证明正式代码路径和协议编排；后续目标 Realm 的窄认证/register 检查只证明该边界，不证明完整浏览器读写。任何这些证据都不能代替 Stage 22M 或 Stage 21 外部门禁。
 
-Stage 22W 在 `codex/stage-22w-web-foundation` 本地分支实施；本轮不提交、不推送、不创建标签，也不执行真实消息或已读写入。用户已明确授权把大版本静态产物同步到固定 `/relaycove-web/` 入口及补充一键工具；该授权不包含修改/停用 Zulip 或旧服务。登录故障诊断仅使用用户指定账号完成限定认证、读取和队列清理。后续直推 `main`、合并远端、完整 Live 写入、删除旧 `%LOCALAPPDATA%\RelayCove` 仍需单独确认精确目标。
+Stage 22W Slice 1/2/3 已由提交 `53a4f1a` 合并并推送至 `main`。2026-08-13 消息交互修订在 `codex/stage-22w-message-interactions` 本地分支实施；用户已明确授权本轮真实账号消息写验证，实际范围严格限制为自发临时私信且已删除。当前没有提交、推送、部署或标签授权；既有固定 `/relaycove-web/` 部署、Zulip 官方 Web 与旧服务保持不变。删除旧 `%LOCALAPPDATA%\RelayCove` 等动作仍需单独确认精确目标。
 
 ## 16. 官方依据
 

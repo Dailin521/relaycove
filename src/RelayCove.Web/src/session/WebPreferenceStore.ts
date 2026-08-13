@@ -5,6 +5,8 @@ export interface WebPreferences {
     fontSize: number;
     listWidth: number;
     detailsDefault: boolean;
+    channelsCollapsed: boolean;
+    directsCollapsed: boolean;
 }
 
 const STORAGE_KEY = 'relaycove.web.preferences.v1';
@@ -14,6 +16,8 @@ export const defaultWebPreferences: WebPreferences = {
     fontSize: 14,
     listWidth: 310,
     detailsDefault: false,
+    channelsCollapsed: false,
+    directsCollapsed: false,
 };
 
 export function readWebPreferences(storage: Storage = window.localStorage): WebPreferences {
@@ -38,6 +42,8 @@ export function readWebPreferences(storage: Storage = window.localStorage): WebP
             fontSize: clamp(Math.round(value.fontSize), 13, 16),
             listWidth: clamp(Math.round(value.listWidth / 10) * 10, 270, 370),
             detailsDefault: value.detailsDefault,
+            channelsCollapsed: typeof value.channelsCollapsed === 'boolean' ? value.channelsCollapsed : false,
+            directsCollapsed: typeof value.directsCollapsed === 'boolean' ? value.directsCollapsed : false,
         };
     } catch {
         return defaultWebPreferences;

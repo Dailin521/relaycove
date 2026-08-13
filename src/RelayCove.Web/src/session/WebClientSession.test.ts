@@ -499,6 +499,107 @@ describe('WebClientSession', () => {
         await client.stop(true);
     });
 
+    it('applies confirmed reaction, edit, star, and delete writes once without optimistic Realm state', async () => {
+        const mutations: string[] = [];
+        const transport = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+            const request = input as Request;
+            const path = new URL(request.url).pathname.replace('/api/v1/', '');
+            if (path === 'users/me') return json({ user_id: 7, full_name: 'Ada Lovelace', email: 'ada@example.test' });
+            if (path === 'register') return json({
+                queue_id: 'queue-test', last_event_id: 1,
+                event_queue_longpoll_timeout_seconds: 60,
+                max_message_length: 10_000, max_topic_length: 60,
+                subscriptions: [],
+                realm_users: [{ user_id: 7, full_name: 'Ada Lovelace' }],
+                recent_private_conversations: [{ user_ids: [7] }],
+                unread_msgs: { count: 0, streams: [], pms: [], huddles: [] },
+            });
+            if (path === 'events' && request.method === 'GET') return await abortablePending(request.signal);
+            if (path === 'events' && request.method === 'DELETE') return json({ result: 'success', msg: '' });
+            if (path === 'messages' && request.method === 'GET') return json({
+                messages: [{
+                    id: 101,
+                    type: 'private',
+                    display_recipient: [{ id: 7 }],
+                    sender_id: 7,
+                    sender_full_name: 'Ada Lovelace',
+                    content: 'original',
+                    timestamp: 1,
+                    flags: ['read'],
+                    reactions: [],
+                }],
+                found_oldest: true,
+                found_newest: true,
+            });
+            if (
+                path === 'messages/101/reactions'
+                || path === 'messages/101'
+                || path === 'messages/flags'
+            ) {
+                mutations.push(`${request.method} ${path}`);
+                return json({ result: 'success', msg: '' });
+            }
+            throw new Error(`Unexpected fake endpoint ${request.method} ${path}`);
+        });
+        const client = new WebClientSession(session, { apiClient: new ZulipApiClient(transport) });
+        await client.start();
+        await waitFor(() => expect(client.store.getSnapshot().messages[101]?.content).toBe('original'));
+
+        await client.setReaction(101, { emojiName: '+1', emojiCode: '1f44d', reactionType: 'unicode_emoji' }, true);
+        expect(client.store.getSnapshot().messages[101]?.reactions[0]?.userIds).toEqual([7]);
+        await client.setMessageStarred(101, true);
+        expect(client.store.getSnapshot().messages[101]?.isStarred).toBe(true);
+        await client.editMessage(101, 'edited');
+        expect(client.store.getSnapshot().messages[101]?.content).toBe('edited');
+        await client.deleteMessage(101);
+        expect(client.store.getSnapshot().messages[101]).toBeUndefined();
+
+        expect(mutations).toEqual([
+            'POST messages/101/reactions',
+            'POST messages/flags',
+            'PATCH messages/101',
+            'DELETE messages/101',
+        ]);
+        expect(client.store.getSnapshot().messageMutations).toEqual({});
+        await client.stop(true);
+    });
+
+    it('coalesces a confirmed channel unsubscribe and removes the channel through the event reducer', async () => {
+        let unsubscribeAttempts = 0;
+        const transport = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+            const request = input as Request;
+            const path = new URL(request.url).pathname.replace('/api/v1/', '');
+            if (path === 'users/me') return json({ user_id: 7, full_name: 'Ada Lovelace', email: 'ada@example.test' });
+            if (path === 'register') return json({
+                queue_id: 'queue-test', last_event_id: 1,
+                event_queue_longpoll_timeout_seconds: 60,
+                max_message_length: 10_000, max_topic_length: 60,
+                subscriptions: [{ stream_id: 5, name: 'engineering', is_archived: false }],
+                realm_users: [{ user_id: 7, full_name: 'Ada Lovelace' }],
+                recent_private_conversations: [],
+                unread_msgs: { count: 0, streams: [], pms: [], huddles: [] },
+            });
+            if (path === 'users/me/5/topics') return json({ topics: [] });
+            if (path === 'events' && request.method === 'GET') return await abortablePending(request.signal);
+            if (path === 'events' && request.method === 'DELETE') return json({ result: 'success', msg: '' });
+            if (path === 'users/me/subscriptions' && request.method === 'DELETE') {
+                unsubscribeAttempts += 1;
+                await new Promise((resolve) => window.setTimeout(resolve, 5));
+                return json({ result: 'success', msg: '', removed: ['engineering'], not_removed: [] });
+            }
+            throw new Error(`Unexpected fake endpoint ${request.method} ${path}`);
+        });
+        const client = new WebClientSession(session, { apiClient: new ZulipApiClient(transport) });
+        await client.start();
+        await waitFor(() => expect(client.store.getSnapshot().subscriptions[5]?.name).toBe('engineering'));
+
+        await Promise.all([client.unsubscribeChannel(5), client.unsubscribeChannel(5)]);
+
+        expect(unsubscribeAttempts).toBe(1);
+        expect(client.store.getSnapshot().subscriptions[5]).toBeUndefined();
+        await client.stop(true);
+    });
+
     it('bounds exponential retry jitter and preserves the cap', () => {
         expect(jitteredBackoff(1_000, () => 0)).toBe(800);
         expect(jitteredBackoff(1_000, () => 1)).toBe(1_000);

@@ -1,9 +1,9 @@
 # RelayCove Chat UI 交互规格
 
-- 规格版本：1.1
+- 规格版本：1.2
 - 对应基线：`chat-ui-v1`
 - 状态：Frozen
-- 最后更新：2026-08-12
+- 最后更新：2026-08-13
 
 ## 1. 目的与边界
 
@@ -80,11 +80,13 @@
 ### 5.2 频道组
 
 - 展示频道图标、标题、`# channel`、最近话题/摘要、时间、置顶和未读状态。
+- 组标题是键盘可达的折叠按钮；折叠只隐藏列表，不取消当前聊天。状态保存为非敏感浏览器偏好；搜索命中时临时展开结果，清空查询后恢复用户选择。
 - 撤权、取消订阅或频道归档事件到达后立即从列表移除，并清理选中状态。
 - 当前频道被移除时回到安全的下一个会话或空状态。
 
 ### 5.3 私信组
 
+- 私信组与频道组独立折叠，使用同一 `aria-expanded`/键盘/搜索临时展开语义。
 - 列出当前客户端可靠获知的工作区成员和既有 DM；若服务器数据不完整，界面不得声称“全部成员”。
 - 每行显示头像或简单图标、姓名、最近摘要、时间和未读状态。
 - self-DM 明确显示“自己”。群组私信显示参与者摘要，不折叠成虚假的单人身份。
@@ -145,7 +147,7 @@ Stage 22W 当前没有正式全局/服务端搜索数据契约；本地 fixture 
 - 1:1 私信详情可显示已有成员资料；共同频道需要频道成员关系能力门。群组私信详情显示可靠参与者集合；静音等入口需要对应能力。
 - 面板可折叠；收起只影响布局，不取消当前会话。
 
-当前共享契约没有频道订阅成员关系、presence、共同频道或 saved/starred flags。`chat-ui-v1` 中这些内容均是视觉占位；22W 与 22M 都不得用 Realm 用户集合猜测频道成员，也不得把“已保存”空页面伪装成已支持。相关读取契约必须先通过独立能力门。
+当前 Stage 21/MAUI 共享契约没有频道订阅成员关系、presence、共同频道或 saved/starred flags。Stage 22W 已单独实现当前账号 `starred` 写入与投影，但“已保存”聚合页仍未实现；两端都不得用 Realm 用户集合猜测频道成员或把空页面伪装成已支持。
 
 ### 7.3 频道权限矩阵
 
@@ -156,35 +158,39 @@ Stage 22W 当前没有正式全局/服务端搜索数据契约；本地 fixture 
 | 移出成员 | 可见且需确认 | 不可见/禁用 | 403 时刷新 capability 并提示权限变化 |
 | 主动退出频道 | 可见 | 可见 | 成功后从导航移除并清理选中状态 |
 
-生产代码使用服务器 capability，而不是只判断本地布尔值。所有管理动作属于当前 Slice 之外的独立协议写入切片。
+生产代码使用服务器 capability，而不是只判断本地布尔值。Stage 22W 已实现“当前用户主动退出频道”：二次确认后按真实订阅名提交，成功或服务端确认已退订时执行既有撤权清理；结果未知不自动重试。重命名、归档和成员管理仍属独立能力门。
 
 ## 8. 消息列表
 
 ### 8.1 正常消息
 
 - 展示头像、发送者、时间和 raw Markdown 文本。
-- 头像优先使用 Zulip `avatar_url`；字段缺失时使用同 Realm `/avatar/{user_id}`。浏览器通过受控请求读取为 Blob，API Key 不进入 URL/DOM；外站头像、失败响应或不可解码图片回退到稳定首字母/Bot 图标。
+- 头像优先使用 Zulip `avatar_url`；同 Realm 公开 `/user_avatars/` 与 `/static/generated/avatars/` 可在无凭据、无 referrer 条件下直接显示。受保护路径只在浏览器同源时通过认证 Blob 读取；本地跨源 `/avatar/{user_id}` 不绕过 CORS，回退稳定首字母/Bot 图标。任何外站头像均拒绝。
 - 自己的消息右对齐，其他消息左对齐；颜色不能作为唯一身份区分。
 - 当前 Web 按已加载消息直接渲染，初次进入从网络取数，不声明虚拟化或持久消息缓存；后续引入这些能力时仍须保持本规格的结构、焦点与撤权语义。
 - 当前 Web 通过明确入口加载每页 50 条历史；滚动阈值自动触发、长列表虚拟化和跨页视觉锚点保持仍是后续性能切片，不得误报已完成。
 
-### 8.2 引用、反应和图片
+### 8.2 引用、反应和附件
 
-- 引用回复在气泡内显示发送者和摘录；点击定位属于后续能力。
-- 反应只在服务器确实提供数据时展示。主动添加反应不在当前 Slice。
+- 引用回复在气泡内显示发送者和完整 raw Markdown 摘录；草稿使用发送者标识、原消息永久链接与 fenced `quote`。正文、图片和其他附件链接都必须保留，不能从已渲染图片占位或 HTML 反推。点击定位属于后续能力。
+- 反应只从历史 `reactions` 和 realtime `reaction` event 投影，按 `reaction_type + emoji_code` 聚合。选择器添加或移除当前用户的 reaction 时必须提交服务器提供/内置的完整 `emoji_name`、`emoji_code`、`reaction_type`，不伪造计数。
 - 图片消息显示受控缩略图和文件名；点击打开遮罩预览，`Escape`、关闭按钮或点击遮罩退出。
-- 只识别同 Realm `/user_uploads/` 的 PNG/JPEG/WebP/GIF/AVIF Markdown 链接；跨 Realm、`data:`、`javascript:`、SVG 和异常链接继续按 raw Markdown 文本显示。
+- 同 Realm `/user_uploads/` 的 PNG/JPEG/WebP/GIF/AVIF Markdown 链接可生成图片预览；同 Realm SVG 和其他文件只生成非活动文件卡片。跨 Realm、`data:`、`javascript:` 与异常链接继续按 raw Markdown 文本显示。
 - 私有上传先通过带 Basic 的 `GET /api/v1/user_uploads/{path}` 换取短期 URL，再立即读取为内存 Blob；短期 URL 和 API Key 都不进入图片 DOM。离开会话、注销或撤销最后引用时 abort 请求并 revoke object URL。
 - 图片下载使用已经授权读取的 Blob，不重新暴露远端地址。加载失败显示文件名、明确失败状态和手动重试。
 - 每条消息最多生成 4 个图片预览，全局同时最多读取 4 个 Realm 媒体，当前页面缓存 Blob 总量最多 64 MiB。超额图片链接继续保留为 raw Markdown，不静默丢弃。
+- 同 Realm `/user_uploads/` 的非图片 Markdown 链接显示为文件卡片。点击时先以 Basic 获取短期 URL，再以无 Authorization、无 referrer、禁重定向请求读取有大小上限的 Blob；SVG、HTML、PDF、Office 和未知文件均不得内嵌为活动内容。
 
 ### 8.3 消息操作菜单
 
 - 鼠标右键、键盘 `Shift+F10`/菜单键，以及触屏可见的“更多”按钮打开同一菜单。
-- 本能力版本只展示确实可用且不写 Realm 的动作：回复到输入框、复制 raw Markdown 正文、复制消息链接、复制消息 ID、在官方 Zulip Web 打开。
-- “回复到输入框”插入带发送者的 Zulip Markdown 引用，不自动发送；现有草稿保留，焦点进入输入框。
+- 每条消息在悬停/键盘聚焦时显示“引用、复制、更多”快捷工具；触屏布局保持可见。“更多”与右键/菜单键打开同一完整菜单。
+- 完整菜单只展示确实已接通的动作：reaction、收藏/取消收藏、引用到输入框、复制 raw Markdown 正文/链接/ID、在官方 Zulip Web 打开；本人消息额外显示编辑和永久删除。
+- “引用回复”插入带发送者的 Zulip Markdown 引用，不自动发送；现有草稿保留，焦点进入输入框。
 - 菜单支持上下键、`Home`/`End`、`Enter`，`Escape` 或点击外部关闭；非回复关闭后焦点回到触发消息/按钮。
-- 编辑、删除、反应、收藏和标未读均是独立的服务端写入能力；未实现 capability/权限/失败刷新前不得显示假动作。
+- 编辑使用当前 raw Markdown 的 UTF-8 SHA-256 作为 `prev_content_sha256`；冲突保留草稿。删除必须经过“永久且不可撤销”确认。收藏是当前账号私有 `starred` flag。
+- 同一消息的写操作串行且提交中禁用重复动作；HTTP 2xx 后更新本地投影，后续 event 幂等收敛。网络、5xx 或超时属于结果未知，显示明确状态且绝不自动重试/补偿；401 立即重新认证并清除本地凭据。
+- 标未读仍是未实现的独立能力；未接通 capability/权限/失败语义前不得显示假动作。服务器始终是编辑/删除权限和时间窗的最终裁决者。
 
 ### 8.4 分割线
 
@@ -204,6 +210,7 @@ Stage 22W 当前没有正式全局/服务端搜索数据契约；本地 fixture 
 | Waiting | 显示正在等待服务器事件 | 不允许自动重复发送 |
 | WaitExpired | 显示结果不确定 | 恢复正文，提示手动重试可能重复 |
 | Failed | 红色失败提示和恢复入口 | 恢复正文后由用户显式再次发送 |
+| MessageMutation | 消息行显示 reaction/edit/delete/star 提交、未知或失败状态 | 同消息写入口锁定；未知结果只能刷新确认，禁止自动重试 |
 | ReauthRequired/Locked | 聊天内容锁定并进入重新认证 | 不允许绕过凭据查看缓存 |
 
 ## 9. 输入区
@@ -211,7 +218,7 @@ Stage 22W 当前没有正式全局/服务端搜索数据契约；本地 fixture 
 ### 9.1 布局与工具
 
 - 输入区固定在聊天区底部，消息区占用剩余高度。
-- 工具栏当前只保留表情和上传；发送按钮位于右侧。
+- 工具栏当前只保留表情和上传；发送按钮位于右侧。表情按钮打开本地 Unicode 选择器，在当前光标/选区插入文本并恢复输入焦点；它不是消息 reaction 写入。
 - 文本框支持多行；`Ctrl+Enter` 发送，普通 `Enter` 换行。
 - 每个会话保留独立草稿；切换回来恢复正文和待发送预览。
 - 群组私信发送使用选中 `DirectMessage` 的完整规范参与者集合；self-DM 使用当前用户 ID，二者都不得从界面标题解析收件人。
@@ -233,15 +240,14 @@ Stage 22W 当前没有正式全局/服务端搜索数据契约；本地 fixture 
 - 支持部分匹配、上下键、`Enter`/`Tab` 插入和 `Escape` 关闭。
 - Zulip mention Markdown 格式必须按固定 12.1 协议证据实现，不能只插入显示名。
 
-### 9.4 图片选择与发送
+### 9.4 附件选择与发送
 
-- 点击上传打开系统文件选择器；取消或拒绝文件不改变正文草稿和已有有效预览。
-- 只接受 PNG/JPEG/WebP/GIF/AVIF，拒绝 SVG/其他 MIME、空文件和超限文件。上限取产品 10 MB 与 register `max_file_upload_size_mib` 的较小值。
-- 选择后在输入区上方显示本地 Blob 缩略图、文件名和大小，可移除；每个会话独立保留自己的图片草稿。
-- 发送后消息列表直接显示图片预览；点击进入大图遮罩。
-- 上传使用 `POST /api/v1/user_uploads` multipart `filename`，随后用服务端返回并清洗后的 `filename`/`url` 组成 Markdown，再执行消息 POST。
+- 点击上传打开支持多选的系统文件选择器；也可把本地文件拖到输入区。只处理 `DataTransfer.files`，拒绝远程 URL/HTML 拖入并阻止浏览器导航。取消或拒绝不改变正文和既有附件。
+- 支持任意文件类型，每条消息最多 10 个；拒绝空文件、控制字符/过长文件名、超过 register `max_file_upload_size_mib` 的单文件和超过产品总预算的组合。MIME/扩展名只决定展示，不作为上传信任依据。
+- PNG/JPEG/WebP/GIF/AVIF 显示本地 Blob 缩略图；其他类型只显示文件图标、名称、大小和移除按钮，不生成活动预览。每个会话独立保存附件草稿。
+- 上传按草稿顺序逐个执行 `POST /api/v1/user_uploads` multipart `filename`；服务端返回的 `filename` 必须清洗并按 Markdown label 转义，URL 必须保持同 Realm。所有上传确认后，正文和全部链接只进入一次消息 POST。
 - 上传和消息 POST 是两个明确步骤，二者都不自动重试。若上传已确认而消息 POST 失败/不确定，保留已上传引用以供用户明确重试，不再次自动上传。
-- 用户确认注销时，先同步取消仍在进行的上传、失效本次提交并释放草稿 Blob URL，再停止会话和清除凭据；即使底层 adapter 在取消后异常返回成功，也不得继续消息 POST。
+- 用户确认注销时，先同步取消仍在进行的上传、失效本次提交并释放图片草稿 Blob URL，再停止会话和清除凭据；即使底层 adapter 在取消后异常返回成功，也不得继续消息 POST。
 
 ## 10. 设置
 
@@ -273,7 +279,7 @@ Web 账户策略与 MAUI 凭据介质不同：Web 默认勾选“记住登录”
 4. Given 消息含附件 `relaycove-team-avatars.jpg`，When 输入部分文件名，Then 结果显示 `附件：…`。
 5. Given 输入区默认 112 px，When 向上拖动或按 `ArrowUp`，Then 输入区增高且消息区缩小，范围不超出 72–300 px。
 6. Given 当前是频道话题，When 在光标处输入 `@ma`，Then 只列出允许的数据源内匹配成员；切换私信后候选关闭。
-7. Given 选择有效图片，When 文件读取完成，Then 发送前显示预览；移除后草稿正文保留。
+7. Given 选择图片和普通文件，When 文件进入草稿，Then 图片显示安全缩略图、普通文件只显示文件卡片；逐项移除后正文保留。
 8. Given 发送结果为 WaitExpired，When 用户选择恢复，Then 正文回到输入框并明确提示再次发送可能重复。
 9. Given 当前用户没有频道管理 capability，When 打开详情，Then 不提供重命名、删除或踢人动作。
 10. Given 窗口为 1024×768，When 打开主会话，Then 列表、聊天和输入区均可操作且无横向滚动。
@@ -292,7 +298,14 @@ Web 账户策略与 MAUI 凭据介质不同：Web 默认勾选“记住登录”
 23. Given subscription/stream 撤权事件到达，When reducer 发布新状态，Then 同频道导航、话题、消息、未读和当前选择一并清除。
 24. Given 一条正式消息，When 鼠标右键、触屏更多按钮或 `Shift+F10` 打开菜单，Then 只显示已实现动作；上下键可导航，`Escape`/外点关闭并恢复焦点，整个过程零 Zulip 写请求。
 25. Given Zulip 用户有同 Realm 头像或仅有 user ID，When 列表、联系人和消息显示该用户，Then 头像通过受控 Blob 加载；失败时回退一致且 API Key 不在 URL、DOM、日志或截图。
-26. Given 消息含同 Realm 图片上传链接，When 打开预览，Then 通过临时授权 URL 读取 Blob，缩略图/文件名可见，关闭按钮、遮罩和 `Escape` 均关闭并恢复焦点；不安全 URL 仍显示为 raw Markdown。
-27. Given Composer 已有正文，When 选择有效图片再移除，Then 正文保持不变；重新选择并明确发送时只上传一次，并把服务端返回引用用于随后唯一一次消息 POST。
+26. Given 消息含同 Realm 图片和普通附件链接，When 用户打开它们，Then 图片进入受控预览；普通附件只在点击后经临时授权 URL 下载 Blob，不进入 `img/iframe/object`；不安全 URL 仍显示 raw Markdown。
+27. Given Composer 已有正文，When 多选或拖入有效附件再移除，Then 正文保持不变；重新添加并明确发送时每个文件只上传一次，全部服务端返回引用用于随后唯一一次消息 POST。
 28. Given 一条消息包含超过 4 个图片链接，When Web 投影并显示该消息，Then 只发起前 4 个受控预览，其余链接保留 raw Markdown；任意时刻媒体读取并发不超过 4、缓存不超过 64 MiB。
-29. Given 图片上传尚未完成，When 用户确认注销，Then 上传立即收到取消、所有图片草稿 URL 被释放；任何晚到上传结果都不能触发消息 POST。
+29. Given 附件上传尚未完成，When 用户确认注销，Then 上传立即收到取消、所有图片草稿 URL 被释放；任何晚到上传结果都不能触发消息 POST。
+30. Given 当前用户对一条消息选择 reaction，When Zulip 接受请求，Then UI 使用完整 emoji 三元组更新当前用户状态；外部客户端的 reaction event 也投影到同一计数。
+31. Given 当前用户编辑自己的消息，When 保存，Then PATCH 携带 raw Markdown 的 `prev_content_sha256`；若服务端报告冲突，草稿保留并提示刷新后重新确认。
+32. Given 当前用户删除自己的消息，When 完成永久删除二次确认，Then只发送一次 DELETE，服务端确认后消息消失；结果未知时消息保留并禁止自动再删。
+33. Given 用户收藏或取消收藏消息，When服务器确认，Then只改变当前账号的 `starred` 状态；切换账号或注销后不残留为其他账号状态。
+34. Given 本地双击 `start-web-dev.cmd`，When Vite 就绪，Then 打开 `/` 正式登录并直连真实 Realm；fixture 只有显式 fixture/E2E 模式可用且不进入 production bundle。
+35. Given 频道或私信组已展开，When 用户点击组标题或用键盘激活，Then 仅该组折叠且当前聊天保持；搜索命中隐藏组时结果临时可见。
+36. Given 当前用户在频道详情确认退出，When Zulip 返回 `removed` 或 `not_removed`，Then 该频道的话题、消息、未读和当前选择通过同一 subscription removal reducer 清理；网络结果未知时不自动再次 DELETE。

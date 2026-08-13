@@ -1,4 +1,4 @@
-import type { ChatMessage, ConversationDetail, ImageDraft } from '../models/ui';
+import type { AttachmentDraft, ChatMessage, ConversationDetail } from '../models/ui';
 import { ChatHeader } from './ChatHeader';
 import { Composer } from './Composer';
 import { MessageList } from './MessageList';
@@ -20,13 +20,22 @@ interface ChatPanelProps {
     onLoadOlder(): void;
     onRecoverPending(localId: string): void;
     onReply(message: ChatMessage): void;
+    onToggleReaction?(
+        messageId: string,
+        reaction: { emojiName: string; emojiCode: string; reactionType: string },
+        active: boolean,
+    ): Promise<void>;
+    onEditMessage?(messageId: string, content: string): Promise<void>;
+    onDeleteMessage?(messageId: string): Promise<void>;
+    onToggleStar?(messageId: string, starred: boolean): Promise<void>;
+    maxMessageLength?: number;
     composerFocusRequest: number;
-    imageDraft?: ImageDraft;
-    maxImageUploadBytes: number;
-    imageUploadEnabled: boolean;
-    onImageSelected(file: File): void;
-    onImageRemoved(): void;
-    onImageError(message: string): void;
+    attachmentDrafts: readonly AttachmentDraft[];
+    maxAttachmentUploadBytes: number;
+    attachmentUploadEnabled: boolean;
+    onAttachmentsSelected(files: readonly File[]): void;
+    onAttachmentRemoved(attachmentId: string): void;
+    onAttachmentError(message: string): void;
 }
 
 export function ChatPanel(props: ChatPanelProps) {
@@ -43,6 +52,11 @@ export function ChatPanel(props: ChatPanelProps) {
                 onLoadOlder={props.onLoadOlder}
                 onRecoverPending={props.onRecoverPending}
                 onReply={props.onReply}
+                onToggleReaction={props.onToggleReaction}
+                onEditMessage={props.onEditMessage}
+                onDeleteMessage={props.onDeleteMessage}
+                onToggleStar={props.onToggleStar}
+                maxMessageLength={props.maxMessageLength}
             />
             <Composer
                 conversationTitle={props.conversation?.title}
@@ -56,12 +70,12 @@ export function ChatPanel(props: ChatPanelProps) {
                 onHeightChange={props.onComposerHeightChange}
                 onSend={props.onSend}
                 focusRequest={props.composerFocusRequest}
-                imageDraft={props.imageDraft}
-                maxImageUploadBytes={props.maxImageUploadBytes}
-                imageUploadEnabled={props.imageUploadEnabled}
-                onImageSelected={props.onImageSelected}
-                onImageRemoved={props.onImageRemoved}
-                onImageError={props.onImageError}
+                attachmentDrafts={props.attachmentDrafts}
+                maxAttachmentUploadBytes={props.maxAttachmentUploadBytes}
+                attachmentUploadEnabled={props.attachmentUploadEnabled}
+                onAttachmentsSelected={props.onAttachmentsSelected}
+                onAttachmentRemoved={props.onAttachmentRemoved}
+                onAttachmentError={props.onAttachmentError}
             />
         </main>
     );

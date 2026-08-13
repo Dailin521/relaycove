@@ -119,13 +119,19 @@ async function installFakeRealm(page: Page) {
             await fulfill({ topics: [{ name: 'Web client', max_id: 201 }] });
             return;
         }
+        if (path === 'users/me/subscriptions' && request.method() === 'DELETE') {
+            await fulfill({ result: 'success', msg: '', removed: ['engineering'], not_removed: [] });
+            return;
+        }
         if (path === 'user_uploads' && request.method() === 'POST') {
             uploadCount += 1;
+            const multipart = request.postData() ?? '';
+            const filename = /filename="([^"]+)"/u.exec(multipart)?.[1] ?? `upload-${uploadCount}.bin`;
             await fulfill({
                 result: 'success',
                 msg: '',
-                url: '/user_uploads/1/a/upload.png',
-                filename: 'upload.png',
+                url: `/user_uploads/1/a/${encodeURIComponent(filename)}`,
+                filename,
             });
             return;
         }
@@ -223,6 +229,7 @@ async function installFakeRealm(page: Page) {
 }
 
 test('runs the formal login, media, message actions, history, send, restore, and logout journey with fake HTTP', async ({ page, context }) => {
+    test.setTimeout(60_000);
     const browserIssues = collectBrowserIssues(page);
     const fakeRealm = await installFakeRealm(page);
     await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:4173' });
@@ -255,6 +262,14 @@ test('runs the formal login, media, message actions, history, send, restore, and
     await expect(page.getByRole('button', { name: /^Grace Hopper/u })).toBeVisible();
     await expect(page.getByText('私信历史来自 fake Zulip HTTP', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: /Web client/ })).toBeVisible();
+    await page.locator('#channels-heading').click();
+    await expect(page.getByRole('button', { name: /Web client/ })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^Grace Hopper/u })).toBeVisible();
+    await page.locator('#channels-heading').click();
+    await page.locator('#directs-heading').click();
+    await expect(page.getByRole('button', { name: /^Grace Hopper/u })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Web client/ })).toBeVisible();
+    await page.locator('#directs-heading').click();
     await page.getByRole('button', { name: /Web client/ }).click();
     await expect(page.getByText('频道历史来自 fake Zulip HTTP', { exact: true })).toBeVisible();
     await expect(page.locator('.message-row .avatar img')).toBeVisible();
@@ -284,14 +299,16 @@ test('runs the formal login, media, message actions, history, send, restore, and
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('https://chat.example.test/#narrow/near/201');
     await channelMessage.focus();
     await channelMessage.press('Shift+F10');
-    await messageMenu.getByRole('menuitem', { name: '回复到输入框' }).click();
-    await expect(page.getByRole('textbox', { name: '消息正文' })).toHaveValue(/> Grace Hopper：/u);
+    await messageMenu.getByRole('menuitem', { name: '引用回复' }).click();
+    await expect(page.getByRole('textbox', { name: '消息正文' })).toHaveValue(/@_\*\*Grace Hopper\|9\*\* \[said\]/u);
     await expect(page.getByRole('textbox', { name: '消息正文' })).toBeFocused();
     await page.getByRole('textbox', { name: '消息正文' }).fill('');
 
     const fileInput = page.locator('.composer-file-input');
     await fileInput.setInputFiles({ name: 'unsafe.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg/>') });
-    await expect(page.getByText('请选择 PNG、JPEG、WebP、GIF 或 AVIF 图片。')).toBeVisible();
+    await expect(page.getByText('unsafe.svg', { exact: true })).toBeVisible();
+    await expect(page.locator('.composer-attachment-draft img')).toHaveCount(0);
+    await page.getByRole('button', { name: '移除附件 unsafe.svg' }).click();
     const uploadFile = {
         name: 'upload.png',
         mimeType: 'image/png',
@@ -300,19 +317,27 @@ test('runs the formal login, media, message actions, history, send, restore, and
     const imageCaption = page.getByRole('textbox', { name: '消息正文' });
     await imageCaption.fill('图片说明保留');
     await fileInput.setInputFiles(uploadFile);
-    await expect(page.getByAltText('待发送图片预览')).toBeVisible();
+    await expect(page.locator('.composer-attachment-draft img')).toBeVisible();
     await expect(page.getByText('upload.png', { exact: true })).toBeVisible();
     await page.screenshot({ path: '../../artifacts/web/screenshots/composer-image-1440-light.png' });
-    await page.getByRole('button', { name: '移除待发送图片' }).click();
-    await expect(page.getByAltText('待发送图片预览')).toHaveCount(0);
+    await page.getByRole('button', { name: '移除附件 upload.png' }).click();
+    await expect(page.locator('.composer-attachment-draft img')).toHaveCount(0);
     await expect(imageCaption).toHaveValue('图片说明保留');
-    await fileInput.setInputFiles(uploadFile);
+    await fileInput.setInputFiles([
+        uploadFile,
+        { name: 'notes.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF') },
+    ]);
+    await expect(page.getByText('notes.pdf', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: '发送消息' }).click();
-    await expect(page.getByAltText('待发送图片预览')).toHaveCount(0);
-    expect(fakeRealm.uploadCount).toBe(1);
+    await expect(page.locator('.composer-attachment-draft')).toHaveCount(0);
+    expect(fakeRealm.uploadCount).toBe(2);
     expect(fakeRealm.sentCount).toBe(1);
     const uploadedMessage = new URLSearchParams(fakeRealm.sentBodies[0]).get('content');
-    expect(uploadedMessage).toBe('图片说明保留\n[upload.png](https://chat.example.test/user_uploads/1/a/upload.png)');
+    expect(uploadedMessage).toBe([
+        '图片说明保留',
+        '[upload.png](https://chat.example.test/user_uploads/1/a/upload.png)',
+        '[notes.pdf](https://chat.example.test/user_uploads/1/a/notes.pdf)',
+    ].join('\n'));
 
     await page.getByRole('button', { name: '新建会话' }).click();
     await page.keyboard.press('Escape');
@@ -366,7 +391,8 @@ test('runs the formal login, media, message actions, history, send, restore, and
     const temporaryUrlRequests = mediaRequests.filter((request) => request.url.includes('/api/v1/user_uploads/'));
     expect(temporaryUrlRequests.length).toBeGreaterThan(0);
     expect(temporaryUrlRequests.every((request) => request.authorization?.startsWith('Basic '))).toBe(true);
-    expect(mediaRequests.filter((request) => /\/(?:avatar|user_avatars)\//u.test(request.url)).every((request) => request.authorization?.startsWith('Basic '))).toBe(true);
+    expect(mediaRequests.filter((request) => /\/avatar\//u.test(request.url)).every((request) => request.authorization?.startsWith('Basic '))).toBe(true);
+    expect(mediaRequests.filter((request) => /\/user_avatars\//u.test(request.url)).every((request) => request.authorization === undefined)).toBe(true);
     expect(mediaRequests.filter((request) => request.url.includes('/user_uploads/temporary/')).every((request) => request.authorization === undefined)).toBe(true);
 
     const serializedCredential = await page.evaluate(() => localStorage.getItem('relaycove.web.session.v1'));
@@ -375,6 +401,15 @@ test('runs the formal login, media, message actions, history, send, restore, and
     expect(serializedCredential).toContain('ada@example.test');
     expect(serializedCredential).not.toContain('user7@internal.example.test');
     expect(serializedCredential).not.toContain('fake-password-for-browser-test');
+
+    await page.getByRole('button', { name: '会话详情' }).click();
+    page.once('dialog', (dialog) => void dialog.accept());
+    await page.getByRole('button', { name: '退出频道' }).click();
+    await expect(page.getByRole('button', { name: /Web client/ })).toHaveCount(0);
+    const unsubscribeRequest = fakeRealm.requests.find((request) => request.url.endsWith('/users/me/subscriptions'));
+    expect(unsubscribeRequest).toMatchObject({ method: 'DELETE' });
+    expect(unsubscribeRequest?.body).toContain('subscriptions=%5B%22engineering%22%5D');
+    expect(unsubscribeRequest?.body).not.toContain('principals');
 
     await page.reload();
     await expect(page.getByRole('button', { name: /^Grace Hopper/u })).toBeVisible();

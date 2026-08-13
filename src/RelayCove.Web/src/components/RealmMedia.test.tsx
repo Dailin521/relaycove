@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Avatar } from './Avatar';
+import type { RealmMediaKind } from '../api/realmMedia';
 import {
     MAX_CONCURRENT_REALM_MEDIA_LOADS,
     RealmMediaProvider,
@@ -16,7 +17,7 @@ describe('RealmMediaProvider', () => {
     it('starts at most four media downloads and advances the queue as one settles', async () => {
         const pending: Array<(blob: Blob) => void> = [];
         const signals: AbortSignal[] = [];
-        const loader = vi.fn((_sourceUrl: string, _kind: 'avatar' | 'upload', signal: AbortSignal) => {
+        const loader = vi.fn((_sourceUrl: string, _kind: RealmMediaKind, signal: AbortSignal) => {
             signals.push(signal);
             return new Promise<Blob>((resolve) => pending.push(resolve));
         });
@@ -43,7 +44,7 @@ describe('RealmMediaProvider', () => {
                     label="Grace Hopper"
                     initials="GH"
                     tone="blue"
-                    avatarUrl="https://chat.example.test/avatar/9"
+                    avatarUrl={`${globalThis.location.origin}/avatar/9`}
                 />
             </RealmMediaProvider>,
         );

@@ -58,7 +58,7 @@ test('supports complete message actions, protected avatars, and image preview in
     await message.click({ button: 'right' });
     const menu = page.getByRole('menu', { name: '消息 m1 操作' });
     await expect(menu).toBeVisible();
-    await expect(menu.getByRole('menuitem', { name: '回复到输入框' })).toBeFocused();
+    await expect(menu.getByRole('menuitem', { name: '引用回复' })).toBeFocused();
     await page.keyboard.press('ArrowDown');
     await expect(menu.getByRole('menuitem', { name: '复制消息正文' })).toBeFocused();
     await page.screenshot({ path: '../../artifacts/web/screenshots/message-actions-1024-light.png' });
@@ -70,9 +70,9 @@ test('supports complete message actions, protected avatars, and image preview in
     await menu.getByRole('menuitem', { name: '复制消息正文' }).click();
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('顶部按微信逻辑收敛');
     await message.press('Shift+F10');
-    await menu.getByRole('menuitem', { name: '回复到输入框' }).click();
+    await menu.getByRole('menuitem', { name: '引用回复' }).click();
     const composer = page.getByRole('textbox', { name: '消息正文' });
-    await expect(composer).toHaveValue(/> Maya Chen：/u);
+    await expect(composer).toHaveValue(/^\*\*Maya Chen\*\* \[said\]\(#\):\r?\n```quote\r?\n/u);
     await expect(composer).toBeFocused();
 
     const imageButton = page.getByRole('button', { name: '打开图片 relaycove-team-avatars.png' });

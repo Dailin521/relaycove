@@ -478,6 +478,7 @@
 }
 
 .group-heading {
+    width: 100%;
     height: 29px;
     display: flex;
     align-items: center;
@@ -485,10 +486,37 @@
     padding: 0 7px;
     color: var(--rc-muted);
     font-size: 12px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
 }
 
 .group-heading small {
     color: var(--rc-tertiary);
+}
+
+.group-heading > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.group-heading svg {
+    width: 14px;
+    height: 14px;
+    transition: transform 120ms ease;
+}
+
+.group-heading[aria-expanded="true"] svg {
+    transform: rotate(90deg);
+}
+
+.group-heading:hover,
+.group-heading:focus-visible {
+    background: var(--rc-surface-hover);
+    color: var(--rc-text);
 }
 
 .conversation-row {
@@ -796,31 +824,55 @@
     font-size: 11px;
 }
 
-.message-more-button {
-    width: 24px;
-    height: 22px;
+.message-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    overflow: hidden;
+    border: 1px solid var(--rc-border);
+    border-radius: 7px;
+    padding: 1px;
+    background: var(--rc-surface-raised);
+    box-shadow: 0 4px 14px rgb(0 0 0 / 10%);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(2px);
+    transition: opacity 100ms ease, transform 100ms ease, visibility 100ms ease;
+}
+
+.message-row:hover .message-actions,
+.message-row:focus-within .message-actions,
+.message-actions.is-open {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.message-actions > button {
+    width: 25px;
+    height: 23px;
     display: grid;
     place-items: center;
     border: 0;
-    border-radius: 6px;
+    border-radius: 5px;
     padding: 0;
     background: transparent;
     color: var(--rc-muted);
-    opacity: 0;
 }
 
-.message-row:hover .message-more-button,
-.message-row:focus-within .message-more-button,
-.message-more-button[aria-expanded="true"] {
-    opacity: 1;
-}
-
-.message-more-button:hover {
+.message-actions > button:hover,
+.message-actions > button:focus-visible {
+    outline: 0;
     background: var(--rc-surface-hover);
     color: var(--rc-text);
 }
 
-.message-more-button svg {
+.message-actions > button:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+}
+
+.message-actions svg {
     width: 15px;
     height: 15px;
 }
@@ -828,6 +880,12 @@
 .message-sender strong {
     color: var(--rc-text);
     font-weight: 600;
+}
+
+.message-starred-mark {
+    width: 13px;
+    height: 13px;
+    color: #d69b16;
 }
 
 .message-row.is-own .message-sender {
@@ -855,18 +913,72 @@
     overflow-wrap: anywhere;
 }
 
-.message-images {
+.message-attachments {
     display: grid;
     gap: 8px;
     margin-top: 8px;
 }
 
-.message-bubble > .message-images:first-child {
+.message-bubble > .message-attachments:first-child {
     margin-top: 0;
 }
 
+.message-file {
+    width: min(360px, 100%);
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) 24px;
+    align-items: center;
+    gap: 9px;
+    border: 1px solid var(--rc-border);
+    border-radius: 9px;
+    padding: 9px;
+    background: var(--rc-ground);
+    color: var(--rc-muted);
+    text-align: left;
+}
+
+.message-file:hover:not(:disabled),
+.message-file:focus-visible {
+    border-color: var(--rc-accent);
+    background: var(--rc-surface-hover);
+}
+
+.message-file.is-error {
+    border-color: color-mix(in srgb, var(--rc-danger), transparent 55%);
+}
+
+.message-file-icon {
+    width: 40px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    background: var(--rc-surface-selected);
+    color: var(--rc-accent-strong);
+}
+
+.message-file > span:nth-child(2) {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+}
+
+.message-file strong,
+.message-file small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.message-file > svg,
+.message-file-icon svg {
+    width: 18px;
+    height: 18px;
+}
+
 .message-image {
-    width: min(340px, 100%);
+    width: min(360px, 100%);
     display: grid;
     gap: 0;
     overflow: hidden;
@@ -889,7 +1001,7 @@
     aspect-ratio: 16 / 10;
     display: grid;
     place-items: center;
-    object-fit: cover;
+    object-fit: contain;
     background: var(--rc-surface-soft);
 }
 
@@ -947,24 +1059,49 @@
     height: 17px;
 }
 
-.message-bubble blockquote {
+.message-quote {
     margin: -2px -2px 8px;
+    min-width: min(320px, 100%);
     display: grid;
-    gap: 3px;
+    gap: 5px;
     border-left: 2px solid var(--rc-accent);
-    padding: 5px 8px;
-    background: color-mix(in srgb, var(--rc-surface) 72%, transparent);
+    border-radius: 0 7px 7px 0;
+    padding: 7px 9px;
+    background: color-mix(in srgb, var(--rc-surface) 82%, transparent);
     color: var(--rc-muted);
     font-size: 12px;
 }
 
-.message-bubble blockquote strong {
+.message-quote header {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.message-quote header svg {
+    width: 13px;
+    height: 13px;
+    color: var(--rc-accent-strong);
+}
+
+.message-quote strong {
     color: var(--rc-text);
+}
+
+.message-quote p {
+    max-height: 9em;
+    overflow: auto;
+    color: var(--rc-muted);
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 .message-reaction {
     min-width: 44px;
     height: 28px;
+    display: inline-grid;
+    place-items: center;
     margin-top: 5px;
     border: 1px solid var(--rc-accent);
     border-radius: 14px;
@@ -972,6 +1109,67 @@
     background: color-mix(in srgb, var(--rc-accent) 8%, transparent);
     color: var(--rc-accent-strong);
     font-size: 12px;
+}
+
+.message-reactions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 5px;
+}
+
+.message-reactions button {
+    min-width: 44px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border: 1px solid var(--rc-border);
+    border-radius: 14px;
+    padding: 0 9px;
+    background: var(--rc-surface-raised);
+    color: var(--rc-text);
+    font-size: 13px;
+}
+
+.message-reactions button[aria-pressed="true"] {
+    border-color: var(--rc-accent);
+    background: color-mix(in srgb, var(--rc-accent) 10%, var(--rc-surface-raised));
+    color: var(--rc-accent-strong);
+}
+
+.message-reactions button:hover:not(:disabled),
+.message-reactions button:focus-visible {
+    outline: 2px solid var(--rc-focus);
+    outline-offset: 1px;
+}
+
+.message-reactions button:disabled {
+    cursor: default;
+    opacity: 0.65;
+}
+
+.message-reactions strong {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.message-mutation-status {
+    max-width: 420px;
+    margin: 5px 2px 0;
+    color: var(--rc-muted);
+    font-size: 11px;
+    line-height: 1.45;
+}
+
+.message-mutation-status.is-uncertain,
+.message-mutation-status.is-failed {
+    color: var(--rc-danger);
+}
+
+.message-row.is-submitting .message-bubble {
+    opacity: 0.78;
 }
 
 .message-loading {
@@ -1041,6 +1239,109 @@
     width: 16px;
     height: 16px;
     color: var(--rc-muted);
+}
+
+.message-context-menu button.danger {
+    color: var(--rc-danger);
+}
+
+.message-context-menu button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.message-dialog-backdrop {
+    position: fixed;
+    z-index: 260;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 22px;
+    background: var(--rc-overlay);
+    color: var(--rc-text);
+    font-family: var(--rc-font-family);
+}
+
+.message-dialog {
+    width: min(520px, 100%);
+    display: grid;
+    gap: 16px;
+    border: 1px solid var(--rc-border);
+    border-radius: 14px;
+    padding: 22px;
+    background: var(--rc-surface-raised);
+    box-shadow: var(--rc-shadow-float);
+}
+
+.message-dialog h2,
+.message-dialog p {
+    margin: 0;
+}
+
+.message-dialog header p {
+    margin-top: 5px;
+    color: var(--rc-muted);
+    font-size: 12px;
+}
+
+.message-dialog textarea {
+    min-height: 150px;
+    resize: vertical;
+    border: 1px solid var(--rc-border);
+    border-radius: 9px;
+    padding: 11px;
+    background: var(--rc-surface-soft);
+    color: var(--rc-text);
+    font: inherit;
+    line-height: 1.5;
+}
+
+.message-dialog blockquote {
+    max-height: 120px;
+    overflow: auto;
+    margin: 0;
+    border-left: 3px solid var(--rc-danger);
+    padding: 9px 11px;
+    background: var(--rc-surface-soft);
+    color: var(--rc-muted);
+    overflow-wrap: anywhere;
+}
+
+.message-dialog footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.message-dialog footer button {
+    min-height: 36px;
+    border: 1px solid var(--rc-border);
+    border-radius: 8px;
+    padding: 0 14px;
+    background: var(--rc-surface-raised);
+    color: var(--rc-text);
+}
+
+.message-dialog footer button.primary {
+    border-color: var(--rc-accent);
+    background: var(--rc-accent);
+    color: white;
+}
+
+.message-dialog footer button.danger {
+    border-color: var(--rc-danger);
+    background: var(--rc-danger);
+    color: white;
+}
+
+.message-dialog footer button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.message-dialog-error {
+    color: var(--rc-danger);
+    font-size: 12px;
 }
 
 .image-viewer-backdrop {
@@ -1170,6 +1471,7 @@
 }
 
 .composer {
+    position: relative;
     height: var(--composer-height);
     min-height: 72px;
     max-height: 300px;
@@ -1182,52 +1484,77 @@
     overflow: hidden;
 }
 
-.composer.has-image {
-    grid-template-rows: 16px 70px minmax(0, 1fr) 40px;
+.composer.has-attachments {
+    grid-template-rows: 16px minmax(64px, auto) minmax(0, 1fr) 40px;
 }
 
-.composer-image-draft {
+.composer-attachment-drafts {
+    min-height: 0;
+    max-height: 94px;
+    display: grid;
+    gap: 5px;
+    overflow-y: auto;
+    margin: 0 10px 4px;
+    padding: 0;
+    list-style: none;
+}
+
+.composer-attachment-draft {
     min-width: 0;
     display: grid;
-    grid-template-columns: 56px minmax(0, 1fr) 30px;
+    grid-template-columns: 42px minmax(0, 1fr) 36px;
     align-items: center;
     gap: 9px;
-    margin: 0 10px 4px;
     border-radius: 8px;
     padding: 6px;
     background: var(--rc-surface-hover);
     color: var(--rc-muted);
 }
 
-.composer-image-draft img {
-    width: 56px;
-    height: 56px;
+.composer-attachment-draft img,
+.composer-file-icon {
+    width: 42px;
+    height: 42px;
     border-radius: 7px;
     background: var(--rc-ground);
+}
+
+.composer-attachment-draft img {
     object-fit: cover;
 }
 
-.composer-image-draft > span {
+.composer-file-icon {
+    display: grid;
+    place-items: center;
+    color: var(--rc-accent-strong);
+}
+
+.composer-file-icon svg {
+    width: 18px;
+    height: 18px;
+}
+
+.composer-attachment-draft > span:nth-child(2) {
     min-width: 0;
     display: grid;
     gap: 2px;
 }
 
-.composer-image-draft strong,
-.composer-image-draft small {
+.composer-attachment-draft strong,
+.composer-attachment-draft small {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.composer-image-draft strong {
+.composer-attachment-draft strong {
     color: var(--rc-text);
     font-weight: 600;
 }
 
-.composer-image-draft button {
-    width: 30px;
-    height: 30px;
+.composer-attachment-draft button {
+    width: 36px;
+    height: 36px;
     display: grid;
     place-items: center;
     border: 0;
@@ -1236,18 +1563,36 @@
     color: var(--rc-muted);
 }
 
-.composer-image-draft button:hover:not(:disabled) {
+.composer-attachment-draft button:hover:not(:disabled) {
     background: var(--rc-surface-selected);
     color: var(--rc-text);
 }
 
-.composer-image-draft button svg {
+.composer-attachment-draft button svg {
     width: 16px;
     height: 16px;
 }
 
 .composer-file-input {
     display: none;
+}
+
+.composer.is-file-drag-active {
+    border-color: var(--rc-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--rc-accent), transparent 76%);
+}
+
+.composer-drop-overlay {
+    position: absolute;
+    inset: 16px 0 0;
+    z-index: 20;
+    display: grid;
+    place-items: center;
+    border: 2px dashed var(--rc-accent);
+    background: color-mix(in srgb, var(--rc-surface), transparent 12%);
+    color: var(--rc-accent-strong);
+    font-weight: 700;
+    pointer-events: none;
 }
 
 .composer-resizer {
@@ -1298,6 +1643,68 @@
     border-radius: 7px;
     background: transparent;
     color: var(--rc-muted);
+}
+
+.composer-toolbar > button:not(.send-button):hover:not(:disabled),
+.composer-toolbar > button:not(.send-button)[aria-expanded="true"] {
+    background: var(--rc-surface-hover);
+    color: var(--rc-text);
+}
+
+.emoji-picker {
+    position: fixed;
+    z-index: 240;
+    width: 286px;
+    overflow: hidden;
+    border: 1px solid var(--rc-border);
+    border-radius: 11px;
+    padding: 8px;
+    background: var(--rc-surface-raised);
+    box-shadow: var(--rc-shadow-float);
+    color: var(--rc-text);
+    font-family: var(--rc-font-family);
+}
+
+.emoji-picker header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 3px 8px;
+}
+
+.emoji-picker header strong {
+    font-size: 13px;
+}
+
+.emoji-picker header span {
+    color: var(--rc-tertiary);
+    font-size: 10px;
+}
+
+.emoji-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 3px;
+}
+
+.emoji-grid button {
+    width: 40px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 7px;
+    padding: 0;
+    background: transparent;
+    font-size: 20px;
+}
+
+.emoji-grid button:hover,
+.emoji-grid button:focus-visible {
+    outline: 2px solid var(--rc-focus);
+    outline-offset: -2px;
+    background: var(--rc-surface-hover);
 }
 
 .composer-toolbar svg {
@@ -1710,8 +2117,10 @@
         max-width: 90%;
     }
 
-    .message-more-button {
+    .message-actions {
         opacity: 1;
+        visibility: visible;
+        transform: none;
     }
 
     .image-viewer-backdrop {
@@ -1742,6 +2151,29 @@
 
     .settings-content > header {
         flex-direction: column;
+    }
+}
+
+.detail-actions .danger-action {
+    color: var(--rc-danger);
+}
+
+.detail-actions .danger-action:hover:not(:disabled),
+.detail-actions .danger-action:focus-visible {
+    background: color-mix(in srgb, var(--rc-danger), transparent 91%);
+}
+
+.detail-error {
+    margin: 0 14px 14px;
+    color: var(--rc-danger);
+    font-size: 12px;
+}
+
+@media (hover: none) {
+    .message-actions {
+        opacity: 1;
+        visibility: visible;
+        transform: none;
     }
 }
 

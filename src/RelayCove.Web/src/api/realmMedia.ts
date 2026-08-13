@@ -1,10 +1,30 @@
 import { normalizeRealm } from './realm';
 
-export type RealmMediaKind = 'avatar' | 'upload';
+export type RealmMediaKind = 'avatar' | 'upload' | 'file';
+
+const publicAvatarPrefixes = ['/user_avatars/', '/static/generated/avatars/'];
+
+export function isPublicRealmAvatarUrl(sourceUrl: string | undefined, realm: string | undefined): boolean {
+    if (!sourceUrl || !realm) {
+        return false;
+    }
+    try {
+        const approvedUrl = resolveRealmMediaUrl(realm, sourceUrl, 'avatar');
+        if (!approvedUrl) {
+            return false;
+        }
+        const url = new URL(approvedUrl);
+        return url.protocol === 'https:'
+            && publicAvatarPrefixes.some((prefix) => url.pathname.startsWith(prefix));
+    } catch {
+        return false;
+    }
+}
 
 const allowedPrefixes: Readonly<Record<RealmMediaKind, readonly string[]>> = {
     avatar: ['/avatar/', '/user_avatars/', '/static/generated/avatars/'],
     upload: ['/user_uploads/'],
+    file: ['/user_uploads/'],
 };
 
 export function resolveRealmMediaUrl(

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { WebSession } from './api/types';
+import type { RealmMediaKind } from './api/realmMedia';
 import { LoginPage } from './components/LoginPage';
 import { RelayCoveShell } from './components/RelayCoveShell';
 import type { ConversationKey } from './domain/types';
@@ -53,7 +54,7 @@ function AuthenticatedApp({ session, onCredentialsInvalid, onLogout }: Authentic
         client.store.getSnapshot,
     );
     const projected = useMemo(() => projectWebClient(session, state), [session, state]);
-    const loadRealmImage = useCallback((sourceUrl: string, kind: 'avatar' | 'upload', signal: AbortSignal) => (
+    const loadRealmImage = useCallback((sourceUrl: string, kind: RealmMediaKind, signal: AbortSignal) => (
         client.loadRealmImage(sourceUrl, kind, signal)
     ), [client]);
 
@@ -92,7 +93,14 @@ function AuthenticatedApp({ session, onCredentialsInvalid, onLogout }: Authentic
             workspace={projected.workspace}
             presentation={projected.presentation}
             loadRealmImage={loadRealmImage}
-            onUploadImage={(file, signal) => client.uploadImage(file, signal)}
+            onUploadAttachment={(file, signal) => client.uploadFile(file, signal)}
+            onToggleReaction={(messageId, reaction, active) => (
+                client.setReaction(parseMessageId(messageId), reaction, active)
+            )}
+            onEditMessage={(messageId, content) => client.editMessage(parseMessageId(messageId), content)}
+            onDeleteMessage={(messageId) => client.deleteMessage(parseMessageId(messageId))}
+            onToggleStar={(messageId, starred) => client.setMessageStarred(parseMessageId(messageId), starred)}
+            onUnsubscribeChannel={(channelId) => client.unsubscribeChannel(channelId)}
             onSelectConversation={(conversationId) => {
                 const conversation = resolveConversation(conversationId);
                 if (conversation) {
@@ -130,4 +138,12 @@ function AuthenticatedApp({ session, onCredentialsInvalid, onLogout }: Authentic
             }}
         />
     );
+}
+
+function parseMessageId(value: string): number {
+    const messageId = Number(value);
+    if (!Number.isSafeInteger(messageId) || messageId <= 0) {
+        throw new Error('消息标识无效。');
+    }
+    return messageId;
 }

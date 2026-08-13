@@ -33,13 +33,20 @@ export class ZulipWebError extends Error {
     public readonly code: ZulipWebErrorCode;
     public readonly status?: number;
     public readonly retryAfterMs?: number;
+    public readonly serverCode?: string;
 
-    public constructor(code: ZulipWebErrorCode, status?: number, retryAfterMs?: number) {
+    public constructor(
+        code: ZulipWebErrorCode,
+        status?: number,
+        retryAfterMs?: number,
+        serverCode?: string,
+    ) {
         super(errorMessages[code]);
         this.name = 'ZulipWebError';
         this.code = code;
         this.status = status;
         this.retryAfterMs = retryAfterMs;
+        this.serverCode = serverCode;
     }
 }
 

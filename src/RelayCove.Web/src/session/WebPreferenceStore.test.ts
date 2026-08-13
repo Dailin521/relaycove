@@ -5,9 +5,23 @@ describe('WebPreferenceStore', () => {
     beforeEach(() => localStorage.clear());
 
     it('persists only non-sensitive appearance preferences', () => {
-        writeWebPreferences({ theme: 'dark', fontSize: 16, listWidth: 350, detailsDefault: true });
+        writeWebPreferences({
+            theme: 'dark',
+            fontSize: 16,
+            listWidth: 350,
+            detailsDefault: true,
+            channelsCollapsed: true,
+            directsCollapsed: false,
+        });
 
-        expect(readWebPreferences()).toEqual({ theme: 'dark', fontSize: 16, listWidth: 350, detailsDefault: true });
+        expect(readWebPreferences()).toEqual({
+            theme: 'dark',
+            fontSize: 16,
+            listWidth: 350,
+            detailsDefault: true,
+            channelsCollapsed: true,
+            directsCollapsed: false,
+        });
         expect(localStorage.getItem('relaycove.web.preferences.v1')).not.toContain('apiKey');
     });
 

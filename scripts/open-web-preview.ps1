@@ -1,5 +1,5 @@
 $ErrorActionPreference = "SilentlyContinue"
-$previewUrl = "http://127.0.0.1:5173/?fixture=chat"
+$previewUrl = "http://127.0.0.1:5173/"
 
 for ($attempt = 0; $attempt -lt 60; $attempt++) {
     $response = Invoke-WebRequest -Uri $previewUrl -UseBasicParsing -TimeoutSec 1

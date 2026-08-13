@@ -11,7 +11,7 @@
 需求与范围确认
   -> RelayCove.Web 正式组件与 fake 数据边界
   -> typecheck / unit / production build / Playwright
-  -> 日常本地 fixture 审查；需要时显式部署大版本验收入口
+  -> 日常本地正式客户端/真实 Realm 审查；fixture 仅自动化；需要时显式部署大版本验收入口
   -> 用户逐页审查与 Web 验收
   -> 冻结版本、截图、Token、功能矩阵和场景
   -> 建立 Stage 22M task slice
@@ -90,10 +90,11 @@
 
 ### 5.1 本地与大版本验收节奏
 
-- 日常开发双击仓库根目录 `start-web-dev.cmd`：只启动本机 `npm run dev`，等待就绪后打开 `http://127.0.0.1:5173/?fixture=chat`；关闭控制台即结束本地服务。
+- 日常开发双击仓库根目录 `start-web-dev.cmd`：只启动本机 `npm run dev`，等待就绪后打开 `http://127.0.0.1:5173/` 正式登录并读取真实 Realm；关闭控制台即结束本地服务。真实写入必须服从当轮明确授权与目标范围。
+- fixture 不再是日常人工验收入口，只允许通过显式 `--mode fixture`/E2E 模式运行，且始终从 production bundle 排除。
 - 只有需要服务器人工验收的大版本才双击 `deploy-web.cmd`。它先跑完整 Web 验证，再只上传 `dist/`，校验 SHA-256/归档路径，写入新 release 并原子切换 `current`；不做 deploy-on-save 或自动清理旧 release。
 - 固定入口是同 Realm 的 `https://hklight.2000521.xyz/relaycove-web/`。官方 Zulip `/` 与旧 `/relaycove/` 不改；静态托管不代理 Zulip API，不构成 RelayCove server/BFF。
-- 服务器登录壳证据不替代本地 fixture 的完整视觉场景，也不替代真实账号认证、消息同步、MAUI 窗口或 Stage 21 外部门禁。
+- 服务器登录壳、fixture 或本地真实读写各自只证明对应边界；均不能替代 MAUI 窗口或 Stage 21 两账号 Live/人工登录/干净 VM 门禁。
 
 ## 6. 阶段 E：Stage 22M MAUI 原生复刻
 
@@ -157,10 +158,11 @@
 - Zulip.Client：在线 narrow/search 映射。
 - App：分组、绿色高亮、键盘和过期请求抑制。
 
-### 图片附件
+### 附件
 
-- Stage 22W Slice 3 已实现 Web 的选择、预览、取消、大图遮罩、multipart 上传、临时授权下载、重定向禁用、脱敏和显式一次发送语义。
+- Stage 22W 已实现 Web 的任意文件多选/拖放、分会话草稿、取消、图片遮罩预览、普通文件卡片、multipart 顺序上传、临时授权 Blob 下载、重定向禁用、脱敏和显式一次发送语义。
 - Web 受控媒体必须限制同 Realm 路径、类型、单文件/每消息/并发/总缓存资源，并在 logout/unmount/release 时 abort 与 revoke；超额链接保留 raw Markdown。
+- 只有 PNG/JPEG/WebP/GIF/AVIF 可内嵌预览；SVG/HTML/PDF/Office/压缩包及未知类型只能作为文件下载，不得进入 `img`、`iframe`、`object` 或活动 HTML。
 - Stage 22M 仍须在原生 App/Core/Zulip.Client/Data 边界另行复刻和验收，不共享 Web 运行时代码。
 - 若任一端持久缓存图片，必须另行处理大小上限、账号隔离和撤权清理；当前 Web Blob 只存在页面内存。
 
@@ -172,6 +174,7 @@
 
 ### 频道管理
 
+- Stage 22W 已实现当前用户主动退订：按 reducer 中的真实订阅名调用 Zulip unsubscribe，成功后复用 subscription removal 清理；结果未知不自动重试。测试不得退出真实业务频道。
 - 建模 `CanEditChannel`、`CanManageMembers`、`CanArchiveChannel` 等服务器能力。
 - 协议写入需要独立只读复核、403 处理和危险确认。
 - 不把服务器“归档/停用”包装成未经证实的永久删除。

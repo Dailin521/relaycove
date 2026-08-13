@@ -3,13 +3,24 @@ import type { WebSession } from '../api/types';
 import { ZulipApiClient } from '../api/ZulipApiClient';
 import type { RealmMediaKind } from '../api/realmMedia';
 import { channelTopic } from '../domain/conversation';
-import type { ConversationKey, OutboxFailure, RegisterSnapshot, UploadedFile } from '../domain/types';
+import type {
+    ConversationKey,
+    EmojiReactionIdentity,
+    EventPatch,
+    MessageMutation,
+    MessageMutationKind,
+    OutboxFailure,
+    RegisterSnapshot,
+    UploadedFile,
+} from '../domain/types';
 import { messagesForConversation } from '../state/webClientReducer';
 import { WebClientStore } from '../state/WebClientStore';
 
 const HISTORY_PAGE_SIZE = 50;
 const OUTBOX_WAIT_MS = 500;
 const OUTBOX_EXPIRY_MS = 10_000;
+const MESSAGE_MUTATION_TIMEOUT_MS = 10_000;
+const CHANNEL_MUTATION_TIMEOUT_MS = 10_000;
 
 interface WebClientSessionOptions {
     apiClient?: ZulipApiClient;
@@ -19,6 +30,12 @@ interface WebClientSessionOptions {
     random?: () => number;
     onReauthenticationRequired?: () => void;
 }
+
+type MessageMutationInput =
+    | { kind: 'reaction'; reaction: EmojiReactionIdentity; active: boolean }
+    | { kind: 'edit'; content: string }
+    | { kind: 'delete' }
+    | { kind: 'star'; starred: boolean };
 
 let nextProcessLocalId = 0;
 
@@ -39,6 +56,11 @@ export class WebClientSession {
     private longPollTimeoutMs = 90_000;
     private readonly outboxTimers = new Map<string, readonly number[]>();
     private readonly sendControllers = new Map<string, AbortController>();
+    private readonly mutationControllers = new Map<number, AbortController>();
+    private readonly mutationLanes = new Map<number, Promise<void>>();
+    private readonly channelUnsubscribeControllers = new Map<number, AbortController>();
+    private readonly channelUnsubscribeTasks = new Map<number, Promise<void>>();
+    private nextMutationId = 0;
     private reauthenticationHandled = false;
     private sendLane: Promise<void> = Promise.resolve();
 
@@ -91,11 +113,23 @@ export class WebClientSession {
         for (const controller of this.sendControllers.values()) {
             controller.abort(new DOMException('Session stopped', 'AbortError'));
         }
+        for (const controller of this.mutationControllers.values()) {
+            controller.abort(new DOMException('Session stopped', 'AbortError'));
+        }
+        for (const controller of this.channelUnsubscribeControllers.values()) {
+            controller.abort(new DOMException('Session stopped', 'AbortError'));
+        }
         this.clearAllOutboxTimers();
         const queueId = this.queueId;
         this.queueId = undefined;
         this.lastEventId = 0;
         await this.sendLane.catch(() => undefined);
+        await Promise.allSettled(this.mutationLanes.values());
+        await Promise.allSettled(this.channelUnsubscribeTasks.values());
+        this.mutationLanes.clear();
+        this.mutationControllers.clear();
+        this.channelUnsubscribeTasks.clear();
+        this.channelUnsubscribeControllers.clear();
         if (cleanQueue && queueId) {
             const cleanup = new AbortController();
             const timeout = window.setTimeout(() => cleanup.abort(), 5_000);
@@ -149,7 +183,8 @@ export class WebClientSession {
 
     public async loadRealmImage(sourceUrl: string, kind: RealmMediaKind, signal?: AbortSignal): Promise<Blob> {
         try {
-            return await this.apiClient.getRealmImage(this.session, sourceUrl, kind, signal);
+            const maxFileBytes = (this.store.getSnapshot().maxFileUploadSizeMiB ?? 10) * 1024 * 1024;
+            return await this.apiClient.getRealmImage(this.session, sourceUrl, kind, signal, maxFileBytes);
         } catch (error) {
             if (error instanceof ZulipWebError && error.code === 'unauthorized') {
                 await this.requireReauthentication();
@@ -158,13 +193,39 @@ export class WebClientSession {
         }
     }
 
-    public async uploadImage(file: File, signal?: AbortSignal): Promise<UploadedFile> {
+    public async uploadFile(file: File, signal?: AbortSignal): Promise<UploadedFile> {
+        const maxBytes = (this.store.getSnapshot().maxFileUploadSizeMiB ?? 10) * 1024 * 1024;
+        if (
+            !file.name.trim()
+            || file.name.length > 256
+            || /[\u0000-\u001f\u007f]/u.test(file.name)
+            || file.size <= 0
+            || file.size > maxBytes
+        ) {
+            throw new Error(`附件必须有有效文件名，且不能超过 ${formatFileSize(maxBytes)}。`);
+        }
         try {
             return await this.apiClient.uploadFile(this.session, file, signal);
         } catch (error) {
             await this.handleCommandError(error);
             throw error;
         }
+    }
+
+    public unsubscribeChannel(channelId: number): Promise<void> {
+        const existing = this.channelUnsubscribeTasks.get(channelId);
+        if (existing) {
+            return existing;
+        }
+        const task = this.performChannelUnsubscribe(channelId);
+        this.channelUnsubscribeTasks.set(channelId, task);
+        const cleanup = () => {
+            if (this.channelUnsubscribeTasks.get(channelId) === task) {
+                this.channelUnsubscribeTasks.delete(channelId);
+            }
+        };
+        void task.then(cleanup, cleanup);
+        return task;
     }
 
     public async loadOlder(conversation: ConversationKey): Promise<void> {
@@ -212,6 +273,240 @@ export class WebClientSession {
         );
         this.sendLane = task.catch(() => undefined);
         return task;
+    }
+
+    public setReaction(
+        messageId: number,
+        reaction: EmojiReactionIdentity,
+        active: boolean,
+    ): Promise<void> {
+        return this.enqueueMessageMutation(messageId, async () => {
+            const mutation = this.beginMessageMutation(messageId, {
+                kind: 'reaction',
+                reaction,
+                active,
+            });
+            await this.performMessageMutation(
+                mutation,
+                (signal) => this.apiClient.setReaction(this.session, messageId, reaction, active, signal),
+                {
+                    type: 'reactionChanged',
+                    messageId,
+                    operation: active ? 'add' : 'remove',
+                    userId: this.session.userId,
+                    reaction,
+                },
+            );
+        });
+    }
+
+    public editMessage(messageId: number, content: string): Promise<void> {
+        return this.enqueueMessageMutation(messageId, async () => {
+            const state = this.store.getSnapshot();
+            const message = state.messages[messageId];
+            const normalizedContent = content.replace(/\r\n/gu, '\n');
+            if (!message || message.senderId !== this.session.userId) {
+                throw new Error('只能编辑自己发送且仍可访问的消息。');
+            }
+            if (!normalizedContent.trim()) {
+                throw new Error('消息正文不能为空。');
+            }
+            if (state.maxMessageLength !== undefined && normalizedContent.length > state.maxMessageLength) {
+                throw new Error(`消息不能超过 ${state.maxMessageLength} 个字符。`);
+            }
+            if (normalizedContent === message.content) {
+                return;
+            }
+            const previousContentSha256 = await sha256Hex(message.content);
+            const mutation = this.beginMessageMutation(messageId, {
+                kind: 'edit',
+                content: normalizedContent,
+            });
+            await this.performMessageMutation(
+                mutation,
+                (signal) => this.apiClient.editMessage(
+                    this.session,
+                    messageId,
+                    normalizedContent,
+                    previousContentSha256,
+                    signal,
+                ),
+                { type: 'messageContent', messageId, content: normalizedContent },
+            );
+        });
+    }
+
+    public deleteMessage(messageId: number): Promise<void> {
+        return this.enqueueMessageMutation(messageId, async () => {
+            const message = this.store.getSnapshot().messages[messageId];
+            if (!message || message.senderId !== this.session.userId) {
+                throw new Error('只能删除自己发送且仍可访问的消息。');
+            }
+            const mutation = this.beginMessageMutation(messageId, { kind: 'delete' });
+            await this.performMessageMutation(
+                mutation,
+                (signal) => this.apiClient.deleteMessage(this.session, messageId, signal),
+                { type: 'messageDeleted', messageIds: [messageId] },
+            );
+        });
+    }
+
+    public setMessageStarred(messageId: number, starred: boolean): Promise<void> {
+        return this.enqueueMessageMutation(messageId, async () => {
+            if (!this.store.getSnapshot().messages[messageId]) {
+                throw new Error('该消息已不可访问。');
+            }
+            const mutation = this.beginMessageMutation(messageId, { kind: 'star', starred });
+            await this.performMessageMutation(
+                mutation,
+                (signal) => this.apiClient.setMessageStarred(this.session, messageId, starred, signal),
+                { type: 'messageStarred', messageIds: [messageId], all: false, starred },
+            );
+        });
+    }
+
+    private async performChannelUnsubscribe(channelId: number): Promise<void> {
+        const state = this.store.getSnapshot();
+        const subscription = state.subscriptions[channelId];
+        if (state.connection !== 'connected') {
+            throw new Error('当前未连接，退订没有提交。');
+        }
+        if (!Number.isSafeInteger(channelId) || channelId <= 0 || !subscription?.isActive) {
+            throw new Error('该频道已不在当前订阅列表中。');
+        }
+
+        const lifecycleEpoch = this.lifecycleEpoch;
+        const linked = linkedAbortController(this.lifecycleController?.signal);
+        this.channelUnsubscribeControllers.set(channelId, linked.controller);
+        const timeout = window.setTimeout(() => {
+            linked.controller.abort(new DOMException('Channel unsubscribe result timed out', 'TimeoutError'));
+        }, CHANNEL_MUTATION_TIMEOUT_MS);
+        try {
+            const result = await this.apiClient.unsubscribeChannel(
+                this.session,
+                subscription.name,
+                linked.controller.signal,
+            );
+            if (lifecycleEpoch !== this.lifecycleEpoch || this.lifecycleController?.signal.aborted) {
+                return;
+            }
+            if (!result.removed.includes(subscription.name) && !result.notRemoved.includes(subscription.name)) {
+                throw new ZulipWebError('invalid_response');
+            }
+            this.store.dispatch({
+                type: 'eventsApplied',
+                groups: [{ patches: [{ type: 'subscriptionRemoved', channelId }] }],
+            });
+        } catch (error) {
+            if (lifecycleEpoch !== this.lifecycleEpoch || this.lifecycleController?.signal.aborted) {
+                return;
+            }
+            const uncertain = isAbort(error)
+                || (error instanceof ZulipWebError && (
+                    error.code === 'network' || error.code === 'request_timed_out'
+                ));
+            if (uncertain) {
+                this.store.dispatch({ type: 'connectionChanged', status: 'offline', reason: 'channel_unsubscribe_result_unknown' });
+                throw new Error('退订结果未确认；不会自动重试。请恢复连接并确认频道状态。');
+            }
+            await this.handleCommandError(error);
+            throw new Error('服务器没有确认退订，频道仍保留在列表中。');
+        } finally {
+            window.clearTimeout(timeout);
+            linked.dispose();
+            if (this.channelUnsubscribeControllers.get(channelId) === linked.controller) {
+                this.channelUnsubscribeControllers.delete(channelId);
+            }
+        }
+    }
+
+    private enqueueMessageMutation(messageId: number, work: () => Promise<void>): Promise<void> {
+        const previous = this.mutationLanes.get(messageId) ?? Promise.resolve();
+        const task = previous.then(work, work);
+        this.mutationLanes.set(messageId, task);
+        const cleanup = () => {
+            if (this.mutationLanes.get(messageId) === task) {
+                this.mutationLanes.delete(messageId);
+            }
+        };
+        void task.then(cleanup, cleanup);
+        return task;
+    }
+
+    private beginMessageMutation(messageId: number, input: MessageMutationInput): MessageMutation {
+        const state = this.store.getSnapshot();
+        if (state.connection !== 'connected') {
+            throw new Error('当前未连接，操作没有提交。');
+        }
+        if (!state.messages[messageId]) {
+            throw new Error('该消息已不可访问。');
+        }
+        const existing = state.messageMutations[messageId];
+        if (existing && existing.phase !== 'failed') {
+            throw new Error(existing.phase === 'uncertain'
+                ? '上一操作的结果尚未确认；请刷新消息后再操作。'
+                : '该消息正在处理另一项操作。');
+        }
+        const operationId = `mutation-${++this.nextMutationId}`;
+        const mutation = {
+            ...input,
+            operationId,
+            messageId,
+            phase: 'submitting' as const,
+        } as MessageMutation;
+        this.store.dispatch({ type: 'messageMutationStarted', mutation });
+        return mutation;
+    }
+
+    private async performMessageMutation(
+        mutation: MessageMutation,
+        request: (signal: AbortSignal) => Promise<void>,
+        successPatch: EventPatch,
+    ): Promise<void> {
+        const lifecycleEpoch = this.lifecycleEpoch;
+        const linked = linkedAbortController(this.lifecycleController?.signal);
+        this.mutationControllers.set(mutation.messageId, linked.controller);
+        const timeout = window.setTimeout(() => {
+            linked.controller.abort(new DOMException('Mutation result timed out', 'TimeoutError'));
+        }, MESSAGE_MUTATION_TIMEOUT_MS);
+        try {
+            await request(linked.controller.signal);
+            if (lifecycleEpoch !== this.lifecycleEpoch || this.lifecycleController?.signal.aborted) {
+                return;
+            }
+            // A successful API response is server confirmation. The later realtime
+            // event applies the same patch idempotently and remains authoritative
+            // for changes made by every other client.
+            this.store.dispatch({ type: 'eventsApplied', groups: [{ patches: [successPatch] }] });
+        } catch (error) {
+            if (lifecycleEpoch !== this.lifecycleEpoch || this.lifecycleController?.signal.aborted) {
+                return;
+            }
+            const uncertain = isAbort(error)
+                || (error instanceof ZulipWebError && (
+                    error.code === 'network' || error.code === 'request_timed_out'
+                ));
+            if (!uncertain) {
+                await this.handleCommandError(error);
+            } else {
+                this.store.dispatch({ type: 'connectionChanged', status: 'offline', reason: 'mutation_result_unknown' });
+            }
+            const message = mutationFailureMessage(mutation.kind, error, uncertain);
+            this.store.dispatch({
+                type: 'messageMutationFailed',
+                messageId: mutation.messageId,
+                operationId: mutation.operationId,
+                phase: uncertain ? 'uncertain' : 'failed',
+                error: message,
+            });
+            throw new Error(message);
+        } finally {
+            window.clearTimeout(timeout);
+            linked.dispose();
+            if (this.mutationControllers.get(mutation.messageId) === linked.controller) {
+                this.mutationControllers.delete(mutation.messageId);
+            }
+        }
     }
 
     private async performSend(conversation: ConversationKey, content: string): Promise<void> {
@@ -686,6 +981,9 @@ export class WebClientSession {
         ++this.lifecycleEpoch;
         this.lifecycleController?.abort();
         this.selectionController?.abort();
+        for (const controller of this.mutationControllers.values()) {
+            controller.abort(new DOMException('Authentication expired', 'AbortError'));
+        }
         this.queueId = undefined;
         this.clearAllOutboxTimers();
         this.store.dispatch({ type: 'connectionChanged', status: 'reauthRequired' });
@@ -727,6 +1025,10 @@ function safeOperationMessage(error: unknown): string {
     return error instanceof ZulipWebError ? error.message : '无法完成该操作。';
 }
 
+function formatFileSize(bytes: number): string {
+    return `${(bytes / (1024 * 1024)).toFixed(bytes % (1024 * 1024) === 0 ? 0 : 1)} MB`;
+}
+
 function sendFailureMessage(failure: OutboxFailure): string {
     switch (failure) {
         case 'networkResultUnknown': return '发送结果未知；不会自动重试。正文仍在输入区。';
@@ -735,6 +1037,38 @@ function sendFailureMessage(failure: OutboxFailure): string {
         case 'rejected': return 'Realm 拒绝了这条消息。';
         default: return '消息没有发送，且不会自动重试。';
     }
+}
+
+function mutationFailureMessage(
+    kind: MessageMutationKind,
+    error: unknown,
+    uncertain: boolean,
+): string {
+    if (uncertain) {
+        return '操作结果尚未确认；RelayCove 不会自动重试。请刷新消息确认服务端状态。';
+    }
+    if (error instanceof ZulipWebError && error.code === 'unauthorized') {
+        return '登录已失效，操作没有自动重试。';
+    }
+    if (error instanceof ZulipWebError && error.code === 'rate_limited') {
+        return 'Realm 暂时限制该操作，请稍后手动重试。';
+    }
+    if (kind === 'edit' && error instanceof ZulipWebError && error.serverCode === 'EXPECTATION_MISMATCH') {
+        return '消息已在其他客户端修改。当前编辑内容仍保留，请刷新后重新确认。';
+    }
+    switch (kind) {
+        case 'reaction': return 'Realm 拒绝了表情反应操作。';
+        case 'edit': return 'Realm 拒绝了消息编辑，可能已超过编辑时限或权限已变化。';
+        case 'delete': return 'Realm 拒绝了消息删除，可能已超过删除时限或权限已变化。';
+        case 'star': return 'Realm 拒绝了收藏操作。';
+    }
+}
+
+async function sha256Hex(value: string): Promise<string> {
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+    return [...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
 }
 
 function isAbort(error: unknown): boolean {
