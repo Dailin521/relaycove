@@ -2,8 +2,8 @@
 
 Updated: 2026-08-13
 Branch: `codex/stage-22m-web-parity` (isolated worktree `E:\WorkSpace\RelayCove-Stage22MParity`)
-Integration commits: Web `573a33d`; MAUI `c1c4da9`
-Current delivery: Stage 22W and the first Stage 22M implementation are integrated. The second native Web-parity pass has passed its current-tree Full gate and independent pre-push review; this branch is the intended fast-forward integration content.
+Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
+Current delivery: Stage 22W and both current Stage 22M slices are integrated. The native Web-parity follow-up passed its current-tree Full gate and independent review, was pushed on `codex/stage-22m-web-parity`, and fast-forwarded to remote `main` at `259e176`. The concurrently dirty primary worktree was intentionally left unchanged.
 
 ## Product direction
 

@@ -1,7 +1,7 @@
 # Stage 22 — RelayCove 双前端（22W Web / 22M Native MAUI）
 
-- Status: Stage 22W and the first Stage 22M slice are integrated; the isolated native Web-parity follow-up passed current-tree Full and independent pre-push review and is ready for fast-forward integration
-- Active branch/worktree: `codex/stage-22m-web-parity` under `E:\WorkSpace\RelayCove-Stage22MParity`; existing integration branch remains `main`
+- Status: Stage 22W, the first Stage 22M slice and native Web-parity follow-up are integrated; the follow-up passed current-tree Full and independent review, and remote `main` contains implementation commit `259e176`
+- Source branch/worktree: `codex/stage-22m-web-parity` under `E:\WorkSpace\RelayCove-Stage22MParity`; the dirty primary worktree was preserved and remote `main` was updated by verified fast-forward
 - Starting point: the integrated Web/first native slices descend from `main@53a4f1a`; this follow-up starts from integrated `main@46e5608`
 - Design source: immutable `docs/ui/baselines/chat-ui-v1/`
 - Interaction source: `docs/ui/INTERACTION_SPEC.md`
