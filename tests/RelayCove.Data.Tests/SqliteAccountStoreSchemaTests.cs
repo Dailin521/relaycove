@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using RelayCove.Core;
 using RelayCove.Data;
 
 namespace RelayCove.Data.Tests;
@@ -38,20 +39,21 @@ public sealed class SqliteAccountStoreSchemaTests
         Assert.Contains("topics", tables);
         Assert.Contains("recent_dm", tables);
         Assert.Contains("messages", tables);
+        Assert.Contains("message_reactions", tables);
         Assert.Contains("unread_counts", tables);
         Assert.Contains("unread_state", tables);
         Assert.Contains("schema_info", tables);
     }
 
     [Fact]
-    public async Task MigrateAsync_WhenSchemaVersionIsOld_AdvancesVersionWithoutLosingMetadata()
+    public async Task MigrateAsync_WhenSchemaVersionIsCurrent_PreservesMetadataAndVersion()
     {
         await using var context = StoreTestContext.Create();
         var account = StoreTestData.Account();
         await context.Store.InitializeAsync(account);
         await using (var connection = context.Open(account.AccountId))
         {
-            await ExecuteAsync(connection, "PRAGMA user_version = 0; DELETE FROM schema_info;");
+            await ExecuteAsync(connection, "UPDATE schema_info SET version = 2;");
         }
 
         await context.Store.MigrateAsync(account.AccountId);
@@ -61,6 +63,46 @@ public sealed class SqliteAccountStoreSchemaTests
         await using var verify = context.Open(account.AccountId);
         Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(verify, "PRAGMA user_version;"));
         Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(verify, "SELECT version FROM schema_info;"));
+    }
+
+    [Fact]
+    public async Task MigrateAsync_WhenSchemaIsVersionOne_PreservesRowsAndAddsMessageCapabilities()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var conversation = new DirectMessage([20]);
+        await context.Store.InitializeAsync(account);
+        await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register(
+            [],
+            [new MessageUpsertEvent(StoreTestData.Message(9, conversation, content: "preserve-me"))],
+            users: [new UserProfile(20, "Bea")]));
+        await using (var connection = context.Open(account.AccountId))
+        {
+            await ExecuteAsync(connection, """
+                DROP TABLE message_reactions;
+                ALTER TABLE messages DROP COLUMN is_starred;
+                ALTER TABLE messages DROP COLUMN sender_avatar_url;
+                ALTER TABLE users DROP COLUMN is_bot;
+                ALTER TABLE users DROP COLUMN avatar_version;
+                ALTER TABLE users DROP COLUMN avatar_url;
+                UPDATE schema_info SET version = 1;
+                PRAGMA user_version = 1;
+                """);
+        }
+
+        await context.Store.MigrateAsync(account.AccountId);
+
+        var loaded = await context.Store.LoadAsync(account.AccountId);
+        Assert.Equal("preserve-me", loaded!.State.Messages[9].Content);
+        Assert.False(loaded.State.Messages[9].IsStarred);
+        Assert.Empty(loaded.State.Messages[9].Reactions);
+        Assert.Equal("Bea", loaded.State.Users[20].FullName);
+        await using var verify = context.Open(account.AccountId);
+        Assert.Equal(2, await ScalarLongAsync(verify, "PRAGMA user_version;"));
+        Assert.Equal(2, await ScalarLongAsync(verify, "SELECT version FROM schema_info;"));
+        Assert.Equal(1, await ScalarLongAsync(
+            verify,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='message_reactions';"));
     }
 
     [Fact]

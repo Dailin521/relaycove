@@ -10,4 +10,5 @@ public sealed record RegisterResult(
     IReadOnlyList<UserProfile> Users,
     IReadOnlyList<ConversationKey> RecentDirectMessages,
     UnreadState Unread,
-    IReadOnlyList<DomainEvent> Events);
+    IReadOnlyList<DomainEvent> Events,
+    int? MaxFileUploadSizeMiB = null);

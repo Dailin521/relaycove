@@ -1,96 +1,512 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:local="clr-namespace:RelayCove.App"
+             xmlns:controls="clr-namespace:RelayCove.App.Controls"
              xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
              x:Class="RelayCove.App.MainPage"
+             x:Name="RootPage"
              x:DataType="viewModels:ShellViewModel"
-             Title="RelayCove">
-    <Grid Padding="20" RowDefinitions="Auto,*">
-        <Label Grid.Row="0" Text="RelayCove" FontSize="24" />
+             Style="{StaticResource RelayCovePageStyle}"
+             Title="RelayCove"
+             Shell.NavBarIsVisible="False">
+    <Grid Background="{StaticResource GroundBrush}">
+        <Grid
+              IsVisible="{Binding LoginVisible}"
+              Padding="24">
+            <Border Padding="28"
+                    MaximumWidthRequest="480"
+                    HorizontalOptions="Center"
+                    VerticalOptions="Center"
+                    Background="{StaticResource SurfaceBrush}"
+                    Stroke="{StaticResource BorderBrush}"
+                    StrokeThickness="1">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="16" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="14">
+                    <Label Text="登录 RelayCove"
+                           Style="{StaticResource BaseLabelStyle}"
+                           FontSize="24"
+                           FontAttributes="Bold" />
+                    <Label Text="使用 Zulip Realm 的邮箱和密码；密码仅用于交换 API Key。"
+                           Style="{StaticResource MutedLabelStyle}"
+                           LineBreakMode="WordWrap" />
+                    <Entry Placeholder="Realm HTTPS origin"
+                           Style="{StaticResource BaseEntryStyle}"
+                           Text="{Binding Realm}"
+                           Keyboard="Url"
+                           SemanticProperties.Description="Zulip Realm HTTPS origin" />
+                    <Entry Placeholder="邮箱"
+                           Style="{StaticResource BaseEntryStyle}"
+                           Text="{Binding Email}"
+                           Keyboard="Email"
+                           SemanticProperties.Description="Zulip 登录邮箱" />
+                    <Entry Placeholder="密码"
+                           Style="{StaticResource BaseEntryStyle}"
+                           Text="{Binding Password}"
+                           IsPassword="True"
+                           ReturnType="Go"
+                           ReturnCommand="{Binding LoginCommand}"
+                           SemanticProperties.Description="Zulip 登录密码" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <Button Text="登录"
+                                Style="{StaticResource PrimaryButtonStyle}"
+                                Command="{Binding LoginCommand}" />
+                        <Button Grid.Column="1"
+                                Text="取消"
+                                Style="{StaticResource BaseButtonStyle}"
+                                Command="{Binding LoginCancelCommand}" />
+                    </Grid>
+                    <Label Text="{Binding LoginError}"
+                           Style="{StaticResource DangerLabelStyle}"
+                           LineBreakMode="WordWrap" />
+                    <Label Text="Stage 21 的人工密码登录与干净 VM 门禁仍未验证。"
+                           Style="{StaticResource MutedLabelStyle}"
+                           LineBreakMode="WordWrap" />
+                </VerticalStackLayout>
+            </Border>
+        </Grid>
 
-        <ScrollView Grid.Row="1" IsVisible="{Binding LoginVisible}">
-            <VerticalStackLayout Spacing="12" MaximumWidthRequest="480">
-                <Label Text="使用 Zulip 邮箱密码登录" FontSize="18" />
-                <Entry Placeholder="Realm" Text="{Binding Realm}" Keyboard="Url" />
-                <Entry Placeholder="邮箱" Text="{Binding Email}" Keyboard="Email" />
-                <Entry Placeholder="密码" Text="{Binding Password}" IsPassword="True" />
-                <Button Text="登录" Command="{Binding LoginCommand}" />
-                <Button Text="取消登录" Command="{Binding LoginCancelCommand}" />
-                <Label Text="{Binding LoginError}" TextColor="DarkRed" />
-            </VerticalStackLayout>
-        </ScrollView>
+        <Grid
+              IsVisible="{Binding MainVisible}"
+              ColumnDefinitions="60,*">
+            <controls:NavigationRailView Grid.Column="0"
+                                         IsEnabled="{Binding IsPrimaryShellEnabled}" />
 
-        <Grid Grid.Row="1" IsVisible="{Binding MainVisible}" ColumnDefinitions="180,180,180,*" RowDefinitions="Auto,*,Auto" ColumnSpacing="12" RowSpacing="8">
-            <VerticalStackLayout Grid.ColumnSpan="4" Spacing="2">
-                <Label Text="{Binding ConnectionStatus}" />
-                <Label Text="{Binding LoginError}" TextColor="DarkRed" />
-            </VerticalStackLayout>
+            <Grid Grid.Column="1">
+                <Grid IsVisible="{Binding IsMessagesSection}">
+                    <Grid IsEnabled="{Binding IsPrimaryShellEnabled}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{Binding ConversationPaneWidth}" />
+                            <ColumnDefinition Width="{Binding ChatPaneWidth}" />
+                            <ColumnDefinition Width="{Binding InlineDetailsWidth}" />
+                        </Grid.ColumnDefinitions>
+                        <controls:ConversationPaneView Grid.Column="0"
+                                                       IsVisible="{Binding IsConversationPaneVisible}" />
 
-            <Grid Grid.Row="1" Grid.Column="0" RowDefinitions="Auto,*" RowSpacing="6">
-                <Label Text="频道" FontAttributes="Bold" />
-                <CollectionView Grid.Row="1" ItemsSource="{Binding Channels}" SelectedItem="{Binding SelectedChannel}" SelectionMode="Single">
-                    <CollectionView.ItemTemplate>
-                        <DataTemplate x:DataType="viewModels:ChannelItem">
-                            <Label Text="{Binding Name}" Padding="4" />
-                        </DataTemplate>
-                    </CollectionView.ItemTemplate>
-                </CollectionView>
+                        <Grid Grid.Column="1"
+                              IsVisible="{Binding IsChatPaneVisible}"
+                              RowDefinitions="Auto,*,Auto">
+                            <controls:ChatHeaderView x:Name="ChatHeader" Grid.Row="0" />
+                            <controls:MessageListView Grid.Row="1" />
+                            <controls:ComposerView Grid.Row="2" />
+                        </Grid>
+
+                        <Border Grid.Column="2"
+                                IsVisible="{Binding IsInlineDetailsVisible}"
+                                Background="{StaticResource SurfaceRaisedBrush}"
+                                Stroke="{StaticResource BorderBrush}"
+                                StrokeThickness="1">
+                            <controls:DetailsPaneView />
+                        </Border>
+                    </Grid>
+
+                    <Grid IsVisible="{Binding IsOverlayDetailsVisible}">
+                        <BoxView Background="{StaticResource OverlayBrush}">
+                            <BoxView.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding ToggleDetailsCommand}" />
+                            </BoxView.GestureRecognizers>
+                        </BoxView>
+                        <Border WidthRequest="284"
+                                HorizontalOptions="End"
+                                Background="{StaticResource SurfaceRaisedBrush}"
+                                Stroke="{StaticResource StrongBorderBrush}"
+                                StrokeThickness="1">
+                            <controls:DetailsPaneView x:Name="OverlayDetails"
+                                                     IsModal="True" />
+                        </Border>
+                    </Grid>
+                </Grid>
+
+                <controls:ContactsPageView IsVisible="{Binding IsContactsSection}" />
+                <controls:SettingsPageView IsVisible="{Binding IsSettingsSection}" />
+
+                <Grid IsVisible="{Binding IsSearchOpen}">
+                    <BoxView Background="{StaticResource OverlayBrush}">
+                        <BoxView.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding CloseSearchCommand}" />
+                        </BoxView.GestureRecognizers>
+                    </BoxView>
+                    <Border Style="{StaticResource DialogBorderStyle}"
+                            VerticalOptions="Start"
+                            Margin="24,54,24,24">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                        <Grid RowDefinitions="Auto,Auto,*" RowSpacing="10" MaximumHeightRequest="620">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <VerticalStackLayout>
+                                    <Label Text="搜索" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                                    <Label Text="频道、话题、真实姓名与当前已加载消息" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
+                                <Button Grid.Column="1" Text="×" Style="{StaticResource IconButtonStyle}" Command="{Binding CloseSearchCommand}" />
+                            </Grid>
+                            <Entry Grid.Row="1"
+                                   x:Name="SearchEntry"
+                                   Style="{StaticResource BaseEntryStyle}"
+                                   Text="{Binding SearchQuery, Mode=TwoWay}"
+                                   Placeholder="键入以搜索"
+                                   SemanticProperties.Description="搜索频道、话题、联系人和已加载消息" />
+                            <Grid Grid.Row="2">
+                                <CollectionView ItemsSource="{Binding SearchResults}"
+                                                SelectedItem="{Binding SelectedSearchResult, Mode=TwoWay}"
+                                                SelectionMode="Single"
+                                                ItemsUpdatingScrollMode="KeepItemsInView">
+                                    <CollectionView.ItemTemplate>
+                                        <DataTemplate x:DataType="viewModels:SearchResultItem">
+                                            <Border Padding="10,8" StrokeThickness="0">
+                                                <Border.GestureRecognizers>
+                                                    <TapGestureRecognizer Command="{Binding ViewModel.SelectSearchResultCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}" CommandParameter="{Binding .}" />
+                                                </Border.GestureRecognizers>
+                                                <Grid ColumnDefinitions="90,*" RowDefinitions="Auto,Auto">
+                                                    <Label Text="{Binding Kind}" Style="{StaticResource MutedLabelStyle}" />
+                                                    <Label Grid.Column="1" Text="{Binding Title}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                                    <Label Grid.Row="1" Grid.Column="1" Text="{Binding Subtitle}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="TailTruncation" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </CollectionView.ItemTemplate>
+                                </CollectionView>
+                                <Label Text="没有匹配的本地结果；服务器全文搜索尚未接入。"
+                                       IsVisible="{Binding IsSearchEmpty}"
+                                       Style="{StaticResource MutedLabelStyle}"
+                                       HorizontalOptions="Center"
+                                       VerticalOptions="Center" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsNewConversationOpen}">
+                    <BoxView Background="{StaticResource OverlayBrush}">
+                        <BoxView.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding CloseNewConversationCommand}" />
+                        </BoxView.GestureRecognizers>
+                    </BoxView>
+                    <Border Style="{StaticResource DialogBorderStyle}" MaximumWidthRequest="560">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                        <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="10">
+                            <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                                <VerticalStackLayout>
+                                    <Label Text="新建私信" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                                    <Label Text="仅列出 IClientSession 当前可靠获知的活跃用户；不代表完整成员目录或 presence。"
+                                           Style="{StaticResource MutedLabelStyle}"
+                                           LineBreakMode="WordWrap" />
+                                </VerticalStackLayout>
+                                <Button Grid.Column="1"
+                                        Text="×"
+                                        Style="{StaticResource IconButtonStyle}"
+                                        Command="{Binding CloseNewConversationCommand}" />
+                            </Grid>
+                            <Entry x:Name="NewConversationSearchEntry"
+                                   Grid.Row="1"
+                                   Text="{Binding NewConversationQuery, Mode=TwoWay}"
+                                   Placeholder="筛选已知联系人"
+                                   Style="{StaticResource BaseEntryStyle}" />
+                            <Grid Grid.Row="2" MinimumHeightRequest="180" MaximumHeightRequest="330">
+                                <CollectionView ItemsSource="{Binding NewConversationChoices}"
+                                                SelectionMode="None"
+                                                IsVisible="{Binding HasNewConversationChoices}">
+                                    <CollectionView.ItemTemplate>
+                                        <DataTemplate x:DataType="viewModels:ConversationContactChoice">
+                                            <Border Margin="0,0,0,6" Padding="9,6" StrokeThickness="0">
+                                                <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="9">
+                                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                              SemanticProperties.Description="{Binding Name, StringFormat='选择 {0}'}" />
+                                                    <Border Grid.Column="1"
+                                                            WidthRequest="32"
+                                                            HeightRequest="32"
+                                                            Padding="0"
+                                                            Background="{StaticResource SurfaceSelectedBrush}"
+                                                            StrokeThickness="0">
+                                                        <Border.StrokeShape><RoundRectangle CornerRadius="16" /></Border.StrokeShape>
+                                                        <Grid>
+                                                            <Label Text="{Binding Initial}"
+                                                                   Style="{StaticResource MutedLabelStyle}"
+                                                                   FontSize="9"
+                                                                   FontAttributes="Bold"
+                                                                   HorizontalTextAlignment="Center"
+                                                                   VerticalTextAlignment="Center" />
+                                                            <controls:RealmMediaImageView SourceUrl="{Binding AvatarUrl}"
+                                                                                          MediaKind="Avatar"
+                                                                                          Aspect="AspectFill"
+                                                                                          ShowFailureText="False" />
+                                                        </Grid>
+                                                    </Border>
+                                                    <VerticalStackLayout Grid.Column="2" VerticalOptions="Center">
+                                                        <Label Text="{Binding Name}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                                        <Label Text="{Binding KindLabel}" Style="{StaticResource MutedLabelStyle}" />
+                                                    </VerticalStackLayout>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </CollectionView.ItemTemplate>
+                                </CollectionView>
+                                <Label Text="没有匹配的已知联系人。"
+                                       IsVisible="{Binding IsNewConversationChoiceEmpty}"
+                                       Style="{StaticResource MutedLabelStyle}"
+                                       HorizontalOptions="Center"
+                                       VerticalOptions="Center" />
+                            </Grid>
+                            <Grid Grid.Row="3" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+                                <Button Text="给自己发私信"
+                                        Style="{StaticResource BaseButtonStyle}"
+                                        Command="{Binding StartSelfConversationCommand}" />
+                                <Button Grid.Column="2"
+                                        Text="取消"
+                                        Style="{StaticResource BaseButtonStyle}"
+                                        Command="{Binding CloseNewConversationCommand}" />
+                                <Button Grid.Column="3"
+                                        Text="打开私信"
+                                        Style="{StaticResource PrimaryButtonStyle}"
+                                        IsEnabled="{Binding CanStartNewConversation}"
+                                        Command="{Binding StartNewConversationCommand}" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsComposerEmojiPickerOpen}">
+                    <BoxView Background="{StaticResource OverlayBrush}">
+                        <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding ToggleComposerEmojiPickerCommand}" /></BoxView.GestureRecognizers>
+                    </BoxView>
+                    <Border Style="{StaticResource DialogBorderStyle}" HorizontalOptions="End" VerticalOptions="End" Margin="24,24,24,108">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                        <VerticalStackLayout Spacing="10">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <VerticalStackLayout>
+                                    <Label Text="表情" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                    <Label Text="选择后在当前光标或选区插入" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
+                                <Button Grid.Column="1" Text="×" Style="{StaticResource IconButtonStyle}" Command="{Binding ToggleComposerEmojiPickerCommand}" />
+                            </Grid>
+                            <CollectionView x:Name="ComposerEmojiCollection"
+                                            ItemsSource="{Binding EmojiChoices}"
+                                            SelectedItem="{Binding SelectedComposerEmoji, Mode=TwoWay}"
+                                            SelectionMode="Single"
+                                            HeightRequest="176"
+                                            MaximumWidthRequest="340">
+                                <CollectionView.ItemsLayout>
+                                    <GridItemsLayout Orientation="Vertical" Span="6" HorizontalItemSpacing="4" VerticalItemSpacing="4" />
+                                </CollectionView.ItemsLayout>
+                                <CollectionView.ItemTemplate>
+                                    <DataTemplate x:DataType="viewModels:EmojiChoice">
+                                        <Button Text="{Binding Emoji}"
+                                                Style="{StaticResource IconButtonStyle}"
+                                                Command="{Binding ViewModel.InsertComposerEmojiCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                CommandParameter="{Binding .}"
+                                                SemanticProperties.Description="{Binding AccessibleLabel}" />
+                                    </DataTemplate>
+                                </CollectionView.ItemTemplate>
+                            </CollectionView>
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsReactionPickerOpen}">
+                    <BoxView Background="{StaticResource OverlayBrush}">
+                        <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseReactionPickerCommand}" /></BoxView.GestureRecognizers>
+                    </BoxView>
+                    <Border Style="{StaticResource DialogBorderStyle}">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                        <VerticalStackLayout Spacing="10">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <VerticalStackLayout>
+                                    <Label Text="添加反应" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                    <Label Text="再次选择自己已添加的反应会移除它" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
+                                <Button Grid.Column="1" Text="×" Style="{StaticResource IconButtonStyle}" Command="{Binding CloseReactionPickerCommand}" />
+                            </Grid>
+                            <CollectionView x:Name="ReactionEmojiCollection"
+                                            ItemsSource="{Binding EmojiChoices}"
+                                            SelectedItem="{Binding SelectedReactionEmoji, Mode=TwoWay}"
+                                            SelectionMode="Single"
+                                            HeightRequest="176"
+                                            MaximumWidthRequest="340">
+                                <CollectionView.ItemsLayout>
+                                    <GridItemsLayout Orientation="Vertical" Span="6" HorizontalItemSpacing="4" VerticalItemSpacing="4" />
+                                </CollectionView.ItemsLayout>
+                                <CollectionView.ItemTemplate>
+                                    <DataTemplate x:DataType="viewModels:EmojiChoice">
+                                        <Button Text="{Binding Emoji}" Style="{StaticResource IconButtonStyle}"
+                                                Command="{Binding ViewModel.SelectReactionEmojiCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                CommandParameter="{Binding .}" SemanticProperties.Description="{Binding AccessibleLabel}" />
+                                    </DataTemplate>
+                                </CollectionView.ItemTemplate>
+                            </CollectionView>
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsImageViewerOpen}">
+                    <BoxView Background="{StaticResource OverlayBrush}">
+                        <BoxView.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding CloseImageViewerCommand}" />
+                        </BoxView.GestureRecognizers>
+                    </BoxView>
+                    <Border Margin="28"
+                            Padding="14"
+                            MaximumWidthRequest="1120"
+                            MaximumHeightRequest="760"
+                            HorizontalOptions="Fill"
+                            VerticalOptions="Fill"
+                            Background="{StaticResource SurfaceRaisedBrush}"
+                            Stroke="{StaticResource StrongBorderBrush}"
+                            StrokeThickness="1">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                        <Grid RowDefinitions="Auto,*,Auto" RowSpacing="10">
+                            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                                <VerticalStackLayout>
+                                    <Label Text="图片预览" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                                    <Label Text="{Binding ActiveImageAttachment.Name}" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
+                                <Button x:Name="ImageViewerCloseButton"
+                                        Grid.Column="1"
+                                        Text="×"
+                                        Style="{StaticResource IconButtonStyle}"
+                                        Command="{Binding CloseImageViewerCommand}"
+                                        SemanticProperties.Description="关闭图片预览" />
+                            </Grid>
+                            <Border Grid.Row="1"
+                                    Padding="0"
+                                    Background="{StaticResource GroundBrush}"
+                                    Stroke="{StaticResource BorderBrush}"
+                                    StrokeThickness="1">
+                                <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                                <controls:RealmMediaImageView SourceUrl="{Binding ActiveImageAttachment.SourceUrl}"
+                                                              Aspect="AspectFit" />
+                            </Border>
+                            <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                <Label Text="{Binding MediaActionStatus}"
+                                       IsVisible="{Binding HasMediaActionStatus}"
+                                       Style="{StaticResource MutedLabelStyle}"
+                                       VerticalTextAlignment="Center" />
+                                <ActivityIndicator Grid.Column="1"
+                                                   IsVisible="{Binding IsMediaActionBusy}"
+                                                   IsRunning="{Binding IsMediaActionBusy}"
+                                                   WidthRequest="24" />
+                                <Button Grid.Column="2"
+                                        Text="下载原文件"
+                                        Style="{StaticResource BaseButtonStyle}"
+                                        Command="{Binding DownloadAttachmentCommand}"
+                                        CommandParameter="{Binding ActiveImageAttachment}" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsMessageMenuOpen}">
+                    <BoxView Background="{StaticResource OverlayBrush}">
+                        <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseMessageMenuCommand}" /></BoxView.GestureRecognizers>
+                    </BoxView>
+                    <Border Style="{StaticResource DialogBorderStyle}" HorizontalOptions="End" Margin="24">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                        <VerticalStackLayout Spacing="6">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <VerticalStackLayout>
+                                    <Label Text="消息操作" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                                    <Label Text="{Binding ActiveMessageTitle}" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
+                                <Button Grid.Column="1" Text="×" Style="{StaticResource IconButtonStyle}" Command="{Binding CloseMessageMenuCommand}" />
+                            </Grid>
+                            <Button x:Name="FirstMessageMenuButton" Text="添加反应" Style="{StaticResource BaseButtonStyle}" Command="{Binding OpenReactionPickerCommand}" />
+                            <Button Text="引用回复" Style="{StaticResource BaseButtonStyle}" Command="{Binding QuoteMessageCommand}" />
+                            <Button Text="复制 raw Markdown" Style="{StaticResource BaseButtonStyle}" Command="{Binding CopyMessageRawCommand}" />
+                            <Button Text="复制消息链接" Style="{StaticResource BaseButtonStyle}" Command="{Binding CopyMessageLinkCommand}" />
+                            <Button Text="复制消息 ID" Style="{StaticResource BaseButtonStyle}" Command="{Binding CopyMessageIdCommand}" />
+                            <Button Text="在官方 Zulip 打开" Style="{StaticResource BaseButtonStyle}" Command="{Binding OpenMessageInZulipCommand}" />
+                            <Button x:Name="StarMessageMenuButton" Text="收藏 / 取消收藏" Style="{StaticResource BaseButtonStyle}" Command="{Binding ToggleMessageStarCommand}" IsEnabled="{Binding CanStarActiveMessage}" />
+                            <Button Text="编辑本人消息" Style="{StaticResource BaseButtonStyle}" Command="{Binding OpenEditDialogCommand}" IsVisible="{Binding CanEditActiveMessage}" />
+                            <Button x:Name="LastMessageMenuButton" Text="永久删除本人消息" Style="{StaticResource BaseButtonStyle}" Command="{Binding RequestDeleteMessageCommand}" IsVisible="{Binding CanDeleteActiveMessage}" TextColor="{StaticResource DangerColor}" />
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsEditDialogOpen}">
+                    <BoxView Background="{StaticResource OverlayBrush}" />
+                    <Border Style="{StaticResource DialogBorderStyle}">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                        <VerticalStackLayout Spacing="12">
+                            <Label Text="编辑消息" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                            <Label Text="使用原始 Markdown；提交时会携带当前正文 SHA-256 防止覆盖并发编辑。" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                            <Editor x:Name="EditMessageEditor" Text="{Binding EditMessageText, Mode=TwoWay}" Style="{StaticResource ComposerEditorStyle}" HeightRequest="180" />
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <Button Text="取消" Style="{StaticResource BaseButtonStyle}" Command="{Binding CancelEditDialogCommand}" />
+                                <Button Grid.Column="1" Text="保存更改" Style="{StaticResource PrimaryButtonStyle}" Command="{Binding ConfirmEditMessageCommand}" />
+                            </Grid>
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsDeleteConfirmationOpen}">
+                    <BoxView Background="{StaticResource OverlayBrush}" />
+                    <Border Style="{StaticResource DialogBorderStyle}" Stroke="{StaticResource DangerColor}">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                        <VerticalStackLayout Spacing="12">
+                            <Label Text="永久删除消息？" Style="{StaticResource DangerLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                            <Label Text="此操作不可撤销。若网络结果未知，RelayCove 不会自动重试删除。" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" />
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <Button x:Name="DeleteCancelButton" Text="取消" Style="{StaticResource BaseButtonStyle}" Command="{Binding CancelDeleteMessageCommand}" />
+                                <Button Grid.Column="1" Text="永久删除" Style="{StaticResource PrimaryButtonStyle}" BackgroundColor="{StaticResource DangerColor}" Command="{Binding ConfirmDeleteMessageCommand}" />
+                            </Grid>
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding LogoutConfirmationVisible}">
+                    <BoxView Background="{StaticResource OverlayBrush}" />
+                    <Border Style="{StaticResource DialogBorderStyle}" Stroke="{StaticResource DangerColor}">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                        <VerticalStackLayout Spacing="12">
+                            <Label Text="注销当前账户？" Style="{StaticResource DangerLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                            <Label Text="将删除安全凭据并锁定当前账号缓存；不会删除 Zulip 服务端消息。" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" />
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <Button x:Name="LogoutCancelButton" Text="取消" Style="{StaticResource BaseButtonStyle}" Command="{Binding CancelLogoutCommand}" />
+                                <Button Grid.Column="1" Text="确认注销" Style="{StaticResource PrimaryButtonStyle}" BackgroundColor="{StaticResource DangerColor}" Command="{Binding ConfirmLogoutCommand}" />
+                            </Grid>
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Border Margin="16"
+                        Padding="12,8"
+                        HorizontalOptions="Center"
+                        VerticalOptions="Start"
+                        IsVisible="{Binding HasUnavailableFeatureMessage}"
+                        Background="{StaticResource SurfaceRaisedBrush}"
+                        Stroke="{StaticResource WarningBrush}"
+                        StrokeThickness="1">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="10" />
+                    </Border.StrokeShape>
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                        <Label Text="{Binding UnavailableFeatureMessage}"
+                               Style="{StaticResource BaseLabelStyle}"
+                               LineBreakMode="WordWrap"
+                               VerticalTextAlignment="Center" />
+                        <Button Grid.Column="1"
+                                Text="×"
+                                Style="{StaticResource IconButtonStyle}"
+                                Command="{Binding DismissUnavailableFeatureCommand}"
+                                SemanticProperties.Description="关闭能力说明" />
+                    </Grid>
+                </Border>
+
+                <Border Margin="16,54,16,0"
+                        Padding="12,8"
+                        HorizontalOptions="Center"
+                        VerticalOptions="Start"
+                        IsVisible="{Binding HasLoginError}"
+                        Background="{StaticResource SurfaceRaisedBrush}"
+                        Stroke="{StaticResource DangerBrush}"
+                        StrokeThickness="1">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="10" />
+                    </Border.StrokeShape>
+                    <Label Text="{Binding LoginError}"
+                           Style="{StaticResource DangerLabelStyle}"
+                           LineBreakMode="WordWrap" />
+                </Border>
             </Grid>
-
-            <Grid Grid.Row="1" Grid.Column="1" RowDefinitions="Auto,*" RowSpacing="6">
-                <Label Text="话题" FontAttributes="Bold" />
-                <CollectionView Grid.Row="1" ItemsSource="{Binding Topics}" SelectedItem="{Binding SelectedTopic}" SelectionMode="Single">
-                    <CollectionView.ItemTemplate>
-                        <DataTemplate x:DataType="viewModels:TopicItem">
-                            <Label Text="{Binding Topic}" Padding="4" />
-                        </DataTemplate>
-                    </CollectionView.ItemTemplate>
-                </CollectionView>
-            </Grid>
-
-            <Grid Grid.Row="1" Grid.Column="2" RowDefinitions="Auto,*" RowSpacing="6">
-                <Label Text="私信" FontAttributes="Bold" />
-                <CollectionView Grid.Row="1" ItemsSource="{Binding DirectMessages}" SelectedItem="{Binding SelectedDirectMessage}" SelectionMode="Single">
-                    <CollectionView.ItemTemplate>
-                        <DataTemplate x:DataType="viewModels:NavigationItem">
-                            <Label Text="{Binding Title}" Padding="4" />
-                        </DataTemplate>
-                    </CollectionView.ItemTemplate>
-                </CollectionView>
-            </Grid>
-
-            <Grid Grid.Row="1" Grid.Column="3" RowDefinitions="Auto,*,Auto,Auto" RowSpacing="8">
-                <Button Text="加载更早消息" Command="{Binding LoadOlderCommand}" IsEnabled="{Binding HasSelectedConversation}" />
-                <CollectionView Grid.Row="1" ItemsSource="{Binding Messages}" SelectionMode="None">
-                    <CollectionView.ItemTemplate>
-                        <DataTemplate x:DataType="viewModels:MessageItem">
-                            <VerticalStackLayout Padding="6" Spacing="2">
-                                <Label Text="{Binding Sender}" FontAttributes="Bold" />
-                                <Label Text="{Binding Content}" LineBreakMode="WordWrap" />
-                                <Label Text="{Binding DeliveryState}" FontSize="12" TextColor="DarkOrange" />
-                                <Button Text="恢复到输入框"
-                                        IsVisible="{Binding CanRecover}"
-                                        Command="{Binding RecoverCommand}"
-                                        CommandParameter="{Binding .}" />
-                                <Label Text="{Binding Timestamp}" FontSize="12" />
-                            </VerticalStackLayout>
-                        </DataTemplate>
-                    </CollectionView.ItemTemplate>
-                </CollectionView>
-                <Entry Grid.Row="2" Placeholder="输入原始 Markdown 文本" Text="{Binding ComposerText}" IsEnabled="{Binding HasSelectedConversation}" />
-                <HorizontalStackLayout Grid.Row="3" Spacing="8">
-                    <Button Text="发送" Command="{Binding SendCommand}" IsEnabled="{Binding HasSelectedConversation}" />
-                    <Button Text="标记当前页已读" Command="{Binding MarkReadCommand}" IsEnabled="{Binding HasSelectedConversation}" />
-                </HorizontalStackLayout>
-            </Grid>
-
-            <HorizontalStackLayout Grid.Row="2" Grid.ColumnSpan="4" Spacing="8">
-                <Button Text="注销" Command="{Binding LogoutCommand}" />
-                <Button Text="清除本地缓存" Command="{Binding RequestClearCacheCommand}" />
-                <Label Text="此操作会删除当前账号的本地缓存，无法恢复。" IsVisible="{Binding ClearCacheConfirmationVisible}" VerticalTextAlignment="Center" />
-                <Button Text="确认清除" Command="{Binding ConfirmClearCacheCommand}" IsVisible="{Binding ClearCacheConfirmationVisible}" />
-                <Button Text="取消" Command="{Binding CancelClearCacheCommand}" IsVisible="{Binding ClearCacheConfirmationVisible}" />
-            </HorizontalStackLayout>
         </Grid>
     </Grid>
 </ContentPage>

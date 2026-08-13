@@ -18,7 +18,7 @@
 - 冻结日期：2026-08-12
 - 目标视口：1440×900；补充检查 1024×768
 - 历史原型（只读）：[RelayCove-UI-Playground.html](baselines/chat-ui-v1/RelayCove-UI-Playground.html)；日常 Web 验收不再使用此入口
-- 当前任务：[Stage 22W / 22M 双前端](../ai/tasks/2026-08-12-stage-22-native-chat-ui.md)；22W active，22M planned
+- 当前任务：[Stage 22W / 22M 双前端](../ai/tasks/2026-08-12-stage-22-native-chat-ui.md)；22W 正式客户端与后续消息/附件操作已实现，22M 原生壳与消息交互已实现并有受限浅/深真实窗口证据；真实 Realm 原生写与完整 Windows 人工验收仍开放
 
 ## 重要边界
 
@@ -26,5 +26,5 @@
 - 两端共享 Token、规格、功能矩阵与验收场景，不共享 UI 运行时代码。
 - MAUI 必须使用原生 XAML、控件和 ViewModel，不得把 RelayCove.Web 或冻结 HTML 放进 WebView。
 - Zulip 仍是用户、权限、频道、话题和消息的唯一事实源。
-- 任意附件选择/拖放/安全文件卡片、真实头像、可折叠频道/私信组、当前用户频道退订、消息菜单/快捷工具、完整 raw Markdown 引用、Composer Unicode 表情、reaction、本人消息编辑/删除和当前账号收藏已由 Stage 22W 实施；其余频道管理、搜索、`@` 成员等仍须按后续独立能力门实施。
+- Stage 22W 已实施任意附件选择/拖放/安全文件卡片、真实头像、可折叠频道/私信组、当前用户频道退订、完整引用/表情/reaction/edit/delete/star。Stage 22M 已原生实现受控头像/图片/文件附件、完整消息菜单、reaction/edit/delete/star、本地已加载状态搜索和已知用户新会话，并通过 fake/in-memory 测试；这些原生真实 Zulip 写入仍未验收。完整成员目录、服务器搜索/`@` 候选、saved 列表、presence 和其余频道管理继续保持隐藏或明确不可用。
 - 截图用于视觉比较；交互规格用于行为判断；两者都不能替代 Windows 真实窗口验收。

@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:controls="clr-namespace:RelayCove.App.Controls"
+             xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
+             x:Class="RelayCove.App.Controls.ContactsPageView"
+             x:DataType="viewModels:ShellViewModel"
+             Background="{StaticResource GroundBrush}">
+    <Grid RowDefinitions="Auto,*" Padding="28,22" RowSpacing="18">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+            <VerticalStackLayout>
+                <Label Text="联系人"
+                       Style="{StaticResource BaseLabelStyle}"
+                       FontSize="24"
+                       FontAttributes="Bold" />
+                <Label Text="仅显示 IClientSession 当前可靠获知的活跃用户；不声称完整成员目录或在线状态。"
+                       Style="{StaticResource MutedLabelStyle}" />
+            </VerticalStackLayout>
+            <Button Grid.Column="1"
+                    Text="返回消息"
+                    Style="{StaticResource BaseButtonStyle}"
+                    Command="{Binding ShowMessagesCommand}" />
+        </Grid>
+
+        <CollectionView Grid.Row="1"
+                        ItemsSource="{Binding KnownContacts}"
+                        SelectionMode="None"
+                        MaximumWidthRequest="760"
+                        HorizontalOptions="Start">
+            <CollectionView.EmptyView>
+                <Label Text="当前会话没有可靠的联系人投影。"
+                       Style="{StaticResource MutedLabelStyle}" />
+            </CollectionView.EmptyView>
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="viewModels:ContactItem">
+                    <Border Margin="0,0,0,8"
+                            WidthRequest="520"
+                            Padding="12"
+                            Background="{StaticResource SurfaceBrush}"
+                            Stroke="{StaticResource BorderBrush}"
+                            StrokeThickness="1">
+                        <Border.StrokeShape>
+                            <RoundRectangle CornerRadius="10" />
+                        </Border.StrokeShape>
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+                            <Border WidthRequest="36"
+                                    HeightRequest="36"
+                                    Padding="0"
+                                    Background="{StaticResource AccentBrush}"
+                                    StrokeThickness="0">
+                                <Border.StrokeShape>
+                                    <RoundRectangle CornerRadius="18" />
+                                </Border.StrokeShape>
+                                <Grid>
+                                    <Label Text="{Binding Initial}"
+                                           TextColor="White"
+                                           FontSize="10"
+                                           HorizontalTextAlignment="Center"
+                                           VerticalTextAlignment="Center" />
+                                    <controls:RealmMediaImageView SourceUrl="{Binding AvatarUrl}"
+                                                                  MediaKind="Avatar"
+                                                                  Aspect="AspectFill"
+                                                                  ShowFailureText="False" />
+                                </Grid>
+                            </Border>
+                            <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
+                                <Label Text="{Binding Name}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                <Label Text="状态与共同频道不可用" Style="{StaticResource MutedLabelStyle}" />
+                            </VerticalStackLayout>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentView>

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:controls="clr-namespace:RelayCove.App.Controls"
+             xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
+             xmlns:windowsBehaviors="clr-namespace:RelayCove.App.Platforms.Windows.Behaviors"
+             x:Class="RelayCove.App.Controls.DetailsPaneView"
+             x:Name="Root"
+             x:DataType="viewModels:ShellViewModel"
+             Background="{StaticResource SurfaceRaisedBrush}">
+    <Grid RowDefinitions="Auto,*" Padding="16,10,16,16" RowSpacing="12">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+            <Label Text="详情"
+                   Style="{StaticResource BaseLabelStyle}"
+                   FontSize="16"
+                   FontAttributes="Bold"
+                   VerticalTextAlignment="Center" />
+            <Button x:Name="CloseButton"
+                    Grid.Column="1"
+                    Text="×"
+                    Style="{StaticResource IconButtonStyle}"
+                    Command="{Binding ToggleDetailsCommand}"
+                    SemanticProperties.Description="收起详情">
+                <Button.Behaviors>
+                    <windowsBehaviors:EscapeCommandBehavior
+                        Command="{Binding ViewModel.ToggleDetailsCommand, Source={x:Reference Root}, x:DataType=controls:DetailsPaneView}"
+                        TrapFocus="{Binding IsModal, Source={x:Reference Root}, x:DataType=controls:DetailsPaneView}" />
+                </Button.Behaviors>
+            </Button>
+        </Grid>
+
+        <ScrollView Grid.Row="1">
+            <VerticalStackLayout Spacing="14">
+                <Border Style="{StaticResource CardBorderStyle}">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="10" />
+                    </Border.StrokeShape>
+                    <VerticalStackLayout Spacing="6">
+                        <Label Text="{Binding DetailsTitle}"
+                               Style="{StaticResource BaseLabelStyle}"
+                               FontAttributes="Bold" />
+                        <Label Text="{Binding DetailsBody}"
+                               Style="{StaticResource BaseLabelStyle}"
+                               LineBreakMode="WordWrap" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <Border Padding="12"
+                        Background="{StaticResource SurfaceSoftBrush}"
+                        Stroke="{StaticResource BorderBrush}"
+                        StrokeThickness="1">
+                    <Border.StrokeShape>
+                        <RoundRectangle CornerRadius="10" />
+                    </Border.StrokeShape>
+                    <VerticalStackLayout Spacing="6">
+                        <Label Text="能力边界" Style="{StaticResource SectionHeaderStyle}" />
+                        <Label Text="{Binding DetailsUnavailableMessage}"
+                               Style="{StaticResource MutedLabelStyle}"
+                               LineBreakMode="WordWrap" />
+                        <Label Text="不会从 Realm 用户集合推断频道成员或 presence。"
+                               Style="{StaticResource MutedLabelStyle}"
+                               LineBreakMode="WordWrap" />
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+        </ScrollView>
+    </Grid>
+</ContentView>

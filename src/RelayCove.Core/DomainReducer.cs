@@ -56,6 +56,7 @@ public static class DomainReducer
         var users = new Dictionary<long, UserProfile>(state.Users);
         var topics = new Dictionary<string, TopicSummary>(state.Topics);
         var outbox = new Dictionary<string, OutboxEntry>(state.Outbox, StringComparer.Ordinal);
+        var messageMutations = new Dictionary<long, MessageMutationState>(state.MessageMutations);
         var unread = state.Unread;
         var connection = state.Connection;
 
@@ -75,6 +76,23 @@ public static class DomainReducer
                 break;
             case MessageContentChangedEvent changed when messages.TryGetValue(changed.MessageId, out var existing):
                 messages[changed.MessageId] = existing with { Content = changed.Content };
+                messageMutations.Remove(changed.MessageId);
+                break;
+            case MessageReactionChangedEvent changed when messages.TryGetValue(changed.MessageId, out var reactionMessage):
+                var reactions = reactionMessage.Reactions.ToList();
+                var reactionIndex = reactions.FindIndex(item =>
+                    item.UserId == changed.Reaction.UserId &&
+                    string.Equals(item.Identity.CanonicalKey, changed.Reaction.Identity.CanonicalKey, StringComparison.Ordinal));
+                if (changed.Add && reactionIndex < 0)
+                {
+                    reactions.Add(changed.Reaction);
+                }
+                else if (!changed.Add && reactionIndex >= 0)
+                {
+                    reactions.RemoveAt(reactionIndex);
+                }
+                messages[changed.MessageId] = reactionMessage with { Reactions = reactions.ToArray() };
+                messageMutations.Remove(changed.MessageId);
                 break;
             case SendConfirmedEvent sent:
                 messages[sent.Message.Id] = sent.Message;
@@ -128,6 +146,7 @@ public static class DomainReducer
                         unread = unread.Adjust(deletedMessage.Conversation.CanonicalKey, -1);
                     }
                     messages.Remove(id);
+                    messageMutations.Remove(id);
                 }
                 break;
             case MessageMovedEvent moved:
@@ -159,6 +178,18 @@ public static class DomainReducer
                     messages[id] = flagged with { IsRead = read };
                 }
                 break;
+            case MessageFlagsChangedEvent flags when string.Equals(flags.Flag, "starred", StringComparison.OrdinalIgnoreCase):
+                var starred = flags.Operation == MessageFlagOperation.Add;
+                var starredIds = flags.AllMessages ? messages.Keys.ToArray() : flags.MessageIds;
+                foreach (var id in starredIds)
+                {
+                    if (messages.TryGetValue(id, out var flagged))
+                    {
+                        messages[id] = flagged with { IsStarred = starred };
+                        messageMutations.Remove(id);
+                    }
+                }
+                break;
             case ConnectionChangedEvent changed:
                 connection = changed.Connection;
                 break;
@@ -170,7 +201,7 @@ public static class DomainReducer
         var lastEventId = advanceCursor && domainEvent.EventId is { } incoming
             ? incoming
             : state.LastEventId;
-        return new ClientState(messages, subscriptions, users, topics, outbox, unread, connection, lastEventId);
+        return new ClientState(messages, subscriptions, users, topics, outbox, unread, connection, lastEventId, messageMutations);
     }
 
     private static UnreadState AdjustForReplacement(

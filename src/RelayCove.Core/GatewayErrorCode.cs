@@ -11,6 +11,9 @@ public enum GatewayErrorCode
     RedirectNotAllowed,
     IncompatibleRealm,
     InvalidResponse,
+    ReactionAlreadyExists,
+    ReactionDoesNotExist,
+    ExpectationMismatch,
     ServerError,
     RequestFailed
 }

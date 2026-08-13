@@ -142,5 +142,32 @@ public sealed class DomainReducerTests
         Assert.Equal(2, state.LastEventId);
     }
 
+    [Fact]
+    public void Apply_WhenReactionIsAddedReplayedAndRemoved_IsIdempotent()
+    {
+        var identity = new EmojiReactionIdentity("thumbs_up", "1f44d", "unicode_emoji");
+        var reaction = new EmojiReaction(identity, 2, "Bea");
+        var state = DomainReducer.Apply(ClientState.Empty, new MessageUpsertEvent(Message(1)));
+
+        state = DomainReducer.Apply(state, new MessageReactionChangedEvent(1, reaction, true));
+        state = DomainReducer.Apply(state, new MessageReactionChangedEvent(1, reaction, true));
+
+        Assert.Single(state.Messages[1].Reactions);
+        state = DomainReducer.Apply(state, new MessageReactionChangedEvent(1, reaction, false));
+        Assert.Empty(state.Messages[1].Reactions);
+    }
+
+    [Fact]
+    public void Apply_WhenStarredFlagChanges_UpdatesOnlyTargetMessages()
+    {
+        var state = DomainReducer.Apply(ClientState.Empty, [new MessageUpsertEvent(Message(1)), new MessageUpsertEvent(Message(2))]);
+
+        state = DomainReducer.Apply(state, new MessageFlagsChangedEvent([1], false, MessageFlagOperation.Add, "starred"));
+        state = DomainReducer.Apply(state, new MessageFlagsChangedEvent([2], false, MessageFlagOperation.Remove, "starred"));
+
+        Assert.True(state.Messages[1].IsStarred);
+        Assert.False(state.Messages[2].IsStarred);
+    }
+
     private static ChatMessage Message(long id, ConversationKey? conversation = null) => new(id, conversation ?? new DirectMessage([]), 1, "content", DateTimeOffset.UnixEpoch);
 }

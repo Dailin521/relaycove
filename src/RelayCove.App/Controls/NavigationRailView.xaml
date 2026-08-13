@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
+             x:Class="RelayCove.App.Controls.NavigationRailView"
+             x:DataType="viewModels:ShellViewModel"
+             Background="{StaticResource SurfaceSoftBrush}">
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Padding="4,10" RowSpacing="4">
+        <Grid Grid.Row="0">
+            <Button Text="消息"
+                    Style="{StaticResource NavigationButtonStyle}"
+                    Command="{Binding ShowMessagesCommand}"
+                    SemanticProperties.Description="消息">
+                <Button.Triggers>
+                    <DataTrigger TargetType="Button" Binding="{Binding IsMessagesSection}" Value="True">
+                        <Setter Property="BackgroundColor"
+                                Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
+                    </DataTrigger>
+                </Button.Triggers>
+            </Button>
+            <Border Margin="0,-2,-2,0"
+                    Padding="5,1"
+                    HorizontalOptions="End"
+                    VerticalOptions="Start"
+                    IsVisible="{Binding HasNavigationUnread}"
+                    Background="{StaticResource DangerBrush}"
+                    StrokeThickness="0">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="8" />
+                </Border.StrokeShape>
+                <Label Text="{Binding NavigationUnreadLabel}"
+                       FontSize="9"
+                       TextColor="White"
+                       SemanticProperties.Description="{Binding NavigationUnreadLabel, StringFormat='未读 {0}'}" />
+            </Border>
+        </Grid>
+
+        <Button Grid.Row="1"
+                Text="联系人"
+                Style="{StaticResource NavigationButtonStyle}"
+                Command="{Binding ShowContactsCommand}"
+                SemanticProperties.Description="当前客户端已知联系人">
+            <Button.Triggers>
+                <DataTrigger TargetType="Button" Binding="{Binding IsContactsSection}" Value="True">
+                    <Setter Property="BackgroundColor"
+                            Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
+                </DataTrigger>
+            </Button.Triggers>
+        </Button>
+
+        <Button Grid.Row="2"
+                Text="已保存"
+                Style="{StaticResource NavigationButtonStyle}"
+                Command="{Binding ShowSavedUnavailableCommand}"
+                SemanticProperties.Description="已保存消息，暂不可用" />
+
+        <Button Grid.Row="3"
+                Text="设置"
+                Style="{StaticResource NavigationButtonStyle}"
+                Command="{Binding ShowSettingsCommand}"
+                SemanticProperties.Description="设置">
+            <Button.Triggers>
+                <DataTrigger TargetType="Button" Binding="{Binding IsSettingsSection}" Value="True">
+                    <Setter Property="BackgroundColor"
+                            Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
+                </DataTrigger>
+            </Button.Triggers>
+        </Button>
+
+        <Border Grid.Row="5"
+                WidthRequest="36"
+                HeightRequest="36"
+                Padding="0"
+                HorizontalOptions="Center"
+                Background="{StaticResource AccentBrush}"
+                StrokeThickness="0"
+                SemanticProperties.Description="当前账户；presence 未提供">
+            <Border.StrokeShape>
+                <RoundRectangle CornerRadius="18" />
+            </Border.StrokeShape>
+            <Label Text="我"
+                   Style="{StaticResource BaseLabelStyle}"
+                   TextColor="White"
+                   HorizontalTextAlignment="Center"
+                   VerticalTextAlignment="Center" />
+        </Border>
+    </Grid>
+</ContentView>

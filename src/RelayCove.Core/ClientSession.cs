@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace RelayCove.Core;
 
@@ -19,6 +21,7 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
     private readonly object _stateGate = new();
     private readonly CancellationTokenSource _disposeCancellation = new();
     private readonly ConcurrentDictionary<string, Task> _outboxTimers = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<long, SemaphoreSlim> _messageMutationLanes = new();
 
     private ClientState _state = ClientState.Empty;
     private AccountId? _accountId;
@@ -29,6 +32,7 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
     private TimeSpan _longPollTimeout = TimeSpan.FromSeconds(30);
     private int _maxMessageLength = int.MaxValue;
     private int _maxTopicLength = int.MaxValue;
+    private long _maxFileUploadBytes = 10L * 1024 * 1024;
     private CancellationTokenSource? _runCancellation;
     private Task? _eventLoop;
     private int _disposed;
@@ -55,6 +59,21 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
     public AccountId? AccountId
     {
         get { lock (_stateGate) return _accountId; }
+    }
+
+    public RealmEndpoint? ActiveRealm
+    {
+        get { lock (_stateGate) return _credentials?.Realm; }
+    }
+
+    public long? CurrentUserId
+    {
+        get { lock (_stateGate) return _credentials?.UserId; }
+    }
+
+    public long MaxFileUploadBytes
+    {
+        get { lock (_stateGate) return _maxFileUploadBytes; }
     }
 
     public ClientState State
@@ -559,6 +578,157 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
         }
     }
 
+    public Task SetReactionAsync(
+        long messageId,
+        EmojiReactionIdentity reaction,
+        bool add,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(reaction);
+        return ExecuteMessageMutationAsync(
+            messageId,
+            MessageMutationKind.Reaction,
+            requireOwnership: false,
+            async (credentials, message, token) =>
+            {
+                await _gateway.SetReactionAsync(
+                    new SetReactionRequest(credentials, messageId, reaction, add), token).ConfigureAwait(false);
+                var fullName = State.Users.GetValueOrDefault(credentials.UserId)?.FullName;
+                return new MessageReactionChangedEvent(
+                    messageId,
+                    new EmojiReaction(reaction, credentials.UserId, fullName),
+                    add,
+                    Source: DomainEventSource.Local);
+            },
+            cancellationToken);
+    }
+
+    public Task EditMessageAsync(long messageId, string content, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(content);
+        return ExecuteMessageMutationAsync(
+            messageId,
+            MessageMutationKind.Edit,
+            requireOwnership: true,
+            async (credentials, message, token) =>
+            {
+                ValidateMessageContent(content);
+                var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(message.Content)))
+                    .ToLowerInvariant();
+                await _gateway.EditMessageAsync(
+                    new EditMessageRequest(credentials, messageId, content, hash), token).ConfigureAwait(false);
+                return new MessageContentChangedEvent(messageId, content, Source: DomainEventSource.Local);
+            },
+            cancellationToken);
+    }
+
+    public Task DeleteMessageAsync(long messageId, CancellationToken cancellationToken = default) =>
+        ExecuteMessageMutationAsync(
+            messageId,
+            MessageMutationKind.Delete,
+            requireOwnership: true,
+            async (credentials, _, token) =>
+            {
+                await _gateway.DeleteMessageAsync(
+                    new DeleteMessageRequest(credentials, messageId), token).ConfigureAwait(false);
+                return new MessageDeletedEvent([messageId], Source: DomainEventSource.Local);
+            },
+            cancellationToken);
+
+    public Task SetMessageStarredAsync(long messageId, bool isStarred, CancellationToken cancellationToken = default) =>
+        ExecuteMessageMutationAsync(
+            messageId,
+            MessageMutationKind.Star,
+            requireOwnership: false,
+            async (credentials, _, token) =>
+            {
+                await _gateway.SetMessageStarredAsync(
+                    new SetMessageStarredRequest(credentials, messageId, isStarred), token).ConfigureAwait(false);
+                return new MessageFlagsChangedEvent(
+                    [messageId],
+                    false,
+                    isStarred ? MessageFlagOperation.Add : MessageFlagOperation.Remove,
+                    "starred",
+                    Source: DomainEventSource.Local);
+            },
+            cancellationToken);
+
+    public async Task<UploadedAttachment> UploadAttachmentAsync(
+        AttachmentUpload upload,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(upload);
+        ValidateAttachmentUpload(upload);
+        ThrowIfDisposed();
+        await _commands.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var credentials = GetConnectedCredentials();
+            CancellationToken runToken;
+            lock (_stateGate)
+            {
+                runToken = _runCancellation?.Token ?? throw new InvalidOperationException("The session is stopped.");
+            }
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runToken);
+            try
+            {
+                return await _gateway.UploadAttachmentAsync(
+                    new UploadAttachmentRequest(credentials, upload),
+                    linked.Token).ConfigureAwait(false);
+            }
+            catch (GatewayException exception) when (IsUnauthorized(exception))
+            {
+                await HandleUnauthorizedAsync().ConfigureAwait(false);
+                throw;
+            }
+            catch (GatewayException exception) when (IsNetwork(exception))
+            {
+                Mutate(state => state with
+                {
+                    Connection = new ConnectionState(ConnectionStatus.Offline, "attachment_upload_unknown")
+                });
+                throw;
+            }
+            catch (GatewayException exception) when (IsRateLimited(exception))
+            {
+                Mutate(state => state with
+                {
+                    Connection = new ConnectionState(ConnectionStatus.RateLimited, "attachment_upload_rate_limited")
+                });
+                throw;
+            }
+        }
+        finally
+        {
+            _commands.Release();
+        }
+    }
+
+    public async Task<RealmMediaResult> GetRealmMediaAsync(
+        RealmMediaRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.MaximumBytes <= 0) throw new ArgumentOutOfRangeException(nameof(request));
+        ThrowIfDisposed();
+        CredentialEnvelope credentials;
+        lock (_stateGate)
+        {
+            credentials = _credentials ?? throw new InvalidOperationException("No credentials are available.");
+        }
+        try
+        {
+            return await _gateway.GetRealmMediaAsync(
+                new GetRealmMediaRequest(credentials, request),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (GatewayException exception) when (IsUnauthorized(exception))
+        {
+            await HandleUnauthorizedAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
     public async Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -896,6 +1066,7 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
             _longPollTimeout = register.EventQueueLongPollTimeout;
             _maxMessageLength = register.MaxMessageLength;
             _maxTopicLength = register.MaxTopicLength;
+            _maxFileUploadBytes = checked((long)(register.MaxFileUploadSizeMiB ?? 10) * 1024 * 1024);
             _recentDirectMessages = MergeRecentDirectMessages(
                 register.RecentDirectMessages,
                 DeriveRecentDirectMessages(snapshot));
@@ -910,6 +1081,120 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
         var accountId = AccountId ?? throw new InvalidOperationException("No account is active.");
         await _store.ApplyBatchAsync(accountId, events, cancellationToken).ConfigureAwait(false);
         Mutate(state => DomainReducer.Apply(state, events));
+    }
+
+    private async Task ExecuteMessageMutationAsync(
+        long messageId,
+        MessageMutationKind kind,
+        bool requireOwnership,
+        Func<CredentialEnvelope, ChatMessage, CancellationToken, Task<DomainEvent>> operation,
+        CancellationToken cancellationToken)
+    {
+        if (messageId <= 0) throw new ArgumentOutOfRangeException(nameof(messageId));
+        ArgumentNullException.ThrowIfNull(operation);
+        ThrowIfDisposed();
+        var lane = _messageMutationLanes.GetOrAdd(messageId, static _ => new SemaphoreSlim(1, 1));
+        await lane.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            CredentialEnvelope credentials;
+            ChatMessage message;
+            CancellationToken runToken;
+            lock (_stateGate)
+            {
+                if (_state.Connection.Status != ConnectionStatus.Connected)
+                {
+                    throw new InvalidOperationException("Message changes require a connected session.");
+                }
+                credentials = _credentials ?? throw new InvalidOperationException("No credentials are available.");
+                message = _state.Messages.GetValueOrDefault(messageId) ??
+                    throw new InvalidOperationException("The message is no longer available.");
+                if (requireOwnership && message.SenderId != credentials.UserId)
+                {
+                    throw new InvalidOperationException("Only your own message can be changed.");
+                }
+                if (_state.MessageMutations.TryGetValue(messageId, out var existing) &&
+                    existing.Status is MessageMutationStatus.Submitting or MessageMutationStatus.Uncertain)
+                {
+                    throw new InvalidOperationException("The previous message change must be reconciled first.");
+                }
+                runToken = _runCancellation?.Token ?? throw new InvalidOperationException("The session is stopped.");
+            }
+
+            SetMessageMutation(new MessageMutationState(messageId, kind, MessageMutationStatus.Submitting));
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runToken);
+            try
+            {
+                var domainEvent = await operation(credentials, message, linked.Token).ConfigureAwait(false);
+                await StoreThenApplyAsync([domainEvent], linked.Token).ConfigureAwait(false);
+            }
+            catch (GatewayException exception) when (IsUnauthorized(exception))
+            {
+                await HandleUnauthorizedAsync().ConfigureAwait(false);
+                throw;
+            }
+            catch (GatewayException exception) when (IsMutationResultUncertain(exception))
+            {
+                SetMessageMutation(new MessageMutationState(
+                    messageId,
+                    kind,
+                    MessageMutationStatus.Uncertain,
+                    exception.Code.ToString()));
+                if (IsNetwork(exception))
+                {
+                    Mutate(state => state with { Connection = new ConnectionState(ConnectionStatus.Offline, "message_mutation_unknown") });
+                }
+                throw;
+            }
+            catch (GatewayException exception)
+            {
+                SetMessageMutation(new MessageMutationState(
+                    messageId,
+                    kind,
+                    MessageMutationStatus.Failed,
+                    exception.Code.ToString()));
+                if (IsRateLimited(exception))
+                {
+                    Mutate(state => state with { Connection = new ConnectionState(ConnectionStatus.RateLimited, "message_mutation_rate_limited") });
+                }
+                throw;
+            }
+            catch (OperationCanceledException)
+            {
+                SetMessageMutation(new MessageMutationState(
+                    messageId,
+                    kind,
+                    MessageMutationStatus.Uncertain,
+                    GatewayErrorCode.RequestTimedOut.ToString()));
+                throw;
+            }
+            catch
+            {
+                SetMessageMutation(new MessageMutationState(
+                    messageId,
+                    kind,
+                    MessageMutationStatus.Failed,
+                    "local_failure"));
+                throw;
+            }
+        }
+        finally
+        {
+            lane.Release();
+        }
+    }
+
+    private void SetMessageMutation(MessageMutationState mutation)
+    {
+        Mutate(state =>
+        {
+            var mutations = new Dictionary<long, MessageMutationState>(state.MessageMutations)
+            {
+                [mutation.MessageId] = mutation
+            };
+            return state with { MessageMutations = mutations };
+        });
     }
 
     private void ApplyLocalMessages(IReadOnlyList<ChatMessage> messages)
@@ -1197,7 +1482,7 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
 
     private void ValidateSend(ConversationKey conversation, string content)
     {
-        if (content.Length > _maxMessageLength) throw new ArgumentException("Message exceeds the server limit.", nameof(content));
+        ValidateMessageContent(content);
         if (conversation is ChannelTopic channel)
         {
             if (!_state.Subscriptions.TryGetValue(channel.ChannelId, out var subscription) || !subscription.IsActive)
@@ -1205,6 +1490,31 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
                 throw new InvalidOperationException("The channel is not subscribed.");
             }
             if (channel.Topic.Length > _maxTopicLength) throw new ArgumentException("Topic exceeds the server limit.", nameof(conversation));
+        }
+    }
+
+    private void ValidateMessageContent(string content)
+    {
+        if (content.Length > _maxMessageLength)
+        {
+            throw new ArgumentException("Message exceeds the server limit.", nameof(content));
+        }
+    }
+
+    private void ValidateAttachmentUpload(AttachmentUpload upload)
+    {
+        var fileName = upload.FileName.Trim();
+        if (fileName.Length == 0 || fileName.Length > 256 || fileName.Any(character => character < 0x20 || character == 0x7f))
+        {
+            throw new ArgumentException("Attachment file name is invalid.", nameof(upload));
+        }
+        if (upload.Length <= 0 || upload.Length > MaxFileUploadBytes)
+        {
+            throw new ArgumentException("Attachment size is outside the server limit.", nameof(upload));
+        }
+        if (upload.Content.CanSeek && upload.Content.Length - upload.Content.Position < upload.Length)
+        {
+            throw new ArgumentException("Attachment stream is shorter than the declared length.", nameof(upload));
         }
     }
 
@@ -1285,6 +1595,10 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
     private static bool IsNetwork(GatewayException exception) =>
         exception.Kind == GatewayErrorKind.Offline ||
         exception.Code is GatewayErrorCode.NetworkError or GatewayErrorCode.RequestTimedOut;
+
+    private static bool IsMutationResultUncertain(GatewayException exception) =>
+        IsNetwork(exception) ||
+        exception.Kind is GatewayErrorKind.Server or GatewayErrorKind.Protocol;
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 }

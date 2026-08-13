@@ -16,7 +16,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
     private static readonly string[] DefaultEventTypes =
     [
         "message", "subscription", "realm_user", "stream", "update_message",
-        "delete_message", "update_message_flags", "realm", "heartbeat", "restart"
+        "delete_message", "update_message_flags", "reaction", "realm", "heartbeat", "restart"
     ];
     private static readonly string[] InitialFetchEventTypes =
     [
@@ -154,6 +154,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         var queueTimeout = RequirePositiveInt32(root, "event_queue_longpoll_timeout_seconds");
         var maxMessageLength = RequirePositiveInt32(root, "max_message_length");
         var maxTopicLength = RequirePositiveInt32(root, "max_topic_length");
+        var maxFileUploadSizeMiB = GetInt32(root, "max_file_upload_size_mib");
         var subscriptions = GetArray(root, "subscriptions").Select(ToSubscription).Where(static item => item is not null).Cast<Subscription>().ToArray();
         var users = GetArray(root, "realm_users").Select(ToUserOrNull).Where(static item => item is not null).Cast<UserProfile>().ToArray();
         return new RegisterResult(
@@ -166,7 +167,8 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             users,
             ToRecentDirectMessages(root),
             ToUnread(root, request.Credentials.UserId),
-            []);
+            [],
+            maxFileUploadSizeMiB is > 0 ? maxFileUploadSizeMiB : null);
     }
 
     public async Task<EventBatch> GetEventsAsync(GetEventsRequest request, CancellationToken cancellationToken = default)
@@ -254,6 +256,177 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Post, "messages", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
         using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
         return new SendResult(request.LocalId, RequireInt64(document.RootElement, "id"));
+    }
+
+    public async Task SetReactionAsync(SetReactionRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.MessageId <= 0) throw new ArgumentOutOfRangeException(nameof(request));
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["emoji_name"] = request.Reaction.EmojiName,
+            ["emoji_code"] = request.Reaction.EmojiCode,
+            ["reaction_type"] = request.Reaction.ReactionType
+        };
+        try
+        {
+            using var response = await SendAsync(
+                request.Credentials.Realm,
+                request.Add ? HttpMethod.Post : HttpMethod.Delete,
+                $"messages/{request.MessageId.ToString(CultureInfo.InvariantCulture)}/reactions",
+                fields,
+                request.Credentials,
+                cancellationToken).ConfigureAwait(false);
+            using var ignored = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+        catch (GatewayException exception) when (
+            request.Add && exception.Code == GatewayErrorCode.ReactionAlreadyExists ||
+            !request.Add && exception.Code == GatewayErrorCode.ReactionDoesNotExist)
+        {
+            // The requested target state is already authoritative.
+        }
+    }
+
+    public async Task EditMessageAsync(EditMessageRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["content"] = request.Content,
+            ["prev_content_sha256"] = request.PreviousContentSha256
+        };
+        using var response = await SendAsync(
+            request.Credentials.Realm,
+            HttpMethod.Patch,
+            $"messages/{request.MessageId.ToString(CultureInfo.InvariantCulture)}",
+            fields,
+            request.Credentials,
+            cancellationToken).ConfigureAwait(false);
+        using var ignored = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task DeleteMessageAsync(DeleteMessageRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        using var response = await SendAsync(
+            request.Credentials.Realm,
+            HttpMethod.Delete,
+            $"messages/{request.MessageId.ToString(CultureInfo.InvariantCulture)}",
+            null,
+            request.Credentials,
+            cancellationToken).ConfigureAwait(false);
+        using var ignored = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task SetMessageStarredAsync(SetMessageStarredRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.MessageId <= 0) throw new ArgumentOutOfRangeException(nameof(request));
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["messages"] = JsonSerializer.Serialize(new[] { request.MessageId }, JsonOptions),
+            ["op"] = request.IsStarred ? "add" : "remove",
+            ["flag"] = "starred"
+        };
+        using var response = await SendAsync(
+            request.Credentials.Realm,
+            HttpMethod.Post,
+            "messages/flags",
+            fields,
+            request.Credentials,
+            cancellationToken).ConfigureAwait(false);
+        using var ignored = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<UploadedAttachment> UploadAttachmentAsync(
+        UploadAttachmentRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var fileName = SanitizeUploadFileName(request.Upload.FileName);
+        using var multipart = new MultipartFormDataContent();
+        var streamContent = new StreamContent(request.Upload.Content);
+        if (request.Upload.ContentType is { } contentType &&
+            MediaTypeHeaderValue.TryParse(contentType, out var parsedContentType))
+        {
+            streamContent.Headers.ContentType = parsedContentType;
+        }
+        streamContent.Headers.ContentLength = request.Upload.Length;
+        multipart.Add(streamContent, "filename", fileName);
+        using var response = await SendMultipartAsync(
+            request.Credentials.Realm,
+            "user_uploads",
+            multipart,
+            request.Credentials,
+            cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        var rawUrl = GetString(document.RootElement, "url", "uri");
+        if (!TryResolveRealmUploadUrl(request.Credentials.Realm, rawUrl, out var url))
+        {
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        }
+        var returnedName = SanitizeUploadFileName(GetString(document.RootElement, "filename") ?? fileName);
+        return new UploadedAttachment(returnedName, url.AbsoluteUri);
+    }
+
+    public async Task<RealmMediaResult> GetRealmMediaAsync(
+        GetRealmMediaRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var hardLimit = request.Media.Kind == RealmMediaKind.File
+            ? 100L * 1024 * 1024
+            : 25L * 1024 * 1024;
+        var maximumBytes = Math.Min(request.Media.MaximumBytes, hardLimit);
+        if (maximumBytes <= 0 ||
+            !TryResolveRealmMediaUrl(
+                request.Credentials.Realm,
+                request.Media.SourceUrl,
+                request.Media.Kind,
+                temporary: false,
+                out var approved))
+        {
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        }
+
+        var fetchUrl = approved;
+        CredentialEnvelope? fetchCredentials = request.Media.Kind == RealmMediaKind.Avatar
+            ? request.Credentials
+            : null;
+        if (request.Media.Kind is RealmMediaKind.Image or RealmMediaKind.File)
+        {
+            var relativePath = approved.AbsolutePath.TrimStart('/');
+            using var temporaryResponse = await SendAsync(
+                request.Credentials.Realm,
+                HttpMethod.Get,
+                relativePath,
+                null,
+                request.Credentials,
+                cancellationToken).ConfigureAwait(false);
+            using var temporaryDocument = await ReadDocumentAsync(temporaryResponse, cancellationToken).ConfigureAwait(false);
+            if (!TryResolveRealmMediaUrl(
+                    request.Credentials.Realm,
+                    GetString(temporaryDocument.RootElement, "url"),
+                    request.Media.Kind,
+                    temporary: true,
+                    out fetchUrl))
+            {
+                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+            }
+        }
+
+        using var response = await SendAbsoluteMediaAsync(
+            fetchUrl,
+            fetchCredentials,
+            request.Media.Kind,
+            cancellationToken).ConfigureAwait(false);
+        var contentType = response.Content.Headers.ContentType?.MediaType?.Trim().ToLowerInvariant();
+        if (request.Media.Kind != RealmMediaKind.File && !IsPreviewImageContentType(contentType))
+        {
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, (int)response.StatusCode);
+        }
+        var bytes = await ReadBytesWithLimitAsync(response.Content, maximumBytes, cancellationToken).ConfigureAwait(false);
+        return new RealmMediaResult(bytes, contentType ?? "application/octet-stream");
     }
 
     public async Task MarkReadAsync(MarkReadRequest request, CancellationToken cancellationToken = default)
@@ -344,6 +517,132 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         }
     }
 
+    private async Task<HttpResponseMessage> SendMultipartAsync(
+        RealmEndpoint realm,
+        string relativePath,
+        MultipartFormDataContent content,
+        CredentialEnvelope credentials,
+        CancellationToken cancellationToken)
+    {
+        var operation = GetSafeOperationName(relativePath);
+        var started = _timeProvider.GetTimestamp();
+        using var request = new HttpRequestMessage(HttpMethod.Post, BuildUri(realm, relativePath, null))
+        {
+            Content = content
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Basic",
+            Convert.ToBase64String(Encoding.UTF8.GetBytes($"{credentials.Email}:{credentials.ApiKey}")));
+        try
+        {
+            var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation(
+                "Zulip operation {Operation} completed with status {StatusCode} in {ElapsedMilliseconds} ms.",
+                operation,
+                (int)response.StatusCode,
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds);
+            if (response.IsSuccessStatusCode) return response;
+            var error = await ToGatewayExceptionAsync(response, cancellationToken).ConfigureAwait(false);
+            response.Dispose();
+            throw error;
+        }
+        catch (GatewayException)
+        {
+            throw;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new GatewayException(
+                GatewayErrorKind.Offline,
+                GatewayErrorCode.NetworkError,
+                innerException: exception);
+        }
+    }
+
+    private async Task<HttpResponseMessage> SendAbsoluteMediaAsync(
+        Uri uri,
+        CredentialEnvelope? credentials,
+        RealmMediaKind kind,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(
+            kind == RealmMediaKind.File ? "application/octet-stream" : "image/avif"));
+        if (kind != RealmMediaKind.File)
+        {
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("image/webp"));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("image/png"));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("image/jpeg"));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("image/gif"));
+        }
+        if (credentials is not null)
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue(
+                "Basic",
+                Convert.ToBase64String(Encoding.UTF8.GetBytes($"{credentials.Email}:{credentials.ApiKey}")));
+        }
+        try
+        {
+            var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken).ConfigureAwait(false);
+            if (response.IsSuccessStatusCode) return response;
+            var error = await ToGatewayExceptionAsync(response, cancellationToken).ConfigureAwait(false);
+            response.Dispose();
+            throw error;
+        }
+        catch (GatewayException)
+        {
+            throw;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new GatewayException(
+                GatewayErrorKind.Offline,
+                GatewayErrorCode.NetworkError,
+                innerException: exception);
+        }
+    }
+
+    private static async Task<byte[]> ReadBytesWithLimitAsync(
+        HttpContent content,
+        long maximumBytes,
+        CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength is { } declared && declared > maximumBytes)
+        {
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        }
+        await using var source = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var destination = new MemoryStream((int)Math.Min(maximumBytes, 1024 * 1024));
+        var buffer = new byte[81920];
+        long total = 0;
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0) break;
+            total += read;
+            if (total > maximumBytes)
+            {
+                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+            }
+            await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+        }
+        return destination.ToArray();
+    }
+
     private async Task<GatewayException> ToGatewayExceptionAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         if ((int)response.StatusCode is >= 300 and < 400)
@@ -370,6 +669,12 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
 
         if (string.Equals(code, "BAD_EVENT_QUEUE_ID", StringComparison.OrdinalIgnoreCase))
             return new GatewayException(GatewayErrorKind.QueueExpired, GatewayErrorCode.BadEventQueueId, (int)response.StatusCode);
+        if (string.Equals(code, "REACTION_ALREADY_EXISTS", StringComparison.OrdinalIgnoreCase))
+            return new GatewayException(GatewayErrorKind.RequestFailed, GatewayErrorCode.ReactionAlreadyExists, (int)response.StatusCode);
+        if (string.Equals(code, "REACTION_DOES_NOT_EXIST", StringComparison.OrdinalIgnoreCase))
+            return new GatewayException(GatewayErrorKind.RequestFailed, GatewayErrorCode.ReactionDoesNotExist, (int)response.StatusCode);
+        if (string.Equals(code, "EXPECTATION_MISMATCH", StringComparison.OrdinalIgnoreCase))
+            return new GatewayException(GatewayErrorKind.RequestFailed, GatewayErrorCode.ExpectationMismatch, (int)response.StatusCode);
         if (response.StatusCode == HttpStatusCode.Unauthorized)
             return new GatewayException(GatewayErrorKind.ReauthRequired, GatewayErrorCode.Unauthorized, (int)response.StatusCode);
         if ((int)response.StatusCode == 429)
@@ -410,10 +715,89 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         "events" => "event_queue",
         "messages" => "messages",
         "messages/flags/narrow" => "mark_read",
+        "messages/flags" => "set_message_flag",
+        "user_uploads" => "upload_attachment",
+        _ when relativePath.StartsWith("user_uploads/", StringComparison.Ordinal) => "resolve_realm_media",
+        _ when relativePath.StartsWith("messages/", StringComparison.Ordinal) &&
+               relativePath.EndsWith("/reactions", StringComparison.Ordinal) => "set_reaction",
+        _ when relativePath.StartsWith("messages/", StringComparison.Ordinal) => "mutate_message",
         _ when relativePath.StartsWith("users/me/", StringComparison.Ordinal) &&
                relativePath.EndsWith("/topics", StringComparison.Ordinal) => "topics",
         _ => "unknown"
     };
+
+    private static string SanitizeUploadFileName(string fileName)
+    {
+        var leaf = Path.GetFileName(fileName)
+            .Select(character => character < 0x20 || character == 0x7f ? '_' : character)
+            .ToArray();
+        var sanitized = new string(leaf).Trim();
+        if (sanitized.Length > 256) sanitized = sanitized[..256];
+        return sanitized.Length == 0 ? "file" : sanitized;
+    }
+
+    private static bool TryResolveRealmUploadUrl(RealmEndpoint realm, string? rawUrl, out Uri url)
+    {
+        url = null!;
+        if (string.IsNullOrWhiteSpace(rawUrl) || !Uri.TryCreate(realm.Uri, rawUrl, out var resolved)) return false;
+        if (!string.Equals(resolved.Scheme, realm.Uri.Scheme, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(resolved.Host, realm.Uri.Host, StringComparison.OrdinalIgnoreCase) ||
+            resolved.Port != realm.Uri.Port ||
+            !resolved.AbsolutePath.StartsWith("/user_uploads/", StringComparison.Ordinal) ||
+            resolved.AbsolutePath.StartsWith("/user_uploads/temporary/", StringComparison.Ordinal))
+        {
+            return false;
+        }
+        url = resolved;
+        return true;
+    }
+
+    private static bool TryResolveRealmMediaUrl(
+        RealmEndpoint realm,
+        string? rawUrl,
+        RealmMediaKind kind,
+        bool temporary,
+        out Uri url)
+    {
+        url = null!;
+        if (string.IsNullOrWhiteSpace(rawUrl) || rawUrl.Length > 4096 || rawUrl.StartsWith("//", StringComparison.Ordinal) ||
+            !Uri.TryCreate(realm.Uri, rawUrl, out var resolved) ||
+            !string.Equals(resolved.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(resolved.Scheme, realm.Uri.Scheme, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(resolved.Host, realm.Uri.Host, StringComparison.OrdinalIgnoreCase) ||
+            resolved.Port != realm.Uri.Port ||
+            !string.IsNullOrEmpty(resolved.UserInfo) ||
+            !string.IsNullOrEmpty(resolved.Fragment))
+        {
+            return false;
+        }
+        string decodedPath;
+        try
+        {
+            decodedPath = Uri.UnescapeDataString(resolved.AbsolutePath);
+        }
+        catch (UriFormatException)
+        {
+            return false;
+        }
+        if (decodedPath.Split('/', StringSplitOptions.RemoveEmptyEntries).Contains("..", StringComparer.Ordinal)) return false;
+        var allowed = temporary
+            ? decodedPath.StartsWith("/user_uploads/temporary/", StringComparison.Ordinal)
+            : kind switch
+            {
+                RealmMediaKind.Avatar => decodedPath.StartsWith("/avatar/", StringComparison.Ordinal) ||
+                    decodedPath.StartsWith("/user_avatars/", StringComparison.Ordinal) ||
+                    decodedPath.StartsWith("/static/generated/avatars/", StringComparison.Ordinal),
+                _ => decodedPath.StartsWith("/user_uploads/", StringComparison.Ordinal) &&
+                    !decodedPath.StartsWith("/user_uploads/temporary/", StringComparison.Ordinal)
+            };
+        if (!allowed) return false;
+        url = resolved;
+        return true;
+    }
+
+    private static bool IsPreviewImageContentType(string? contentType) => contentType is
+        "image/avif" or "image/gif" or "image/jpeg" or "image/png" or "image/webp";
 
     private static void AddSendConversation(
         IDictionary<string, string> fields,
@@ -498,6 +882,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
                 "message" => ToMessageEvents(value, source, currentUserId, eventId),
                 "delete_message" => ToDeleteMessageEvents(value, source, eventId),
                 "update_message" => ToUpdateMessageEvents(value, source, eventId),
+                "reaction" => ToReactionEvents(value, source, eventId),
                 "update_message_flags" =>
                 [
                     new MessageFlagsChangedEvent(
@@ -579,8 +964,8 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         if (messageId is { } flaggedMessageId && TryGetProperty(value, "flags", out var flagsElement) &&
             flagsElement.ValueKind == JsonValueKind.Array)
         {
-            var isRead = GetStringArray(value, "flags")
-                .Contains("read", StringComparer.OrdinalIgnoreCase);
+            var flags = GetStringArray(value, "flags");
+            var isRead = flags.Contains("read", StringComparer.OrdinalIgnoreCase);
             events.Add(new MessageFlagsChangedEvent(
                 [flaggedMessageId],
                 false,
@@ -588,6 +973,16 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
                 "read",
                 eventId,
                 source));
+            if (flags.Contains("starred", StringComparer.OrdinalIgnoreCase))
+            {
+                events.Add(new MessageFlagsChangedEvent(
+                    [flaggedMessageId],
+                    false,
+                    MessageFlagOperation.Add,
+                    "starred",
+                    eventId,
+                    source));
+            }
         }
 
         var hasTopicMove = TryGetProperty(value, "subject", out _);
@@ -607,6 +1002,38 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         return events.Count == 0
             ? [new UnknownDomainEvent("update_message", eventId, source)]
             : events;
+    }
+
+    private static IReadOnlyList<DomainEvent> ToReactionEvents(
+        JsonElement value,
+        DomainEventSource source,
+        long? eventId)
+    {
+        var messageId = GetInt64(value, "message_id");
+        var userId = GetInt64(value, "user_id");
+        var emojiName = GetString(value, "emoji_name");
+        var emojiCode = GetString(value, "emoji_code");
+        var reactionType = GetString(value, "reaction_type");
+        if (messageId is not > 0 || userId is not > 0 ||
+            string.IsNullOrWhiteSpace(emojiName) || string.IsNullOrWhiteSpace(emojiCode) ||
+            string.IsNullOrWhiteSpace(reactionType))
+        {
+            return [new UnknownDomainEvent("reaction", eventId, source)];
+        }
+
+        var reaction = new EmojiReaction(
+            new EmojiReactionIdentity(emojiName, emojiCode, reactionType),
+            userId.Value,
+            GetString(value, "user_full_name"));
+        return
+        [
+            new MessageReactionChangedEvent(
+                messageId.Value,
+                reaction,
+                string.Equals(GetString(value, "op"), "add", StringComparison.OrdinalIgnoreCase),
+                eventId,
+                source)
+        ];
     }
 
     private static IReadOnlyList<DomainEvent> ToRealmUserEvents(
@@ -750,6 +1177,12 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         var flags = GetStringArray(value, "flags");
         if (flags.Length == 0 && eventEnvelope is { } envelope) flags = GetStringArray(envelope, "flags");
         var isRead = flags.Contains("read", StringComparer.OrdinalIgnoreCase);
+        var isStarred = flags.Contains("starred", StringComparer.OrdinalIgnoreCase);
+        var reactions = GetArray(value, "reactions")
+            .Select(ToReactionOrNull)
+            .Where(static reaction => reaction is not null)
+            .Cast<EmojiReaction>()
+            .ToArray();
         return new ChatMessage(
             id.Value,
             conversation,
@@ -757,7 +1190,10 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             GetString(value, "content") ?? string.Empty,
             timestamp,
             isRead,
-            GetString(value, "sender_full_name"));
+            GetString(value, "sender_full_name"),
+            GetString(value, "avatar_url", "sender_avatar_url"),
+            isStarred,
+            reactions);
     }
 
     private static Subscription? ToSubscription(JsonElement value)
@@ -774,8 +1210,33 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         var id = GetInt64(value, "user_id", "id");
         var name = GetString(value, "full_name");
         return id is > 0 && !string.IsNullOrWhiteSpace(name)
-            ? new UserProfile(id.Value, name, GetString(value, "email"), GetBoolean(value, "is_active") ?? true)
+            ? new UserProfile(
+                id.Value,
+                name,
+                GetString(value, "email"),
+                GetBoolean(value, "is_active") ?? true,
+                GetString(value, "avatar_url"),
+                GetInt32(value, "avatar_version"),
+                GetBoolean(value, "is_bot") ?? false)
             : null;
+    }
+
+    private static EmojiReaction? ToReactionOrNull(JsonElement value)
+    {
+        var userId = GetInt64(value, "user_id");
+        var emojiName = GetString(value, "emoji_name");
+        var emojiCode = GetString(value, "emoji_code");
+        var reactionType = GetString(value, "reaction_type");
+        if (userId is not > 0 || string.IsNullOrWhiteSpace(emojiName) ||
+            string.IsNullOrWhiteSpace(emojiCode) || string.IsNullOrWhiteSpace(reactionType))
+        {
+            return null;
+        }
+
+        return new EmojiReaction(
+            new EmojiReactionIdentity(emojiName, emojiCode, reactionType),
+            userId.Value,
+            GetString(value, "user_full_name"));
     }
 
     private static IReadOnlyList<ConversationKey> ToRecentDirectMessages(JsonElement root)
@@ -849,6 +1310,14 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
     private static long RequireInt64(JsonElement value, string name) => GetInt64(value, name) ?? throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
     private static string RequireString(JsonElement value, string name) => GetString(value, name) ?? throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
     private static long? GetInt64(JsonElement value, params string[] names) => names.Select(name => TryGetProperty(value, name, out var item) && item.ValueKind == JsonValueKind.Number && item.TryGetInt64(out var number) ? (long?)number : null).FirstOrDefault(static item => item is not null);
+
+    private static int? GetInt32(JsonElement value, params string[] names) => names
+        .Select(name => TryGetProperty(value, name, out var item) &&
+                        item.ValueKind == JsonValueKind.Number &&
+                        item.TryGetInt32(out var number)
+            ? (int?)number
+            : null)
+        .FirstOrDefault(static item => item is not null);
     private static decimal? GetDecimal(JsonElement value, params string[] names) => names.Select(name => TryGetProperty(value, name, out var item) && item.ValueKind == JsonValueKind.Number && item.TryGetDecimal(out var number) ? (decimal?)number : null).FirstOrDefault(static item => item is not null);
     private static string? GetString(JsonElement value, params string[] names) => names.Select(name => TryGetProperty(value, name, out var item) && item.ValueKind == JsonValueKind.String ? item.GetString() : null).FirstOrDefault(static item => item is not null);
     private static string[] GetStringArray(JsonElement value, params string[] names) => GetArray(value, names).Where(static item => item.ValueKind == JsonValueKind.String).Select(static item => item.GetString()).Where(static item => item is not null).Cast<string>().ToArray();

@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
+             x:Class="RelayCove.App.Controls.SettingsPageView"
+             x:DataType="viewModels:ShellViewModel"
+             Background="{StaticResource GroundBrush}">
+    <ScrollView>
+        <VerticalStackLayout Padding="28,22" Spacing="18" MaximumWidthRequest="840">
+            <Grid ColumnDefinitions="*,Auto">
+                <VerticalStackLayout>
+                    <Label Text="设置"
+                           Style="{StaticResource BaseLabelStyle}"
+                           FontSize="24"
+                           FontAttributes="Bold" />
+                    <Label Text="仅保存非敏感设备偏好"
+                           Style="{StaticResource MutedLabelStyle}" />
+                </VerticalStackLayout>
+                <Button Grid.Column="1"
+                        Text="返回消息"
+                        Style="{StaticResource BaseButtonStyle}"
+                        Command="{Binding ShowMessagesCommand}" />
+            </Grid>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="10" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="12">
+                    <Label Text="外观" Style="{StaticResource SectionHeaderStyle}" />
+                    <Label Text="主题立即应用；使用系统、浅色或深色。"
+                           Style="{StaticResource BaseLabelStyle}" />
+                    <HorizontalStackLayout Spacing="8">
+                        <Button Text="跟随系统"
+                                Style="{StaticResource BaseButtonStyle}"
+                                Command="{Binding SetSystemThemeCommand}">
+                            <Button.Triggers>
+                                <DataTrigger TargetType="Button" Binding="{Binding IsSystemTheme}" Value="True">
+                                    <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
+                                    <Setter Property="BorderWidth" Value="2" />
+                                </DataTrigger>
+                            </Button.Triggers>
+                        </Button>
+                        <Button Text="浅色"
+                                Style="{StaticResource BaseButtonStyle}"
+                                Command="{Binding SetLightThemeCommand}">
+                            <Button.Triggers>
+                                <DataTrigger TargetType="Button" Binding="{Binding IsLightTheme}" Value="True">
+                                    <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
+                                    <Setter Property="BorderWidth" Value="2" />
+                                </DataTrigger>
+                            </Button.Triggers>
+                        </Button>
+                        <Button Text="深色"
+                                Style="{StaticResource BaseButtonStyle}"
+                                Command="{Binding SetDarkThemeCommand}">
+                            <Button.Triggers>
+                                <DataTrigger TargetType="Button" Binding="{Binding IsDarkTheme}" Value="True">
+                                    <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
+                                    <Setter Property="BorderWidth" Value="2" />
+                                </DataTrigger>
+                            </Button.Triggers>
+                        </Button>
+                    </HorizontalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="10" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="14">
+                    <Label Text="布局与可读性" Style="{StaticResource SectionHeaderStyle}" />
+
+                    <VerticalStackLayout Spacing="7">
+                        <Label Text="界面密度" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                        <HorizontalStackLayout Spacing="8">
+                            <Button Text="舒适"
+                                    Style="{StaticResource BaseButtonStyle}"
+                                    Command="{Binding SetComfortableDensityCommand}">
+                                <Button.Triggers>
+                                    <DataTrigger TargetType="Button" Binding="{Binding IsComfortableDensity}" Value="True">
+                                        <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
+                                        <Setter Property="BorderWidth" Value="2" />
+                                    </DataTrigger>
+                                </Button.Triggers>
+                            </Button>
+                            <Button Text="紧凑"
+                                    Style="{StaticResource BaseButtonStyle}"
+                                    Command="{Binding SetCompactDensityCommand}">
+                                <Button.Triggers>
+                                    <DataTrigger TargetType="Button" Binding="{Binding IsCompactDensity}" Value="True">
+                                        <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
+                                        <Setter Property="BorderWidth" Value="2" />
+                                    </DataTrigger>
+                                </Button.Triggers>
+                            </Button>
+                        </HorizontalStackLayout>
+                    </VerticalStackLayout>
+
+                    <VerticalStackLayout Spacing="7">
+                        <Label Text="字体大小" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                        <HorizontalStackLayout Spacing="8">
+                            <Button Text="小"
+                                    Style="{StaticResource BaseButtonStyle}"
+                                    Command="{Binding SetSmallFontCommand}">
+                                <Button.Triggers>
+                                    <DataTrigger TargetType="Button" Binding="{Binding IsSmallFont}" Value="True">
+                                        <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
+                                        <Setter Property="BorderWidth" Value="2" />
+                                    </DataTrigger>
+                                </Button.Triggers>
+                            </Button>
+                            <Button Text="标准"
+                                    Style="{StaticResource BaseButtonStyle}"
+                                    Command="{Binding SetDefaultFontCommand}">
+                                <Button.Triggers>
+                                    <DataTrigger TargetType="Button" Binding="{Binding IsDefaultFont}" Value="True">
+                                        <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
+                                        <Setter Property="BorderWidth" Value="2" />
+                                    </DataTrigger>
+                                </Button.Triggers>
+                            </Button>
+                            <Button Text="大"
+                                    Style="{StaticResource BaseButtonStyle}"
+                                    Command="{Binding SetLargeFontCommand}">
+                                <Button.Triggers>
+                                    <DataTrigger TargetType="Button" Binding="{Binding IsLargeFont}" Value="True">
+                                        <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
+                                        <Setter Property="BorderWidth" Value="2" />
+                                    </DataTrigger>
+                                </Button.Triggers>
+                            </Button>
+                        </HorizontalStackLayout>
+                    </VerticalStackLayout>
+
+                    <VerticalStackLayout Spacing="7">
+                        <Label Text="会话列表宽度" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                        <HorizontalStackLayout Spacing="8">
+                            <Button Text="窄"
+                                    Style="{StaticResource BaseButtonStyle}"
+                                    Command="{Binding SetNarrowConversationWidthCommand}">
+                                <Button.Triggers>
+                                    <DataTrigger TargetType="Button" Binding="{Binding IsNarrowConversationWidth}" Value="True">
+                                        <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
+                                        <Setter Property="BorderWidth" Value="2" />
+                                    </DataTrigger>
+                                </Button.Triggers>
+                            </Button>
+                            <Button Text="标准"
+                                    Style="{StaticResource BaseButtonStyle}"
+                                    Command="{Binding SetStandardConversationWidthCommand}">
+                                <Button.Triggers>
+                                    <DataTrigger TargetType="Button" Binding="{Binding IsStandardConversationWidth}" Value="True">
+                                        <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
+                                        <Setter Property="BorderWidth" Value="2" />
+                                    </DataTrigger>
+                                </Button.Triggers>
+                            </Button>
+                            <Button Text="宽"
+                                    Style="{StaticResource BaseButtonStyle}"
+                                    Command="{Binding SetWideConversationWidthCommand}">
+                                <Button.Triggers>
+                                    <DataTrigger TargetType="Button" Binding="{Binding IsWideConversationWidth}" Value="True">
+                                        <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
+                                        <Setter Property="BorderWidth" Value="2" />
+                                    </DataTrigger>
+                                </Button.Triggers>
+                            </Button>
+                        </HorizontalStackLayout>
+                    </VerticalStackLayout>
+
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <VerticalStackLayout>
+                            <Label Text="宽屏选择会话时默认打开详情"
+                                   Style="{StaticResource BaseLabelStyle}"
+                                   FontAttributes="Bold" />
+                            <Label Text="1024 与窄屏仍默认收起，避免横向溢出。"
+                                   Style="{StaticResource MutedLabelStyle}" />
+                        </VerticalStackLayout>
+                        <Switch Grid.Column="1"
+                                IsToggled="{Binding OpenDetailsByDefault, Mode=TwoWay}"
+                                SemanticProperties.Description="宽屏默认打开会话详情" />
+                    </Grid>
+
+                    <Button Text="恢复界面默认值"
+                            HorizontalOptions="Start"
+                            Style="{StaticResource BaseButtonStyle}"
+                            Command="{Binding ResetUiPreferencesCommand}" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="10" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="8">
+                    <Label Text="通用与通知" Style="{StaticResource SectionHeaderStyle}" />
+                    <Label Text="启动行为、语言与系统通知尚未进入当前原生能力门。"
+                           Style="{StaticResource BaseLabelStyle}"
+                           LineBreakMode="WordWrap" />
+                    <Label Text="界面不会伪造通知、presence 或在线状态。"
+                           Style="{StaticResource MutedLabelStyle}" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="10" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="存储" Style="{StaticResource SectionHeaderStyle}" />
+                    <Label Text="SQLite 是当前账号的本地缓存，不是第二消息后端，也不等同磁盘加密。"
+                           Style="{StaticResource BaseLabelStyle}"
+                           LineBreakMode="WordWrap" />
+                    <HorizontalStackLayout Spacing="8">
+                        <Button Text="清除当前账号缓存"
+                                Style="{StaticResource BaseButtonStyle}"
+                                Command="{Binding RequestClearCacheCommand}" />
+                        <Button Text="确认清除"
+                                Style="{StaticResource PrimaryButtonStyle}"
+                                IsVisible="{Binding ClearCacheConfirmationVisible}"
+                                Command="{Binding ConfirmClearCacheCommand}" />
+                        <Button Text="取消"
+                                Style="{StaticResource BaseButtonStyle}"
+                                IsVisible="{Binding ClearCacheConfirmationVisible}"
+                                Command="{Binding CancelClearCacheCommand}" />
+                    </HorizontalStackLayout>
+                    <Label Text="确认后只删除经过账号路径校验的本地缓存，不删除服务端消息。"
+                           IsVisible="{Binding ClearCacheConfirmationVisible}"
+                           Style="{StaticResource DangerLabelStyle}"
+                           FontSize="12" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{StaticResource CardBorderStyle}">
+                <Border.StrokeShape>
+                    <RoundRectangle CornerRadius="10" />
+                </Border.StrokeShape>
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="账户" Style="{StaticResource SectionHeaderStyle}" />
+                    <Label Text="{Binding Realm, StringFormat='Realm：{0}'}"
+                           Style="{StaticResource BaseLabelStyle}" />
+                    <Label Text="API Key 与密码不会在设置、日志或异常中显示。"
+                           Style="{StaticResource MutedLabelStyle}" />
+                    <Button Text="注销"
+                            HorizontalOptions="Start"
+                            Style="{StaticResource BaseButtonStyle}"
+                            Command="{Binding RequestLogoutCommand}" />
+                </VerticalStackLayout>
+            </Border>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentView>
