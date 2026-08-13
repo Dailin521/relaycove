@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ResourceDictionary xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml">
+    <Style x:Key="RelayCovePageStyle" TargetType="ContentPage">
+        <Setter Property="Background" Value="{StaticResource GroundBrush}" />
+    </Style>
+
+    <Style x:Key="BaseLabelStyle" TargetType="Label">
+        <Setter Property="FontFamily" Value="{StaticResource RelayCoveFontFamily}" />
+        <Setter Property="FontSize" Value="{DynamicResource BaseFontSize}" />
+        <Setter Property="TextColor"
+                Value="{AppThemeBinding Light={StaticResource LightTextColor}, Dark={StaticResource DarkTextColor}}" />
+        <Setter Property="LineBreakMode" Value="TailTruncation" />
+    </Style>
+
+    <Style x:Key="MutedLabelStyle" TargetType="Label" BasedOn="{StaticResource BaseLabelStyle}">
+        <Setter Property="FontSize" Value="{DynamicResource MutedFontSize}" />
+        <Setter Property="TextColor"
+                Value="{AppThemeBinding Light={StaticResource LightMutedColor}, Dark={StaticResource DarkMutedColor}}" />
+    </Style>
+
+    <Style x:Key="SectionHeaderStyle" TargetType="Label" BasedOn="{StaticResource BaseLabelStyle}">
+        <Setter Property="FontSize" Value="{DynamicResource MutedFontSize}" />
+        <Setter Property="FontAttributes" Value="Bold" />
+        <Setter Property="TextTransform" Value="Uppercase" />
+        <Setter Property="TextColor"
+                Value="{AppThemeBinding Light={StaticResource LightMutedColor}, Dark={StaticResource DarkMutedColor}}" />
+    </Style>
+
+    <Style x:Key="DangerLabelStyle" TargetType="Label" BasedOn="{StaticResource BaseLabelStyle}">
+        <Setter Property="TextColor" Value="{StaticResource DangerColor}" />
+    </Style>
+
+    <Style x:Key="BaseButtonStyle" TargetType="Button">
+        <Setter Property="FontFamily" Value="{StaticResource RelayCoveFontFamily}" />
+        <Setter Property="FontSize" Value="{DynamicResource ButtonFontSize}" />
+        <Setter Property="HeightRequest" Value="{DynamicResource ControlHeight}" />
+        <Setter Property="MinimumHeightRequest" Value="{DynamicResource ControlHeight}" />
+        <Setter Property="Padding" Value="{DynamicResource ControlHorizontalPadding}" />
+        <Setter Property="CornerRadius" Value="7" />
+        <Setter Property="BorderWidth" Value="1" />
+        <Setter Property="BorderColor"
+                Value="{AppThemeBinding Light={StaticResource LightBorderColor}, Dark={StaticResource DarkBorderColor}}" />
+        <Setter Property="BackgroundColor"
+                Value="{AppThemeBinding Light={StaticResource LightSurfaceSoftColor}, Dark={StaticResource DarkSurfaceSoftColor}}" />
+        <Setter Property="TextColor"
+                Value="{AppThemeBinding Light={StaticResource LightTextColor}, Dark={StaticResource DarkTextColor}}" />
+    </Style>
+
+    <Style x:Key="PrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
+        <Setter Property="BackgroundColor" Value="{StaticResource AccentColor}" />
+        <Setter Property="BorderColor" Value="{StaticResource AccentStrongColor}" />
+        <Setter Property="TextColor" Value="White" />
+        <Setter Property="FontAttributes" Value="Bold" />
+    </Style>
+
+    <Style x:Key="IconButtonStyle" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
+        <Setter Property="WidthRequest" Value="36" />
+        <Setter Property="MinimumWidthRequest" Value="36" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="BorderWidth" Value="0" />
+        <Setter Property="BackgroundColor" Value="Transparent" />
+    </Style>
+
+    <Style x:Key="NavigationButtonStyle" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
+        <Setter Property="WidthRequest" Value="52" />
+        <Setter Property="HeightRequest" Value="48" />
+        <Setter Property="Padding" Value="2" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="BorderWidth" Value="0" />
+        <Setter Property="BackgroundColor" Value="Transparent" />
+    </Style>
+
+    <Style x:Key="MessageQuickButtonStyle" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
+        <Setter Property="HeightRequest" Value="28" />
+        <Setter Property="MinimumHeightRequest" Value="28" />
+        <Setter Property="Padding" Value="8,0" />
+        <Setter Property="FontSize" Value="{DynamicResource SmallFontSize}" />
+        <Setter Property="BorderWidth" Value="0" />
+        <Setter Property="BackgroundColor" Value="Transparent" />
+    </Style>
+
+    <Style x:Key="ReactionButtonStyle" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
+        <Setter Property="HeightRequest" Value="30" />
+        <Setter Property="MinimumHeightRequest" Value="30" />
+        <Setter Property="Padding" Value="8,0" />
+        <Setter Property="Margin" Value="0,0,4,4" />
+        <Setter Property="FontSize" Value="{DynamicResource MutedFontSize}" />
+    </Style>
+
+    <Style x:Key="BaseEntryStyle" TargetType="Entry">
+        <Setter Property="FontFamily" Value="{StaticResource RelayCoveFontFamily}" />
+        <Setter Property="FontSize" Value="{DynamicResource BaseFontSize}" />
+        <Setter Property="HeightRequest" Value="{DynamicResource ControlHeight}" />
+        <Setter Property="ClearButtonVisibility" Value="WhileEditing" />
+        <Setter Property="BackgroundColor"
+                Value="{AppThemeBinding Light={StaticResource LightSurfaceSoftColor}, Dark={StaticResource DarkSurfaceSoftColor}}" />
+        <Setter Property="TextColor"
+                Value="{AppThemeBinding Light={StaticResource LightTextColor}, Dark={StaticResource DarkTextColor}}" />
+        <Setter Property="PlaceholderColor"
+                Value="{AppThemeBinding Light={StaticResource LightMutedColor}, Dark={StaticResource DarkMutedColor}}" />
+    </Style>
+
+    <Style x:Key="ComposerEditorStyle" TargetType="Editor">
+        <Setter Property="FontFamily" Value="{StaticResource RelayCoveFontFamily}" />
+        <Setter Property="FontSize" Value="{DynamicResource BaseFontSize}" />
+        <Setter Property="AutoSize" Value="Disabled" />
+        <Setter Property="BackgroundColor" Value="Transparent" />
+        <Setter Property="TextColor"
+                Value="{AppThemeBinding Light={StaticResource LightTextColor}, Dark={StaticResource DarkTextColor}}" />
+        <Setter Property="PlaceholderColor"
+                Value="{AppThemeBinding Light={StaticResource LightMutedColor}, Dark={StaticResource DarkMutedColor}}" />
+    </Style>
+
+    <Style x:Key="CardBorderStyle" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+        <Setter Property="Stroke" Value="{StaticResource BorderBrush}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="Padding" Value="12" />
+    </Style>
+
+    <Style x:Key="DialogBorderStyle" TargetType="Border" BasedOn="{StaticResource CardBorderStyle}">
+        <Setter Property="Padding" Value="18" />
+        <Setter Property="MinimumWidthRequest" Value="320" />
+        <Setter Property="MaximumWidthRequest" Value="520" />
+        <Setter Property="HorizontalOptions" Value="Center" />
+        <Setter Property="VerticalOptions" Value="Center" />
+        <Setter Property="Stroke" Value="{StaticResource StrongBorderBrush}" />
+    </Style>
+</ResourceDictionary>

@@ -138,6 +138,43 @@ public sealed class SqliteAccountStoreCacheTests
     }
 
     [Fact]
+    public async Task LoadAsync_WhenMessageHasAvatarStarAndReactions_RoundTripsSchemaV2()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var conversation = new DirectMessage([20]);
+        var identity = new EmojiReactionIdentity("thumbs_up", "1f44d", "unicode_emoji");
+        var message = new ChatMessage(
+            9,
+            conversation,
+            10,
+            "raw",
+            DateTimeOffset.UnixEpoch,
+            senderDisplayName: "Sender",
+            senderAvatarUrl: "/avatar.png",
+            isStarred: true,
+            reactions: [new EmojiReaction(identity, 20, "Bea")]);
+        await context.Store.InitializeAsync(account);
+        await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register(
+            [],
+            [new MessageUpsertEvent(message)],
+            users:
+            [
+                new UserProfile(10, "Sender", avatarUrl: "/avatar.png", avatarVersion: 2),
+                new UserProfile(20, "Bea", isBot: true)
+            ]));
+
+        var loaded = (await context.Store.LoadAsync(account.AccountId))!;
+
+        var actual = Assert.Single(loaded.State.Messages).Value;
+        Assert.True(actual.IsStarred);
+        Assert.Equal("/avatar.png", actual.SenderAvatarUrl);
+        Assert.Equal("1f44d", Assert.Single(actual.Reactions).Identity.EmojiCode);
+        Assert.True(loaded.State.Users[20].IsBot);
+        Assert.Equal(2, loaded.State.Users[10].AvatarVersion);
+    }
+
+    [Fact]
     public async Task ApplyBatchAsync_WhenCallsAreConcurrent_SerializesWithoutLostMessages()
     {
         await using var context = StoreTestContext.Create();
@@ -327,6 +364,24 @@ public sealed class SqliteAccountStoreCacheTests
             Task.FromResult(new TopicsResult([]));
 
         public Task<SendResult> SendAsync(SendRequest request, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task SetReactionAsync(SetReactionRequest request, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task EditMessageAsync(EditMessageRequest request, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task DeleteMessageAsync(DeleteMessageRequest request, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task SetMessageStarredAsync(SetMessageStarredRequest request, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<UploadedAttachment> UploadAttachmentAsync(UploadAttachmentRequest request, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<RealmMediaResult> GetRealmMediaAsync(GetRealmMediaRequest request, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
         public Task MarkReadAsync(MarkReadRequest request, CancellationToken cancellationToken = default) =>

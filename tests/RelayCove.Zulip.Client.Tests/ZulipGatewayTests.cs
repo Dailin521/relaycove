@@ -61,7 +61,7 @@ public sealed class ZulipGatewayTests
     public async Task Register_serializes_event_types_as_json_and_projects_snapshot()
     {
         using var handler = new RecordingHandler(Json("""
-            {"queue_id":"queue-1","last_event_id":9,"event_queue_longpoll_timeout_seconds":90,"idle_queue_timeout_secs":3600,"max_message_length":10000,"max_topic_length":60,
+            {"queue_id":"queue-1","last_event_id":9,"event_queue_longpoll_timeout_seconds":90,"idle_queue_timeout_secs":3600,"max_message_length":10000,"max_topic_length":60,"max_file_upload_size_mib":25,
              "subscriptions":[{"stream_id":42,"name":"general","future":1}],
              "realm_users":[{"user_id":7,"full_name":"Ada","email":"ada@example.test"}],
              "recent_private_conversations":[{"user_ids":[9,10]},{"user_ids":[]}],
@@ -90,7 +90,23 @@ public sealed class ZulipGatewayTests
         Assert.Equal(2, result.RecentDirectMessages.Count);
         Assert.Contains(result.RecentDirectMessages, item => item is DirectMessage direct && direct.OtherUserIds.Count == 0);
         Assert.Equal(3, result.Unread.Total);
+        Assert.Equal(25, result.MaxFileUploadSizeMiB);
         Assert.Empty(result.Events);
+    }
+
+    [Fact]
+    public async Task Register_WhenEventTypesAreDefault_IncludesReaction()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"queue_id":"queue-1","last_event_id":9,"event_queue_longpoll_timeout_seconds":90,
+             "max_message_length":10000,"max_topic_length":60,"subscriptions":[],"realm_users":[]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        await gateway.RegisterAsync(new RegisterRequest(Credentials));
+
+        var form = ParseForm(Assert.Single(handler.Requests).Body);
+        Assert.Contains("\"reaction\"", form["event_types"], StringComparison.Ordinal);
     }
 
     [Theory]
@@ -395,10 +411,213 @@ public sealed class ZulipGatewayTests
         Assert.Single(handler.Requests);
     }
 
+    [Fact]
+    public async Task SetReaction_Add_UsesFullIdentityAndMessageEndpoint()
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success"}"""));
+        using var gateway = new ZulipGateway(handler);
+        var identity = new EmojiReactionIdentity("thumbs_up", "1f44d", "unicode_emoji");
+
+        await gateway.SetReactionAsync(new SetReactionRequest(Credentials, 42, identity, true));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.EndsWith("/api/v1/messages/42/reactions", request.Uri!.AbsolutePath, StringComparison.Ordinal);
+        var form = ParseForm(request.Body);
+        Assert.Equal("thumbs_up", form["emoji_name"]);
+        Assert.Equal("1f44d", form["emoji_code"]);
+        Assert.Equal("unicode_emoji", form["reaction_type"]);
+    }
+
+    [Fact]
+    public async Task EditMessage_UsesPatchWithPreviousContentHash()
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success"}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        await gateway.EditMessageAsync(new EditMessageRequest(Credentials, 43, "new raw", "abc123"));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Patch, request.Method);
+        Assert.EndsWith("/api/v1/messages/43", request.Uri!.AbsolutePath, StringComparison.Ordinal);
+        var form = ParseForm(request.Body);
+        Assert.Equal("new raw", form["content"]);
+        Assert.Equal("abc123", form["prev_content_sha256"]);
+    }
+
+    [Fact]
+    public async Task SetMessageStarred_UsesPerAccountFlagsEndpoint()
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success"}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        await gateway.SetMessageStarredAsync(new SetMessageStarredRequest(Credentials, 44, true));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.EndsWith("/api/v1/messages/flags", request.Uri!.AbsolutePath, StringComparison.Ordinal);
+        var form = ParseForm(request.Body);
+        Assert.Equal("[44]", form["messages"]);
+        Assert.Equal("add", form["op"]);
+        Assert.Equal("starred", form["flag"]);
+    }
+
+    [Fact]
+    public async Task Event_Reaction_MapsFullIdentityAndOperation()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"events":[{"id":30,"type":"reaction","op":"add","message_id":42,"user_id":9,
+             "user_full_name":"Grace","emoji_name":"thumbs_up","emoji_code":"1f44d","reaction_type":"unicode_emoji"}]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var batch = await gateway.GetEventsAsync(new GetEventsRequest(Credentials, "queue-1", 29, TimeSpan.FromSeconds(30)));
+
+        var changed = Assert.IsType<MessageReactionChangedEvent>(Assert.Single(batch.Events));
+        Assert.True(changed.Add);
+        Assert.Equal(42, changed.MessageId);
+        Assert.Equal("1f44d", changed.Reaction.Identity.EmojiCode);
+        Assert.Equal(9, changed.Reaction.UserId);
+    }
+
+    [Fact]
+    public async Task UploadAttachment_UsesMultipartFilenameAndAcceptsOnlySameRealmUploadUrl()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"result":"success","filename":"design.png","url":"/user_uploads/7/ab/design.png"}
+            """));
+        using var gateway = new ZulipGateway(handler);
+        await using var stream = new MemoryStream([1, 2, 3]);
+
+        var result = await gateway.UploadAttachmentAsync(new UploadAttachmentRequest(
+            Credentials,
+            new AttachmentUpload("design.png", "image/png", 3, stream)));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.EndsWith("/api/v1/user_uploads", request.Uri!.AbsolutePath, StringComparison.Ordinal);
+        Assert.Contains("name=filename", request.Body, StringComparison.Ordinal);
+        Assert.Contains("filename=design.png", request.Body, StringComparison.Ordinal);
+        Assert.Equal("https://chat.example.test/user_uploads/7/ab/design.png", result.Url);
+    }
+
+    [Fact]
+    public async Task UploadAttachment_WhenServerReturnsCrossRealmUrl_FailsClosed()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"result":"success","filename":"design.png","url":"https://evil.example/user_uploads/design.png"}
+            """));
+        using var gateway = new ZulipGateway(handler);
+        await using var stream = new MemoryStream([1]);
+
+        var error = await Assert.ThrowsAsync<GatewayException>(() => gateway.UploadAttachmentAsync(
+            new UploadAttachmentRequest(Credentials, new AttachmentUpload("design.png", "image/png", 1, stream))));
+
+        Assert.Equal(GatewayErrorKind.Protocol, error.Kind);
+    }
+
+    [Fact]
+    public async Task GetRealmMedia_Image_ResolvesWithAuthenticationThenFetchesTemporaryUrlWithoutCredentials()
+    {
+        using var handler = new RecordingHandler(
+            Json("""{"result":"success","url":"/user_uploads/temporary/7/preview.png"}"""),
+            Binary([1, 2, 3], "image/png"));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.GetRealmMediaAsync(new GetRealmMediaRequest(
+            Credentials,
+            new RealmMediaRequest(
+                "https://chat.example.test/user_uploads/7/ab/preview.png",
+                RealmMediaKind.Image,
+                1024)));
+
+        Assert.Equal([1, 2, 3], result.Content);
+        Assert.Equal("image/png", result.ContentType);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal("/api/v1/user_uploads/7/ab/preview.png", handler.Requests[0].Uri!.AbsolutePath);
+        Assert.Equal("Basic", handler.Requests[0].Authorization!.Scheme);
+        Assert.Equal("/user_uploads/temporary/7/preview.png", handler.Requests[1].Uri!.AbsolutePath);
+        Assert.Null(handler.Requests[1].Authorization);
+    }
+
+    [Fact]
+    public async Task GetRealmMedia_WhenSourceOrTemporaryUrlLeavesRealm_FailsClosed()
+    {
+        using var sourceHandler = new RecordingHandler();
+        using var sourceGateway = new ZulipGateway(sourceHandler);
+
+        var sourceError = await Assert.ThrowsAsync<GatewayException>(() => sourceGateway.GetRealmMediaAsync(
+            new GetRealmMediaRequest(
+                Credentials,
+                new RealmMediaRequest(
+                    "https://evil.example/user_uploads/7/file.png",
+                    RealmMediaKind.Image,
+                    1024))));
+
+        Assert.Equal(GatewayErrorKind.Protocol, sourceError.Kind);
+        Assert.Empty(sourceHandler.Requests);
+
+        using var temporaryHandler = new RecordingHandler(
+            Json("""{"result":"success","url":"https://evil.example/user_uploads/temporary/file.png"}"""));
+        using var temporaryGateway = new ZulipGateway(temporaryHandler);
+
+        var temporaryError = await Assert.ThrowsAsync<GatewayException>(() => temporaryGateway.GetRealmMediaAsync(
+            new GetRealmMediaRequest(
+                Credentials,
+                new RealmMediaRequest(
+                    "/user_uploads/7/file.png",
+                    RealmMediaKind.Image,
+                    1024))));
+
+        Assert.Equal(GatewayErrorKind.Protocol, temporaryError.Kind);
+        Assert.Single(temporaryHandler.Requests);
+    }
+
+    [Fact]
+    public async Task GetRealmMedia_WhenPayloadExceedsRequestedLimit_FailsWithoutReturningPartialContent()
+    {
+        using var handler = new RecordingHandler(
+            Json("""{"result":"success","url":"/user_uploads/temporary/7/file.png"}"""),
+            Binary([1, 2, 3, 4], "image/png"));
+        using var gateway = new ZulipGateway(handler);
+
+        var error = await Assert.ThrowsAsync<GatewayException>(() => gateway.GetRealmMediaAsync(
+            new GetRealmMediaRequest(
+                Credentials,
+                new RealmMediaRequest("/user_uploads/7/file.png", RealmMediaKind.Image, 3))));
+
+        Assert.Equal(GatewayErrorKind.Protocol, error.Kind);
+    }
+
+    [Fact]
+    public async Task GetRealmMedia_Avatar_UsesAuthenticatedSameRealmReadAndRequiresImageMime()
+    {
+        using var handler = new RecordingHandler(Binary([9, 8], "image/webp"));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.GetRealmMediaAsync(new GetRealmMediaRequest(
+            Credentials,
+            new RealmMediaRequest("/user_avatars/7/avatar.png", RealmMediaKind.Avatar, 1024)));
+
+        Assert.Equal([9, 8], result.Content);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("https://chat.example.test/user_avatars/7/avatar.png", request.Uri!.AbsoluteUri);
+        Assert.Equal("Basic", request.Authorization!.Scheme);
+    }
+
     private static HttpResponseMessage Json(string json, HttpStatusCode status = HttpStatusCode.OK, TimeSpan? retryAfter = null)
     {
         var response = new HttpResponseMessage(status) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
         if (retryAfter is { } retry) response.Headers.RetryAfter = new RetryConditionHeaderValue(retry);
+        return response;
+    }
+
+    private static HttpResponseMessage Binary(byte[] content, string contentType)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(content)
+        };
+        response.Content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
         return response;
     }
 

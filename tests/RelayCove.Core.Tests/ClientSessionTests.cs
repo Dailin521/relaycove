@@ -1088,6 +1088,101 @@ public sealed class ClientSessionTests
         await session.StopAsync();
     }
 
+    [Fact]
+    public async Task SetMessageStarredAsync_WhenGatewaySucceeds_ConvergesLocalProjection()
+    {
+        var message = Message(50, new DirectMessage([]));
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(events:
+                [new MessageUpsertEvent(message, Source: DomainEventSource.Register)]))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.SetMessageStarredAsync(50, true);
+
+        Assert.True(session.State.Messages[50].IsStarred);
+        Assert.DoesNotContain(50, session.State.MessageMutations.Keys);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task EditMessageAsync_WhenGatewayResultIsUnknown_BlocksFurtherMutationAndDoesNotRetry()
+    {
+        var message = Message(51, new DirectMessage([]));
+        var calls = 0;
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(events:
+                [new MessageUpsertEvent(message, Source: DomainEventSource.Register)])),
+            EditMessageHandler = (_, _) =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromException(new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await Assert.ThrowsAsync<GatewayException>(() => session.EditMessageAsync(51, "edited"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            session.SetMessageStarredAsync(51, true));
+
+        Assert.Equal(1, Volatile.Read(ref calls));
+        Assert.Equal("message-51", session.State.Messages[51].Content);
+        Assert.Equal(MessageMutationStatus.Uncertain, session.State.MessageMutations[51].Status);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task EditMessageAsync_WhenMessageIsNotOwned_DoesNotCallGateway()
+    {
+        var message = new ChatMessage(52, new DirectMessage([20]), 20, "other", DateTimeOffset.UnixEpoch);
+        var calls = 0;
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(events:
+                [new MessageUpsertEvent(message, Source: DomainEventSource.Register)])),
+            EditMessageHandler = (_, _) =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.CompletedTask;
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => session.EditMessageAsync(52, "edited"));
+
+        Assert.Equal(0, calls);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task UploadAttachmentAsync_WhenRegisterDefinesLimit_ValidatesBeforeOneGatewayPost()
+    {
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(maxFileUploadSizeMiB: 1))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await using var acceptedStream = new MemoryStream([1, 2, 3]);
+
+        var uploaded = await session.UploadAttachmentAsync(
+            new AttachmentUpload("note.txt", "text/plain", 3, acceptedStream));
+
+        Assert.Equal(1024 * 1024, session.MaxFileUploadBytes);
+        Assert.Equal(1, gateway.UploadCalls);
+        Assert.Equal("note.txt", uploaded.FileName);
+        await using var tooLarge = new MemoryStream(new byte[1]);
+        await Assert.ThrowsAsync<ArgumentException>(() => session.UploadAttachmentAsync(
+            new AttachmentUpload("large.bin", null, 1024 * 1024 + 1L, tooLarge)));
+        Assert.Equal(1, gateway.UploadCalls);
+        await session.StopAsync();
+    }
+
     private static CredentialEnvelope Credential() =>
         new(RealmEndpoint.Parse("https://zulip.example/"), "me@example.test", 10, "api-key");
 
@@ -1102,9 +1197,10 @@ public sealed class ClientSessionTests
         IReadOnlyList<Subscription>? subscriptions = null,
         IReadOnlyList<DomainEvent>? events = null,
         IReadOnlyList<ConversationKey>? recent = null,
-        UnreadState? unread = null) =>
+        UnreadState? unread = null,
+        int? maxFileUploadSizeMiB = null) =>
         new(queue, 1, TimeSpan.FromSeconds(25), 1_000, 100, subscriptions ?? [],
-            [new UserProfile(10, "Me", "me@example.test")], recent ?? [], unread ?? new UnreadState(), events ?? []);
+            [new UserProfile(10, "Me", "me@example.test")], recent ?? [], unread ?? new UnreadState(), events ?? [], maxFileUploadSizeMiB);
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
@@ -1274,6 +1370,7 @@ public sealed class ClientSessionTests
         public int SendCalls { get; private set; }
         public int TopicsCalls { get; private set; }
         public int DeleteQueueCalls { get; private set; }
+        public int UploadCalls { get; private set; }
         public int CancelledLongPolls { get; private set; }
         public TaskCompletionSource<bool> RegisterEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<bool> AuthenticateEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1290,6 +1387,12 @@ public sealed class ClientSessionTests
         public Func<HistoryRequest, CancellationToken, Task<HistoryResult>> HistoryHandler { get; set; } = (_, _) => Task.FromResult(new HistoryResult([], false, false));
         public Func<SendRequest, CancellationToken, Task<SendResult>>? SendHandler { get; set; }
         public Func<MarkReadRequest, CancellationToken, Task>? MarkReadHandler { get; set; }
+        public Func<SetReactionRequest, CancellationToken, Task>? SetReactionHandler { get; set; }
+        public Func<EditMessageRequest, CancellationToken, Task>? EditMessageHandler { get; set; }
+        public Func<DeleteMessageRequest, CancellationToken, Task>? DeleteMessageHandler { get; set; }
+        public Func<SetMessageStarredRequest, CancellationToken, Task>? SetMessageStarredHandler { get; set; }
+        public Func<UploadAttachmentRequest, CancellationToken, Task<UploadedAttachment>>? UploadAttachmentHandler { get; set; }
+        public Func<GetRealmMediaRequest, CancellationToken, Task<RealmMediaResult>>? GetRealmMediaHandler { get; set; }
         public Func<DeleteQueueRequest, CancellationToken, Task>? DeleteQueueHandler { get; set; }
         public Func<TopicsRequest, CancellationToken, Task<TopicsResult>> TopicsHandler { get; set; } = (_, _) => Task.FromResult(new TopicsResult([]));
 
@@ -1364,6 +1467,29 @@ public sealed class ClientSessionTests
             MarkReadRequests.Add(request);
             return MarkReadHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
         }
+
+        public Task SetReactionAsync(SetReactionRequest request, CancellationToken cancellationToken = default) =>
+            SetReactionHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
+
+        public Task EditMessageAsync(EditMessageRequest request, CancellationToken cancellationToken = default) =>
+            EditMessageHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
+
+        public Task DeleteMessageAsync(DeleteMessageRequest request, CancellationToken cancellationToken = default) =>
+            DeleteMessageHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
+
+        public Task SetMessageStarredAsync(SetMessageStarredRequest request, CancellationToken cancellationToken = default) =>
+            SetMessageStarredHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
+
+        public Task<UploadedAttachment> UploadAttachmentAsync(UploadAttachmentRequest request, CancellationToken cancellationToken = default)
+        {
+            UploadCalls++;
+            return UploadAttachmentHandler?.Invoke(request, cancellationToken) ??
+                Task.FromResult(new UploadedAttachment(request.Upload.FileName, $"https://zulip.example/user_uploads/{request.Upload.FileName}"));
+        }
+
+        public Task<RealmMediaResult> GetRealmMediaAsync(GetRealmMediaRequest request, CancellationToken cancellationToken = default) =>
+            GetRealmMediaHandler?.Invoke(request, cancellationToken) ??
+            Task.FromResult(new RealmMediaResult([1], "image/png"));
 
         public Task DeleteQueueAsync(DeleteQueueRequest request, CancellationToken cancellationToken = default)
         {

@@ -1,10 +1,10 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：Stage 21 外部门禁保留；Stage 22W Slice 1/2/3 已在当前审查树完成并部署；Stage 22M 待启动
+文档状态：Stage 21 外部门禁保留；Stage 22W Slice 1/2/3 已完成并部署；Stage 22M 原生壳与消息交互已在隔离 worktree 实现并通过 Fast 和受限真实窗口验收，真实 Realm/完整人工验收仍未完成
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
-最后更新：2026-08-12
+最后更新：2026-08-13
 
 ## 1. 决策摘要
 
@@ -55,7 +55,7 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 | 真实 Realm Live 测试 | 未验证 | 两个专用账号 API key、隔离私有频道和显式写入授权齐全 |
 | 人工密码登录 | 未验证 | 专用测试账号在最终 MAUI UI 中完成一次登录 |
 | Stage 22W Web 验收 | Slice 1/2/3 已完成组件化、正式 fake-HTTP 旅程、消息菜单/头像/图片、Fast/Full、独立复核和固定入口部署；完整真实账号验收仍未执行 | 固定 Chromium 下 typecheck/unit/build、目标视口、正式 login→register→history→send→logout 旅程、主题、键盘、响应式和控制台检查通过；真实消息/已读/上传写入仍需专用账号与明确授权 |
-| Stage 22M MAUI 视觉验收 | 未开始 | Web 交互版本冻结后完成原生 Windows 真实窗口验收 |
+| Stage 22M MAUI 视觉验收 | 部分完成 | 原生壳已完成 1440×900 / 1024×768、浅色/深色、150% 副屏内部窗口截图及指针/UI Automation 菜单焦点检查；真实 Realm、100%/200%、完整键盘/高对比/长列表仍待人工验收 |
 | 签名/安装器/公开发布 | 不在范围 | 需要单独授权和发布方案 |
 
 任何门禁失败都必须保留证据并停止对应交付声明，不得静默切换凭据后端、关闭 TLS 校验或扩大测试目标。
@@ -75,9 +75,9 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 9. 被动处理其他客户端产生的消息编辑、频道/话题移动和批量删除事件。
 10. 明确确认的清除本地缓存操作。
 
-### 3.2 当前共享消息能力明确不做
+### 3.2 当前仍不可用或未完成真实验收的能力
 
-频道管理、非图片附件、反应、主动编辑/删除入口、搜索、typing、presence、通知、push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux。Stage 22W 已单独实现图片能力门，不表示 Stage 21/MAUI 已拥有或验收图片能力。
+完整成员目录/频道关系、频道管理、服务器范围搜索与 `@` 候选、saved 消息列表、typing、presence、通知、push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux 仍不可用或不在当前范围。Stage 22M 已增加 reaction、主动编辑/删除、star、图片/文件附件、受控媒体和本地已加载状态搜索的原生路径，但仅有确定性 fake/in-memory 与受限真实窗口证据；未获授权也未执行真实 Zulip 写入，不能据此关闭 Live 门禁。
 
 后续平台可以复用 Core、Zulip.Client 与 Data，但必须另行增加目标框架、图标、签名、后台生命周期和发布验证。本阶段不声称可交付这些平台；Linux 不支持。
 
@@ -307,7 +307,7 @@ unread_state
 
 ## 9. 双前端 UI 路线
 
-Stage 21 的 MAUI Shell 已冻结功能但尚未完成最终视觉：
+Stage 21 的 MAUI Shell 是历史功能基线；Stage 22M 已在其上完成当前原生壳和消息交互，但外部门禁仍未关闭：
 
 ```text
 LoginPage
@@ -327,7 +327,7 @@ ViewModel 使用 CommunityToolkit.Mvvm，只调用 `IClientSession`。code-behin
 
 登录错误分类：不兼容 Realm、认证失败、限流、离线、凭据存储失败。最后 Realm 可用 Preferences 保存为非敏感配置；密码字段完成登录后立即清空。
 
-用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/`。该目录保持不可变，现作为正式 Web 与后续 MAUI 的初始视觉/交互来源，而不是运行时资产。Stage 22W 在 `src/RelayCove.Web/` 以生产组件实现并验收；交互版本冻结后，Stage 22M 使用原生 XAML/ViewModel 复刻，不得以 WebView 承载 Web。图片已由 Web Slice 3 独立实现；非图片附件、搜索、反应、`@` 候选和频道管理仍需独立能力门。
+用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/`。该目录保持不可变，现作为正式 Web 与后续 MAUI 的初始视觉/交互来源，而不是运行时资产。Stage 22W 在 `src/RelayCove.Web/` 以生产组件实现并验收；Stage 22M 使用原生 XAML/ViewModel 复刻，不得以 WebView 承载 Web。当前原生实现已覆盖 reaction/edit/delete/star、图片/文件附件、本地搜索和已知用户新会话，但真实 Realm 写入、完整目录/服务器搜索、`@` 候选、saved 列表和频道管理仍是独立能力/验收门。
 
 ## 10. 实施切片与完成定义
 
@@ -345,6 +345,8 @@ ViewModel 使用 CommunityToolkit.Mvvm，只调用 `IClientSession`。code-behin
 ### Stage 22M：MAUI 原生视觉与交互对齐
 
 Web 对应交互版本冻结后，按 Token/规格/功能矩阵/场景用原生 MAUI 复刻。不得共享 React 运行时代码或使用 WebView；MAUI 继续通过 `IClientSession` 使用 Zulip 权威状态。Web 浏览器验收不能替代 Windows 真实窗口、200% 缩放、人工登录或干净 VM 验收。
+
+截至 2026-08-13，隔离分支 `codex/stage-22m-native-shell` 已实现原生 Token/主题/响应式壳、消息结构、Composer、详情/设置、菜单/emoji/搜索/新会话、附件/媒体以及 reaction/edit/delete/star 的共享 `Core → Zulip.Client → Data → ClientSession → MAUI` 路径。未知写结果按消息冻结且不自动重试；Debug 预览只修改内存，不连接 Realm。当前树通过 Fast（Core 85、Zulip.Client 40、Data 17、App 36）并在副屏 150% 完成浅/深色 1440×900/1024×768 内部窗口证据。真实 Zulip 写入、100%/200%、完整键盘/高对比/长列表、人工密码登录和干净 VM 仍未验证。
 
 ### Stage 21 历史实施切片
 

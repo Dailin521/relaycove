@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:controls="clr-namespace:RelayCove.App.Controls"
+             xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
+             x:Class="RelayCove.App.Controls.ConversationPaneView"
+             x:DataType="viewModels:ShellViewModel"
+             Background="{StaticResource SurfaceBrush}">
+    <Grid RowDefinitions="Auto,Auto,2*,Auto,*,Auto,2*"
+          Padding="12,12,10,10"
+          RowSpacing="8">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <Entry Grid.Column="0"
+                   Style="{StaticResource BaseEntryStyle}"
+                   Placeholder="搜索频道、话题、成员和已加载消息"
+                   IsReadOnly="True"
+                   Focused="OnSearchFocused"
+                   SemanticProperties.Description="打开本地工作区搜索" />
+            <Button Grid.Column="1"
+                    Text="+"
+                    Style="{StaticResource IconButtonStyle}"
+                    Command="{Binding OpenNewConversationCommand}"
+                    SemanticProperties.Description="使用当前已知联系人新建私信" />
+        </Grid>
+
+        <Label Grid.Row="1" Text="频道" Style="{StaticResource SectionHeaderStyle}" />
+        <CollectionView Grid.Row="2"
+                        ItemsSource="{Binding Channels}"
+                        SelectedItem="{Binding SelectedChannel, Mode=TwoWay}"
+                        SelectionMode="Single"
+                        ItemsUpdatingScrollMode="KeepItemsInView">
+            <CollectionView.EmptyView>
+                <Label Text="暂无已订阅频道" Style="{StaticResource MutedLabelStyle}" Padding="8" />
+            </CollectionView.EmptyView>
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="viewModels:ChannelItem">
+                    <Border Padding="8,6" StrokeThickness="0">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup Name="CommonStates">
+                                <VisualState Name="Normal" />
+                                <VisualState Name="Selected">
+                                    <VisualState.Setters>
+                                        <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                            <Label Grid.Column="0" Text="#" Style="{StaticResource MutedLabelStyle}" />
+                            <Label Grid.Column="1" Text="{Binding Name}" Style="{StaticResource BaseLabelStyle}" />
+                            <Border Grid.Column="2"
+                                    Padding="5,1"
+                                    IsVisible="{Binding HasUnread}"
+                                    Background="{StaticResource DangerBrush}"
+                                    StrokeThickness="0">
+                                <Border.StrokeShape>
+                                    <RoundRectangle CornerRadius="8" />
+                                </Border.StrokeShape>
+                                <Label Text="{Binding UnreadLabel}" FontSize="9" TextColor="White" />
+                            </Border>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+
+        <Label Grid.Row="3"
+               Text="话题"
+               Style="{StaticResource SectionHeaderStyle}"
+               IsVisible="{Binding HasSelectedChannel}" />
+        <CollectionView Grid.Row="4"
+                        ItemsSource="{Binding Topics}"
+                        SelectedItem="{Binding SelectedTopic, Mode=TwoWay}"
+                        SelectionMode="Single"
+                        ItemsUpdatingScrollMode="KeepItemsInView">
+            <CollectionView.EmptyView>
+                <Label Text="选择频道以加载话题" Style="{StaticResource MutedLabelStyle}" Padding="8" />
+            </CollectionView.EmptyView>
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="viewModels:TopicItem">
+                    <Border Padding="8,5" StrokeThickness="0">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup Name="CommonStates">
+                                <VisualState Name="Normal" />
+                                <VisualState Name="Selected">
+                                    <VisualState.Setters>
+                                        <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Text="{Binding DisplayName}" Style="{StaticResource BaseLabelStyle}" FontSize="13" />
+                            <Label Grid.Column="1"
+                                   Text="{Binding UnreadLabel}"
+                                   IsVisible="{Binding HasUnread}"
+                                   Style="{StaticResource MutedLabelStyle}"
+                                   TextColor="{StaticResource DangerColor}" />
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+
+        <Label Grid.Row="5" Text="私信" Style="{StaticResource SectionHeaderStyle}" />
+        <CollectionView Grid.Row="6"
+                        ItemsSource="{Binding DirectMessages}"
+                        SelectedItem="{Binding SelectedDirectMessage, Mode=TwoWay}"
+                        SelectionMode="Single"
+                        ItemsUpdatingScrollMode="KeepItemsInView">
+            <CollectionView.EmptyView>
+                <Label Text="暂无最近私信" Style="{StaticResource MutedLabelStyle}" Padding="8" />
+            </CollectionView.EmptyView>
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="viewModels:NavigationItem">
+                    <Border Padding="8,6" StrokeThickness="0">
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup Name="CommonStates">
+                                <VisualState Name="Normal" />
+                                <VisualState Name="Selected">
+                                    <VisualState.Setters>
+                                        <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                        <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8">
+                            <Border Grid.RowSpan="2"
+                                    WidthRequest="32"
+                                    HeightRequest="32"
+                                    Padding="0"
+                                    VerticalOptions="Center"
+                                    Background="{StaticResource SurfaceSelectedBrush}"
+                                    StrokeThickness="0">
+                                <Border.StrokeShape><RoundRectangle CornerRadius="16" /></Border.StrokeShape>
+                                <Grid>
+                                    <Label Text="{Binding Initial}"
+                                           Style="{StaticResource MutedLabelStyle}"
+                                           FontSize="9"
+                                           FontAttributes="Bold"
+                                           HorizontalTextAlignment="Center"
+                                           VerticalTextAlignment="Center" />
+                                    <controls:RealmMediaImageView SourceUrl="{Binding AvatarUrl}"
+                                                                  MediaKind="Avatar"
+                                                                  Aspect="AspectFill"
+                                                                  ShowFailureText="False" />
+                                </Grid>
+                            </Border>
+                            <Label Grid.Column="1" Text="{Binding Title}" Style="{StaticResource BaseLabelStyle}" />
+                            <Label Grid.Row="1" Grid.Column="1" Text="{Binding Detail}" Style="{StaticResource MutedLabelStyle}" />
+                            <Border Grid.Column="2"
+                                    Grid.RowSpan="2"
+                                    Padding="5,1"
+                                    VerticalOptions="Center"
+                                    IsVisible="{Binding HasUnread}"
+                                    Background="{StaticResource DangerBrush}"
+                                    StrokeThickness="0">
+                                <Border.StrokeShape>
+                                    <RoundRectangle CornerRadius="8" />
+                                </Border.StrokeShape>
+                                <Label Text="{Binding UnreadLabel}" FontSize="9" TextColor="White" />
+                            </Border>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentView>

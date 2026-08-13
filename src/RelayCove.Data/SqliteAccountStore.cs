@@ -8,7 +8,7 @@ namespace RelayCove.Data;
 
 public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     private readonly string _accountsRoot;
     private readonly Channel<IWorkItem> _mutations;
@@ -230,7 +230,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id, conversation_kind, channel_id, topic, dm_user_ids, sender_id,
-                   content, timestamp_utc, is_read, sender_display_name
+                   content, timestamp_utc, is_read, sender_display_name, sender_avatar_url, is_starred
             FROM messages
             WHERE conversation_key = $conversation
               AND ($before IS NULL OR id < $before)
@@ -241,8 +241,13 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         command.Parameters.AddWithValue("$before", beforeMessageId is null ? DBNull.Value : beforeMessageId.Value);
         command.Parameters.AddWithValue("$limit", limit);
         var messages = new List<ChatMessage>();
-        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) messages.Add(ReadMessage(reader));
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) messages.Add(ReadMessage(reader));
+        }
+        var messagesById = messages.ToDictionary(message => message.Id);
+        await PopulateReactionsAsync(connection, null, messagesById, cancellationToken).ConfigureAwait(false);
+        for (var index = 0; index < messages.Count; index++) messages[index] = messagesById[messages[index].Id];
         messages.Reverse();
         return messages;
     }
@@ -349,7 +354,14 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         var version = await ExecuteScalarLongAsync(connection, "PRAGMA user_version;", null, cancellationToken).ConfigureAwait(false);
         if (version > CurrentSchemaVersion) throw new InvalidOperationException($"Unsupported schema version {version}.");
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        await ExecuteNonQueryAsync(connection, """
+        var hasCoreSchema = await ExecuteScalarLongAsync(
+            connection,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='messages';",
+            transaction,
+            cancellationToken).ConfigureAwait(false) > 0;
+        if (version < 1 && !hasCoreSchema)
+        {
+            await ExecuteNonQueryAsync(connection, """
             CREATE TABLE IF NOT EXISTS schema_info(version INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS account_metadata(
                 singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
@@ -409,6 +421,29 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
             INSERT INTO schema_info(version) VALUES(1);
             PRAGMA user_version = 1;
             """, transaction, cancellationToken).ConfigureAwait(false);
+        }
+        if (version < 2)
+        {
+            await ExecuteNonQueryAsync(connection, """
+                ALTER TABLE users ADD COLUMN avatar_url TEXT NULL;
+                ALTER TABLE users ADD COLUMN avatar_version INTEGER NULL;
+                ALTER TABLE users ADD COLUMN is_bot INTEGER NOT NULL DEFAULT 0 CHECK(is_bot IN (0, 1));
+                ALTER TABLE messages ADD COLUMN sender_avatar_url TEXT NULL;
+                ALTER TABLE messages ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0 CHECK(is_starred IN (0, 1));
+                CREATE TABLE message_reactions(
+                    message_id INTEGER NOT NULL,
+                    reaction_type TEXT NOT NULL,
+                    emoji_code TEXT NOT NULL,
+                    emoji_name TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    user_full_name TEXT NULL,
+                    PRIMARY KEY(message_id, reaction_type, emoji_code, user_id),
+                    FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE
+                );
+                UPDATE schema_info SET version = 2;
+                PRAGMA user_version = 2;
+                """, transaction, cancellationToken).ConfigureAwait(false);
+        }
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -420,7 +455,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         var messages = new Dictionary<long, ChatMessage>();
         await using (var command = CreateCommand(connection, transaction, """
             SELECT id, conversation_kind, channel_id, topic, dm_user_ids, sender_id,
-                   content, timestamp_utc, is_read, sender_display_name
+                   content, timestamp_utc, is_read, sender_display_name, sender_avatar_url, is_starred
             FROM messages ORDER BY id;
             """))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
@@ -431,6 +466,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                 messages[message.Id] = message;
             }
         }
+        await PopulateReactionsAsync(connection, transaction, messages, cancellationToken).ConfigureAwait(false);
 
         var subscriptions = new Dictionary<long, Subscription>();
         await using (var command = CreateCommand(connection, transaction, "SELECT channel_id, name, is_active FROM subscriptions;"))
@@ -444,12 +480,19 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         }
 
         var users = new Dictionary<long, UserProfile>();
-        await using (var command = CreateCommand(connection, transaction, "SELECT user_id, full_name, email, is_active FROM users;"))
+        await using (var command = CreateCommand(connection, transaction, "SELECT user_id, full_name, email, is_active, avatar_url, avatar_version, is_bot FROM users;"))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                var user = new UserProfile(reader.GetInt64(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetInt64(3) != 0);
+                var user = new UserProfile(
+                    reader.GetInt64(0),
+                    reader.GetString(1),
+                    reader.IsDBNull(2) ? null : reader.GetString(2),
+                    reader.GetInt64(3) != 0,
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                    reader.IsDBNull(5) ? null : reader.GetInt32(5),
+                    reader.GetInt64(6) != 0);
                 users[user.UserId] = user;
             }
         }
@@ -493,6 +536,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
     {
         await ExecuteNonQueryAsync(connection, """
             DELETE FROM messages;
+            DELETE FROM message_reactions;
             DELETE FROM topics;
             DELETE FROM subscriptions;
             DELETE FROM users;
@@ -509,8 +553,15 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         foreach (var user in state.Users.Values)
         {
             await ExecuteAsync(connection, transaction,
-                "INSERT INTO users(user_id, full_name, email, is_active) VALUES($id, $name, $email, $active);",
-                cancellationToken, ("$id", user.UserId), ("$name", user.FullName), ("$email", user.Email), ("$active", user.IsActive ? 1 : 0)).ConfigureAwait(false);
+                "INSERT INTO users(user_id, full_name, email, is_active, avatar_url, avatar_version, is_bot) VALUES($id, $name, $email, $active, $avatar, $avatar_version, $bot);",
+                cancellationToken,
+                ("$id", user.UserId),
+                ("$name", user.FullName),
+                ("$email", user.Email),
+                ("$active", user.IsActive ? 1 : 0),
+                ("$avatar", user.AvatarUrl),
+                ("$avatar_version", user.AvatarVersion),
+                ("$bot", user.IsBot ? 1 : 0)).ConfigureAwait(false);
         }
         foreach (var topic in state.Topics.Values.Where(topic => state.Subscriptions.ContainsKey(topic.ChannelId)))
         {
@@ -522,6 +573,20 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         {
             if (message.Conversation is ChannelTopic channel && !state.Subscriptions.ContainsKey(channel.ChannelId)) continue;
             await InsertMessageAsync(connection, transaction, message, cancellationToken).ConfigureAwait(false);
+            foreach (var reaction in message.Reactions)
+            {
+                await ExecuteAsync(connection, transaction, """
+                    INSERT INTO message_reactions(
+                        message_id, reaction_type, emoji_code, emoji_name, user_id, user_full_name)
+                    VALUES($message, $type, $code, $name, $user, $full_name);
+                    """, cancellationToken,
+                    ("$message", message.Id),
+                    ("$type", reaction.Identity.ReactionType),
+                    ("$code", reaction.Identity.EmojiCode),
+                    ("$name", reaction.Identity.EmojiName),
+                    ("$user", reaction.UserId),
+                    ("$full_name", reaction.UserFullName)).ConfigureAwait(false);
+            }
         }
         foreach (var pair in state.Unread.Counts)
         {
@@ -561,14 +626,14 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         await ExecuteAsync(connection, transaction, """
             INSERT INTO messages(
                 id, conversation_key, conversation_kind, channel_id, topic, dm_user_ids,
-                sender_id, sender_display_name, content, timestamp_utc, is_read)
-            VALUES($id, $key, $kind, $channel, $topic, $dm, $sender, $sender_name, $content, $timestamp, $read);
+                sender_id, sender_display_name, sender_avatar_url, content, timestamp_utc, is_read, is_starred)
+            VALUES($id, $key, $kind, $channel, $topic, $dm, $sender, $sender_name, $sender_avatar, $content, $timestamp, $read, $starred);
             """, cancellationToken,
             ("$id", message.Id), ("$key", message.Conversation.CanonicalKey), ("$kind", kind),
             ("$channel", channelId), ("$topic", topic), ("$dm", dmUserIds), ("$sender", message.SenderId),
-            ("$sender_name", message.SenderDisplayName), ("$content", message.Content),
+            ("$sender_name", message.SenderDisplayName), ("$sender_avatar", message.SenderAvatarUrl), ("$content", message.Content),
             ("$timestamp", message.Timestamp.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture)),
-            ("$read", message.IsRead ? 1 : 0)).ConfigureAwait(false);
+            ("$read", message.IsRead ? 1 : 0), ("$starred", message.IsStarred ? 1 : 0)).ConfigureAwait(false);
     }
 
     private static ChatMessage ReadMessage(SqliteDataReader reader)
@@ -582,7 +647,40 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         return new ChatMessage(
             reader.GetInt64(0), conversation, reader.GetInt64(5), reader.GetString(6),
             DateTimeOffset.Parse(reader.GetString(7), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
-            reader.GetInt64(8) != 0, reader.IsDBNull(9) ? null : reader.GetString(9));
+            reader.GetInt64(8) != 0,
+            reader.IsDBNull(9) ? null : reader.GetString(9),
+            reader.IsDBNull(10) ? null : reader.GetString(10),
+            reader.GetInt64(11) != 0);
+    }
+
+    private static async Task PopulateReactionsAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        IDictionary<long, ChatMessage> messages,
+        CancellationToken cancellationToken)
+    {
+        if (messages.Count == 0) return;
+        var reactions = messages.Keys.ToDictionary(id => id, _ => new List<EmojiReaction>());
+        await using var command = CreateCommand(connection, transaction, """
+            SELECT message_id, reaction_type, emoji_code, emoji_name, user_id, user_full_name
+            FROM message_reactions ORDER BY message_id, reaction_type, emoji_code, user_id;
+            """);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var messageId = reader.GetInt64(0);
+            if (!reactions.TryGetValue(messageId, out var list)) continue;
+            list.Add(new EmojiReaction(
+                new EmojiReactionIdentity(reader.GetString(3), reader.GetString(2), reader.GetString(1)),
+                reader.GetInt64(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5)));
+        }
+
+        foreach (var pair in reactions)
+        {
+            messages[pair.Key] = messages[pair.Key] with { Reactions = pair.Value.ToArray() };
+        }
+
     }
 
     private static IEnumerable<long> ParseIds(string value) =>

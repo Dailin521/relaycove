@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<TitleBar xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+          xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+          xmlns:controls="clr-namespace:RelayCove.App.Controls"
+          xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
+          x:Class="RelayCove.App.Controls.ProductBarView"
+          x:Name="Root"
+          x:DataType="viewModels:ShellViewModel"
+          Title="RelayCove"
+          Subtitle="{Binding WorkspaceDisplayName}"
+          HeightRequest="{StaticResource ProductBarHeight}"
+          BackgroundColor="{AppThemeBinding Light={StaticResource LightSurfaceColor}, Dark={StaticResource DarkSurfaceColor}}"
+          ForegroundColor="{AppThemeBinding Light={StaticResource LightTextColor}, Dark={StaticResource DarkTextColor}}">
+    <TitleBar.Content>
+        <Border Padding="10,4"
+                HorizontalOptions="Center"
+                VerticalOptions="Center"
+                Background="{StaticResource SurfaceSoftBrush}"
+                Stroke="{StaticResource BorderBrush}"
+                StrokeThickness="1">
+            <Border.StrokeShape>
+                <RoundRectangle CornerRadius="10" />
+            </Border.StrokeShape>
+            <Label x:Name="ConnectionStatusLabel"
+                   Style="{StaticResource MutedLabelStyle}"
+                   VerticalTextAlignment="Center" />
+        </Border>
+    </TitleBar.Content>
+    <TitleBar.TrailingContent>
+        <Button Text="⌃"
+                Style="{StaticResource IconButtonStyle}"
+                Clicked="OnPinClicked"
+                SemanticProperties.Description="置顶窗口">
+            <Button.Triggers>
+                <DataTrigger TargetType="Button"
+                             Binding="{Binding IsPinned, Source={x:Reference Root}, x:DataType=controls:ProductBarView}"
+                             Value="True">
+                    <Setter Property="BackgroundColor" Value="{StaticResource AccentColor}" />
+                    <Setter Property="TextColor" Value="White" />
+                </DataTrigger>
+            </Button.Triggers>
+        </Button>
+    </TitleBar.TrailingContent>
+</TitleBar>

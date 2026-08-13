@@ -10,13 +10,15 @@ public sealed record ClientState
         IReadOnlyDictionary<string, OutboxEntry>? outbox = null,
         UnreadState? unread = null,
         ConnectionState? connection = null,
-        long? lastEventId = null)
+        long? lastEventId = null,
+        IReadOnlyDictionary<long, MessageMutationState>? messageMutations = null)
     {
         Messages = new Dictionary<long, ChatMessage>(messages ?? new Dictionary<long, ChatMessage>());
         Subscriptions = new Dictionary<long, Subscription>(subscriptions ?? new Dictionary<long, Subscription>());
         Users = new Dictionary<long, UserProfile>(users ?? new Dictionary<long, UserProfile>());
         Topics = new Dictionary<string, TopicSummary>(topics ?? new Dictionary<string, TopicSummary>());
         Outbox = new Dictionary<string, OutboxEntry>(outbox ?? new Dictionary<string, OutboxEntry>());
+        MessageMutations = new Dictionary<long, MessageMutationState>(messageMutations ?? new Dictionary<long, MessageMutationState>());
         Unread = unread ?? new UnreadState();
         Connection = connection ?? ConnectionState.SignedOut;
         LastEventId = lastEventId;
@@ -28,6 +30,7 @@ public sealed record ClientState
     public IReadOnlyDictionary<long, UserProfile> Users { get; init; }
     public IReadOnlyDictionary<string, TopicSummary> Topics { get; init; }
     public IReadOnlyDictionary<string, OutboxEntry> Outbox { get; init; }
+    public IReadOnlyDictionary<long, MessageMutationState> MessageMutations { get; init; }
     public UnreadState Unread { get; init; }
     public ConnectionState Connection { get; init; }
     public long? LastEventId { get; init; }

@@ -1,8 +1,8 @@
 # Stage 22 — RelayCove 双前端（22W Web / 22M Native MAUI）
 
-- Status: Stage 22W / Slice 1, Slice 2 and Slice 3 complete on the current uncommitted review tree; local gates, independent review and fixed-entry deployment passed; Stage 22M planned
-- Execution branch: `codex/stage-22w-web-foundation`
-- Starting point: clean `main` at `1374985197aca39806b8780f2e9f17799ffe3abe`
+- Status: Stage 22W / Slice 1–3 historical delivery retained; Stage 22M native shell and message-interaction parity implemented in an isolated worktree, Fast passed and bounded light/dark native-window evidence recorded; real Realm/manual/Stage 21 gates remain open
+- Execution branch: `codex/stage-22m-native-shell`
+- Starting point: exact `main@53a4f1a643031d9eef801e52ab8b20456ea8773c`
 - Design source: immutable `docs/ui/baselines/chat-ui-v1/`
 - Interaction source: `docs/ui/INTERACTION_SPEC.md`
 
@@ -26,7 +26,7 @@ Stage 21 的真实 Realm Live、MAUI 人工密码登录和干净 Windows 11 x64 
 
 ### Stage 22M — MAUI native parity
 
-状态：planned。只在相应 Web 交互版本冻结后启动；使用原生 XAML、ResourceDictionary、ViewModel、Behavior 和 Windows adapter，不引用 React runtime，不加载 WebView。
+状态：Slice 1 and message-interaction parity implemented in isolated worktree。使用原生 XAML、ResourceDictionary、ViewModel、Behavior 和 Windows adapter，不引用 React runtime，不加载 WebView。当前实现包含可运行原生壳、既有 session 投影、reaction/edit/delete/star/附件写能力以及确定性 App/Core/Zulip/Data 测试；真实 Realm 写入和完整 Windows 人工验收仍是独立未验证门禁。
 
 ## Stage 22W / Slice 1 — production foundation
 
@@ -110,12 +110,13 @@ Formal automation covers avatar/media Basic boundaries, temporary upload URLs wi
 
 ## Remaining independent capability gates
 
-- global/server search, non-image attachments, reactions, mentions, membership, saved messages, presence or channel management;
+- global/server search, mentions, complete membership/common-channel data, saved-message list, presence or channel management;
+- real-Realm acceptance for native image/file upload, reaction, edit, delete, star and message-send writes;
 - formal Web service worker or offline cache;
 - automatic scroll-threshold paging, long-list virtualization and cross-page visual-anchor preservation;
-- any Stage 22M MAUI visual conversion.
+- Stage 22M native 100%/200%, complete keyboard/high-contrast/long-list, manual password login, package/install and clean-VM acceptance.
 
-Visual buttons for remaining capabilities stay disabled, hidden or explicitly marked unavailable. A fixture-only affordance is not production capability evidence. Real-account authenticated reads and message writes also remain external acceptance gates; fake HTTP does not satisfy them.
+Visual buttons for capabilities without a real contract stay hidden or explicitly marked unavailable. A fixture/in-memory affordance is not real-Realm capability evidence. Real-account authenticated reads and message writes remain external acceptance gates; fake HTTP and the no-network native preview do not satisfy them.
 
 ## Validation matrix
 
@@ -219,14 +220,14 @@ Artifacts are intentionally ignored by Git; their dimensions and results are rec
 - Current fixed-entry release is `20260812T105302Z-1374985197ac-worktree`, archive SHA-256 `DB1A2948B2E70E3CE2F30104E44E46E18E99E9C52CA7ADE8E94E243E9CFAE8E3`. Fresh anonymous Chromium returned 200, rendered the corrected formal-client login copy, logged no error/warning, had no horizontal overflow and byte-matched the deployed JavaScript to local `dist`.
 - All media/upload/send automation used fake HTTP. No real account was entered during Slice 3 deployment verification; no real upload, send, mark-read, commit, push or tag occurred.
 
-## Stage 22M planned slices
+## Stage 22M slices
 
-1. native tokens/window and responsive skeleton;
-2. navigation and keyed `ClientState` projection;
-3. virtualized message list and connection/outbox states;
-4. multiline Composer, drafts, focus and exact send snapshot semantics;
-5. details/settings backed only by current contracts;
-6. real Windows 1440×900 / 1024×768, light/dark, 100%/200%, mouse/keyboard acceptance.
+1. **Slice 1 implemented:** native tokens/window, componentized responsive shell and light/dark resource wiring;
+2. **Slice 1 foundation implemented:** navigation and keyed `ClientState` projection, including authoritative unread and A→B channel-browse regression coverage;
+3. **Native message presentation implemented:** virtualized messages, own/other alignment, date/unread dividers, quotes, avatars, reactions, image/file cards, connection/outbox/mutation state and explicit recovery wording;
+4. **Composer and interaction parity implemented:** multiline per-conversation drafts, exact send snapshot semantics, Unicode emoji, attachments, local loaded-state search, known-user new DM, message menu, quote/copy/permalink, reaction/edit/delete/star and modal focus behavior;
+5. **Shared native contracts implemented:** `Core → Zulip.Client → Data → ClientSession → ShellViewModel`, including same-Realm controlled media, upload, message mutation lanes, unknown-result freeze and SQLite v2 reaction/star/avatar persistence;
+6. **Partially evidenced:** real Windows light/dark full-window captures at exact 1440×900 and 1024×768 equivalent DIP on `DISPLAY2` 150%, plus pointer/UI Automation menu/focus/settings checks. Real Realm writes, 100%/200%, full manual keyboard/high contrast, long text/list and scroll-anchor acceptance remain open.
 
 Proposed MAUI landing points remain:
 
@@ -238,6 +239,27 @@ Proposed MAUI landing points remain:
 | Windows behavior | `src/RelayCove.App/Platforms/Windows/` |
 | native tokens | `src/RelayCove.App/Resources/Styles/` |
 | tests | `tests/RelayCove.App.Tests/` |
+
+## Stage 22M / Slice 1 evidence — 2026-08-13
+
+- Isolated worktree `E:\WorkSpace\RelayCove-Stage22M`, branch `codex/stage-22m-native-shell`, base/HEAD `53a4f1a643031d9eef801e52ab8b20456ea8773c`. The primary worktree was read-only; no Web/frozen-baseline/deployment source changed.
+- Implementation spans `RelayCove.App`, shared `RelayCove.Core` contracts/session, `RelayCove.Zulip.Client`, `RelayCove.Data` schema v2 and deterministic tests. The UI remains pure native XAML/ViewModel/Behavior/Windows adapter; no WebView/server/BFF/proxy/second backend was added.
+- `ShellViewModel` projects subscriptions/topics/recent DMs/known users/messages/unread/connection/outbox/mutation state from `IClientSession`. The session adds reaction/edit/delete/star/upload and controlled media without bypassing Core. Per-message mutation lanes freeze on unknown outcomes and never automatically retry a non-idempotent write.
+- Native interaction includes loaded-workspace search, known-user single/group/self DM, quote/copy/message-link/ID, right-click/`Shift+F10`/touch menu, 24-emoji Composer/reaction pickers, own-message edit/delete confirmation, attachment drafts, image viewer/download, themes and device-only appearance preferences. Server-wide search/mentions, complete membership/presence/common-channel data, saved-message list and channel management remain explicitly unavailable.
+- Restore, password login, mark-read, logout and cache paths remain. Text/attachment sends are canonical-conversation keyed and exact-snapshot safe; upload and send are separate one-attempt stages. No real Realm request or write was executed for this Stage 22M handoff.
+- App tests passed 36/36. Final Full passed after fixing all 13 Release XamlC explicit-source binding failures with strongly typed ViewModel/control sources and keeping compiled bindings enabled: Core 85/85, Zulip.Client 40/40, Data 17/17 and App 36/36 passed in both Debug and Release (178/178 per configuration), plus deployment-template regression, Web typecheck/unit 63/63/build, Playwright 6/6 and deployment path 1/1. The Windows package was generated with zero warnings/errors; `Live` did not run.
+- Independent review closed earlier A→B selection, compact-details focus and screenshot-evidence P1s. Final architecture/security review found no confirmed P0/P1; final UI review found one stale-documentation P1, fixed by this current capability/test/screenshot record.
+
+Native screenshot evidence is Debug-only, deterministic and no-network: `RELAYCOVE_NATIVE_UI_PREVIEW=1` selects a `#if DEBUG` in-memory `IClientSession`. Send/reaction/edit/delete/star/upload interactions modify only its local memory and cannot reach a Realm. `PrintWindow(PW_RENDERFULLCONTENT)` rendered only the complete RelayCove top-level window on `DISPLAY2`, 150%/DPI 144, dated 2026-08-13:
+
+| Evidence | Target/equivalent DIP | Actual PNG pixels | SHA-256 |
+|---|---:|---:|---|
+| `artifacts/maui/screenshots/native-shell-wide-display2-150pct-light-stage22m-parity.png` | 1440×900 | 2160×1350 | `B8A38A4C8A93B7234D1557A10EAC062C2ADACD9D9D2D766021F8613B4DDDF104` |
+| `artifacts/maui/screenshots/native-shell-compact-display2-150pct-light-stage22m-parity.png` | 1024×768 | 1536×1152 | `7F194E2917C2788CCD42289720AC09D2B9DC1F8F0AC0A8D104FB4330E6A72E8C` |
+| `artifacts/maui/screenshots/native-shell-compact-display2-150pct-dark-stage22m-parity.png` | 1024×768 | 1536×1152 | `CD60F951E394D569AFB73CA1870240B257C283DFDF95C7F8A472AC617EF95F12` |
+| `artifacts/maui/screenshots/native-message-menu-compact-display2-150pct-dark-stage22m-parity.png` | 1024×768 | 1536×1152 | `6C8A2FB72E4DED1CD86CD26FF91EF1EB54CC034DDD1316F779DCB15A705B3E3C` |
+
+The captures verify startup and visible native shell composition at both target sizes, light/dark resources, details, quote/reaction/image presentation, Composer and the complete message menu, with no visible horizontal clipping at 1024×768. Real pointer/UI Automation checks opened the menu, focused its first action, closed back to the trigger, navigated settings and changed theme. They do not verify real Realm state/writes, 100%/200%, complete manual keyboard/high contrast, long-list anchors, package/sign/install or clean VM. Stage 21 Live, dedicated manual password login and clean Windows VM gates remain explicitly unverified.
 
 ## Review and completion
 

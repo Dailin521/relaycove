@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ResourceDictionary xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml">
+    <Color x:Key="AccentColor">#2F9BFF</Color>
+    <Color x:Key="AccentStrongColor">#1686EE</Color>
+    <Color x:Key="DangerColor">#F04F59</Color>
+    <Color x:Key="SuccessColor">#209765</Color>
+    <Color x:Key="WarningColor">#D48719</Color>
+
+    <Color x:Key="LightGroundColor">#F4F4F5</Color>
+    <Color x:Key="LightSurfaceColor">#FFFFFF</Color>
+    <Color x:Key="LightSurfaceRaisedColor">#FFFFFF</Color>
+    <Color x:Key="LightSurfaceSoftColor">#F7F7F8</Color>
+    <Color x:Key="LightSurfaceHoverColor">#EEF1F5</Color>
+    <Color x:Key="LightSurfaceSelectedColor">#E8EEF5</Color>
+    <Color x:Key="LightTextColor">#202124</Color>
+    <Color x:Key="LightMutedColor">#74777D</Color>
+    <Color x:Key="LightTertiaryColor">#A0A3A8</Color>
+    <Color x:Key="LightBorderColor">#E1E2E4</Color>
+    <Color x:Key="LightStrongBorderColor">#CFD2D6</Color>
+    <Color x:Key="LightBubbleColor">#F1F2F3</Color>
+    <Color x:Key="LightOwnBubbleColor">#E2F1FF</Color>
+    <Color x:Key="LightFocusColor">#0078D4</Color>
+    <Color x:Key="LightOverlayColor">#6B161A1F</Color>
+
+    <Color x:Key="DarkGroundColor">#17181B</Color>
+    <Color x:Key="DarkSurfaceColor">#202125</Color>
+    <Color x:Key="DarkSurfaceRaisedColor">#25262B</Color>
+    <Color x:Key="DarkSurfaceSoftColor">#1B1C1F</Color>
+    <Color x:Key="DarkSurfaceHoverColor">#292B30</Color>
+    <Color x:Key="DarkSurfaceSelectedColor">#303F3D</Color>
+    <Color x:Key="DarkTextColor">#F3F3F4</Color>
+    <Color x:Key="DarkMutedColor">#A7A9AF</Color>
+    <Color x:Key="DarkTertiaryColor">#797C83</Color>
+    <Color x:Key="DarkBorderColor">#34363C</Color>
+    <Color x:Key="DarkStrongBorderColor">#4A4D55</Color>
+    <Color x:Key="DarkBubbleColor">#2A2B30</Color>
+    <Color x:Key="DarkOwnBubbleColor">#24394A</Color>
+    <Color x:Key="DarkFocusColor">#5AB2FF</Color>
+    <Color x:Key="DarkOverlayColor">#A8000000</Color>
+
+    <SolidColorBrush x:Key="GroundBrush"
+                     Color="{AppThemeBinding Light={StaticResource LightGroundColor}, Dark={StaticResource DarkGroundColor}}" />
+    <SolidColorBrush x:Key="SurfaceBrush"
+                     Color="{AppThemeBinding Light={StaticResource LightSurfaceColor}, Dark={StaticResource DarkSurfaceColor}}" />
+    <SolidColorBrush x:Key="SurfaceRaisedBrush"
+                     Color="{AppThemeBinding Light={StaticResource LightSurfaceRaisedColor}, Dark={StaticResource DarkSurfaceRaisedColor}}" />
+    <SolidColorBrush x:Key="SurfaceSoftBrush"
+                     Color="{AppThemeBinding Light={StaticResource LightSurfaceSoftColor}, Dark={StaticResource DarkSurfaceSoftColor}}" />
+    <SolidColorBrush x:Key="SurfaceHoverBrush"
+                     Color="{AppThemeBinding Light={StaticResource LightSurfaceHoverColor}, Dark={StaticResource DarkSurfaceHoverColor}}" />
+    <SolidColorBrush x:Key="SurfaceSelectedBrush"
+                     Color="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
+    <SolidColorBrush x:Key="BorderBrush"
+                     Color="{AppThemeBinding Light={StaticResource LightBorderColor}, Dark={StaticResource DarkBorderColor}}" />
+    <SolidColorBrush x:Key="StrongBorderBrush"
+                     Color="{AppThemeBinding Light={StaticResource LightStrongBorderColor}, Dark={StaticResource DarkStrongBorderColor}}" />
+    <SolidColorBrush x:Key="BubbleBrush"
+                     Color="{AppThemeBinding Light={StaticResource LightBubbleColor}, Dark={StaticResource DarkBubbleColor}}" />
+    <SolidColorBrush x:Key="OwnBubbleBrush"
+                     Color="{AppThemeBinding Light={StaticResource LightOwnBubbleColor}, Dark={StaticResource DarkOwnBubbleColor}}" />
+    <SolidColorBrush x:Key="OverlayBrush"
+                     Color="{AppThemeBinding Light={StaticResource LightOverlayColor}, Dark={StaticResource DarkOverlayColor}}" />
+    <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
+    <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}" />
+    <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}" />
+
+    <x:Double x:Key="RadiusXs">4</x:Double>
+    <x:Double x:Key="RadiusSm">7</x:Double>
+    <x:Double x:Key="RadiusMd">10</x:Double>
+    <x:Double x:Key="RadiusLg">16</x:Double>
+    <x:Double x:Key="Space1">4</x:Double>
+    <x:Double x:Key="Space2">8</x:Double>
+    <x:Double x:Key="Space3">12</x:Double>
+    <x:Double x:Key="Space4">16</x:Double>
+    <x:Double x:Key="Space5">20</x:Double>
+    <x:Double x:Key="Space6">24</x:Double>
+    <x:Double x:Key="ProductBarHeight">40</x:Double>
+    <x:Double x:Key="NavigationWidth">60</x:Double>
+    <x:Double x:Key="DetailWidth">284</x:Double>
+    <x:Double x:Key="ControlHeight">36</x:Double>
+    <Thickness x:Key="ControlHorizontalPadding">12,0</Thickness>
+    <x:Double x:Key="BaseFontSize">14</x:Double>
+    <x:Double x:Key="MutedFontSize">12</x:Double>
+    <x:Double x:Key="SmallFontSize">11</x:Double>
+    <x:Double x:Key="ButtonFontSize">13</x:Double>
+    <x:String x:Key="RelayCoveFontFamily">Segoe UI, Microsoft YaHei UI</x:String>
+</ResourceDictionary>
