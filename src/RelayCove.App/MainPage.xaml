@@ -99,6 +99,7 @@
 
                         <Grid Grid.Column="1"
                               IsVisible="{Binding IsChatPaneVisible}"
+                              Background="{StaticResource SurfaceBrush}"
                               RowDefinitions="Auto,*,Auto">
                             <controls:ChatHeaderView x:Name="ChatHeader" Grid.Row="0" />
                             <controls:MessageListView Grid.Row="1" />
@@ -110,7 +111,7 @@
                                 Background="{StaticResource SurfaceSoftBrush}"
                                 Stroke="{StaticResource BorderBrush}"
                                 StrokeThickness="1">
-                            <controls:DetailsPaneView />
+                            <controls:DetailsPaneView x:Name="InlineDetails" />
                         </Border>
                     </Grid>
 
@@ -162,8 +163,12 @@
                                 </VerticalStackLayout>
                             </Grid>
                             <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
-                            <Button x:Name="FirstAccountMenuButton" Text="账户设置" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding ShowSettingsCommand}" />
-                            <Button x:Name="LastAccountMenuButton" Text="注销" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding RequestLogoutCommand}" />
+                            <Button x:Name="FirstAccountMenuButton" Text="账户设置" ImageSource="icon_settings.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding ShowSettingsCommand}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button x:Name="LastAccountMenuButton" Text="注销" ImageSource="icon_close.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding RequestLogoutCommand}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
                         </VerticalStackLayout>
                     </Border>
                 </Grid>
@@ -312,35 +317,77 @@
                 </Grid>
 
                 <Grid IsVisible="{Binding IsComposerEmojiPickerOpen}">
-                    <BoxView Background="{StaticResource OverlayBrush}">
+                    <BoxView BackgroundColor="Transparent">
                         <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding ToggleComposerEmojiPickerCommand}" /></BoxView.GestureRecognizers>
                     </BoxView>
-                    <Border Style="{StaticResource DialogBorderStyle}" HorizontalOptions="End" VerticalOptions="End" Margin="24,24,24,108">
-                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
-                        <VerticalStackLayout Spacing="10">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <VerticalStackLayout>
-                                    <Label Text="表情" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
-                                    <Label Text="选择后在当前光标或选区插入" Style="{StaticResource MutedLabelStyle}" />
-                                </VerticalStackLayout>
-                                <Button Grid.Column="1" Text="×" Style="{StaticResource IconButtonStyle}" Command="{Binding ToggleComposerEmojiPickerCommand}" />
+                    <Border Style="{StaticResource PopoverBorderStyle}"
+                            Padding="8"
+                            WidthRequest="310"
+                            MinimumWidthRequest="310"
+                            MaximumWidthRequest="310"
+                            HorizontalOptions="Start"
+                            VerticalOptions="Start">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="11" /></Border.StrokeShape>
+                        <Border.Behaviors>
+                            <windowsBehaviors:PopoverAnchorBehavior
+                                AnchorX="{Binding ViewModel.ComposerEmojiAnchorX, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                AnchorY="{Binding ViewModel.ComposerEmojiAnchorY, Source={x:Reference RootPage}, x:DataType=local:MainPage}" />
+                        </Border.Behaviors>
+                        <VerticalStackLayout Spacing="0">
+                            <Grid Padding="3,2,3,8" ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                                <Label Text="表情" Style="{StaticResource BaseLabelStyle}" FontSize="13" FontAttributes="Bold" />
+                                <Label Grid.Column="1" Text="选择后插入光标位置" Style="{StaticResource MutedLabelStyle}" FontSize="10" HorizontalTextAlignment="End" VerticalTextAlignment="Center" />
                             </Grid>
                             <CollectionView x:Name="ComposerEmojiCollection"
                                             ItemsSource="{Binding EmojiChoices}"
-                                            SelectedItem="{Binding SelectedComposerEmoji, Mode=TwoWay}"
-                                            SelectionMode="Single"
-                                            HeightRequest="176"
-                                            MaximumWidthRequest="340">
+                                            SelectionMode="None"
+                                            WidthRequest="284"
+                                            HeightRequest="205"
+                                            HorizontalOptions="Start">
                                 <CollectionView.ItemsLayout>
-                                    <GridItemsLayout Orientation="Vertical" Span="6" HorizontalItemSpacing="4" VerticalItemSpacing="4" />
+                                    <GridItemsLayout Orientation="Vertical" Span="6" HorizontalItemSpacing="3" VerticalItemSpacing="3" />
                                 </CollectionView.ItemsLayout>
                                 <CollectionView.ItemTemplate>
                                     <DataTemplate x:DataType="viewModels:EmojiChoice">
-                                        <Button Text="{Binding Emoji}"
-                                                Style="{StaticResource IconButtonStyle}"
-                                                Command="{Binding ViewModel.InsertComposerEmojiCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
-                                                CommandParameter="{Binding .}"
-                                                SemanticProperties.Description="{Binding AccessibleLabel}" />
+                                        <Grid Margin="1"
+                                              BackgroundColor="Transparent"
+                                              SemanticProperties.Description="{Binding AccessibleLabel}">
+                                            <Grid.GestureRecognizers>
+                                                <TapGestureRecognizer
+                                                    Command="{Binding ViewModel.InsertComposerEmojiCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                    CommandParameter="{Binding .}" />
+                                                <PointerGestureRecognizer
+                                                    PointerEntered="OnEmojiPointerEntered"
+                                                    PointerExited="OnEmojiPointerExited" />
+                                            </Grid.GestureRecognizers>
+                                            <Border InputTransparent="True"
+                                                    WidthRequest="40"
+                                                    HeightRequest="38"
+                                                    HorizontalOptions="Center"
+                                                    VerticalOptions="Center"
+                                                    Stroke="Transparent"
+                                                    StrokeThickness="2">
+                                                <Border.StrokeShape>
+                                                    <RoundRectangle CornerRadius="7" />
+                                                </Border.StrokeShape>
+                                                <Border.Triggers>
+                                                    <DataTrigger TargetType="Border" Binding="{Binding IsPointerOver}" Value="True">
+                                                        <Setter Property="Stroke" Value="{StaticResource AccentBrush}" />
+                                                        <Setter Property="Background" Value="{StaticResource SurfaceHoverBrush}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger TargetType="Border" Binding="{Binding IsComposerSelected}" Value="True">
+                                                        <Setter Property="Stroke" Value="{StaticResource AccentBrush}" />
+                                                    </DataTrigger>
+                                                </Border.Triggers>
+                                            </Border>
+                                            <Label Text="{Binding Emoji}"
+                                                   FontSize="20"
+                                                   HorizontalOptions="Center"
+                                                   VerticalOptions="Center"
+                                                   HorizontalTextAlignment="Center"
+                                                   VerticalTextAlignment="Center"
+                                                   InputTransparent="True" />
+                                        </Grid>
                                     </DataTemplate>
                                 </CollectionView.ItemTemplate>
                             </CollectionView>
@@ -349,33 +396,77 @@
                 </Grid>
 
                 <Grid IsVisible="{Binding IsReactionPickerOpen}">
-                    <BoxView Background="{StaticResource OverlayBrush}">
+                    <BoxView BackgroundColor="Transparent">
                         <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseReactionPickerCommand}" /></BoxView.GestureRecognizers>
                     </BoxView>
-                    <Border Style="{StaticResource DialogBorderStyle}">
-                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
-                        <VerticalStackLayout Spacing="10">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <VerticalStackLayout>
-                                    <Label Text="添加反应" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
-                                    <Label Text="再次选择自己已添加的反应会移除它" Style="{StaticResource MutedLabelStyle}" />
-                                </VerticalStackLayout>
-                                <Button Grid.Column="1" Text="×" Style="{StaticResource IconButtonStyle}" Command="{Binding CloseReactionPickerCommand}" />
+                    <Border Style="{StaticResource PopoverBorderStyle}"
+                            Padding="8"
+                            WidthRequest="310"
+                            MinimumWidthRequest="310"
+                            MaximumWidthRequest="310"
+                            HorizontalOptions="Start"
+                            VerticalOptions="Start">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="11" /></Border.StrokeShape>
+                        <Border.Behaviors>
+                            <windowsBehaviors:PopoverAnchorBehavior
+                                AnchorX="{Binding ViewModel.MessageMenuAnchorX, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                AnchorY="{Binding ViewModel.MessageMenuAnchorY, Source={x:Reference RootPage}, x:DataType=local:MainPage}" />
+                        </Border.Behaviors>
+                        <VerticalStackLayout Spacing="0">
+                            <Grid Padding="3,2,3,8" ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                                <Label Text="添加反应" Style="{StaticResource BaseLabelStyle}" FontSize="13" FontAttributes="Bold" />
+                                <Label Grid.Column="1" Text="再次选择可移除" Style="{StaticResource MutedLabelStyle}" FontSize="10" HorizontalTextAlignment="End" VerticalTextAlignment="Center" />
                             </Grid>
                             <CollectionView x:Name="ReactionEmojiCollection"
                                             ItemsSource="{Binding EmojiChoices}"
-                                            SelectedItem="{Binding SelectedReactionEmoji, Mode=TwoWay}"
-                                            SelectionMode="Single"
-                                            HeightRequest="176"
-                                            MaximumWidthRequest="340">
+                                            SelectionMode="None"
+                                            WidthRequest="284"
+                                            HeightRequest="205"
+                                            HorizontalOptions="Start">
                                 <CollectionView.ItemsLayout>
-                                    <GridItemsLayout Orientation="Vertical" Span="6" HorizontalItemSpacing="4" VerticalItemSpacing="4" />
+                                    <GridItemsLayout Orientation="Vertical" Span="6" HorizontalItemSpacing="3" VerticalItemSpacing="3" />
                                 </CollectionView.ItemsLayout>
                                 <CollectionView.ItemTemplate>
                                     <DataTemplate x:DataType="viewModels:EmojiChoice">
-                                        <Button Text="{Binding Emoji}" Style="{StaticResource IconButtonStyle}"
-                                                Command="{Binding ViewModel.SelectReactionEmojiCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
-                                                CommandParameter="{Binding .}" SemanticProperties.Description="{Binding AccessibleLabel}" />
+                                        <Grid Margin="1"
+                                              BackgroundColor="Transparent"
+                                              SemanticProperties.Description="{Binding AccessibleLabel}">
+                                            <Grid.GestureRecognizers>
+                                                <TapGestureRecognizer
+                                                    Command="{Binding ViewModel.SelectReactionEmojiCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                    CommandParameter="{Binding .}" />
+                                                <PointerGestureRecognizer
+                                                    PointerEntered="OnEmojiPointerEntered"
+                                                    PointerExited="OnEmojiPointerExited" />
+                                            </Grid.GestureRecognizers>
+                                            <Border InputTransparent="True"
+                                                    WidthRequest="40"
+                                                    HeightRequest="38"
+                                                    HorizontalOptions="Center"
+                                                    VerticalOptions="Center"
+                                                    Stroke="Transparent"
+                                                    StrokeThickness="2">
+                                                <Border.StrokeShape>
+                                                    <RoundRectangle CornerRadius="7" />
+                                                </Border.StrokeShape>
+                                                <Border.Triggers>
+                                                    <DataTrigger TargetType="Border" Binding="{Binding IsPointerOver}" Value="True">
+                                                        <Setter Property="Stroke" Value="{StaticResource AccentBrush}" />
+                                                        <Setter Property="Background" Value="{StaticResource SurfaceHoverBrush}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger TargetType="Border" Binding="{Binding IsReactionSelected}" Value="True">
+                                                        <Setter Property="Stroke" Value="{StaticResource AccentBrush}" />
+                                                    </DataTrigger>
+                                                </Border.Triggers>
+                                            </Border>
+                                            <Label Text="{Binding Emoji}"
+                                                   FontSize="20"
+                                                   HorizontalOptions="Center"
+                                                   VerticalOptions="Center"
+                                                   HorizontalTextAlignment="Center"
+                                                   VerticalTextAlignment="Center"
+                                                   InputTransparent="True" />
+                                        </Grid>
                                     </DataTemplate>
                                 </CollectionView.ItemTemplate>
                             </CollectionView>
@@ -458,15 +549,33 @@
                                 AnchorY="{Binding ViewModel.MessageMenuAnchorY, Source={x:Reference RootPage}, x:DataType=local:MainPage}" />
                         </Border.Behaviors>
                         <VerticalStackLayout Spacing="4">
-                            <Button x:Name="FirstMessageMenuButton" Text="添加反应" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding OpenReactionPickerCommand}" />
-                            <Button Text="引用回复" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding QuoteMessageCommand}" />
-                            <Button Text="复制 raw Markdown" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding CopyMessageRawCommand}" />
-                            <Button Text="复制消息链接" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding CopyMessageLinkCommand}" />
-                            <Button Text="复制消息 ID" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding CopyMessageIdCommand}" />
-                            <Button Text="在官方 Zulip 打开" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding OpenMessageInZulipCommand}" />
-                            <Button x:Name="StarMessageMenuButton" Text="收藏 / 取消收藏" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding ToggleMessageStarCommand}" IsEnabled="{Binding CanStarActiveMessage}" />
-                            <Button Text="编辑本人消息" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding OpenEditDialogCommand}" IsVisible="{Binding CanEditActiveMessage}" />
-                            <Button x:Name="LastMessageMenuButton" Text="永久删除本人消息" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding RequestDeleteMessageCommand}" IsVisible="{Binding CanDeleteActiveMessage}" TextColor="{StaticResource DangerColor}" />
+                            <Button x:Name="FirstMessageMenuButton" Text="添加表情反应" ImageSource="icon_smile.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding OpenReactionPickerCommand}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="{Binding ActiveMessageStarActionLabel}" ImageSource="icon_star.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding ToggleMessageStarCommand}" IsEnabled="{Binding CanStarActiveMessage}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="引用回复" ImageSource="icon_quote.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding QuoteMessageCommand}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="编辑消息" ImageSource="icon_edit.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding OpenEditDialogCommand}" IsVisible="{Binding CanEditActiveMessage}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="删除消息" ImageSource="icon_close.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding RequestDeleteMessageCommand}" IsVisible="{Binding CanDeleteActiveMessage}" TextColor="{StaticResource DangerColor}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="复制消息正文" ImageSource="icon_copy.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding CopyMessageRawCommand}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="复制消息链接" ImageSource="icon_copy.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding CopyMessageLinkCommand}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="复制消息 ID" ImageSource="icon_info.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding CopyMessageIdCommand}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button x:Name="LastMessageMenuButton" Text="在 Zulip 中打开" ImageSource="icon_messages.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding OpenMessageInZulipCommand}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
                         </VerticalStackLayout>
                     </Border>
                 </Grid>
@@ -497,6 +606,39 @@
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                                 <Button x:Name="DeleteCancelButton" Text="取消" Style="{StaticResource BaseButtonStyle}" Command="{Binding CancelDeleteMessageCommand}" />
                                 <Button Grid.Column="1" Text="永久删除" Style="{StaticResource PrimaryButtonStyle}" BackgroundColor="{StaticResource DangerColor}" Command="{Binding ConfirmDeleteMessageCommand}" />
+                            </Grid>
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsChannelUnsubscribeConfirmationOpen}">
+                    <BoxView Background="{StaticResource OverlayBrush}" />
+                    <Border Style="{StaticResource DialogBorderStyle}" Stroke="{StaticResource DangerColor}">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                        <VerticalStackLayout Spacing="12">
+                            <Label Text="退出频道？" Style="{StaticResource DangerLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                            <Label Text="{Binding ChannelUnsubscribeTargetName, StringFormat='将退出 #{0}。私有频道退出后可能需要再次获邀。'}"
+                                   Style="{StaticResource BaseLabelStyle}"
+                                   LineBreakMode="WordWrap" />
+                            <Label Text="网络结果未知时不会自动重试，也不会提前从本地移除频道。"
+                                   Style="{StaticResource MutedLabelStyle}"
+                                   LineBreakMode="WordWrap" />
+                            <Label Text="{Binding ChannelUnsubscribeError}"
+                                   IsVisible="{Binding HasChannelUnsubscribeError}"
+                                   Style="{StaticResource DangerLabelStyle}"
+                                   LineBreakMode="WordWrap" />
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <Button x:Name="ChannelUnsubscribeCancelButton"
+                                        Text="取消"
+                                        Style="{StaticResource BaseButtonStyle}"
+                                        Command="{Binding CancelChannelUnsubscribeCommand}"
+                                        IsEnabled="{Binding CanCloseChannelUnsubscribe}" />
+                                <Button Grid.Column="1"
+                                        Text="确认退出"
+                                        Style="{StaticResource PrimaryButtonStyle}"
+                                        BackgroundColor="{StaticResource DangerColor}"
+                                        Command="{Binding ConfirmChannelUnsubscribeCommand}"
+                                        IsEnabled="{Binding CanCloseChannelUnsubscribe}" />
                             </Grid>
                         </VerticalStackLayout>
                     </Border>

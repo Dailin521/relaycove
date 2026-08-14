@@ -1,10 +1,10 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：Stage 21 外部门禁保留；Stage 22W Slice 1/2/3 已合并部署，后续消息操作/附件/导航修订已实现并通过 Full；Stage 22M 原生壳与消息交互对齐已实现并通过 Full 和受限真实窗口验收。真实 Realm/Stage 21/完整 Windows 人工验收仍未完成
+文档状态：Stage 21 外部门禁保留；Stage 22W Slice 1/2/3 已合并部署，后续消息操作/附件/导航修订已实现并通过 Full；Stage 22M 原生壳、消息交互和当前用户退订已实现并通过当前树 Full、受限真实窗口验收与双账号 Live。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
-最后更新：2026-08-13
+最后更新：2026-08-14
 
 ## 1. 决策摘要
 
@@ -52,10 +52,10 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 | 门禁 | 状态 | 完成条件 |
 |---|---|---|
 | 干净 Windows 11 x64 VM 启动 | 未验证 | 在未安装 .NET 与 Windows App SDK Runtime 的 VM 中运行最终 ZIP |
-| 真实 Realm Live 测试 | 未验证 | 两个专用账号 API key、隔离私有频道和显式写入授权齐全 |
+| 真实 Realm Live 测试 | 已通过（2026-08-14） | DAL/zhang 两个专用账号在两个独立私有双人频道完成 2/2 Live；覆盖消息/事件/已读、reaction、编辑、收藏、附件、删除、队列恢复、生产 `ClientSession` 密码登录与当前用户退订；测试消息按用户要求保留，退订探针成员已恢复 |
 | 人工密码登录 | 未验证 | 专用测试账号在最终 MAUI UI 中完成一次登录 |
 | Stage 22W Web 验收 | Slice 1/2/3 已完成并部署；后续已完成 reaction/edit/delete/star、任意附件、导航折叠、当前用户退订、真实本地入口、86 单测、Full 和限定 self-DM 真实写闭环 | 后续 Web 版本尚未部署；真实已读/附件上传/频道退订仍需隔离目标，Stage 21/22M 门禁不受此结果替代 |
-| Stage 22M MAUI 视觉验收 | 部分完成 | 原生壳与消息操作已通过 Full，并完成 1440×900 / 1024×768、浅色/深色、150% 副屏窗口截图及指针/UI Automation 检查；真实 Realm、100%/200%、完整键盘/高对比/长列表仍待人工验收 |
+| Stage 22M MAUI 视觉验收 | 部分完成 | 原生壳与消息操作已通过历史 Full，并完成 1440×900 / 1024×768、浅色/深色、150% 副屏窗口截图及指针/UI Automation 检查；真实 Realm 的 headless 生产会话路径已通过，最终 MAUI UI 人工密码登录、100%/200%、完整键盘/高对比/长列表仍待验收 |
 | 签名/安装器/公开发布 | 不在范围 | 需要单独授权和发布方案 |
 
 任何门禁失败都必须保留证据并停止对应交付声明，不得静默切换凭据后端、关闭 TLS 校验或扩大测试目标。
@@ -77,7 +77,7 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 
 ### 3.2 当前仍不可用或未完成真实验收的能力
 
-完整成员目录/频道关系、频道订阅/创建/重命名/归档/成员管理、服务器范围搜索与 `@` 候选、saved 消息列表、typing、presence、通知、push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux 仍不可用或不在当前范围。Stage 22W 已实现任意附件、当前用户退订、reaction、本人消息编辑/删除和收藏；Stage 22M 已实现 reaction/edit/delete/star、图片/文件附件、受控媒体和本地已加载状态搜索，但原生写路径仅有 fake/in-memory 证据，不能据此关闭 Live 门禁。
+完整成员目录/频道关系、频道订阅/创建/重命名/归档/成员管理、服务器范围搜索与 `@` 候选、saved 消息列表、typing、presence、通知、push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux 仍不可用或不在当前范围。Stage 22W 已实现任意附件、当前用户退订、reaction、本人消息编辑/删除和收藏；Stage 22M 已实现 reaction/edit/delete/star、图片/文件附件、受控媒体、本地已加载状态搜索和当前用户退订，其生产 Gateway/ClientSession 写路径已有隔离双账号 Live 证据。最终 MAUI UI 人工密码登录与干净 VM 仍是独立门禁。
 
 后续平台可以复用 Core、Zulip.Client 与 Data，但必须另行增加目标框架、图标、签名、后台生命周期和发布验证。本阶段不声称可交付这些平台；Linux 不支持。
 

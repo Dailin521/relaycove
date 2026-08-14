@@ -22,6 +22,7 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
     private readonly CancellationTokenSource _disposeCancellation = new();
     private readonly ConcurrentDictionary<string, Task> _outboxTimers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<long, SemaphoreSlim> _messageMutationLanes = new();
+    private readonly ConcurrentDictionary<long, SemaphoreSlim> _channelUnsubscribeLanes = new();
 
     private ClientState _state = ClientState.Empty;
     private AccountId? _accountId;
@@ -729,6 +730,100 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
         }
     }
 
+    public async Task UnsubscribeChannelAsync(long channelId, CancellationToken cancellationToken = default)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        ThrowIfDisposed();
+        var lane = _channelUnsubscribeLanes.GetOrAdd(channelId, static _ => new SemaphoreSlim(1, 1));
+        await lane.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            ThrowIfDisposed();
+            CredentialEnvelope credentials;
+            Subscription? subscription;
+            AccountId accountId;
+            CancellationToken runToken;
+            lock (_stateGate)
+            {
+                if (_state.Connection.Status != ConnectionStatus.Connected)
+                {
+                    throw new InvalidOperationException("Channel unsubscribe requires a connected session.");
+                }
+                credentials = _credentials ?? throw new InvalidOperationException("No credentials are available.");
+                accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+                subscription = _state.Subscriptions.GetValueOrDefault(channelId);
+                runToken = _runCancellation?.Token ?? throw new InvalidOperationException("The session is stopped.");
+            }
+            if (subscription is null) return;
+
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runToken);
+            UnsubscribeChannelResult result;
+            try
+            {
+                result = await _gateway.UnsubscribeChannelAsync(
+                    new UnsubscribeChannelRequest(credentials, subscription.Name),
+                    linked.Token).ConfigureAwait(false);
+            }
+            catch (GatewayException exception) when (IsUnauthorized(exception))
+            {
+                await HandleUnauthorizedAsync().ConfigureAwait(false);
+                throw;
+            }
+            catch (GatewayException exception) when (IsNetwork(exception))
+            {
+                Mutate(state => state with
+                {
+                    Connection = new ConnectionState(ConnectionStatus.Offline, "channel_unsubscribe_unknown")
+                });
+                throw;
+            }
+            catch (GatewayException exception) when (IsRateLimited(exception))
+            {
+                Mutate(state => state with
+                {
+                    Connection = new ConnectionState(ConnectionStatus.RateLimited, "channel_unsubscribe_rate_limited")
+                });
+                throw;
+            }
+
+            var confirmed = result.Removed.Contains(subscription.Name, StringComparer.Ordinal) ||
+                result.NotRemoved.Contains(subscription.Name, StringComparer.Ordinal);
+            if (!confirmed)
+            {
+                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+            }
+
+            lock (_stateGate)
+            {
+                if (_selectedConversation is ChannelTopic selected && selected.ChannelId == channelId)
+                {
+                    _selectedConversation = null;
+                }
+            }
+            Mutate(state => DomainReducer.Apply(
+                state,
+                new SubscriptionRemovedEvent(channelId, Source: DomainEventSource.Local)));
+            try
+            {
+                await _store.PurgeSubscriptionAsync(accountId, channelId, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch
+            {
+                Mutate(state => state with
+                {
+                    Connection = new ConnectionState(
+                        ConnectionStatus.Faulted,
+                        "channel_unsubscribe_cache_cleanup_failed")
+                });
+                throw;
+            }
+        }
+        finally
+        {
+            lane.Release();
+        }
+    }
+
     public async Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -1070,6 +1165,11 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
             _recentDirectMessages = MergeRecentDirectMessages(
                 register.RecentDirectMessages,
                 DeriveRecentDirectMessages(snapshot));
+            if (_selectedConversation is ChannelTopic selected &&
+                !snapshot.Subscriptions.ContainsKey(selected.ChannelId))
+            {
+                _selectedConversation = null;
+            }
             _state = snapshot;
         }
         RaiseStateChanged();
@@ -1535,6 +1635,11 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
             var next = update(_state);
             changed = !ReferenceEquals(next, _state);
             _state = next;
+            if (_selectedConversation is ChannelTopic selected &&
+                !next.Subscriptions.ContainsKey(selected.ChannelId))
+            {
+                _selectedConversation = null;
+            }
             _recentDirectMessages = MergeRecentDirectMessages(
                 _recentDirectMessages,
                 DeriveRecentDirectMessages(next));

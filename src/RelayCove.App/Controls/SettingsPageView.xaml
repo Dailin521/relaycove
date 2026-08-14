@@ -6,27 +6,27 @@
              x:DataType="viewModels:ShellViewModel"
              Background="{StaticResource SurfaceBrush}">
     <Grid ColumnDefinitions="218,1,*">
-        <Grid Grid.Column="0" RowDefinitions="Auto,*" Padding="16,20" Background="{StaticResource GroundBrush}"
+        <Grid Grid.Column="0" RowDefinitions="Auto,*" Padding="13,23" Background="{StaticResource GroundBrush}"
               IsVisible="{Binding IsNotNarrowLayout}">
-            <Label Text="设置" Style="{StaticResource BaseLabelStyle}" FontSize="24" FontAttributes="Bold" Margin="4,0,0,17" />
+            <Label Text="设置" Style="{StaticResource BaseLabelStyle}" FontSize="20" FontAttributes="Bold" Margin="10,0,10,18" />
             <VerticalStackLayout Grid.Row="1" Spacing="4">
-                <Button Text="外观" Style="{StaticResource BaseButtonStyle}"
+                <Button Text="外观" ImageSource="icon_moon.png" Style="{StaticResource SettingsNavigationButtonStyle}"
                         Command="{Binding ShowAppearanceSettingsCommand}">
                     <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsAppearanceSettings}" Value="True"><Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" /><Setter Property="BorderWidth" Value="0" /></DataTrigger></Button.Triggers>
                 </Button>
-                <Button Text="通用" Style="{StaticResource BaseButtonStyle}"
+                <Button Text="通用" ImageSource="icon_settings.png" Style="{StaticResource SettingsNavigationButtonStyle}"
                         Command="{Binding ShowGeneralSettingsCommand}">
                     <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsGeneralSettings}" Value="True"><Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" /><Setter Property="BorderWidth" Value="0" /></DataTrigger></Button.Triggers>
                 </Button>
-                <Button Text="通知" Style="{StaticResource BaseButtonStyle}"
+                <Button Text="通知" ImageSource="icon_info.png" Style="{StaticResource SettingsNavigationButtonStyle}"
                         Command="{Binding ShowNotificationSettingsCommand}">
                     <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsNotificationSettings}" Value="True"><Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" /><Setter Property="BorderWidth" Value="0" /></DataTrigger></Button.Triggers>
                 </Button>
-                <Button Text="存储" Style="{StaticResource BaseButtonStyle}"
+                <Button Text="存储" ImageSource="icon_bookmark.png" Style="{StaticResource SettingsNavigationButtonStyle}"
                         Command="{Binding ShowStorageSettingsCommand}">
                     <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsStorageSettings}" Value="True"><Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" /><Setter Property="BorderWidth" Value="0" /></DataTrigger></Button.Triggers>
                 </Button>
-                <Button Text="账户" Style="{StaticResource BaseButtonStyle}"
+                <Button Text="账户" ImageSource="icon_contacts.png" Style="{StaticResource SettingsNavigationButtonStyle}"
                         Command="{Binding ShowAccountSettingsCommand}">
                     <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsAccountSettings}" Value="True"><Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" /><Setter Property="BorderWidth" Value="0" /></DataTrigger></Button.Triggers>
                 </Button>
@@ -46,19 +46,19 @@
                     IsVisible="{Binding IsNarrowLayout}"
                     ZIndex="2">
             <HorizontalStackLayout Spacing="6">
-                <Button Text="外观" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowAppearanceSettingsCommand}">
+                <Button Text="外观" ImageSource="icon_moon.png" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowAppearanceSettingsCommand}">
                     <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsAppearanceSettings}" Value="True"><Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" /><Setter Property="BorderWidth" Value="0" /></DataTrigger></Button.Triggers>
                 </Button>
-                <Button Text="通用" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowGeneralSettingsCommand}">
+                <Button Text="通用" ImageSource="icon_settings.png" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowGeneralSettingsCommand}">
                     <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsGeneralSettings}" Value="True"><Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" /><Setter Property="BorderWidth" Value="0" /></DataTrigger></Button.Triggers>
                 </Button>
-                <Button Text="通知" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowNotificationSettingsCommand}">
+                <Button Text="通知" ImageSource="icon_info.png" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowNotificationSettingsCommand}">
                     <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsNotificationSettings}" Value="True"><Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" /><Setter Property="BorderWidth" Value="0" /></DataTrigger></Button.Triggers>
                 </Button>
-                <Button Text="存储" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowStorageSettingsCommand}">
+                <Button Text="存储" ImageSource="icon_bookmark.png" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowStorageSettingsCommand}">
                     <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsStorageSettings}" Value="True"><Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" /><Setter Property="BorderWidth" Value="0" /></DataTrigger></Button.Triggers>
                 </Button>
-                <Button Text="账户" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowAccountSettingsCommand}">
+                <Button Text="账户" ImageSource="icon_contacts.png" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowAccountSettingsCommand}">
                     <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsAccountSettings}" Value="True"><Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" /><Setter Property="BorderWidth" Value="0" /></DataTrigger></Button.Triggers>
                 </Button>
             </HorizontalStackLayout>

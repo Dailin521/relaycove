@@ -62,8 +62,6 @@
                     </Grid>
                 </VerticalStackLayout>
 
-                <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
-
                 <VerticalStackLayout Padding="16,15" Spacing="7">
                     <Label Text="能力边界" Style="{StaticResource SectionHeaderStyle}" />
                     <Label Text="{Binding DetailsUnavailableMessage}"
@@ -72,6 +70,18 @@
                     <Label Text="不会从 Realm 用户集合推断频道成员、presence 或共同频道。"
                            Style="{StaticResource MutedLabelStyle}"
                            LineBreakMode="WordWrap" />
+                </VerticalStackLayout>
+
+                <VerticalStackLayout Padding="16,4,16,18"
+                                     Spacing="8"
+                                     IsVisible="{Binding CanUnsubscribeSelectedChannel}">
+                    <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                    <Button x:Name="UnsubscribeButton"
+                            Text="退出频道"
+                            Style="{StaticResource BaseButtonStyle}"
+                            TextColor="{StaticResource DangerColor}"
+                            Command="{Binding RequestChannelUnsubscribeCommand}"
+                            SemanticProperties.Description="退出当前频道" />
                 </VerticalStackLayout>
             </VerticalStackLayout>
         </ScrollView>

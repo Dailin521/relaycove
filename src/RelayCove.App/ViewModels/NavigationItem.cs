@@ -18,11 +18,7 @@ public sealed record NavigationItem(
     public bool HasTimestamp => !string.IsNullOrWhiteSpace(Timestamp);
     public Brush ToneBrush => new SolidColorBrush(
         Color.FromArgb(TonePalette[StableToneIndex(Conversation.CanonicalKey)]));
-    public string Initial => IsBot
-        ? "BOT"
-        : string.IsNullOrWhiteSpace(Title)
-            ? "?"
-            : Title.Trim()[0].ToString().ToUpperInvariant();
+    public string Initial => AvatarInitials.Create(Title, IsBot);
 
     private static readonly string[] TonePalette =
     [

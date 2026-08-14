@@ -15,6 +15,7 @@ public interface IZulipGateway
     Task SetMessageStarredAsync(SetMessageStarredRequest request, CancellationToken cancellationToken = default);
     Task<UploadedAttachment> UploadAttachmentAsync(UploadAttachmentRequest request, CancellationToken cancellationToken = default);
     Task<RealmMediaResult> GetRealmMediaAsync(GetRealmMediaRequest request, CancellationToken cancellationToken = default);
+    Task<UnsubscribeChannelResult> UnsubscribeChannelAsync(UnsubscribeChannelRequest request, CancellationToken cancellationToken = default);
     Task MarkReadAsync(MarkReadRequest request, CancellationToken cancellationToken = default);
     Task DeleteQueueAsync(DeleteQueueRequest request, CancellationToken cancellationToken = default);
 }

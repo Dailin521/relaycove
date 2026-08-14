@@ -22,6 +22,7 @@ public sealed record MessageItem
         bool showDateDivider = false,
         string? dateDividerLabel = null,
         bool showUnreadDivider = false,
+        string? unreadDividerLabel = null,
         string? mutationState = null,
         bool mutationBlocksActions = false,
         string? deliveryState = null,
@@ -48,6 +49,7 @@ public sealed record MessageItem
         ShowDateDivider = showDateDivider;
         DateDividerLabel = dateDividerLabel;
         ShowUnreadDivider = showUnreadDivider;
+        UnreadDividerLabel = string.IsNullOrWhiteSpace(unreadDividerLabel) ? "未读消息" : unreadDividerLabel;
         MutationState = mutationState;
         MutationBlocksActions = mutationBlocksActions;
         DeliveryState = deliveryState;
@@ -82,6 +84,7 @@ public sealed record MessageItem
     public bool ShowDateDivider { get; }
     public string? DateDividerLabel { get; }
     public bool ShowUnreadDivider { get; }
+    public string UnreadDividerLabel { get; }
     public string? MutationState { get; }
     public bool MutationBlocksActions { get; }
     public string? DeliveryState { get; }
@@ -100,10 +103,13 @@ public sealed record MessageItem
     public bool CanMutate => MessageId is not null && !MutationBlocksActions;
     public bool CanEditOrDelete => CanMutate && IsOwn;
     public int AvatarColumn => IsOwn ? 2 : 0;
-    public string AvatarInitial => IsBot
-        ? "BOT"
-        : string.IsNullOrWhiteSpace(Sender)
-            ? "?"
-            : Sender.Trim()[0].ToString().ToUpperInvariant();
+    public Brush ToneBrush => new SolidColorBrush(
+        Color.FromArgb(TonePalette[(int)(Math.Abs((SenderId ?? 0) % TonePalette.Length))]));
+    public string AvatarInitial => AvatarInitials.Create(Sender, IsBot);
     public string AccessibleLabel => $"{Sender}，{Timestamp}。{Content}";
+
+    private static readonly string[] TonePalette =
+    [
+        "#2F9BFF", "#8268A9", "#43846F", "#D69B60", "#D65B78", "#657681"
+    ];
 }

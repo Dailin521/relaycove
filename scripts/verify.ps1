@@ -264,6 +264,7 @@ function Assert-NoSecrets {
 
     $secretEnvironmentVariables = @(
         "RELAYCOVE_LIVE_USER_A_API_KEY",
+        "RELAYCOVE_LIVE_USER_A_PASSWORD",
         "RELAYCOVE_LIVE_USER_B_API_KEY",
         "RELAYCOVE_LIVE_BOOTSTRAP_API_KEY",
         "RELAYCOVE_LIVE_PASSWORD"
@@ -342,12 +343,17 @@ function Invoke-LiveVerification {
         "RELAYCOVE_LIVE_USER_A_EMAIL",
         "RELAYCOVE_LIVE_USER_A_ID",
         "RELAYCOVE_LIVE_USER_A_API_KEY",
+        "RELAYCOVE_LIVE_USER_A_PASSWORD",
         "RELAYCOVE_LIVE_USER_B_EMAIL",
         "RELAYCOVE_LIVE_USER_B_ID",
         "RELAYCOVE_LIVE_USER_B_API_KEY",
         "RELAYCOVE_LIVE_CHANNEL_ID",
+        "RELAYCOVE_LIVE_CHANNEL_NAME",
+        "RELAYCOVE_LIVE_UNSUBSCRIBE_CHANNEL_ID",
+        "RELAYCOVE_LIVE_UNSUBSCRIBE_CHANNEL_NAME",
         "RELAYCOVE_LIVE_ALLOWED_USER_IDS",
-        "RELAYCOVE_LIVE_CHANNEL_APPROVED"
+        "RELAYCOVE_LIVE_CHANNEL_APPROVED",
+        "RELAYCOVE_LIVE_UNSUBSCRIBE_CHANNEL_APPROVED"
     )
     foreach ($name in $required) {
         if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
@@ -359,6 +365,9 @@ function Invoke-LiveVerification {
     }
     if ([Environment]::GetEnvironmentVariable("RELAYCOVE_LIVE_CHANNEL_APPROVED") -cne "true") {
         throw "Live verification requires an independently approved private E2E channel."
+    }
+    if ([Environment]::GetEnvironmentVariable("RELAYCOVE_LIVE_UNSUBSCRIBE_CHANNEL_APPROVED") -cne "true") {
+        throw "Live verification requires an independently approved private unsubscribe channel."
     }
 
     Invoke-DotNet restore "tests/RelayCove.Zulip.LiveTests/RelayCove.Zulip.LiveTests.csproj" --nologo

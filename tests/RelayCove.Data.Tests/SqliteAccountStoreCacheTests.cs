@@ -384,6 +384,9 @@ public sealed class SqliteAccountStoreCacheTests
         public Task<RealmMediaResult> GetRealmMediaAsync(GetRealmMediaRequest request, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
+        public Task<UnsubscribeChannelResult> UnsubscribeChannelAsync(UnsubscribeChannelRequest request, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
         public Task MarkReadAsync(MarkReadRequest request, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
 

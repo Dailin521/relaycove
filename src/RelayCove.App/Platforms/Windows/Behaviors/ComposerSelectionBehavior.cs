@@ -56,6 +56,7 @@ public sealed class ComposerSelectionBehavior : PlatformBehavior<Editor, Microso
         base.OnAttachedTo(bindable, platformView);
         _editor = bindable;
         _platformView = platformView;
+        ApplyWebComposerChrome(platformView);
         platformView.SelectionChanged += OnSelectionChanged;
     }
 
@@ -113,5 +114,21 @@ public sealed class ComposerSelectionBehavior : PlatformBehavior<Editor, Microso
             _platformView.Focus(Microsoft.UI.Xaml.FocusState.Keyboard);
             ApplySelection();
         });
+    }
+
+    private static void ApplyWebComposerChrome(Microsoft.UI.Xaml.Controls.TextBox textBox)
+    {
+        var transparent = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        textBox.Background = transparent;
+        textBox.BorderBrush = transparent;
+        textBox.BorderThickness = new Microsoft.UI.Xaml.Thickness(0);
+        textBox.Padding = new Microsoft.UI.Xaml.Thickness(13d, 7d, 13d, 7d);
+        textBox.UseSystemFocusVisuals = false;
+        textBox.Resources["TextControlBackground"] = transparent;
+        textBox.Resources["TextControlBackgroundPointerOver"] = transparent;
+        textBox.Resources["TextControlBackgroundFocused"] = transparent;
+        textBox.Resources["TextControlBorderBrush"] = transparent;
+        textBox.Resources["TextControlBorderBrushPointerOver"] = transparent;
+        textBox.Resources["TextControlBorderBrushFocused"] = transparent;
     }
 }

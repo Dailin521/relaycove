@@ -6,28 +6,36 @@
              x:Class="RelayCove.App.Controls.ConversationPaneView"
              x:DataType="viewModels:ShellViewModel"
              Background="{StaticResource GroundBrush}">
-    <Grid RowDefinitions="58,29,Auto,Auto,Auto,29,*" Padding="0,0,0,8">
-        <Grid Grid.Row="0" ColumnDefinitions="*,36" Padding="11,11" ColumnSpacing="8">
-            <Grid Grid.Column="0">
+    <Grid RowDefinitions="76,29,Auto,Auto,Auto,29,*" Padding="0,0,0,8">
+        <Grid Grid.Row="0" RowDefinitions="47,18" Padding="11,7,11,4">
+            <Grid Grid.Row="0" ColumnDefinitions="*,36" ColumnSpacing="8">
+                <Grid Grid.Column="0">
                 <Entry Style="{StaticResource BaseEntryStyle}"
                        Placeholder="搜索会话、成员和消息"
                        IsReadOnly="True"
                        Focused="OnSearchFocused"
                        SemanticProperties.Description="打开本地工作区搜索" />
-                <Image Source="icon_search.png"
+                    <Image Source="icon_search.png"
                        WidthRequest="17"
                        HeightRequest="17"
                        Margin="0,0,10,0"
                        HorizontalOptions="End"
                        VerticalOptions="Center"
                        InputTransparent="True" />
-            </Grid>
-            <ImageButton Grid.Column="1"
+                </Grid>
+                <ImageButton Grid.Column="1"
                          Source="icon_plus.png"
                          Style="{StaticResource ImageIconButtonStyle}"
                          BackgroundColor="{AppThemeBinding Light={StaticResource LightSurfaceHoverColor}, Dark={StaticResource DarkSurfaceHoverColor}}"
                          Command="{Binding OpenNewConversationCommand}"
                          SemanticProperties.Description="使用当前已知联系人新建私信" />
+            </Grid>
+            <Label Grid.Row="1"
+                   Text="{Binding NativePreviewStatus}"
+                   IsVisible="{Binding IsNativePreview}"
+                   Style="{StaticResource MutedLabelStyle}"
+                   FontSize="10"
+                   VerticalTextAlignment="Center" />
         </Grid>
 
         <Grid Grid.Row="1" Padding="10,0,12,0" ColumnDefinitions="18,*,Auto" HeightRequest="29">
@@ -69,8 +77,12 @@
                                 <Label Text="#" TextColor="White" FontSize="16" FontAttributes="Bold"
                                        HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
                             </Border>
-                            <Label Grid.Column="1" Text="{Binding DisplayTitle}" Style="{StaticResource BaseLabelStyle}"
-                                   FontSize="14" FontAttributes="Bold" VerticalTextAlignment="End" />
+                            <Grid Grid.Column="1" ColumnDefinitions="*,Auto" ColumnSpacing="5">
+                                <Label Text="{Binding DisplayTitle}" Style="{StaticResource BaseLabelStyle}"
+                                       FontSize="14" FontAttributes="Bold" VerticalTextAlignment="End" />
+                                <Label Grid.Column="1" Text="{Binding Timestamp}" IsVisible="{Binding HasTimestamp}"
+                                       Style="{StaticResource MutedLabelStyle}" FontSize="10" VerticalTextAlignment="End" />
+                            </Grid>
                             <Label Grid.Row="1" Grid.Column="1" Text="{Binding Detail}" Style="{StaticResource MutedLabelStyle}"
                                    FontSize="12" VerticalTextAlignment="Start" />
                             <Border Grid.Column="2" Grid.RowSpan="2" Padding="5,1" VerticalOptions="Center"
@@ -85,11 +97,7 @@
             </CollectionView.ItemTemplate>
         </CollectionView>
 
-        <Grid Grid.Row="3">
-            <Grid.Triggers>
-                <DataTrigger TargetType="Grid" Binding="{Binding AreChannelsExpanded}" Value="False"><Setter Property="IsVisible" Value="False" /></DataTrigger>
-                <DataTrigger TargetType="Grid" Binding="{Binding HasSelectedChannel}" Value="False"><Setter Property="IsVisible" Value="False" /></DataTrigger>
-            </Grid.Triggers>
+        <Grid Grid.Row="3" IsVisible="{Binding ShowTopicPicker}">
             <Grid RowDefinitions="25,Auto">
                 <Label Grid.Row="0" Text="话题" Style="{StaticResource MutedLabelStyle}" Padding="28,0,0,0" VerticalTextAlignment="Center" />
                 <CollectionView Grid.Row="1"

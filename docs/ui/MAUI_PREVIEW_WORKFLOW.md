@@ -78,6 +78,36 @@ C# 类型、Behavior、DI、项目文件、资源项、编译绑定源类型或�
 
 如后续制作一键 watcher，必须满足：只监听 App 源 XAML/资源、排除 `bin/obj`、250–300 ms 去抖、编译成功后才停止它自己启动的进程、不得按进程名误杀其他 worktree，并让子进程继承 `RELAYCOVE_NATIVE_UI_PREVIEW=1`。它是“自动增量重启器”，不是 Hot Reload，也不能替代测试。
 
+### 4.3 无鼠标场景预览
+
+不要通过移动用户鼠标、发送系统点击或抢占键盘焦点来打开预览弹层。仓库提供 Debug-only 场景入口，启动时直接把 ViewModel 投影到指定 UI 状态：
+
+```powershell
+pwsh ./scripts/start-maui-preview.ps1 -Scene shell -Theme light -Width 1440 -Height 900
+pwsh ./scripts/start-maui-preview.ps1 -Scene composer-emoji -Theme light -Width 1440 -Height 900 -NoBuild
+pwsh ./scripts/start-maui-preview.ps1 -Scene message-menu -NoBuild
+pwsh ./scripts/start-maui-preview.ps1 -Scene reaction-picker -NoBuild
+pwsh ./scripts/start-maui-preview.ps1 -Scene account-menu -NoBuild
+pwsh ./scripts/start-maui-preview.ps1 -Scene settings -NoBuild
+pwsh ./scripts/start-maui-preview.ps1 -Scene details -Width 1024 -Height 768 -NoBuild
+pwsh ./scripts/start-maui-preview.ps1 -Scene narrow-list -Width 640 -Height 900 -NoBuild
+pwsh ./scripts/start-maui-preview.ps1 -Scene narrow-chat -Width 640 -Height 900 -NoBuild
+```
+
+固定场景为 `shell`、`details`、`message-menu`、`composer-emoji`、`reaction-picker`、`account-menu`、`settings`、`narrow-list`、`narrow-chat`；主题为 `light`、`dark` 或 `system`。首次修改后省略 `-NoBuild`，脚本会先把 App-only Debug build 输出到忽略的 `artifacts/maui/preview-builds/<timestamp>/`；只有构建成功才替换它自己记录的旧预览进程。每个预览 EXE 必须以自身输出目录作为工作目录，否则 WinUI 可能因找不到本地运行时资源而在创建 HWND 前退出。仅切换场景时使用 `-NoBuild`，通常一秒内即可重新打开。双击根目录的 `start-maui-preview.cmd` 会打开默认 `shell` 场景。
+
+场景、主题和窗口大小分别由 `RELAYCOVE_NATIVE_UI_PREVIEW_SCENE`、`RELAYCOVE_NATIVE_UI_PREVIEW_THEME`、`RELAYCOVE_NATIVE_UI_PREVIEW_WIDTH`、`RELAYCOVE_NATIVE_UI_PREVIEW_HEIGHT` 选择，并且只有 `Debug`、`RELAYCOVE_NATIVE_UI_PREVIEW=1` 和内存 `NativeShellPreviewSession` 同时成立时才应用。正式 Debug、Release 与真实 `ClientSession` 不读取这些场景。
+
+仓库内的捕获脚本只接受启动器记录的 PID，并核对进程真实路径属于当前 worktree；它先把 HWND 放到副屏、等待 per-monitor DPI/预览定位计时器稳定，再用 `DwmGetWindowAttribute` 和 `PrintWindow(PW_RENDERFULLCONTENT)` 抓取窗口：
+
+```powershell
+pwsh ./scripts/capture-maui-preview.ps1 `
+  -DipWidth 1440 -DipHeight 900 `
+  -OutputPath artifacts/maui/screenshots/parity-polish/shell-1440-light.png
+```
+
+该链路不会移动鼠标、发送点击或键盘输入，也不会按进程名误抓另一个 worktree。截图进入被忽略的 `artifacts/maui/screenshots/parity-polish/`；正式交付在 STATUS/task 记录路径、目标 DIP、实际像素和 SHA-256。
+
 ## 5. 推荐验证节奏
 
 | 时机 | 动作 |
@@ -106,6 +136,15 @@ dotnet test tests/RelayCove.App.Tests/RelayCove.App.Tests.csproj -c Debug --no-b
 - Hot Reload 不会重新执行 C# 启动定位逻辑；只有新启动或显式重启才会重新放到副屏。
 - 截图尺寸以 `DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` 为准；PowerShell 普通 `GetWindowRect` 可能受调用进程 DPI 虚拟化影响。正式窗口捕获使用 `PrintWindow(PW_RENDERFULLCONTENT)`，避免把桌面或其他窗口录入证据。
 
+### 6.1 先判断整体层级，再校正局部尺寸
+
+- 视觉复核先看大区域的“地面—表面—浮层”关系：导航/会话区使用 `Ground`，聊天画布必须以 `Surface` 从标题下方连续铺到底，Composer 使用 `SurfaceSoft` 并靠外边距形成悬浮卡片。不要因为 Composer 本身颜色正确，就忽略它周围暴露了错误的根背景。
+- Web 的百分比约束要转译成原生布局语义。例如消息行在标准/紧凑布局中是聊天内容宽度的 76%，窄屏是 90%，再受 690 DIP 上限控制；不能只复制一个 690 数字，否则 1440 看似正常、1024 会明显铺得过宽。
+- 列表重复会破坏整体节奏。频道只有一个可靠话题时直接进入该会话并隐藏重复“话题”区；存在多个话题时才显示原生选择区。保留真实能力的同时，避免为了数据结构把同一会话展示两次。
+- 先用整窗 1440/1024/640 截图判断区域比例，再截局部验证边缘与焦点。局部裁剪不能用来推断整窗控件已越界；应以启动器记录的目标 DIP、DWM 实际像素和完整窗口图共同判断。
+- 不强求把 CSS 阴影逐值搬到 MAUI。WinUI 对 MAUI `Border.Shadow` 的扩散范围与 CSS 不等价，本项目实测会把局部 popover 阴影扩散成大面积灰层。出现这类平台失真时优先保留清晰描边、层级和安全边距，而不是继续堆半径/透明度。
+- 表情盘等浮层要同时检查内容测量和窗口边界：完整 6 列、右边框、底部最后一行均可见，且 `PopoverAnchorBehavior` 在根窗口保留边缘余量。不要依赖 WinUI `CollectionView` 的默认选择描边：它会在六列取整后的单元边界丢失右侧 1 个物理像素，而且仅给模板根增加 Padding 无法修复。当前实现关闭原生选择视觉，保留 ViewModel 键盘索引，并用 34×34 DIP、单元内居中且覆盖在按钮上层的 MAUI `Border` 绘制完整状态框；按钮本身为 30×30 DIP。在目标 150% DPI 下使用 2 DIP 描边会得到整数 3 物理像素，避免 1.5 DIP 描边的半像素抗锯齿看起来仍像裁边。验收图必须是无鼠标/键盘输入的固定场景，避免人为点击位置掩盖锚点问题。
+
 ## 7. 常见故障
 
 | 现象 | 主要原因 | 处理 |
@@ -117,6 +156,8 @@ dotnet test tests/RelayCove.App.Tests/RelayCove.App.Tests.csproj -c Debug --no-b
 | 副屏窗口尺寸过大/过小 | 混用了 DIP、物理像素或原显示器 DPI | 读取目标 monitor scale，再换算目标像素 |
 | 副屏枚举时 `InvalidCastException` | WinRT `DisplayArea` 集合经 LINQ 投影失败 | 使用 Windows adapter 的 Win32 monitor 枚举 |
 | 编译失败后预览也消失 | 自动化先结束旧进程再 build | 顺序改为 build 成功后才替换旧预览 |
+| Debug build 成功但窗口在 HWND 创建前崩溃 | 从仓库根目录启动独立输出的 WinUI EXE | 用启动器固定 `WorkingDirectory` 为该 EXE 所在构建目录 |
+| 连续场景截图尺寸偶尔沿用主屏缩放 | HWND 尚未完成副屏 DPI 迁移或与启动定位计时器竞态 | 先无激活移动到副屏，等待启动计时器完成，再读取 DPI 和最终调整 DWM 边界 |
 
 ## 8. 交付记录
 

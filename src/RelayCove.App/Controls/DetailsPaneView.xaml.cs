@@ -29,4 +29,6 @@ public partial class DetailsPaneView : ContentView
     }
 
     internal void FocusCloseButton() => CloseButton.Focus();
+
+    internal void FocusUnsubscribeButton() => UnsubscribeButton.Focus();
 }

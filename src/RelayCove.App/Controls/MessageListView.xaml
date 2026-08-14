@@ -13,7 +13,8 @@
         <HorizontalStackLayout Grid.Row="0"
                                Margin="18,8,18,0"
                                Spacing="8"
-                               HorizontalOptions="Center">
+                               HorizontalOptions="Center"
+                               IsVisible="{Binding ShowLoadOlderButton}">
             <Button Text="加载更早消息"
                     Style="{StaticResource BaseButtonStyle}"
                     HeightRequest="30"
@@ -66,7 +67,7 @@
 
                         <Grid Grid.Row="1" Margin="0,4,0,8" ColumnDefinitions="*,Auto,*" IsVisible="{Binding ShowUnreadDivider}">
                             <BoxView Grid.Column="0" HeightRequest="1" VerticalOptions="Center" Color="{StaticResource DangerColor}" />
-                            <Label Grid.Column="1" Margin="10,0" Text="未读消息" Style="{StaticResource DangerLabelStyle}" FontSize="11" />
+                            <Label Grid.Column="1" Margin="10,0" Text="{Binding UnreadDividerLabel}" Style="{StaticResource DangerLabelStyle}" FontSize="11" />
                             <BoxView Grid.Column="2" HeightRequest="1" VerticalOptions="Center" Color="{StaticResource DangerColor}" />
                         </Grid>
 
@@ -74,19 +75,27 @@
                             <Border.Behaviors>
                                 <windowsBehaviors:MessageContextBehavior RevealElement="{x:Reference QuickActions}" />
                             </Border.Behaviors>
-                            <Grid ColumnDefinitions="40,*,40" ColumnSpacing="10">
+                            <Grid ColumnDefinitions="40,*,40"
+                                  ColumnSpacing="10"
+                                  MaximumWidthRequest="{Binding ViewModel.MessageRowMaximumWidth, Source={x:Reference Root}, x:DataType=controls:MessageListView}"
+                                  HorizontalOptions="Start">
+                                <Grid.Triggers>
+                                    <DataTrigger TargetType="Grid" Binding="{Binding IsOwn}" Value="True">
+                                        <Setter Property="HorizontalOptions" Value="End" />
+                                    </DataTrigger>
+                                </Grid.Triggers>
 
                                 <Border Grid.Column="{Binding AvatarColumn}"
                                         WidthRequest="40"
                                         HeightRequest="40"
                                         Padding="0"
                                         VerticalOptions="Start"
-                                        Background="{StaticResource SurfaceSelectedBrush}"
+                                        Background="{Binding ToneBrush}"
                                         StrokeThickness="0">
                                     <Border.StrokeShape><RoundRectangle CornerRadius="20" /></Border.StrokeShape>
                                     <Grid>
                                         <Label Text="{Binding AvatarInitial}"
-                                               Style="{StaticResource BaseLabelStyle}"
+                                               TextColor="White"
                                                FontSize="11"
                                                FontAttributes="Bold"
                                                HorizontalTextAlignment="Center"

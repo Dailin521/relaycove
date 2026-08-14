@@ -24,7 +24,7 @@ UI implementation follows the mandatory order `formal RelayCove.Web -> browser/u
 
 Keep the Web delivery cadence explicit. Daily UI work uses repository-root `start-web-dev.cmd`, opens `/` and exercises the formal client against real Realm data by default; do not perform real writes unless the current task explicitly authorizes their exact scope. Deterministic fixtures are automation-only and require explicit fixture/E2E mode. A large-version manual-acceptance sync uses `deploy-web.cmd`, which must complete local verification, versioned archive/SHA-256 checks, atomic switch and HTTPS smoke checks before opening the fixed `/relaycove-web/` entrance. Never add deploy-on-save behavior. Server connection material stays in the private `server-admin` checkout and must not enter this repository or logs.
 
-MAUI visual work follows `docs/ui/MAUI_PREVIEW_WORKFLOW.md`: use the MAUI-aware Visual Studio `Windows Machine` profile and the Debug-only offline preview session. XAML saved inside Visual Studio may use Hot Reload; Codex/external file edits are batched, followed by an App-only no-restore build and one preview restart. The preview may auto-place itself on a non-primary display only under the Debug preview gate. Neither Hot Reload, a secondary-display screenshot nor the in-memory preview can replace XamlC/Release, real Realm, package or clean-VM evidence.
+MAUI visual work follows `docs/ui/MAUI_PREVIEW_WORKFLOW.md`: use the MAUI-aware Visual Studio `Windows Machine` profile and the Debug-only offline preview session. XAML saved inside Visual Studio may use Hot Reload; Codex/external file edits are batched, followed by an App-only no-restore build and one preview restart. Deterministic states use `start-maui-preview.ps1 -Scene/-Theme/-Width/-Height`; `capture-maui-preview.ps1` captures only its recorded PID/EXE with `PrintWindow`. Do not move the user's mouse, inject clicks/keys or depend on foreground focus. The preview may auto-place itself on a non-primary display only under the Debug preview gate. Neither Hot Reload, a secondary-display screenshot nor the in-memory preview can replace XamlC/Release, real Realm, package or clean-VM evidence.
 
 ## 3. Verify locally
 
@@ -51,6 +51,10 @@ pwsh ./scripts/verify.ps1 -Mode Live
 ```
 
 Missing host, two dedicated account credentials, recipient allowlist or write confirmation is a failure, not a skip.
+
+The local DAL/zhang bootstrap is deliberately kept under ignored `artifacts/live/`; it reads the private credential archive only at runtime, requests API keys in process, verifies that the message and unsubscribe targets are distinct private channels with exactly the same two approved users, and clears secret environment variables afterward. `verify.ps1 -Mode Live` requires the password plus explicit approval flags for both targets before launching any test, so incomplete configuration fails before a real write. The main Live channel is retained for message/event evidence. The separate unsubscribe probe is restored to two-member state after each run so current-user unsubscribe is repeatable without modifying unrelated channels. Never copy this bootstrap, passwords or API keys into tracked source, logs, snapshots or command output.
+
+For rapid native work, use App-only Debug build and the narrow affected tests. Do not run Fast for every XAML or small capability edit; run Fast at a coherent batch checkpoint and Full only before a delivery commit. Live is independent from Fast/Full and is rerun only when explicit real-write authorization remains in scope.
 
 ## 4. Review high-risk changes
 

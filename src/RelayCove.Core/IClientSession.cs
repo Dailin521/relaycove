@@ -23,6 +23,7 @@ public interface IClientSession
     Task SetMessageStarredAsync(long messageId, bool isStarred, CancellationToken cancellationToken = default);
     Task<UploadedAttachment> UploadAttachmentAsync(AttachmentUpload upload, CancellationToken cancellationToken = default);
     Task<RealmMediaResult> GetRealmMediaAsync(RealmMediaRequest request, CancellationToken cancellationToken = default);
+    Task UnsubscribeChannelAsync(long channelId, CancellationToken cancellationToken = default);
     Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default);
     Task ClearLocalCacheAsync(CancellationToken cancellationToken = default);
     Task StopAsync(CancellationToken cancellationToken = default);

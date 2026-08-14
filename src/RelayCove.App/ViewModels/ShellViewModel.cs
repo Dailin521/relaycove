@@ -36,6 +36,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private string? _activeDraftKey;
     private double _composerHeight = DefaultComposerHeight;
     private double _viewportWidth = 1440d;
+    private long? _channelUnsubscribeTargetId;
     private int _initialized;
     private int _loginInFlight;
     private bool _suppressDraftTracking;
@@ -143,6 +144,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial bool IsComposerEmojiPickerOpen { get; set; }
 
     [ObservableProperty]
+    public partial double ComposerEmojiAnchorX { get; set; }
+
+    [ObservableProperty]
+    public partial double ComposerEmojiAnchorY { get; set; }
+
+    [ObservableProperty]
     public partial bool IsReactionPickerOpen { get; set; }
 
     [ObservableProperty]
@@ -162,6 +169,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial bool IsDeleteConfirmationOpen { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsChannelUnsubscribeConfirmationOpen { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsChannelUnsubscribeBusy { get; set; }
+
+    [ObservableProperty]
+    public partial string ChannelUnsubscribeTargetName { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string? ChannelUnsubscribeError { get; set; }
 
     [ObservableProperty]
     public partial string EditMessageText { get; set; } = string.Empty;
@@ -289,10 +308,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool LoginVisible => !IsLoggedIn;
     public bool MainVisible => IsLoggedIn;
     public bool HasSelectedConversation => _session.SelectedConversation is not null;
+    public string ComposerPlaceholder => HasSelectedConversation
+        ? $"发送到 {ConversationTitle}"
+        : "发送到当前会话";
     public bool HasMessages => Messages.Count > 0;
     public bool IsMessageListEmpty => !HasMessages;
     public bool HasTopics => Topics.Count > 0;
     public bool HasSelectedChannel => SelectedChannel is not null;
+    public bool ShowTopicPicker => AreChannelsExpanded && HasSelectedChannel && Topics.Count > 1;
     public bool HasKnownContacts => KnownContacts.Count > 0;
     public bool IsMessagesSection => SelectedSection == ShellSection.Messages;
     public bool IsContactsSection => SelectedSection == ShellSection.Contacts;
@@ -309,8 +332,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool IsOverlayDetailsVisible => IsMessagesSection && !IsWideLayout && IsDetailsOpen;
     public bool IsModalOverlayVisible => IsOverlayDetailsVisible || IsSearchOpen || IsMessageMenuOpen || IsAccountMenuOpen ||
         IsComposerEmojiPickerOpen || IsReactionPickerOpen || IsEditDialogOpen ||
-        IsDeleteConfirmationOpen || IsImageViewerOpen || IsNewConversationOpen || LogoutConfirmationVisible;
-    public bool IsPrimaryShellEnabled => !IsModalOverlayVisible || IsMessageMenuOpen || IsAccountMenuOpen;
+        IsDeleteConfirmationOpen || IsChannelUnsubscribeConfirmationOpen || IsImageViewerOpen ||
+        IsNewConversationOpen || LogoutConfirmationVisible;
+    public bool IsPrimaryShellEnabled => !IsModalOverlayVisible || IsMessageMenuOpen || IsAccountMenuOpen ||
+        IsComposerEmojiPickerOpen || IsReactionPickerOpen;
     public bool CanCompose =>
         HasSelectedConversation && _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
     public bool CanSend => CanCompose && (!string.IsNullOrWhiteSpace(ComposerText) || HasAttachments) &&
@@ -331,6 +356,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool CanEditActiveMessage => ActiveMessageAction?.CanEditOrDelete == true;
     public bool CanDeleteActiveMessage => ActiveMessageAction?.CanEditOrDelete == true;
     public bool CanStarActiveMessage => ActiveMessageAction?.CanMutate == true && CanCompose;
+    public bool CanUnsubscribeSelectedChannel =>
+        _session.SelectedConversation is ChannelTopic selected &&
+        _projectedState.Subscriptions.ContainsKey(selected.ChannelId) &&
+        _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
+    public bool HasChannelUnsubscribeError => !string.IsNullOrWhiteSpace(ChannelUnsubscribeError);
+    public bool CanCloseChannelUnsubscribe => !IsChannelUnsubscribeBusy;
+    public string ActiveMessageStarActionLabel => ActiveMessageAction?.IsStarred == true
+        ? "取消收藏"
+        : "收藏消息";
     public string ActiveMessageTitle => ActiveMessageAction is null
         ? "消息操作"
         : $"{ActiveMessageAction.Sender} · {ActiveMessageAction.Timestamp}";
@@ -383,7 +417,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public string ChannelGroupCountLabel => Channels.Count.ToString();
     public string DirectMessageGroupCountLabel => $"{DirectMessages.Count} 个会话";
     public double ChannelListHeight => AreChannelsExpanded ? Math.Min(Channels.Count * 67d, 268d) : 0d;
-    public double TopicListHeight => AreChannelsExpanded && HasSelectedChannel
+    public double TopicListHeight => ShowTopicPicker
         ? Math.Min(Topics.Count * 36d, 144d)
         : 0d;
     public string CurrentUserDisplayName => _session.CurrentUserId is { } currentUserId &&
@@ -403,14 +437,20 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             var host = _session.ActiveRealm?.Uri.Host ?? TryGetRealmHost(Realm);
             return string.Equals(host, "preview.invalid", StringComparison.OrdinalIgnoreCase)
-                ? "本地预览"
+                ? "Acme Workspace"
                 : host ?? "RelayCove";
         }
     }
+    public bool IsNativePreview => string.Equals(
+        _session.ActiveRealm?.Uri.Host,
+        "preview.invalid",
+        StringComparison.OrdinalIgnoreCase);
+    public string NativePreviewStatus => "本地演示数据 · 不连接 Zulip";
     public bool ShowConnectionStatus => IsLoggedIn &&
         _projectedState.Connection.Status != RelayCove.Core.ConnectionStatus.Connected;
     public bool HasCurrentConversationUnread => _session.SelectedConversation is { } selected &&
         GetConversationUnread(_projectedState.Unread, selected) > 0;
+    public bool ShowLoadOlderButton => HasSelectedConversation && !IsNativePreview;
     public string MessageEmptyTitle => !HasSelectedConversation
         ? "从左侧选择频道话题或私信"
         : _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Offline
@@ -433,6 +473,21 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public GridLength InlineDetailsWidth => IsInlineDetailsVisible
         ? new GridLength(284)
         : new GridLength(0);
+    public double MessageRowMaximumWidth
+    {
+        get
+        {
+            var conversationWidth = IsNarrowLayout ? 0d : ConversationWidthSliderValue;
+            var detailsWidth = IsInlineDetailsVisible ? 284d : 0d;
+            var chatPaneWidth = Math.Max(0d, _viewportWidth - 60d - conversationWidth - detailsWidth);
+            var messageContentWidth = Math.Max(0d, chatPaneWidth - 40d);
+            var rowWidth = Math.Min(690d, messageContentWidth * (IsNarrowLayout ? 0.90d : 0.76d));
+
+            // MessageListView reserves the opposite avatar column so own and
+            // other rows align without changing their text flow direction.
+            return Math.Max(0d, rowWidth + 50d);
+        }
+    }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -463,7 +518,72 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             {
                 IsDetailsOpen = true;
             }
+#if DEBUG
+            if (NativeShellPreviewSession.IsRequested)
+            {
+                ApplyNativePreviewTheme(NativeShellPreviewSession.RequestedTheme);
+                ApplyNativePreviewScene(NativeShellPreviewSession.RequestedScene);
+            }
+#endif
         }
+    }
+
+    internal void ApplyNativePreviewScene(string? scene)
+    {
+        switch (scene?.Trim().ToLowerInvariant())
+        {
+            case "composer-emoji":
+                OpenComposerEmojiPickerAt(new PopoverAnchorRequest(402d, 820d));
+                break;
+            case "message-menu":
+                if (Messages.FirstOrDefault(message => message.IsOwn && message.MessageId is not null) is { } menuMessage)
+                {
+                    OpenMessageMenuAt(new MessageMenuRequest(
+                        menuMessage,
+                        Math.Max(420d, _viewportWidth - 232d),
+                        210d));
+                }
+                break;
+            case "reaction-picker":
+                if (Messages.FirstOrDefault(message => message.CanMutate) is { } reactionMessage)
+                {
+                    MessageMenuAnchorX = Math.Max(420d, _viewportWidth - 232d);
+                    MessageMenuAnchorY = 210d;
+                    OpenReactionPicker(reactionMessage);
+                }
+                break;
+            case "account-menu":
+                CloseTransientOverlays();
+                IsAccountMenuOpen = true;
+                break;
+            case "settings":
+                ShowSettings();
+                break;
+            case "details":
+                CloseTransientOverlays();
+                IsDetailsOpen = true;
+                break;
+            case "narrow-list":
+                CloseTransientOverlays();
+                IsDetailsOpen = false;
+                IsConversationListVisibleOnNarrow = true;
+                break;
+            case "narrow-chat":
+                CloseTransientOverlays();
+                IsDetailsOpen = false;
+                IsConversationListVisibleOnNarrow = false;
+                break;
+        }
+    }
+
+    internal void ApplyNativePreviewTheme(string? theme)
+    {
+        AppearanceMode = theme?.Trim().ToLowerInvariant() switch
+        {
+            "dark" => AppAppearanceMode.Dark,
+            "system" => AppAppearanceMode.System,
+            _ => AppAppearanceMode.Light
+        };
     }
 
     public void UpdateViewport(double width)
@@ -475,7 +595,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             : width <= NarrowLayoutMaximum
                 ? ShellLayoutMode.Narrow
                 : ShellLayoutMode.Compact;
-        if (next == LayoutMode) return;
+        if (next == LayoutMode)
+        {
+            OnPropertyChanged(nameof(MessageRowMaximumWidth));
+            return;
+        }
 
         var previous = LayoutMode;
         LayoutMode = next;
@@ -490,6 +614,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
 
         NotifyLayoutProperties();
+#if DEBUG
+        if (NativeShellPreviewSession.IsRequested)
+        {
+            ApplyNativePreviewScene(NativeShellPreviewSession.RequestedScene);
+        }
+#endif
     }
 
     [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
@@ -958,7 +1088,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         var open = !IsComposerEmojiPickerOpen;
         CloseTransientOverlays();
         IsComposerEmojiPickerOpen = open;
-        SelectedComposerEmoji = open ? EmojiChoices[0] : null;
+        SelectedComposerEmoji = null;
+    }
+
+    [RelayCommand]
+    private void OpenComposerEmojiPickerAt(PopoverAnchorRequest? request)
+    {
+        if (request is null) return;
+        CloseTransientOverlays();
+        ComposerEmojiAnchorX = request.X;
+        ComposerEmojiAnchorY = request.Y;
+        IsComposerEmojiPickerOpen = true;
+        SelectedComposerEmoji = null;
     }
 
     [RelayCommand]
@@ -1055,7 +1196,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         CloseTransientOverlays();
         ActiveMessageAction = message;
         IsReactionPickerOpen = true;
-        SelectedReactionEmoji = EmojiChoices[0];
+        SelectedReactionEmoji = null;
     }
 
     [RelayCommand]
@@ -1156,6 +1297,69 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
+    private void RequestChannelUnsubscribe()
+    {
+        if (_session.SelectedConversation is not ChannelTopic selected ||
+            !_projectedState.Subscriptions.TryGetValue(selected.ChannelId, out var subscription) ||
+            !CanUnsubscribeSelectedChannel)
+        {
+            return;
+        }
+        CloseTransientOverlays();
+        _channelUnsubscribeTargetId = selected.ChannelId;
+        ChannelUnsubscribeTargetName = subscription.Name;
+        ChannelUnsubscribeError = null;
+        IsChannelUnsubscribeConfirmationOpen = true;
+    }
+
+    [RelayCommand]
+    private void CancelChannelUnsubscribe()
+    {
+        if (IsChannelUnsubscribeBusy) return;
+        IsChannelUnsubscribeConfirmationOpen = false;
+        _channelUnsubscribeTargetId = null;
+        ChannelUnsubscribeTargetName = string.Empty;
+        ChannelUnsubscribeError = null;
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ConfirmChannelUnsubscribeAsync()
+    {
+        if (_channelUnsubscribeTargetId is not { } channelId || IsChannelUnsubscribeBusy) return;
+        IsChannelUnsubscribeBusy = true;
+        ChannelUnsubscribeError = null;
+        try
+        {
+            await _session.UnsubscribeChannelAsync(channelId);
+            IsChannelUnsubscribeConfirmationOpen = false;
+            _channelUnsubscribeTargetId = null;
+            ChannelUnsubscribeTargetName = string.Empty;
+            IsDetailsOpen = false;
+        }
+        catch (GatewayException exception)
+        {
+            ChannelUnsubscribeError = DescribeGatewayFailure(exception);
+        }
+        catch (OperationCanceledException)
+        {
+            ChannelUnsubscribeError = "退出频道未完成，请确认连接状态。";
+        }
+        catch (InvalidOperationException exception)
+        {
+            ChannelUnsubscribeError = DescribeInvalidOperation(exception);
+        }
+        catch (Exception)
+        {
+            ChannelUnsubscribeError = "退出频道失败，请稍后重试。";
+        }
+        finally
+        {
+            IsChannelUnsubscribeBusy = false;
+            Project(_session.State);
+        }
+    }
+
+    [RelayCommand]
     private void ToggleDetails()
     {
         if (!HasSelectedConversation) return;
@@ -1242,6 +1446,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IsMessageMenuOpen = false;
         IsEditDialogOpen = false;
         IsDeleteConfirmationOpen = false;
+        IsChannelUnsubscribeConfirmationOpen = false;
+        _channelUnsubscribeTargetId = null;
+        ChannelUnsubscribeTargetName = string.Empty;
+        ChannelUnsubscribeError = null;
         IsImageViewerOpen = false;
         IsNewConversationOpen = false;
         ActiveImageAttachment = null;
@@ -1264,6 +1472,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     partial void OnLoginErrorChanged(string? value) => OnPropertyChanged(nameof(HasLoginError));
 
+    partial void OnChannelUnsubscribeErrorChanged(string? value) =>
+        OnPropertyChanged(nameof(HasChannelUnsubscribeError));
+
+    partial void OnIsChannelUnsubscribeBusyChanged(bool value) =>
+        OnPropertyChanged(nameof(CanCloseChannelUnsubscribe));
+
     partial void OnComposerTextChanged(string value)
     {
         if (!_suppressDraftTracking && _activeDraftKey is not null)
@@ -1279,6 +1493,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     partial void OnSearchQueryChanged(string value) => ProjectSearch();
     partial void OnNewConversationQueryChanged(string value) => ProjectNewConversationChoices();
+    partial void OnConversationTitleChanged(string value) =>
+        OnPropertyChanged(nameof(ComposerPlaceholder));
     partial void OnAttachmentErrorChanged(string? value) =>
         OnPropertyChanged(nameof(HasAttachmentError));
     partial void OnMediaActionStatusChanged(string? value) =>
@@ -1286,7 +1502,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     partial void OnMessageLoadErrorChanged(string? value) =>
         OnPropertyChanged(nameof(HasMessageLoadError));
 
-    partial void OnIsSearchOpenChanged(bool value) => NotifyOverlayProperties();
+    partial void OnIsSearchOpenChanged(bool value)
+    {
+#if DEBUG
+        if (value && NativeShellPreviewSession.IsRequested &&
+            string.Equals(NativeShellPreviewSession.RequestedScene, "details", StringComparison.OrdinalIgnoreCase))
+        {
+            IsSearchOpen = false;
+            return;
+        }
+#endif
+        NotifyOverlayProperties();
+    }
     partial void OnIsAccountMenuOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsNewConversationOpenChanged(bool value)
     {
@@ -1295,9 +1522,22 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     }
     partial void OnIsComposerEmojiPickerOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsReactionPickerOpenChanged(bool value) => NotifyOverlayProperties();
+    partial void OnSelectedComposerEmojiChanged(EmojiChoice? oldValue, EmojiChoice? newValue)
+    {
+        if (oldValue is not null) oldValue.IsComposerSelected = false;
+        if (newValue is not null) newValue.IsComposerSelected = true;
+    }
+
+    partial void OnSelectedReactionEmojiChanged(EmojiChoice? oldValue, EmojiChoice? newValue)
+    {
+        if (oldValue is not null) oldValue.IsReactionSelected = false;
+        if (newValue is not null) newValue.IsReactionSelected = true;
+    }
+
     partial void OnIsMessageMenuOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsEditDialogOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsDeleteConfirmationOpenChanged(bool value) => NotifyOverlayProperties();
+    partial void OnIsChannelUnsubscribeConfirmationOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsImageViewerOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnLogoutConfirmationVisibleChanged(bool value) => NotifyOverlayProperties();
 
@@ -1307,6 +1547,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanEditActiveMessage));
         OnPropertyChanged(nameof(CanDeleteActiveMessage));
         OnPropertyChanged(nameof(CanStarActiveMessage));
+        OnPropertyChanged(nameof(ActiveMessageStarActionLabel));
         OnPropertyChanged(nameof(ActiveMessageTitle));
     }
 
@@ -1335,6 +1576,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsOverlayDetailsVisible));
         OnPropertyChanged(nameof(IsPrimaryShellEnabled));
         OnPropertyChanged(nameof(InlineDetailsWidth));
+        OnPropertyChanged(nameof(MessageRowMaximumWidth));
         OnPropertyChanged(nameof(DetailsButtonDescription));
     }
 
@@ -1371,6 +1613,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsStandardConversationWidth));
         OnPropertyChanged(nameof(IsWideConversationWidth));
         OnPropertyChanged(nameof(ConversationPaneWidth));
+        OnPropertyChanged(nameof(MessageRowMaximumWidth));
         OnPropertyChanged(nameof(ConversationWidthSliderValue));
         OnPropertyChanged(nameof(CurrentConversationWidthLabel));
         SaveUiPreferences();
@@ -1382,6 +1625,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(ChannelListHeight));
         OnPropertyChanged(nameof(TopicListHeight));
+        OnPropertyChanged(nameof(ShowTopicPicker));
         SaveUiPreferences();
     }
 
@@ -1394,6 +1638,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(HasSelectedChannel));
         OnPropertyChanged(nameof(TopicListHeight));
+        OnPropertyChanged(nameof(ShowTopicPicker));
         if (value?.ChannelId == _loadedTopicsChannelId) return;
         _ = SelectChannelAsync(value);
     }
@@ -1421,6 +1666,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _loadedTopicsChannelId = channel?.ChannelId;
         ProjectTopics(_projectedState, channel?.ChannelId);
         if (channel is null) return;
+        SelectOnlyTopicWhenUnambiguous();
 
         var cancellation = new CancellationTokenSource();
         _navigationCancellation = cancellation;
@@ -1433,6 +1679,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 _loadedTopics = topics;
                 _loadedTopicsChannelId = channel.ChannelId;
                 ProjectTopics(_projectedState, channel.ChannelId);
+                SelectOnlyTopicWhenUnambiguous();
                 SynchronizeSelection(_session.SelectedConversation);
             });
         }
@@ -1543,39 +1790,30 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             state.Subscriptions.Values
                 .Where(subscription => subscription.IsActive)
                 .OrderBy(subscription => subscription.Name, StringComparer.Ordinal)
-                .Select(subscription => new ChannelItem(
-                    subscription.ChannelId,
-                    subscription.Name,
-                    GetChannelUnread(state.Unread, subscription.ChannelId),
-                    state.Topics.Values
-                        .Where(topic => topic.ChannelId == subscription.ChannelId)
-                        .OrderByDescending(topic => topic.MaxMessageId)
-                        .Select(topic => topic.Topic)
-                        .FirstOrDefault())),
+                .Select(subscription => CreateChannelItem(state, subscription)),
             item => item.ChannelId);
 
         Reconcile(
             DirectMessages,
             _session.RecentDirectMessages
                 .OfType<DirectMessage>()
-                .OrderBy(item => item.CanonicalKey, StringComparer.Ordinal)
                 .Select(item =>
                 {
-                    var avatar = GetDirectMessageAvatar(item, state.Users);
+                    var avatar = GetDirectMessageAvatar(item, state.Users, _session.CurrentUserId);
                     var latestMessage = state.Messages.Values
                         .Where(message => message.Conversation == item)
                         .OrderByDescending(message => message.Id)
                         .FirstOrDefault();
                     return new NavigationItem(
                         item,
-                        DescribeDirectMessage(item, state.Users),
+                        DescribeDirectMessage(item, state.Users, _session.CurrentUserId),
                         latestMessage is null
                             ? DescribeDirectMessageKind(item)
                             : TruncateForSearch(latestMessage.Content),
                         GetConversationUnread(state.Unread, item),
                         avatar?.AvatarUrl,
                         avatar?.IsBot ?? false,
-                        latestMessage?.Timestamp.LocalDateTime.ToString("H:mm"));
+                        latestMessage is null ? null : FormatConversationTimestamp(latestMessage.Timestamp.LocalDateTime));
                 }),
             item => item.Conversation.CanonicalKey);
 
@@ -1609,6 +1847,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         var currentUserId = _session.CurrentUserId;
         DateOnly? previousDate = null;
         var unreadDividerAdded = false;
+        long? previousMessageId = null;
+        long? previewUnreadAfterMessageId = null;
+        string? previewUnreadDividerLabel = null;
+#if DEBUG
+        if (_session is NativeShellPreviewSession previewSession)
+        {
+            previewUnreadAfterMessageId = previewSession.UnreadDividerAfterMessageId;
+            previewUnreadDividerLabel = previewSession.UnreadDividerLabel;
+        }
+#endif
         foreach (var message in state.Messages.Values
                      .Where(message => message.Conversation == selected)
                      .OrderBy(message => message.Id))
@@ -1618,6 +1866,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             var date = DateOnly.FromDateTime(localTime);
             var isOwn = currentUserId == message.SenderId;
             var isUnread = !isOwn && !message.IsRead;
+            var showPreviewUnreadDivider = previewUnreadAfterMessageId is { } previewAfter &&
+                previousMessageId == previewAfter;
             var mutation = state.MessageMutations.GetValueOrDefault(message.Id);
             var reactions = message.Reactions
                 .GroupBy(reaction => reaction.Identity.CanonicalKey, StringComparer.Ordinal)
@@ -1655,13 +1905,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 reactions,
                 CreatePermalink(message.Id),
                 previousDate != date,
-                DescribeDate(date),
-                isUnread && !unreadDividerAdded,
+                DescribeDate(date, localTime),
+                showPreviewUnreadDivider || isUnread && !unreadDividerAdded,
+                showPreviewUnreadDivider ? previewUnreadDividerLabel : null,
                 DescribeMutation(mutation),
                 mutation?.Status is MessageMutationStatus.Submitting or MessageMutationStatus.Uncertain,
                 realm: _session.ActiveRealm));
             previousDate = date;
-            if (isUnread) unreadDividerAdded = true;
+            previousMessageId = message.Id;
+            if (showPreviewUnreadDivider || isUnread) unreadDividerAdded = true;
         }
 
         foreach (var entry in state.Outbox.Values
@@ -1679,7 +1931,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 localTime.ToString("t"),
                 isOwn: true,
                 showDateDivider: previousDate != date,
-                dateDividerLabel: DescribeDate(date),
+                dateDividerLabel: DescribeDate(date, localTime),
                 deliveryState: DescribeOutbox(entry.State),
                 canRecover: entry.State is OutboxState.WaitExpired or OutboxState.Failed,
                 recoverCommand: RecoverOutboxCommand,
@@ -1802,6 +2054,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             Reconcile(Topics, [], item => item.CanonicalKey);
             OnPropertyChanged(nameof(HasTopics));
+            OnPropertyChanged(nameof(ShowTopicPicker));
+            OnPropertyChanged(nameof(TopicListHeight));
             return;
         }
 
@@ -1832,6 +2086,52 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                     GetConversationUnread(state.Unread, new ChannelTopic(topic.ChannelId, topic.Topic)))),
             item => item.CanonicalKey);
         OnPropertyChanged(nameof(HasTopics));
+        OnPropertyChanged(nameof(ShowTopicPicker));
+        OnPropertyChanged(nameof(TopicListHeight));
+    }
+
+    private void SelectOnlyTopicWhenUnambiguous()
+    {
+        if (Topics.Count == 1 && !string.Equals(
+                SelectedTopic?.CanonicalKey,
+                Topics[0].CanonicalKey,
+                StringComparison.Ordinal))
+        {
+            SelectedTopic = Topics[0];
+        }
+    }
+
+    private ChannelItem CreateChannelItem(ClientState state, Subscription subscription)
+    {
+        var recentTopic = state.Topics.Values
+            .Where(topic => topic.ChannelId == subscription.ChannelId)
+            .OrderByDescending(topic => topic.MaxMessageId)
+            .FirstOrDefault();
+        var conversation = recentTopic is null
+            ? null
+            : new ChannelTopic(subscription.ChannelId, recentTopic.Topic);
+        var latestMessage = conversation is null
+            ? null
+            : state.Messages.Values
+                .Where(message => message.Conversation == conversation)
+                .OrderByDescending(message => message.Id)
+                .FirstOrDefault();
+        var sender = latestMessage is null
+            ? null
+            : latestMessage.SenderDisplayName ??
+              state.Users.GetValueOrDefault(latestMessage.SenderId)?.FullName ??
+              $"用户 {latestMessage.SenderId}";
+        var preview = latestMessage is null
+            ? null
+            : $"{sender}: {TruncateForSearch(latestMessage.Content)}";
+
+        return new ChannelItem(
+            subscription.ChannelId,
+            subscription.Name,
+            GetChannelUnread(state.Unread, subscription.ChannelId),
+            recentTopic?.Topic,
+            preview,
+            latestMessage is null ? null : FormatConversationTimestamp(latestMessage.Timestamp.LocalDateTime));
     }
 
     private void SynchronizeSelection(ConversationKey? selected)
@@ -1891,16 +2191,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                     ConversationSubtitle = $"# {channelName}";
                     DetailsTitle = $"# {channelName}";
                     DetailsBody = $"当前话题：{ConversationTitle}";
-                    DetailsUnavailableMessage = "成员数、频道成员关系、presence 与频道管理尚无原生真实契约。";
+                    DetailsUnavailableMessage = "成员数、频道成员关系与 presence 尚不可用；退出频道已接入真实 Realm。";
                     break;
                 }
             case DirectMessage directMessage:
-                ConversationTitle = DescribeDirectMessage(directMessage, state.Users);
+                ConversationTitle = DescribeDirectMessage(directMessage, state.Users, _session.CurrentUserId);
                 ConversationSubtitle = DescribeDirectMessageKind(directMessage);
                 DetailsTitle = ConversationTitle;
                 DetailsBody = directMessage.OtherUserIds.Count == 0
                     ? "这是给自己的私信。"
-                    : $"可靠参与者：{DescribeDirectMessage(directMessage, state.Users)}";
+                    : $"可靠参与者：{DescribeDirectMessage(directMessage, state.Users, _session.CurrentUserId)}";
                 DetailsUnavailableMessage = "presence、共同频道、静音与成员管理尚不可用。";
                 break;
             default:
@@ -1945,14 +2245,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void NotifyProjectionProperties()
     {
         OnPropertyChanged(nameof(HasSelectedConversation));
+        OnPropertyChanged(nameof(ComposerPlaceholder));
         OnPropertyChanged(nameof(HasMessages));
         OnPropertyChanged(nameof(IsMessageListEmpty));
         OnPropertyChanged(nameof(HasKnownContacts));
         OnPropertyChanged(nameof(CanCompose));
         OnPropertyChanged(nameof(CanSend));
         OnPropertyChanged(nameof(CanMarkRead));
+        OnPropertyChanged(nameof(CanUnsubscribeSelectedChannel));
         OnPropertyChanged(nameof(MessageEmptyTitle));
         OnPropertyChanged(nameof(WorkspaceDisplayName));
+        OnPropertyChanged(nameof(IsNativePreview));
+        OnPropertyChanged(nameof(ShowLoadOlderButton));
         OnPropertyChanged(nameof(ShowConnectionStatus));
         OnPropertyChanged(nameof(ChannelGroupCountLabel));
         OnPropertyChanged(nameof(DirectMessageGroupCountLabel));
@@ -1979,6 +2283,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ConversationPaneWidth));
         OnPropertyChanged(nameof(ChatPaneWidth));
         OnPropertyChanged(nameof(InlineDetailsWidth));
+        OnPropertyChanged(nameof(MessageRowMaximumWidth));
     }
 
     private void NotifyOverlayProperties()
@@ -2124,10 +2429,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         return new Uri(realm.Uri, $"#narrow/near/{messageId}").AbsoluteUri;
     }
 
-    private static string DescribeDate(DateOnly date)
+    private static string DescribeDate(DateOnly date, DateTime firstMessageTime)
     {
         var today = DateOnly.FromDateTime(DateTime.Now);
-        if (date == today) return "今天";
+        if (date == today) return $"今天 {firstMessageTime:H:mm}";
         if (date == today.AddDays(-1)) return "昨天";
         return date.ToString("yyyy年M月d日");
     }
@@ -2243,9 +2548,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _ => "连接故障"
     };
 
-    private static string DescribeDirectMessage(DirectMessage message, IReadOnlyDictionary<long, UserProfile> users) =>
+    private static string DescribeDirectMessage(
+        DirectMessage message,
+        IReadOnlyDictionary<long, UserProfile> users,
+        long? currentUserId) =>
         message.OtherUserIds.Count == 0
-            ? "给自己"
+            ? currentUserId is { } current && users.GetValueOrDefault(current) is { } currentUser
+                ? $"{currentUser.FullName}（自己）"
+                : "给自己"
             : string.Join(", ", message.OtherUserIds.Select(id => users.GetValueOrDefault(id)?.FullName ?? $"用户 {id}"));
 
     private static string DescribeDirectMessageKind(DirectMessage message) => message.OtherUserIds.Count switch
@@ -2257,10 +2567,35 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     private static UserProfile? GetDirectMessageAvatar(
         DirectMessage message,
-        IReadOnlyDictionary<long, UserProfile> users) =>
-        message.OtherUserIds.Count == 1
-            ? users.GetValueOrDefault(message.OtherUserIds[0])
-            : null;
+        IReadOnlyDictionary<long, UserProfile> users,
+        long? currentUserId) => message.OtherUserIds.Count switch
+        {
+            0 when currentUserId is { } current => users.GetValueOrDefault(current),
+            1 => users.GetValueOrDefault(message.OtherUserIds[0]),
+            _ => null
+        };
+
+    internal static string FormatConversationTimestamp(DateTime timestamp, DateTime? now = null)
+    {
+        var current = now ?? DateTime.Now;
+        if (timestamp.Date == current.Date) return timestamp.ToString("H:mm");
+        if (timestamp.Date == current.Date.AddDays(-1)) return "昨天";
+        if (timestamp.Date >= current.Date.AddDays(-6))
+        {
+            return timestamp.DayOfWeek switch
+            {
+                DayOfWeek.Monday => "周一",
+                DayOfWeek.Tuesday => "周二",
+                DayOfWeek.Wednesday => "周三",
+                DayOfWeek.Thursday => "周四",
+                DayOfWeek.Friday => "周五",
+                DayOfWeek.Saturday => "周六",
+                _ => "周日"
+            };
+        }
+
+        return timestamp.ToString("M/d");
+    }
 
     private static string DescribeOutbox(OutboxState state) => state switch
     {

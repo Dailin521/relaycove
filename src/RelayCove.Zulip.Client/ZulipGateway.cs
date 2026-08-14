@@ -429,6 +429,29 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         return new RealmMediaResult(bytes, contentType ?? "application/octet-stream");
     }
 
+    public async Task<UnsubscribeChannelResult> UnsubscribeChannelAsync(
+        UnsubscribeChannelRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.ChannelName);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["subscriptions"] = JsonSerializer.Serialize(new[] { request.ChannelName }, JsonOptions)
+        };
+        using var response = await SendAsync(
+            request.Credentials.Realm,
+            HttpMethod.Delete,
+            "users/me/subscriptions",
+            fields,
+            request.Credentials,
+            cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        return new UnsubscribeChannelResult(
+            GetStringArray(document.RootElement, "removed"),
+            GetStringArray(document.RootElement, "not_removed"));
+    }
+
     public async Task MarkReadAsync(MarkReadRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);

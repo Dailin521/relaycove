@@ -11,7 +11,7 @@
     <Border Margin="15,0,15,14"
             HeightRequest="{Binding ComposerHeight}"
             Background="{StaticResource SurfaceSoftBrush}"
-            Stroke="{StaticResource StrongBorderBrush}"
+            Stroke="{StaticResource BorderBrush}"
             StrokeThickness="1">
         <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
         <Border.Behaviors>
@@ -20,13 +20,13 @@
                 IsDragActive="{Binding ViewModel.IsFileDragActive, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}" />
         </Border.Behaviors>
 
-        <Grid RowDefinitions="10,*,Auto,40">
+        <Grid RowDefinitions="16,Auto,*,40">
             <Button Grid.Row="0"
                     Text=""
                     Padding="0"
                     Margin="0"
-                    HeightRequest="10"
-                    MinimumHeightRequest="10"
+                    HeightRequest="16"
+                    MinimumHeightRequest="16"
                     BackgroundColor="Transparent"
                     BorderWidth="0"
                     SemanticProperties.Description="调整输入区高度；上下键每次 16，Home 最小，End 最大">
@@ -45,11 +45,11 @@
                      InputTransparent="True" />
 
             <Editor x:Name="ComposerEditor"
-                    Grid.Row="1"
-                    Margin="12,2,12,0"
+                    Grid.Row="2"
+                    Margin="0"
                     Style="{StaticResource ComposerEditorStyle}"
                     Text="{Binding ComposerText, Mode=TwoWay}"
-                    Placeholder="发送到当前会话"
+                    Placeholder="{Binding ComposerPlaceholder}"
                     IsEnabled="{Binding CanCompose}"
                     SemanticProperties.Description="多行消息输入框；Ctrl+Enter 发送，Enter 换行">
                 <Editor.Behaviors>
@@ -62,7 +62,7 @@
                 </Editor.Behaviors>
             </Editor>
 
-            <VerticalStackLayout Grid.Row="2" Margin="9,2,9,0" Spacing="3">
+            <VerticalStackLayout Grid.Row="1" Margin="10,0,10,4" Spacing="3">
                 <CollectionView ItemsSource="{Binding Attachments}"
                                 IsVisible="{Binding HasAttachments}"
                                 HeightRequest="58"
@@ -113,17 +113,17 @@
                        LineBreakMode="WordWrap" />
             </VerticalStackLayout>
 
-            <Grid Grid.Row="3" ColumnDefinitions="34,34,*,Auto" Padding="8,3,8,5" ColumnSpacing="3">
+            <Grid Grid.Row="3" ColumnDefinitions="34,34,*,Auto" Padding="8,0,8,6" ColumnSpacing="4">
                 <ImageButton Grid.Column="0"
                              Source="icon_smile.png"
                              Style="{StaticResource ImageIconButtonStyle}"
-                             WidthRequest="32" HeightRequest="32" Padding="7"
-                             Command="{Binding ToggleComposerEmojiPickerCommand}"
+                             WidthRequest="34" HeightRequest="32" Padding="8,7"
+                             Clicked="OnEmojiPickerClicked"
                              SemanticProperties.Description="打开表情选择器" />
                 <ImageButton Grid.Column="1"
                              Source="icon_attachment.png"
                              Style="{StaticResource ImageIconButtonStyle}"
-                             WidthRequest="32" HeightRequest="32" Padding="7"
+                             WidthRequest="34" HeightRequest="32" Padding="8,7"
                              Command="{Binding PickAttachmentsCommand}"
                              IsEnabled="{Binding CanCompose}"
                              SemanticProperties.Description="选择最多 10 个图片或文件附件" />
@@ -140,6 +140,9 @@
                         Style="{StaticResource PrimaryButtonStyle}"
                         HeightRequest="32"
                         MinimumHeightRequest="32"
+                        Padding="12,0"
+                        CornerRadius="8"
+                        BorderWidth="0"
                         Command="{Binding SendCommand}"
                         IsEnabled="{Binding CanSend}"
                         SemanticProperties.Description="发送当前会话草稿" />

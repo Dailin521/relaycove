@@ -4,7 +4,11 @@
       "commandName": "Project",
       "nativeDebugging": false,
       "environmentVariables": {
-        "RELAYCOVE_NATIVE_UI_PREVIEW": "1"
+        "RELAYCOVE_NATIVE_UI_PREVIEW": "1",
+        "RELAYCOVE_NATIVE_UI_PREVIEW_SCENE": "shell",
+        "RELAYCOVE_NATIVE_UI_PREVIEW_THEME": "light",
+        "RELAYCOVE_NATIVE_UI_PREVIEW_WIDTH": "1440",
+        "RELAYCOVE_NATIVE_UI_PREVIEW_HEIGHT": "900"
       }
     }
   }

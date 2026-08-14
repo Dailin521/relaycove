@@ -462,6 +462,28 @@ public sealed class ZulipGatewayTests
     }
 
     [Fact]
+    public async Task UnsubscribeChannel_UsesExactNameForCurrentUserAndMapsResponse()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"result":"success","removed":["工程频道"],"not_removed":[]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.UnsubscribeChannelAsync(
+            new UnsubscribeChannelRequest(Credentials, "工程频道"));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Delete, request.Method);
+        Assert.EndsWith("/api/v1/users/me/subscriptions", request.Uri!.AbsolutePath, StringComparison.Ordinal);
+        var form = ParseForm(request.Body);
+        var subscriptions = JsonSerializer.Deserialize<string[]>(form["subscriptions"]);
+        Assert.NotNull(subscriptions);
+        Assert.Equal(["工程频道"], subscriptions);
+        Assert.Equal(["工程频道"], result.Removed);
+        Assert.Empty(result.NotRemoved);
+    }
+
+    [Fact]
     public async Task Event_Reaction_MapsFullIdentityAndOperation()
     {
         using var handler = new RecordingHandler(Json("""

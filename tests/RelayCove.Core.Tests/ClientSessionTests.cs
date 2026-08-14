@@ -1183,6 +1183,132 @@ public sealed class ClientSessionTests
         await session.StopAsync();
     }
 
+    [Fact]
+    public async Task UnsubscribeChannelAsync_WhenServerConfirms_RemovesChannelAndSelection()
+    {
+        var channel = new Subscription(7, "Engineering");
+        var store = new FakeAccountStore();
+        var requestedNames = new List<string>();
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [channel])),
+            UnsubscribeChannelHandler = (request, _) =>
+            {
+                requestedNames.Add(request.ChannelName);
+                return Task.FromResult(new UnsubscribeChannelResult([request.ChannelName], []));
+            }
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(new ChannelTopic(channel.ChannelId, "topic"));
+
+        await session.UnsubscribeChannelAsync(channel.ChannelId);
+
+        Assert.Equal([channel.Name], requestedNames);
+        Assert.DoesNotContain(channel.ChannelId, session.State.Subscriptions.Keys);
+        Assert.Null(session.SelectedConversation);
+        Assert.Contains(channel.ChannelId, store.PurgedChannels);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task UnsubscribeChannelAsync_WhenAlreadyRemoved_ConvergesLocalState()
+    {
+        var channel = new Subscription(8, "Already gone");
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [channel])),
+            UnsubscribeChannelHandler = (request, _) =>
+                Task.FromResult(new UnsubscribeChannelResult([], [request.ChannelName]))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.UnsubscribeChannelAsync(channel.ChannelId);
+
+        Assert.DoesNotContain(channel.ChannelId, session.State.Subscriptions.Keys);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task UnsubscribeChannelAsync_WhenCachePurgeFails_KeepsConfirmedRemovalInMemory()
+    {
+        var channel = new Subscription(11, "Confirmed remotely");
+        var store = new FakeAccountStore
+        {
+            PurgeFailure = new InvalidOperationException("database unavailable")
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [channel])),
+            UnsubscribeChannelHandler = (request, _) =>
+                Task.FromResult(new UnsubscribeChannelResult([request.ChannelName], []))
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(new ChannelTopic(channel.ChannelId, "topic"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            session.UnsubscribeChannelAsync(channel.ChannelId));
+
+        Assert.DoesNotContain(channel.ChannelId, session.State.Subscriptions.Keys);
+        Assert.Null(session.SelectedConversation);
+        Assert.Contains(channel.ChannelId, store.PurgedChannels);
+        Assert.Equal(ConnectionStatus.Faulted, session.State.Connection.Status);
+        Assert.Equal("channel_unsubscribe_cache_cleanup_failed", session.State.Connection.Detail);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task UnsubscribeChannelAsync_WhenResultIsUnknown_DoesNotRemoveOrRetry()
+    {
+        var channel = new Subscription(9, "Keep me");
+        var calls = 0;
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [channel])),
+            UnsubscribeChannelHandler = (_, _) =>
+            {
+                Interlocked.Increment(ref calls);
+                return Task.FromException<UnsubscribeChannelResult>(
+                    new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await Assert.ThrowsAsync<GatewayException>(() => session.UnsubscribeChannelAsync(channel.ChannelId));
+
+        Assert.Equal(1, Volatile.Read(ref calls));
+        Assert.Contains(channel.ChannelId, session.State.Subscriptions.Keys);
+        Assert.Equal(ConnectionStatus.Offline, session.State.Connection.Status);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task EventLoop_WhenSubscriptionIsRemoved_ClearsSelectedChannel()
+    {
+        var channel = new Subscription(10, "External removal");
+        var removal = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var eventCalls = 0;
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [channel])),
+            GetEventsHandler = (_, cancellationToken) => Interlocked.Increment(ref eventCalls) == 1
+                ? removal.Task
+                : Never<EventBatch>(cancellationToken)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(new ChannelTopic(channel.ChannelId, "topic"));
+
+        removal.SetResult(new EventBatch([new SubscriptionRemovedEvent(channel.ChannelId, 2)], 2));
+        await WaitUntilAsync(() => session.SelectedConversation is null);
+
+        Assert.DoesNotContain(channel.ChannelId, session.State.Subscriptions.Keys);
+        await session.StopAsync();
+    }
+
     private static CredentialEnvelope Credential() =>
         new(RealmEndpoint.Parse("https://zulip.example/"), "me@example.test", 10, "api-key");
 
@@ -1281,8 +1407,10 @@ public sealed class ClientSessionTests
         public Exception? InitializeFailure { get; set; }
         public Exception? MigrateFailure { get; set; }
         public Exception? ApplyFailure { get; set; }
+        public Exception? PurgeFailure { get; set; }
         public Exception? LockFailure { get; set; }
         public List<IReadOnlyCollection<DomainEvent>> AppliedBatches { get; } = [];
+        public List<long> PurgedChannels { get; } = [];
         public Func<AccountId, ConversationKey, long?, int, CancellationToken, Task<IReadOnlyList<ChatMessage>>>? QueryHandler { get; set; }
 
         public Task<IReadOnlyList<StoredAccount>> ListAsync(CancellationToken cancellationToken = default) =>
@@ -1335,7 +1463,15 @@ public sealed class ClientSessionTests
             return Task.CompletedTask;
         }
 
-        public Task PurgeSubscriptionAsync(AccountId accountId, long channelId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task PurgeSubscriptionAsync(AccountId accountId, long channelId, CancellationToken cancellationToken = default)
+        {
+            PurgedChannels.Add(channelId);
+            if (PurgeFailure is not null) return Task.FromException(PurgeFailure);
+            SnapshotState = DomainReducer.Apply(
+                SnapshotState,
+                new SubscriptionRemovedEvent(channelId, Source: DomainEventSource.Local));
+            return Task.CompletedTask;
+        }
 
         public Task<bool> IsCacheUnlockedAsync(AccountId accountId, CancellationToken cancellationToken = default) =>
             Task.FromResult(IsUnlocked);
@@ -1393,6 +1529,7 @@ public sealed class ClientSessionTests
         public Func<SetMessageStarredRequest, CancellationToken, Task>? SetMessageStarredHandler { get; set; }
         public Func<UploadAttachmentRequest, CancellationToken, Task<UploadedAttachment>>? UploadAttachmentHandler { get; set; }
         public Func<GetRealmMediaRequest, CancellationToken, Task<RealmMediaResult>>? GetRealmMediaHandler { get; set; }
+        public Func<UnsubscribeChannelRequest, CancellationToken, Task<UnsubscribeChannelResult>>? UnsubscribeChannelHandler { get; set; }
         public Func<DeleteQueueRequest, CancellationToken, Task>? DeleteQueueHandler { get; set; }
         public Func<TopicsRequest, CancellationToken, Task<TopicsResult>> TopicsHandler { get; set; } = (_, _) => Task.FromResult(new TopicsResult([]));
 
@@ -1490,6 +1627,12 @@ public sealed class ClientSessionTests
         public Task<RealmMediaResult> GetRealmMediaAsync(GetRealmMediaRequest request, CancellationToken cancellationToken = default) =>
             GetRealmMediaHandler?.Invoke(request, cancellationToken) ??
             Task.FromResult(new RealmMediaResult([1], "image/png"));
+
+        public Task<UnsubscribeChannelResult> UnsubscribeChannelAsync(
+            UnsubscribeChannelRequest request,
+            CancellationToken cancellationToken = default) =>
+            UnsubscribeChannelHandler?.Invoke(request, cancellationToken) ??
+            Task.FromResult(new UnsubscribeChannelResult([request.ChannelName], []));
 
         public Task DeleteQueueAsync(DeleteQueueRequest request, CancellationToken cancellationToken = default)
         {

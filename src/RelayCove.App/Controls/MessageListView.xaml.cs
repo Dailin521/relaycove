@@ -16,11 +16,14 @@ public partial class MessageListView : ContentView
         InitializeComponent();
     }
 
+    public ShellViewModel? ViewModel => BindingContext as ShellViewModel;
+
     protected override void OnBindingContextChanged()
     {
         if (_viewModel is not null) _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
         base.OnBindingContextChanged();
         _viewModel = BindingContext as ShellViewModel;
+        OnPropertyChanged(nameof(ViewModel));
         if (_viewModel is not null) _viewModel.PropertyChanged += OnViewModelPropertyChanged;
     }
 

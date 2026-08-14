@@ -114,6 +114,40 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task ChannelUnsubscribe_WhenConfirmed_UsesSelectedChannelAndClosesDetails()
+    {
+        var channel = new ChannelTopic(4, "release");
+        var state = new ClientState(
+            subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering") },
+            connection: new ConnectionState(RelayCove.Core.ConnectionStatus.Connected));
+        var requested = new List<long>();
+        var session = new FakeSession { StateValue = state, Selected = channel };
+        session.UnsubscribeChannelAction = (channelId, _) =>
+        {
+            requested.Add(channelId);
+            session.StateValue = DomainReducer.Apply(
+                session.StateValue,
+                new SubscriptionRemovedEvent(channelId, Source: DomainEventSource.Local));
+            session.Selected = null;
+            session.Publish();
+            return Task.CompletedTask;
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.IsDetailsOpen = true;
+
+        viewModel.RequestChannelUnsubscribeCommand.Execute(null);
+
+        Assert.True(viewModel.IsChannelUnsubscribeConfirmationOpen);
+        Assert.Equal("engineering", viewModel.ChannelUnsubscribeTargetName);
+        await ((IAsyncRelayCommand)viewModel.ConfirmChannelUnsubscribeCommand).ExecuteAsync(null);
+
+        Assert.Equal([4], requested);
+        Assert.False(viewModel.IsChannelUnsubscribeConfirmationOpen);
+        Assert.False(viewModel.IsDetailsOpen);
+        Assert.False(viewModel.CanUnsubscribeSelectedChannel);
+    }
+
+    [Fact]
     public void UpdateViewport_WhenMovingFromWideTo1024_CollapsesDetailsAndUsesOverlayWhenReopened()
     {
         var conversation = new DirectMessage([8]);
@@ -142,7 +176,7 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public void SelectedChannel_WhenTopicLoadPublishesOldConversation_KeepsBrowsedChannel()
+    public void SelectedChannel_WhenTopicLoadPublishesOldConversation_KeepsBrowsedChannelAndSelectsOnlyTopic()
     {
         var channelA = new ChannelTopic(4, "release");
         var topicB = new TopicSummary(5, "native-ui", 12);
@@ -173,7 +207,8 @@ public sealed class ShellViewModelTests
 
         Assert.Equal(5, Assert.IsType<ChannelItem>(viewModel.SelectedChannel).ChannelId);
         Assert.Equal("native-ui", Assert.Single(viewModel.Topics).Topic);
-        Assert.Equal(channelA, session.SelectedConversation);
+        Assert.Equal(new ChannelTopic(5, "native-ui"), session.SelectedConversation);
+        Assert.False(viewModel.ShowTopicPicker);
     }
 
     [Fact]
@@ -267,6 +302,32 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public void MessageRowMaximumWidth_WhenViewportChanges_MatchesWebResponsiveCaps()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        viewModel.UpdateViewport(1440);
+        Assert.Equal(740d, viewModel.MessageRowMaximumWidth, 3);
+
+        viewModel.UpdateViewport(1024);
+        Assert.Equal(516.64d, viewModel.MessageRowMaximumWidth, 2);
+
+        viewModel.UpdateViewport(640);
+        Assert.Equal(536d, viewModel.MessageRowMaximumWidth, 3);
+    }
+
+    [Fact]
+    public void MessageRowMaximumWidth_WhenInlineDetailsOpens_UsesRemainingChatWidth()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        viewModel.UpdateViewport(1440);
+
+        viewModel.IsDetailsOpen = true;
+
+        Assert.Equal(616.96d, viewModel.MessageRowMaximumWidth, 2);
+    }
+
+    [Fact]
     public void ConversationGroupCommands_WhenToggled_PersistIndependentPreferences()
     {
         var preferences = new FakeUiPreferencesService();
@@ -307,6 +368,184 @@ public sealed class ShellViewModelTests
 
         Assert.True(viewModel.IsMessageMenuOpen);
         Assert.True(viewModel.IsPrimaryShellEnabled);
+    }
+
+    [Fact]
+    public void EmojiPickers_WhenOpen_RemainPopoversWithoutDisablingTheShell()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        viewModel.ToggleComposerEmojiPickerCommand.Execute(null);
+        Assert.True(viewModel.IsComposerEmojiPickerOpen);
+        Assert.True(viewModel.IsPrimaryShellEnabled);
+
+        viewModel.ToggleComposerEmojiPickerCommand.Execute(null);
+        viewModel.IsReactionPickerOpen = true;
+        Assert.True(viewModel.IsReactionPickerOpen);
+        Assert.True(viewModel.IsPrimaryShellEnabled);
+    }
+
+    [Fact]
+    public void OpenComposerEmojiPickerAtCommand_WhenInvoked_StoresTheTriggerAnchor()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        viewModel.OpenComposerEmojiPickerAtCommand.Execute(new PopoverAnchorRequest(92.5d, 714d));
+
+        Assert.True(viewModel.IsComposerEmojiPickerOpen);
+        Assert.Equal(92.5d, viewModel.ComposerEmojiAnchorX);
+        Assert.Equal(714d, viewModel.ComposerEmojiAnchorY);
+        Assert.Null(viewModel.SelectedComposerEmoji);
+        Assert.DoesNotContain(viewModel.EmojiChoices, choice => choice.IsComposerSelected);
+    }
+
+    [Fact]
+    public void EmojiSelection_WhenKeyboardIndexChanges_UpdatesOnlyTheCustomPickerState()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        var first = viewModel.EmojiChoices[0];
+        var second = viewModel.EmojiChoices[1];
+
+        viewModel.SelectedComposerEmoji = first;
+        viewModel.SelectedComposerEmoji = second;
+        viewModel.SelectedReactionEmoji = first;
+
+        Assert.False(first.IsComposerSelected);
+        Assert.True(second.IsComposerSelected);
+        Assert.True(first.IsReactionSelected);
+        Assert.False(second.IsReactionSelected);
+    }
+
+    [Fact]
+    public void ApplyNativePreviewScene_WhenSettingsRequested_ProjectsSettingsWithoutInputAutomation()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        viewModel.ApplyNativePreviewScene("settings");
+
+        Assert.True(viewModel.IsSettingsSection);
+        Assert.True(viewModel.IsAppearanceSettings);
+    }
+
+    [Fact]
+    public async Task InitializeAsync_WhenNativePreviewIsUsed_ProjectsTheWebAcceptanceFixture()
+    {
+        using var viewModel = CreateViewModel(new NativeShellPreviewSession());
+
+        await viewModel.InitializeAsync();
+
+        Assert.Equal("Acme Workspace", viewModel.WorkspaceDisplayName);
+        Assert.True(viewModel.IsNativePreview);
+        Assert.False(viewModel.ShowLoadOlderButton);
+        Assert.Equal(
+            ["UI 设计讨论", "Windows 客户端", "产品路线图", "版本发布"],
+            viewModel.Channels.Select(channel => channel.DisplayTitle));
+        Assert.Equal(
+            ["Maya Chen", "Alex Wu", "Daniel Okafor", "Sarah Li", "林远（自己）"],
+            viewModel.DirectMessages.Select(message => message.Title));
+        Assert.Equal(4, viewModel.Messages.Count);
+#if DEBUG
+        Assert.Equal("4 条未读消息", viewModel.Messages[2].UnreadDividerLabel);
+        Assert.True(viewModel.Messages[2].ShowUnreadDivider);
+#else
+        Assert.Equal("未读消息", viewModel.Messages[2].UnreadDividerLabel);
+        Assert.False(viewModel.Messages[2].ShowUnreadDivider);
+#endif
+    }
+
+    [Theory]
+    [InlineData("details", true, true)]
+    [InlineData("narrow-list", false, true)]
+    [InlineData("narrow-chat", false, false)]
+    public void ApplyNativePreviewScene_WhenLayoutSceneRequested_ProjectsWithoutInputAutomation(
+        string scene,
+        bool detailsOpen,
+        bool listVisible)
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        viewModel.ApplyNativePreviewScene(scene);
+
+        Assert.Equal(detailsOpen, viewModel.IsDetailsOpen);
+        Assert.Equal(listVisible, viewModel.IsConversationListVisibleOnNarrow);
+    }
+
+    [Fact]
+    public void UpdateViewport_WhenPreviewDetailsSceneIsRequested_RespectsBuildIsolation()
+    {
+        var previousPreview = Environment.GetEnvironmentVariable("RELAYCOVE_NATIVE_UI_PREVIEW");
+        var previousScene = Environment.GetEnvironmentVariable("RELAYCOVE_NATIVE_UI_PREVIEW_SCENE");
+        try
+        {
+            Environment.SetEnvironmentVariable("RELAYCOVE_NATIVE_UI_PREVIEW", "1");
+            Environment.SetEnvironmentVariable("RELAYCOVE_NATIVE_UI_PREVIEW_SCENE", "details");
+            using var viewModel = CreateViewModel(new FakeSession());
+            viewModel.ApplyNativePreviewScene("details");
+
+            viewModel.UpdateViewport(1024);
+
+#if DEBUG
+            Assert.True(viewModel.IsDetailsOpen);
+            Assert.True(viewModel.IsOverlayDetailsVisible);
+#else
+            Assert.False(viewModel.IsDetailsOpen);
+            Assert.False(viewModel.IsOverlayDetailsVisible);
+#endif
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("RELAYCOVE_NATIVE_UI_PREVIEW", previousPreview);
+            Environment.SetEnvironmentVariable("RELAYCOVE_NATIVE_UI_PREVIEW_SCENE", previousScene);
+        }
+    }
+
+    [Theory]
+    [InlineData("light", AppAppearanceMode.Light)]
+    [InlineData("dark", AppAppearanceMode.Dark)]
+    [InlineData("system", AppAppearanceMode.System)]
+    [InlineData("unknown", AppAppearanceMode.Light)]
+    public void ApplyNativePreviewTheme_WhenRequested_UsesDeterministicTheme(
+        string theme,
+        AppAppearanceMode expected)
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        viewModel.ApplyNativePreviewTheme(theme);
+
+        Assert.Equal(expected, viewModel.AppearanceMode);
+    }
+
+    [Theory]
+    [InlineData(2026, 8, 14, 2026, 8, 14, 9, 56, "9:56")]
+    [InlineData(2026, 8, 14, 2026, 8, 13, 9, 56, "昨天")]
+    [InlineData(2026, 8, 14, 2026, 8, 9, 9, 56, "周日")]
+    [InlineData(2026, 8, 14, 2026, 7, 1, 9, 56, "7/1")]
+    public void FormatConversationTimestamp_WhenProjected_UsesWebParityLabels(
+        int nowYear,
+        int nowMonth,
+        int nowDay,
+        int messageYear,
+        int messageMonth,
+        int messageDay,
+        int hour,
+        int minute,
+        string expected)
+    {
+        var now = new DateTime(nowYear, nowMonth, nowDay, 12, 0, 0);
+        var timestamp = new DateTime(messageYear, messageMonth, messageDay, hour, minute, 0);
+
+        Assert.Equal(expected, ShellViewModel.FormatConversationTimestamp(timestamp, now));
+    }
+
+    [Fact]
+    public void MessageMenu_WhenMessageStarStateChanges_ProjectsTheMatchingActionLabel()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        viewModel.OpenMessageMenuCommand.Execute(new MessageItem("message-1", 1, 7, "Ada", "hello", "10:00", isStarred: false));
+        Assert.Equal("收藏消息", viewModel.ActiveMessageStarActionLabel);
+
+        viewModel.OpenMessageMenuCommand.Execute(new MessageItem("message-2", 2, 7, "Ada", "world", "10:01", isStarred: true));
+        Assert.Equal("取消收藏", viewModel.ActiveMessageStarActionLabel);
     }
 
     [Fact]
@@ -795,7 +1034,7 @@ public sealed class ShellViewModelTests
     }
 
     private static ShellViewModel CreateViewModel(
-        FakeSession session,
+        IClientSession session,
         FakeLastRealmStore? lastRealmStore = null,
         FakeAppearanceService? appearanceService = null,
         FakeUiPreferencesService? uiPreferencesService = null,
@@ -931,6 +1170,7 @@ public sealed class ShellViewModelTests
         public Func<CancellationToken, Task>? LogoutAction { get; set; }
         public Func<string, CancellationToken, Task>? SendAction { get; set; }
         public Func<AttachmentUpload, CancellationToken, Task<UploadedAttachment>>? UploadAction { get; set; }
+        public Func<long, CancellationToken, Task>? UnsubscribeChannelAction { get; set; }
         public Func<long, CancellationToken, Task<IReadOnlyList<TopicSummary>>>? LoadTopicsAction { get; set; }
         public int LoginCalls { get; private set; }
         public List<string> SentContents { get; } = [];
@@ -982,6 +1222,8 @@ public sealed class ShellViewModelTests
         }
         public Task<RealmMediaResult> GetRealmMediaAsync(RealmMediaRequest request, CancellationToken cancellationToken = default) =>
             Task.FromResult(new RealmMediaResult([1], "image/png"));
+        public Task UnsubscribeChannelAsync(long channelId, CancellationToken cancellationToken = default) =>
+            UnsubscribeChannelAction?.Invoke(channelId, cancellationToken) ?? Task.CompletedTask;
         public Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task ClearLocalCacheAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
