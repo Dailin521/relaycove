@@ -164,7 +164,7 @@
                                 </DataTemplate>
                             </CollectionView.ItemTemplate>
                             <CollectionView.Footer>
-                                <Button Text="加载更早消息" IsVisible="{Binding BindingContext.HasMoreSavedMessages, Source={x:Reference RootPage}}" Command="{Binding BindingContext.LoadOlderSavedCommand, Source={x:Reference RootPage}}" Style="{StaticResource BaseButtonStyle}" />
+                                <Button Text="加载更早消息" IsVisible="{Binding ViewModel.HasMoreSavedMessages, Source={x:Reference RootPage}, x:DataType=local:MainPage}" Command="{Binding ViewModel.LoadOlderSavedCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}" Style="{StaticResource BaseButtonStyle}" />
                             </CollectionView.Footer>
                         </CollectionView>
                         <Label Text="尚无已保存消息。" IsVisible="{Binding IsSavedEmpty}" Style="{StaticResource MutedLabelStyle}" HorizontalOptions="Center" VerticalOptions="Center" />
@@ -256,8 +256,8 @@
                                     </CollectionView.ItemTemplate>
                                     <CollectionView.Footer>
                                         <Button Text="加载更多服务器结果"
-                                                IsVisible="{Binding BindingContext.HasMoreSearchResults, Source={x:Reference RootPage}}"
-                                                Command="{Binding BindingContext.LoadOlderSearchCommand, Source={x:Reference RootPage}}"
+                                                IsVisible="{Binding ViewModel.HasMoreSearchResults, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                Command="{Binding ViewModel.LoadOlderSearchCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
                                                 Style="{StaticResource BaseButtonStyle}" />
                                     </CollectionView.Footer>
                                 </CollectionView>
@@ -720,7 +720,7 @@
                                                         <Label Text="{Binding SubscriberCountLabel}" Style="{StaticResource MutedLabelStyle}" FontSize="11" />
                                                     </VerticalStackLayout>
                                                     <Button Grid.Column="1" Text="加入" Style="{StaticResource PrimaryButtonStyle}"
-                                                            Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.JoinAvailableChannelCommand}"
+                                                            Command="{Binding ViewModel.JoinAvailableChannelCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
                                                             CommandParameter="{Binding .}" SemanticProperties.Description="加入此频道" />
                                                 </Grid>
                                             </Border>

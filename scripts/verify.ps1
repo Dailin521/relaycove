@@ -351,9 +351,13 @@ function Invoke-LiveVerification {
         "RELAYCOVE_LIVE_CHANNEL_NAME",
         "RELAYCOVE_LIVE_UNSUBSCRIBE_CHANNEL_ID",
         "RELAYCOVE_LIVE_UNSUBSCRIBE_CHANNEL_NAME",
+        "RELAYCOVE_LIVE_JOINABLE_CHANNEL_ID",
+        "RELAYCOVE_LIVE_JOINABLE_CHANNEL_NAME",
         "RELAYCOVE_LIVE_ALLOWED_USER_IDS",
         "RELAYCOVE_LIVE_CHANNEL_APPROVED",
-        "RELAYCOVE_LIVE_UNSUBSCRIBE_CHANNEL_APPROVED"
+        "RELAYCOVE_LIVE_UNSUBSCRIBE_CHANNEL_APPROVED",
+        "RELAYCOVE_LIVE_JOINABLE_CHANNEL_APPROVED",
+        "RELAYCOVE_LIVE_STAGE23_APPROVED"
     )
     foreach ($name in $required) {
         if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
@@ -368,6 +372,9 @@ function Invoke-LiveVerification {
     }
     if ([Environment]::GetEnvironmentVariable("RELAYCOVE_LIVE_UNSUBSCRIBE_CHANNEL_APPROVED") -cne "true") {
         throw "Live verification requires an independently approved private unsubscribe channel."
+    }
+    if ([Environment]::GetEnvironmentVariable("RELAYCOVE_LIVE_JOINABLE_CHANNEL_APPROVED") -cne "true" -or [Environment]::GetEnvironmentVariable("RELAYCOVE_LIVE_STAGE23_APPROVED") -cne "true") {
+        throw "Live verification requires explicit Stage23 joinable-channel approval."
     }
 
     Invoke-DotNet restore "tests/RelayCove.Zulip.LiveTests/RelayCove.Zulip.LiveTests.csproj" --nologo

@@ -1,9 +1,9 @@
 # Stage 23 — MAUI 普通用户全功能收口
 
-- Status: active; Slice 1 is fixed at local commit `037bcf8`, Slice 2 at local commit `8a9f07f`, and Slice 3 channel self-service has passed its Fast gate and is ready for its rollback commit
+- Status: candidate ready for user review; Slice 1 is fixed at `037bcf8`, Slice 2 at `8a9f07f`, and Slice 3 at `bba0cbb`; final Live and Full passed
 - Branch/worktree: `codex/stage-23-native-functions` under `E:\WorkSpace\RelayCove-Stage22MParity`
 - Baseline: local commit `8d1a6e5` (`feat(maui): complete native parity and real Zulip flows`)
-- External writes: none for Stage 23 so far; no push, merge, deployment or Live run
+- External writes: explicitly authorized isolated Stage 23 Live passed 3/3; no push, merge or deployment
 
 ## Scope
 
@@ -35,7 +35,7 @@ Excluded: Web changes, WebView, BFF/proxy/server changes, authentication redesig
 
 - Slice 1 and Slice 2 are fixed as separate local rollback commits; Slice 3 is ready for its own local rollback commit.
 - After Slice 3 is fixed, proceed to the explicitly authorized isolated real-Realm acceptance without using a business channel.
-- Final native real-UI password login, long-list real-window acceptance, Full/package and clean Windows 11 VM remain open. Stage 21 is not complete.
+- Final native real-UI password login, long-list real-window acceptance, package installation and clean Windows 11 VM remain open. Stage 21 is not complete.
 
 ## Slice 2 — server search and saved messages (local, 2026-08-14)
 
@@ -71,7 +71,7 @@ Excluded: Web changes, WebView, BFF/proxy/server changes, authentication redesig
 - `dotnet build src/RelayCove.App/RelayCove.App.csproj -c Debug --no-restore`: 0 warnings/errors.
 - `dotnet test tests/RelayCove.Zulip.Client.Tests/RelayCove.Zulip.Client.Tests.csproj -c Debug --no-restore`: 45/45.
 - Final Slice Fast passed with 0 build warnings/errors: Core 102/102, Zulip.Client 45/45, Data 21/21 and App 87/87 (255/255 total); Web deployment-template checks, typecheck, 86/86 unit tests and production build also passed.
-- Still unverified: manual MAUI UI/focus at real narrow widths, screenshot/visual review, accessibility, package/clean VM, Full, and Live/real Realm behavior.
+- At Slice 3 close, manual MAUI UI/focus at real narrow widths, screenshot/visual review, accessibility, package/clean VM, Full and Live/real Realm behavior were still unverified; later final evidence is recorded below.
 
 ### Slice 3 P1 follow-up (local, 2026-08-14)
 
@@ -79,4 +79,20 @@ Excluded: Web changes, WebView, BFF/proxy/server changes, authentication redesig
 - Subscribe now requires a parseable official structured response with the exact verified current name in `subscribed` or `already_subscribed`; a malformed successful HTTP response is treated as a protocol failure. `ChannelSummary` also carries private/subscribed/color catalog metadata while subscriber count remains nullable.
 - SQLite schema v5 stores `is_muted`/`is_pinned` plus register-provided `color`, persists preference events, and conditionally migrates old schemas without assuming legacy fixture columns. `GET /streams` does not invent subscription/color data; Core merges those fields from current authoritative subscriptions by ID. The migration test verifies the preference columns.
 - The browser cancels the real catalog request and ignores stale completion/error after close/logout/account change, clears its collection on close, and restores focus to the browse trigger. Projection changes notify the mute/pin action labels.
-- Independent protocol/Core/Data and App/UI re-reviews found no remaining P0/P1 after the close-recursion, cancellation, lifecycle, response-shape, persistence, focus and 401 findings were fixed. Full/Live/manual MAUI/screenshot/package/clean-VM remain unrun.
+- Independent protocol/Core/Data and App/UI re-reviews found no remaining P0/P1 after the close-recursion, cancellation, lifecycle, response-shape, persistence, focus and 401 findings were fixed. Full/manual MAUI/screenshot/package/clean-VM remain unrun; the later isolated Live result is recorded below.
+
+## Stage 23 isolated Live acceptance (2026-08-14)
+
+- The tracked gate now requires a separate Stage 23 approval, exact joinable-channel ID/name approval, two-account allowlist and the existing explicit write confirmation before any test starts. The ignored runner additionally requires an external confirmation before reading the credential archive or issuing HTTP, and disables redirects for every authenticated PowerShell request.
+- Tracked preflight verifies the two private probes and one public join probe against the Realm before every write, including exact names, privacy/archive state, three distinct IDs and exactly DAL/zhang as subscribers. All register queues are deleted with an independent cleanup token.
+- Final Live passed 3/3: search/saved/fresh around-anchor open; star/unstar; mute/pin toggle and authoritative restore; private unsubscribe and restore; public dedicated `relaycove-join-e2e` unsubscribe, catalog discovery and rejoin. Cleanup completed without a reported restoration failure.
+- A private channel cannot be discovered after an ordinary user unsubscribes, so the join probe is deliberately public/non-archived but has exactly the two approved subscribers. It is isolated from business channels and does not add channel-creation capability to the product.
+- Still open: final manual password login through the native MAUI UI, real-window long-list/anchor acceptance, accessibility/high-contrast/100%/200%, package installation and clean Windows 11 VM.
+
+## Final candidate gate (2026-08-14)
+
+- Release XamlC found five new explicit-source bindings that Debug accepted. They were corrected through the existing strongly typed `RootPage.ViewModel` bridge; compiled bindings remain enabled. Independent App review found no remaining P0/P1.
+- Final `pwsh ./scripts/verify.ps1 -Mode Full` passed: Debug/Release each Core 102/102, Zulip.Client 45/45, Data 21/21, App 87/87 (255/255); Web 86/86; Playwright 6/6 plus deployment-path 1/1; zero build warnings/errors.
+- Windows package SHA-256: `75B176F07531DAD9D1DEF1412B37778B1B876840ACA4862F663BE8FC586A0994`.
+- Full was offline and did not reuse Live credentials. Remaining user/VM gates are manual native password login, real-window long-list/anchor behavior, package installation on clean Windows 11, 100%/200%, high contrast and accessibility.
+- For that manual login, select Visual Studio profile `Windows Machine`. The separate `RelayCove Native Preview` profile remains the no-network fixture/Hot Reload entry and must not be used as real Realm evidence.

@@ -3,7 +3,23 @@
 Updated: 2026-08-14
 Branch: `codex/stage-23-native-functions` (isolated worktree `E:\WorkSpace\RelayCove-Stage22MParity`)
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W and Stage 22M are fixed locally at baseline commit `8d1a6e5`. Stage 23 is active on `codex/stage-23-native-functions`; Slice 1 is fixed at local commit `037bcf8`, Slice 2 at local commit `8a9f07f`, and Slice 3 channel self-service has passed its Fast gate. Nothing from Stage 23 has been pushed, merged, deployed or run against a real Realm.
+Current delivery: Stage 22W and Stage 22M are fixed locally at baseline commit `8d1a6e5`. Stage 23 is active on `codex/stage-23-native-functions`; Slice 1 is fixed at `037bcf8`, Slice 2 at `8a9f07f`, and Slice 3 at `bba0cbb`. Stage 23 has not been pushed, merged or deployed; its isolated three-scenario Live gate passed on 2026-08-14.
+
+## Stage 23 real-Realm acceptance — 2026-08-14
+
+- With explicit user authorization, the ignored local runner used the existing DAL/zhang credential archive without printing or tracking secrets. Before every write, tracked LiveTests independently verified two distinct users, three distinct channel IDs, exact names, the two private probes' private/non-archived state, the join probe's public/non-archived state, and an exact two-user subscriber set.
+- `pwsh ./scripts/verify.ps1 -Mode Live` passed 3/3 in 1 minute 17 seconds. It covered server search, saved messages, fresh-session around-anchor open, one star/unstar cycle, mute/pin toggle and authoritative restoration, private unsubscribe restoration, and public dedicated `relaycove-join-e2e` unsubscribe → catalog discovery → rejoin. All temporary register queues were deleted and cleanup reported no restoration failure.
+- The first authorized run passed 2/3 and exposed only an invalid test assumption that a unique topic must contain an adjacent message. The regression was corrected without weakening the fresh empty-store anchor proof, independently reviewed, and the complete Live suite then passed.
+- Zulip private channels are not discoverable by an unsubscribed ordinary user. Therefore the join probe is a dedicated public, non-archived channel with exactly DAL and zhang subscribed; it is not a business channel, and RelayCove still does not implement channel creation or administration.
+- This Live evidence does not replace final manual password login through the MAUI window, long-list real-window acceptance, package installation, 100%/200%, high contrast or clean Windows 11 VM acceptance.
+
+## Stage 23 final offline gate — 2026-08-14
+
+- After correcting five Release XamlC source bindings with the existing strongly typed `MainPage.ViewModel` bridge, `pwsh ./scripts/verify.ps1 -Mode Full` passed on the exact candidate tree. Debug and Release each passed Core 102/102, Zulip.Client 45/45, Data 21/21 and App 87/87 (255/255 per configuration), with zero build warnings/errors.
+- Web deployment-template checks, typecheck, 86/86 unit tests, production build, Playwright 6/6 and fixed deployment-path 1/1 passed without changing Web source or contacting the Realm.
+- Windows publish/package passed. `artifacts/package/RelayCove-2.0.0-alpha.1-win-x64.zip` SHA-256 is `75B176F07531DAD9D1DEF1412B37778B1B876840ACA4862F663BE8FC586A0994`.
+- Full did not run Live or use credentials. The final manual MAUI password-login/window acceptance and clean Windows 11 VM installation remain open.
+- Visual Studio launch profiles are explicit: `Windows Machine` opens the formal real-login client, while `RelayCove Native Preview` keeps the Debug-only in-memory/no-network scene. This prevents final manual acceptance from accidentally starting `preview.invalid`.
 
 ## Stage 23 native functions — Slice 2 (local, narrow verification only), 2026-08-14
 
@@ -266,7 +282,7 @@ The HTML Playwright report is under `artifacts/web/playwright/report/`. All gene
 
 ## Remaining capability gates / known differences
 
-- Web and MAUI implement arbitrary attachment upload/presentation, current-user unsubscribe, reaction, own-message edit/delete and per-account starred state. MAUI now also implements transient server search and the saved-message list, but these Stage 23 paths have only offline/fake-HTTP evidence. Mentions, complete membership/presence/common-channel data, channel self-service/admin management and resumable large-file upload remain separate gates.
+- Web and MAUI implement arbitrary attachment upload/presentation, current-user unsubscribe, reaction, own-message edit/delete and per-account starred state. MAUI now also implements server search, saved messages, channel discovery/join and personal mute/pin, with isolated Stage 23 Live evidence. Mentions, complete membership/presence/common-channel data, administrator channel management and resumable large-file upload remain separate gates.
 - The fixture still proves visual/interaction structure only. The production login now starts the formal Zulip session path; no fixture account/message enters that graph.
 - Messages, queue/cursor and outbox are page-memory only. RelayCove.Web does not yet claim refresh-offline history or Service Worker/IndexedDB caching.
 - Loaded messages are currently rendered directly. Automatic scroll-threshold paging, long-list virtualization and cross-page visual-anchor preservation remain a Web performance slice; the current verified control loads explicit 50-message pages.
@@ -286,4 +302,4 @@ Do not mark Stage 21 complete until the clean-VM and manual MAUI password-login 
 
 - Web commit `573a33d` and MAUI commit `c1c4da9` preserve the two implementations as independently reviewable history and are integrated into `main` under the user's explicit commit/merge/push authorization.
 - The fixed static Web entrance remains on the previously recorded Slice 3 server release; this integration does not deploy a new Web build or alter the Zulip host.
-- Stage 22M now has the bounded two-account Live evidence documented above. No secret was printed or persisted in tracked files; the credential bootstrap remains ignored local tooling. The current parity-polish/real-function worktree is still uncommitted and unpushed.
+- Stage 22M and Stage 23 now have the bounded two-account Live evidence documented above. No secret was printed or persisted in tracked files; the credential bootstrap remains ignored local tooling. Stage 23 has three local Slice commits plus the current final acceptance/documentation changes; nothing has been pushed.

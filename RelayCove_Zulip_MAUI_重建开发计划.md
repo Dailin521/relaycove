@@ -1,6 +1,6 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：Stage 21 外部门禁保留；Stage 22W Slice 1/2/3 已合并部署，后续消息操作/附件/导航修订已实现并通过 Full；Stage 22M 原生壳、消息交互和当前用户退订已实现并通过当前树 Full、受限真实窗口验收与双账号 Live。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
+文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M 已形成原生回滚基线；Stage 23 的增量长列表、服务器搜索/已保存消息和普通用户频道自助已实现，其中隔离双账号 Live 3/3 通过。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
@@ -77,7 +77,7 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 
 ### 3.2 当前仍不可用或未完成真实验收的能力
 
-完整成员目录/频道关系、频道订阅/创建/重命名/归档/成员管理、服务器范围搜索与 `@` 候选、saved 消息列表、typing、presence、通知、push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux 仍不可用或不在当前范围。Stage 22W 已实现任意附件、当前用户退订、reaction、本人消息编辑/删除和收藏；Stage 22M 已实现 reaction/edit/delete/star、图片/文件附件、受控媒体、本地已加载状态搜索和当前用户退订，其生产 Gateway/ClientSession 写路径已有隔离双账号 Live 证据。最终 MAUI UI 人工密码登录与干净 VM 仍是独立门禁。
+完整成员目录/频道关系、管理员级频道创建/重命名/归档/成员与权限管理、服务器 `@` 候选、typing、presence、通知、push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux 仍不可用或不在当前范围。Stage 23 已为 MAUI 实现普通用户服务器搜索、saved 消息、频道发现/加入/退订及个人静音/置顶；其隔离双账号 Live 已通过。Stage 22W 仍保有任意附件、当前用户退订、reaction、本人消息编辑/删除和收藏。最终 MAUI UI 人工密码登录、真实窗口长列表与干净 VM 仍是独立门禁。
 
 后续平台可以复用 Core、Zulip.Client 与 Data，但必须另行增加目标框架、图标、签名、后台生命周期和发布验证。本阶段不声称可交付这些平台；Linux 不支持。
 
@@ -121,7 +121,7 @@ Slice 3 完成首批完整交互能力，而不是只添加视觉按钮：
 - 同 Realm 非图片上传使用受控下载卡片：先以 Basic 换取临时 URL，再用无 Authorization、无 referrer 的请求读取有大小上限的 Blob；不内嵌 SVG/HTML/PDF/Office 等主动内容。
 - 频道详情支持当前用户按真实订阅名调用 `DELETE /users/me/subscriptions` 退订；确认成功或已退订都复用既有 `subscriptionRemoved` 清理，结果未知不自动重试。
 
-所有仓库自动门禁继续只使用 mock/fake HTTP。2026-08-13 在用户明确授权后，使用用户指定成员账号对发给自己的临时私信执行发送、reaction、收藏、编辑、事件 flags 核对和删除闭环，测试消息均已删除；没有操作其他用户消息、频道、上传或标记已读。本地 Chromium 另验证正式登录、真实会话和消息读取，控制台无错误。任意附件与退订已通过 fake HTTP/浏览器链路验证；真实上传和真实频道退订没有执行。全局/服务端搜索、mention 候选、saved 列表页、presence、通知和其余频道管理仍是独立能力门。
+所有仓库普通自动门禁继续只使用 mock/fake HTTP；Live 始终是显式授权的独立模式。2026-08-13 的 Web/早期 MAUI 证据曾只覆盖有限消息链路。2026-08-14 Stage 23 进一步以 DAL/zhang 隔离频道完成服务器搜索、saved、按锚点打开、个人频道偏好、退订恢复和自助重加的真实 Live。mention 候选、presence、通知、完整成员关系和管理员频道管理仍是独立能力门。
 
 ## 4. 架构和依赖边界
 
@@ -340,7 +340,7 @@ ViewModel 使用 CommunityToolkit.Mvvm，只调用 `IClientSession`。code-behin
 
 登录错误分类：不兼容 Realm、认证失败、限流、离线、凭据存储失败。最后 Realm 可用 Preferences 保存为非敏感配置；密码字段完成登录后立即清空。
 
-用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/`。该目录继续保持不可变，只作为初始视觉/交互基线和哈希证据，不是日常运行时资产。正式 RelayCove.Web 是当前 Web 交互事实基准；Stage 22M 使用原生 XAML/ViewModel 复刻，不得以 WebView 承载 Web。Web 已实现任意附件、当前用户退订和完整消息操作；MAUI 已覆盖 reaction/edit/delete/star、图片/文件附件、本地搜索和已知用户新会话，但真实 Realm 原生写入、完整目录/服务器搜索、`@` 候选、saved 列表和频道管理仍是独立门禁。
+用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/`。该目录继续保持不可变，只作为初始视觉/交互基线和哈希证据，不是日常运行时资产。正式 RelayCove.Web 是当前 Web 交互事实基准；Stage 22M/23 使用原生 XAML/ViewModel 复刻，不得以 WebView 承载 Web。Web 已实现任意附件、当前用户退订和完整消息操作；MAUI 已覆盖 reaction/edit/delete/star、图片/文件附件、服务器搜索、saved、已知用户新会话，以及普通用户频道发现/加入/退订/静音/置顶，并具有隔离 Live 证据。完整成员目录、`@` 候选、管理员频道管理及最终原生 UI/clean-VM 验收仍是独立门禁。
 
 ## 10. 实施切片与完成定义
 
@@ -366,6 +366,8 @@ Web 对应交互版本冻结后，按 Token/规格/功能矩阵/场景用原生 
 ### Stage 23：MAUI 普通用户全功能收口
 
 Stage 23 从本地回滚基线 `8d1a6e5` 开始，不修改 Web、认证架构、Zulip 服务端或直连模式。顺序固定为：SQLite v3 增量缓存与长列表、服务器搜索和已保存消息、现有频道发现/加入/退订/静音/置顶、最终真实 MAUI UI/包/干净 VM 验收。管理员级频道创建、改名、成员/权限管理和归档不在范围内。每个 Slice 独立本地提交；开发期只跑定向 Debug，Slice 收口跑 Fast，Stage 候选交付才跑 Full。
+
+截至 2026-08-14，前三个 Slice 已分别固定为本地提交 `037bcf8`、`8a9f07f`、`bba0cbb`。隔离 Stage 23 Live 通过 3/3，覆盖搜索、收藏、按锚点打开、个人静音/置顶恢复、私有退订恢复，以及专用可发现频道的退订/发现/重加。由于 Zulip 私有频道在普通用户退订后不可发现，加入探针使用非业务的公开非归档频道，但其订阅者严格限制为 DAL/zhang 两人；这不改变产品“不创建/管理频道”的范围。最终候选 Full 通过：Debug/Release 各 255/255、Web 86/86、Playwright 6+1、Windows 包 SHA-256 `75B176F07531DAD9D1DEF1412B37778B1B876840ACA4862F663BE8FC586A0994`。最终原生窗口人工密码登录、长列表真实窗口、安装包实装和干净 VM 仍是门禁。
 
 ### Stage 21 历史实施切片
 
@@ -440,7 +442,7 @@ artifact: RelayCove-2.0.0-alpha.1-win-x64.zip
 pwsh ./scripts/verify.ps1 -Mode Live
 ```
 
-必须同时提供目标 Realm、测试账号 A/B 的 email/API key、写入确认变量和 recipient allowlist；任意缺失都 fail-closed。日常 Live 复用 API key，不调用 `/fetch_api_key`。
+必须同时提供目标 Realm、测试账号 A/B 的 email/API key、写入确认变量和 recipient allowlist；任意缺失都 fail-closed。普通手工配置的 Live 可复用 API key。专用 DAL/zhang Stage 23 runner 是明确记录的例外：它在额外外部确认后，才从忽略的私密档案读取密码并在进程内调用 `/fetch_api_key`，随后执行三频道权威 preflight；密钥不会写入仓库或输出。
 
 一次性 bootstrap 只能在独立高权限凭据和额外授权下创建私有频道 `relaycove-client-e2e`。已存在同名频道时，只有它仍为私有且成员集合精确等于两个测试账号才可复用，否则停止且不修改。
 

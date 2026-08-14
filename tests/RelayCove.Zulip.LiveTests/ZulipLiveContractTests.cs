@@ -10,12 +10,98 @@ public sealed class ZulipLiveContractTests
 {
     private const string WriteConfirmation = "I_UNDERSTAND_THIS_WRITES_TO_ZULIP";
 
+    private static async Task AssertStage23PreflightAsync(LiveConfiguration configuration, ZulipGateway gateway, CancellationToken cancellationToken)
+    {
+        RegisterResult? registerA = null;
+        RegisterResult? registerB = null;
+        try
+        {
+            registerA = await gateway.RegisterAsync(new RegisterRequest(configuration.UserA), cancellationToken);
+            registerB = await gateway.RegisterAsync(new RegisterRequest(configuration.UserB), cancellationToken);
+            AssertApprovedChannel(registerA, configuration.ChannelId, configuration.ChannelName);
+            AssertApprovedChannel(registerB, configuration.ChannelId, configuration.ChannelName);
+            AssertApprovedChannel(registerA, configuration.UnsubscribeChannelId, configuration.UnsubscribeChannelName);
+            AssertApprovedChannel(registerB, configuration.UnsubscribeChannelId, configuration.UnsubscribeChannelName);
+            var streams = await gateway.GetAvailableChannelsAsync(new AvailableChannelsRequest(configuration.UserA), cancellationToken);
+            var messageChannel = Assert.Single(streams, item => item.ChannelId == configuration.ChannelId);
+            var unsubscribeChannel = Assert.Single(streams, item => item.ChannelId == configuration.UnsubscribeChannelId);
+            var joinable = Assert.Single(streams, item => item.ChannelId == configuration.JoinableChannelId);
+            Assert.True(messageChannel.IsPrivate);
+            Assert.False(messageChannel.IsArchived);
+            Assert.True(unsubscribeChannel.IsPrivate);
+            Assert.False(unsubscribeChannel.IsArchived);
+            Assert.Equal(configuration.JoinableChannelName, joinable.Name);
+            Assert.False(joinable.IsPrivate);
+            Assert.False(joinable.IsArchived);
+            Assert.NotEqual(configuration.ChannelId, configuration.JoinableChannelId);
+            Assert.NotEqual(configuration.UnsubscribeChannelId, configuration.JoinableChannelId);
+            await AssertExactSubscribersAsync(configuration.Realm, configuration.UserA, configuration.ChannelId, configuration.AllowedUserIds, cancellationToken);
+            await AssertExactSubscribersAsync(configuration.Realm, configuration.UserA, configuration.UnsubscribeChannelId, configuration.AllowedUserIds, cancellationToken);
+            await AssertExactSubscribersAsync(configuration.Realm, configuration.UserA, configuration.JoinableChannelId, configuration.AllowedUserIds, cancellationToken);
+        }
+        finally
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            var deletes = new List<Task>();
+            if (!string.IsNullOrWhiteSpace(registerA?.QueueId)) deletes.Add(gateway.DeleteQueueAsync(new DeleteQueueRequest(configuration.UserA, registerA.QueueId), cleanup.Token));
+            if (!string.IsNullOrWhiteSpace(registerB?.QueueId)) deletes.Add(gateway.DeleteQueueAsync(new DeleteQueueRequest(configuration.UserB, registerB.QueueId), cleanup.Token));
+            await Task.WhenAll(deletes);
+        }
+    }
+
+    private static async Task AssertExactSubscribersAsync(RealmEndpoint realm, CredentialEnvelope credentials, long channelId, IReadOnlySet<long> allowedUserIds, CancellationToken cancellationToken)
+    {
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false };
+        using var client = new HttpClient(handler) { BaseAddress = realm.Uri };
+        var token = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{credentials.Email}:{credentials.ApiKey}"));
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"api/v1/streams/{channelId.ToString(CultureInfo.InvariantCulture)}/members");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", token);
+        request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true, NoStore = true };
+        using var response = await client.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        using var document = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStreamAsync(cancellationToken));
+        var subscribers = document.RootElement.GetProperty("subscribers").EnumerateArray().Select(item => item.GetInt64()).ToHashSet();
+        Assert.True(subscribers.SetEquals(allowedUserIds), "Live channel subscribers do not exactly match the approved two-account allowlist.");
+    }
+
+    private static async Task RestorePrivateProbeAsync(LiveConfiguration configuration, ZulipGateway gateway, CancellationToken cancellationToken)
+    {
+        var current = await gateway.RegisterAsync(new RegisterRequest(configuration.UserA), cancellationToken);
+        if (current.Subscriptions.Any(item => item.ChannelId == configuration.UnsubscribeChannelId))
+        {
+            if (!string.IsNullOrWhiteSpace(current.QueueId)) await gateway.DeleteQueueAsync(new DeleteQueueRequest(configuration.UserA, current.QueueId), cancellationToken);
+            return;
+        }
+        if (!string.IsNullOrWhiteSpace(current.QueueId)) await gateway.DeleteQueueAsync(new DeleteQueueRequest(configuration.UserA, current.QueueId), cancellationToken);
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false };
+        using var client = new HttpClient(handler) { BaseAddress = configuration.Realm.Uri };
+        var token = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{configuration.UserB.Email}:{configuration.UserB.ApiKey}"));
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/v1/users/me/subscriptions");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", token);
+        request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true, NoStore = true };
+        request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["subscriptions"] = System.Text.Json.JsonSerializer.Serialize(new[] { new { name = configuration.UnsubscribeChannelName } }),
+            ["principals"] = System.Text.Json.JsonSerializer.Serialize(configuration.AllowedUserIds),
+            ["invite_only"] = "true",
+            ["announce"] = "false",
+            ["send_new_subscription_messages"] = "false"
+        });
+        using var response = await client.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var verified = await gateway.RegisterAsync(new RegisterRequest(configuration.UserA), cancellationToken);
+        try { Assert.Contains(verified.Subscriptions, item => item.ChannelId == configuration.UnsubscribeChannelId); }
+        finally { if (!string.IsNullOrWhiteSpace(verified.QueueId)) await gateway.DeleteQueueAsync(new DeleteQueueRequest(configuration.UserA, verified.QueueId), cancellationToken); }
+        await AssertExactSubscribersAsync(configuration.Realm, configuration.UserA, configuration.UnsubscribeChannelId, configuration.AllowedUserIds, cancellationToken);
+    }
+
     [Fact]
     public async Task DedicatedAccounts_WhenExplicitlyAuthorized_ExchangeChannelAndDirectMessages()
     {
         var configuration = LiveConfiguration.Load();
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
         using var gateway = new ZulipGateway();
+        await AssertStage23PreflightAsync(configuration, gateway, timeout.Token);
 
         var probe = await gateway.ProbeRealmAsync(configuration.Realm, timeout.Token);
         Assert.True(probe.IsCompatible);
@@ -241,6 +327,7 @@ public sealed class ZulipLiveContractTests
         var configuration = LiveConfiguration.Load();
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
         using var gateway = new ZulipGateway();
+        await AssertStage23PreflightAsync(configuration, gateway, timeout.Token);
         var store = new EphemeralAccountStore();
         var vault = new EphemeralCredentialVault();
         await using var session = new ClientSession(gateway, store, vault);
@@ -279,6 +366,18 @@ public sealed class ZulipLiveContractTests
 
         await session.SetMessageStarredAsync(sent.Id, true, timeout.Token);
         Assert.True(session.State.Messages[sent.Id].IsStarred);
+        var search = await session.SearchMessagesAsync("RelayCove ClientSession", null, 20, timeout.Token);
+        Assert.Contains(search.Messages, message => message.Id == sent.Id);
+        var saved = await session.LoadSavedMessagesAsync(null, 20, timeout.Token);
+        Assert.Contains(saved.Messages, message => message.Id == sent.Id);
+        await using (var freshSession = new ClientSession(gateway, new EphemeralAccountStore(), new EphemeralCredentialVault()))
+        {
+            await freshSession.LoginAsync(configuration.Realm.AbsoluteUri, configuration.UserA.Email, configuration.UserAPassword, timeout.Token);
+            await freshSession.OpenMessageAsync(channel, sent.Id, timeout.Token);
+            Assert.Equal(channel, freshSession.SelectedConversation);
+            Assert.Contains(sent.Id, freshSession.State.Messages.Keys);
+            Assert.Equal(sent.Id, freshSession.State.Messages[sent.Id].Id);
+        }
 
         var attachmentBytes = Encoding.UTF8.GetBytes($"RelayCove ClientSession attachment {topic}\n");
         using var attachmentStream = new MemoryStream(attachmentBytes, writable: false);
@@ -309,19 +408,107 @@ public sealed class ZulipLiveContractTests
         await session.DeleteMessageAsync(sent.Id, timeout.Token);
         Assert.DoesNotContain(sent.Id, session.State.Messages.Keys);
 
-        var unsubscribeProbe = new ChannelTopic(configuration.UnsubscribeChannelId, "unsubscribe-probe");
-        Assert.Equal(
-            configuration.UnsubscribeChannelName,
-            session.State.Subscriptions[configuration.UnsubscribeChannelId].Name,
-            ignoreCase: true);
-        await session.SelectConversationAsync(unsubscribeProbe, timeout.Token);
-        await session.UnsubscribeChannelAsync(configuration.UnsubscribeChannelId, timeout.Token);
-        Assert.DoesNotContain(configuration.UnsubscribeChannelId, session.State.Subscriptions.Keys);
-        Assert.Null(session.SelectedConversation);
+        try
+        {
+            var unsubscribeProbe = new ChannelTopic(configuration.UnsubscribeChannelId, "unsubscribe-probe");
+            Assert.Equal(configuration.UnsubscribeChannelName, session.State.Subscriptions[configuration.UnsubscribeChannelId].Name, ignoreCase: true);
+            await session.SelectConversationAsync(unsubscribeProbe, timeout.Token);
+            await session.UnsubscribeChannelAsync(configuration.UnsubscribeChannelId, timeout.Token);
+            Assert.DoesNotContain(configuration.UnsubscribeChannelId, session.State.Subscriptions.Keys);
+            Assert.Null(session.SelectedConversation);
+        }
+        finally
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            await RestorePrivateProbeAsync(configuration, gateway, cleanup.Token);
+        }
 
         await session.LogoutAsync(timeout.Token);
         Assert.Equal(ConnectionStatus.SignedOut, session.State.Connection.Status);
         Assert.Null(vault.Credential);
+    }
+
+    [Fact]
+    public async Task Stage23JoinableChannel_WhenExplicitlyAuthorized_LeavesAndRejoinsOnlyVerifiedCatalogEntry()
+    {
+        var configuration = LiveConfiguration.Load();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        using var gateway = new ZulipGateway();
+        await AssertStage23PreflightAsync(configuration, gateway, timeout.Token);
+        var store = new EphemeralAccountStore();
+        var vault = new EphemeralCredentialVault();
+        await using var session = new ClientSession(gateway, store, vault);
+        await session.LoginAsync(configuration.Realm.AbsoluteUri, configuration.UserA.Email, configuration.UserAPassword, timeout.Token);
+        Subscription? original = null;
+        try
+        {
+            Assert.True(session.State.Subscriptions.ContainsKey(configuration.JoinableChannelId));
+            original = session.State.Subscriptions[configuration.JoinableChannelId];
+            await session.SetSubscriptionPreferenceAsync(configuration.JoinableChannelId, SubscriptionPreference.Muted, !original.IsMuted, timeout.Token);
+            await session.SetSubscriptionPreferenceAsync(configuration.JoinableChannelId, SubscriptionPreference.Pinned, !original.IsPinned, timeout.Token);
+            var toggledRegister = await gateway.RegisterAsync(new RegisterRequest(configuration.UserA), timeout.Token);
+            Subscription toggled;
+            try { toggled = toggledRegister.Subscriptions.Single(item => item.ChannelId == configuration.JoinableChannelId); }
+            finally
+            {
+                using var queueCleanup = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+                if (!string.IsNullOrWhiteSpace(toggledRegister.QueueId)) await gateway.DeleteQueueAsync(new DeleteQueueRequest(configuration.UserA, toggledRegister.QueueId), queueCleanup.Token);
+            }
+            Assert.Equal(!original.IsMuted, toggled.IsMuted);
+            Assert.Equal(!original.IsPinned, toggled.IsPinned);
+            await session.UnsubscribeChannelAsync(configuration.JoinableChannelId, timeout.Token);
+            var catalog = await session.GetAvailableChannelsAsync(timeout.Token);
+            var joinable = Assert.Single(catalog, channel => channel.ChannelId == configuration.JoinableChannelId);
+            Assert.Equal(configuration.JoinableChannelName, joinable.Name);
+            Assert.False(joinable.IsArchived);
+            Assert.False(joinable.IsPrivate);
+            await session.SubscribeToChannelAsync(joinable.ChannelId, timeout.Token);
+            Assert.Contains(configuration.JoinableChannelId, session.State.Subscriptions.Keys);
+        }
+        finally
+        {
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            var failures = new List<Exception>();
+            try
+            {
+                var authoritative = await gateway.RegisterAsync(new RegisterRequest(configuration.UserA), cleanup.Token);
+                try
+                {
+                    if (!authoritative.Subscriptions.Any(item => item.ChannelId == configuration.JoinableChannelId))
+                    {
+                        var catalog = await session.GetAvailableChannelsAsync(cleanup.Token);
+                        var joinable = catalog.Single(channel => channel.ChannelId == configuration.JoinableChannelId);
+                        await session.SubscribeToChannelAsync(joinable.ChannelId, cleanup.Token);
+                    }
+                    var confirmed = await gateway.RegisterAsync(new RegisterRequest(configuration.UserA), cleanup.Token);
+                    try { Assert.Contains(confirmed.Subscriptions, item => item.ChannelId == configuration.JoinableChannelId); }
+                    finally { if (!string.IsNullOrWhiteSpace(confirmed.QueueId)) await gateway.DeleteQueueAsync(new DeleteQueueRequest(configuration.UserA, confirmed.QueueId), cleanup.Token); }
+                }
+                finally { if (!string.IsNullOrWhiteSpace(authoritative.QueueId)) await gateway.DeleteQueueAsync(new DeleteQueueRequest(configuration.UserA, authoritative.QueueId), cleanup.Token); }
+            }
+            catch (Exception exception) { failures.Add(exception); }
+            try
+            {
+                if (original is not null)
+                {
+                    var beforeRestore = await gateway.RegisterAsync(new RegisterRequest(configuration.UserA), cleanup.Token);
+                    Subscription confirmed;
+                    try { confirmed = beforeRestore.Subscriptions.Single(item => item.ChannelId == configuration.JoinableChannelId); }
+                    finally { if (!string.IsNullOrWhiteSpace(beforeRestore.QueueId)) await gateway.DeleteQueueAsync(new DeleteQueueRequest(configuration.UserA, beforeRestore.QueueId), cleanup.Token); }
+                    Assert.Equal(configuration.JoinableChannelId, confirmed.ChannelId);
+                    await session.SetSubscriptionPreferenceAsync(configuration.JoinableChannelId, SubscriptionPreference.Muted, original.IsMuted, cleanup.Token);
+                    await session.SetSubscriptionPreferenceAsync(configuration.JoinableChannelId, SubscriptionPreference.Pinned, original.IsPinned, cleanup.Token);
+                    var finalRegister = await gateway.RegisterAsync(new RegisterRequest(configuration.UserA), cleanup.Token);
+                    Subscription verified;
+                    try { verified = finalRegister.Subscriptions.Single(item => item.ChannelId == configuration.JoinableChannelId); }
+                    finally { if (!string.IsNullOrWhiteSpace(finalRegister.QueueId)) await gateway.DeleteQueueAsync(new DeleteQueueRequest(configuration.UserA, finalRegister.QueueId), cleanup.Token); }
+                    Assert.Equal(original.IsMuted, verified.IsMuted);
+                    Assert.Equal(original.IsPinned, verified.IsPinned);
+                }
+            }
+            catch (Exception exception) { failures.Add(exception); }
+            if (failures.Count > 0) throw new AggregateException("Stage23 joinable cleanup failed.", failures);
+        }
     }
 
     private static async Task WaitUntilAsync(Func<bool> predicate, CancellationToken cancellationToken)
@@ -577,6 +764,8 @@ public sealed class ZulipLiveContractTests
         string ChannelName,
         long UnsubscribeChannelId,
         string UnsubscribeChannelName,
+        long JoinableChannelId,
+        string JoinableChannelName,
         HashSet<long> AllowedUserIds,
         string UserAPassword)
     {
@@ -593,6 +782,11 @@ public sealed class ZulipLiveContractTests
             if (!string.Equals(Require("RELAYCOVE_LIVE_UNSUBSCRIBE_CHANNEL_APPROVED"), "true", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException("The isolated private unsubscribe channel is not approved.");
+            }
+            if (!string.Equals(Require("RELAYCOVE_LIVE_STAGE23_APPROVED"), "true", StringComparison.Ordinal) ||
+                !string.Equals(Require("RELAYCOVE_LIVE_JOINABLE_CHANNEL_APPROVED"), "true", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("The Stage23 joinable Live channel is not approved.");
             }
 
             var realm = RealmEndpoint.Parse(Require("RELAYCOVE_LIVE_REALM"));
@@ -614,7 +808,8 @@ public sealed class ZulipLiveContractTests
 
             var channelId = RequirePositiveInt64("RELAYCOVE_LIVE_CHANNEL_ID");
             var unsubscribeChannelId = RequirePositiveInt64("RELAYCOVE_LIVE_UNSUBSCRIBE_CHANNEL_ID");
-            if (channelId == unsubscribeChannelId)
+            var joinableChannelId = RequirePositiveInt64("RELAYCOVE_LIVE_JOINABLE_CHANNEL_ID");
+            if (channelId == unsubscribeChannelId || channelId == joinableChannelId || unsubscribeChannelId == joinableChannelId)
             {
                 throw new InvalidOperationException("The Live message and unsubscribe channels must be distinct.");
             }
@@ -635,6 +830,8 @@ public sealed class ZulipLiveContractTests
                 Require("RELAYCOVE_LIVE_CHANNEL_NAME"),
                 unsubscribeChannelId,
                 Require("RELAYCOVE_LIVE_UNSUBSCRIBE_CHANNEL_NAME"),
+                joinableChannelId,
+                Require("RELAYCOVE_LIVE_JOINABLE_CHANNEL_NAME"),
                 allowed,
                 Require("RELAYCOVE_LIVE_USER_A_PASSWORD"));
         }
