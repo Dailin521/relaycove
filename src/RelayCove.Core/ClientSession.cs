@@ -25,6 +25,11 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
     private readonly ConcurrentDictionary<string, Task> _outboxTimers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<long, SemaphoreSlim> _messageMutationLanes = new();
     private readonly ConcurrentDictionary<long, SemaphoreSlim> _channelUnsubscribeLanes = new();
+    private readonly ConcurrentDictionary<long, SemaphoreSlim> _channelPreferenceLanes = new();
+    private readonly ConcurrentDictionary<long, SemaphoreSlim> _channelSubscribeLanes = new();
+    private IReadOnlyDictionary<long, ChannelSummary> _availableChannels = new Dictionary<long, ChannelSummary>();
+    private CancellationTokenSource? _channelCatalogCancellation;
+    private long _channelCatalogGeneration;
 
     private ClientState _state = ClientState.Empty;
     private AccountId? _accountId;
@@ -994,6 +999,121 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         {
             lane.Release();
         }
+    }
+
+    public async Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        CredentialEnvelope credentials;
+        AccountId accountId;
+        long generation;
+        CancellationTokenSource queryCancellation;
+        lock (_stateGate)
+        {
+            credentials = _state.Connection.Status == ConnectionStatus.Connected
+                ? _credentials ?? throw new InvalidOperationException("No credentials are available.")
+                : throw new InvalidOperationException("Channel discovery requires a connected session.");
+            accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+            _channelCatalogCancellation?.Cancel();
+            _channelCatalogCancellation?.Dispose();
+            queryCancellation = _channelCatalogCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _runCancellation?.Token ?? _disposeCancellation.Token);
+            generation = ++_channelCatalogGeneration;
+        }
+        try
+        {
+            var channels = await _gateway.GetAvailableChannelsAsync(new AvailableChannelsRequest(credentials), queryCancellation.Token).ConfigureAwait(false);
+            lock (_stateGate)
+            {
+                if (!IsChannelCatalogCurrentLocked(accountId, generation, queryCancellation)) return [];
+                channels = channels.Select(channel => _state.Subscriptions.TryGetValue(channel.ChannelId, out var subscription)
+                    ? channel with { IsSubscribed = true, Color = subscription.Color }
+                    : channel with { IsSubscribed = false, Color = null }).ToArray();
+                _availableChannels = channels.ToDictionary(channel => channel.ChannelId);
+            }
+            return channels;
+        }
+        catch (GatewayException exception) when (IsUnauthorized(exception))
+        {
+            if (IsChannelCatalogCurrent(accountId, generation, queryCancellation)) await HandleUnauthorizedAsync().ConfigureAwait(false);
+            throw;
+        }
+        finally { }
+    }
+
+    public async Task SubscribeToChannelAsync(long channelId, CancellationToken cancellationToken = default)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        ThrowIfDisposed();
+        var lane = _channelSubscribeLanes.GetOrAdd(channelId, static _ => new SemaphoreSlim(1, 1));
+        await lane.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            CredentialEnvelope credentials;
+            AccountId accountId;
+            long generation;
+            CancellationTokenSource runCancellation;
+            ChannelSummary channel;
+            lock (_stateGate)
+            {
+                credentials = _state.Connection.Status == ConnectionStatus.Connected ? _credentials ?? throw new InvalidOperationException("No credentials are available.") : throw new InvalidOperationException("Channel subscription requires a connected session.");
+                channel = _availableChannels.GetValueOrDefault(channelId) ?? throw new InvalidOperationException("Refresh available channels before subscribing.");
+                if (channel.IsArchived) throw new InvalidOperationException("Archived channels cannot be joined.");
+                accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+                generation = _queryEpoch;
+                runCancellation = _runCancellation ?? throw new InvalidOperationException("The session is stopped.");
+            }
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runCancellation.Token);
+            IReadOnlyList<ChannelSummary> refreshed;
+            try { refreshed = await _gateway.GetAvailableChannelsAsync(new AvailableChannelsRequest(credentials), linked.Token).ConfigureAwait(false); }
+            catch (GatewayException exception) when (IsUnauthorized(exception)) { if (IsChannelOperationCurrent(accountId, generation, runCancellation)) await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+            if (!IsChannelOperationCurrent(accountId, generation, runCancellation)) return;
+            var current = refreshed.FirstOrDefault(item => item.ChannelId == channelId);
+            if (current is null || !string.Equals(current.Name, channel.Name, StringComparison.Ordinal) || current.IsArchived)
+                throw new InvalidOperationException("The available-channel catalog changed; refresh before joining.");
+            lock (_stateGate) { if (!IsChannelOperationCurrentLocked(accountId, generation, runCancellation)) return; _availableChannels = refreshed.ToDictionary(item => item.ChannelId); }
+            SubscribeChannelResult result;
+            try { result = await _gateway.SubscribeToChannelAsync(new SubscribeChannelRequest(credentials, current), linked.Token).ConfigureAwait(false); }
+            catch (GatewayException exception) when (IsUnauthorized(exception))
+            {
+                if (IsChannelOperationCurrent(accountId, generation, runCancellation)) await HandleUnauthorizedAsync().ConfigureAwait(false);
+                throw;
+            }
+            if (!IsChannelOperationCurrent(accountId, generation, runCancellation)) return;
+            if (result.Unauthorized.Contains(current.Name, StringComparer.Ordinal) || !result.Confirms(current.Name))
+                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+            await StoreThenApplyAsync([new SubscriptionChangedEvent(new Subscription(current.ChannelId, current.Name), false, Source: DomainEventSource.Local)], linked.Token).ConfigureAwait(false);
+        }
+        finally { lane.Release(); }
+    }
+
+    public async Task SetSubscriptionPreferenceAsync(long channelId, SubscriptionPreference preference, bool value, CancellationToken cancellationToken = default)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        var lane = _channelPreferenceLanes.GetOrAdd(channelId, static _ => new SemaphoreSlim(1, 1));
+        await lane.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            CredentialEnvelope credentials;
+            AccountId accountId;
+            long generation;
+            CancellationTokenSource runCancellation;
+            Subscription subscription;
+            lock (_stateGate)
+            {
+                credentials = _state.Connection.Status == ConnectionStatus.Connected ? _credentials ?? throw new InvalidOperationException("No credentials are available.") : throw new InvalidOperationException("Subscription preferences require a connected session.");
+                subscription = _state.Subscriptions.GetValueOrDefault(channelId) ?? throw new InvalidOperationException("The channel is not subscribed.");
+                accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+                generation = _queryEpoch;
+                runCancellation = _runCancellation ?? throw new InvalidOperationException("The session is stopped.");
+            }
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runCancellation.Token);
+            try { await _gateway.SetSubscriptionPreferenceAsync(new SetSubscriptionPreferenceRequest(credentials, channelId, preference, value), linked.Token).ConfigureAwait(false); }
+            catch (GatewayException exception) when (IsUnauthorized(exception)) { if (IsChannelOperationCurrent(accountId, generation, runCancellation)) await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+            if (!IsChannelOperationCurrent(accountId, generation, runCancellation)) return;
+            var updated = preference == SubscriptionPreference.Muted ? subscription with { IsMuted = value } : subscription with { IsPinned = value };
+            await StoreThenApplyAsync([new SubscriptionChangedEvent(updated, false, Source: DomainEventSource.Local)], linked.Token).ConfigureAwait(false);
+        }
+        finally { lane.Release(); }
     }
 
     public async Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default)
@@ -2036,6 +2156,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             _runCancellation = null;
             _eventLoop = null;
             CancelMessageQueriesLocked();
+            CancelChannelCatalogLocked();
             InvalidateHistoryLocked(clearConversation: false);
         }
         cancellation?.Cancel();
@@ -2060,6 +2181,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         lock (_stateGate)
         {
             CancelMessageQueriesLocked();
+            CancelChannelCatalogLocked();
             _credentials = null;
             _queueId = null;
             _selectedConversation = null;
@@ -2104,6 +2226,19 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         _savedQueryCancellation?.Cancel();
         _searchQueryCancellation = null;
         _savedQueryCancellation = null;
+    }
+
+    private bool IsChannelCatalogCurrent(AccountId accountId, long generation, CancellationTokenSource cancellation) { lock (_stateGate) return IsChannelCatalogCurrentLocked(accountId, generation, cancellation); }
+    private bool IsChannelCatalogCurrentLocked(AccountId accountId, long generation, CancellationTokenSource cancellation) => _accountId == accountId && _channelCatalogGeneration == generation && ReferenceEquals(_channelCatalogCancellation, cancellation) && _runCancellation is not null;
+    private bool IsChannelOperationCurrent(AccountId accountId, long generation, CancellationTokenSource runCancellation) { lock (_stateGate) return IsChannelOperationCurrentLocked(accountId, generation, runCancellation); }
+    private bool IsChannelOperationCurrentLocked(AccountId accountId, long generation, CancellationTokenSource runCancellation) => _accountId == accountId && _queryEpoch == generation && ReferenceEquals(_runCancellation, runCancellation);
+    private void CancelChannelCatalogLocked()
+    {
+        _channelCatalogGeneration++;
+        try { _channelCatalogCancellation?.Cancel(); } catch (ObjectDisposedException) { }
+        _channelCatalogCancellation?.Dispose();
+        _channelCatalogCancellation = null;
+        _availableChannels = new Dictionary<long, ChannelSummary>();
     }
 
     private void ValidateSend(ConversationKey conversation, string content)

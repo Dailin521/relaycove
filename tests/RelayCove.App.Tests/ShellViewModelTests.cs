@@ -1332,6 +1332,63 @@ public sealed class ShellViewModelTests
         }
     }
 
+    [Fact]
+    public async Task ChannelBrowser_CloseCommand_ClearsStateAndIgnoresLateCatalog()
+    {
+        var completion = new TaskCompletionSource<IReadOnlyList<ChannelSummary>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken receivedToken = default;
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test/"), 10),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            AvailableChannelsAction = token =>
+            {
+                receivedToken = token;
+                return completion.Task;
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+
+        var open = ((IAsyncRelayCommand)viewModel.OpenChannelBrowserCommand).ExecuteAsync(null);
+        await Task.Yield();
+        viewModel.CloseChannelBrowserCommand.Execute(null);
+        Assert.True(receivedToken.IsCancellationRequested);
+        completion.SetResult([new ChannelSummary(4, "late", null, false, null)]);
+        await open;
+
+        Assert.False(viewModel.IsChannelBrowserOpen);
+        Assert.False(viewModel.IsChannelBrowserLoading);
+        Assert.Empty(viewModel.AvailableChannels);
+        Assert.Null(viewModel.ChannelBrowserError);
+    }
+
+    [Fact]
+    public void Projection_WhenSelectedSubscriptionPreferenceChanges_NotifiesActionLabels()
+    {
+        var conversation = new ChannelTopic(7, "topic");
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            StateValue = new ClientState(
+                connection: new ConnectionState(ConnectionStatus.Connected),
+                subscriptions: new Dictionary<long, Subscription> { [7] = new Subscription(7, "engineering") })
+        };
+        using var viewModel = CreateViewModel(session);
+        var changed = new List<string?>();
+        viewModel.PropertyChanged += (_, eventArgs) => changed.Add(eventArgs.PropertyName);
+
+        session.StateValue = session.StateValue with
+        {
+            Subscriptions = new Dictionary<long, Subscription> { [7] = new Subscription(7, "engineering", isMuted: true, isPinned: true) }
+        };
+        session.Publish();
+
+        Assert.Contains(nameof(ShellViewModel.SelectedChannelMuteLabel), changed);
+        Assert.Contains(nameof(ShellViewModel.SelectedChannelPinLabel), changed);
+        Assert.Equal("取消静音", viewModel.SelectedChannelMuteLabel);
+        Assert.Equal("取消置顶", viewModel.SelectedChannelPinLabel);
+    }
+
     private sealed class FakeSession : IClientSession
     {
         public ClientState StateValue { get; set; } = ClientState.Empty;
@@ -1347,6 +1404,7 @@ public sealed class ShellViewModelTests
         public Func<CancellationToken, Task>? LoadOlderAction { get; set; }
         public Func<long?, int, CancellationToken, Task<MessageQueryPage>>? SavedMessagesAction { get; set; }
         public Func<string, long?, int, CancellationToken, Task<MessageQueryPage>>? SearchMessagesAction { get; set; }
+        public Func<CancellationToken, Task<IReadOnlyList<ChannelSummary>>>? AvailableChannelsAction { get; set; }
         public int LoginCalls { get; private set; }
         public List<string> SentContents { get; } = [];
         public int UploadCalls { get; private set; }
@@ -1389,6 +1447,8 @@ public sealed class ShellViewModelTests
             SavedMessagesAction?.Invoke(beforeMessageId, limit, cancellationToken) ?? Task.FromResult(new MessageQueryPage([], false, true, true));
         public Task<MessageQueryPage> SearchMessagesAsync(string query, long? beforeMessageId, int limit, CancellationToken cancellationToken = default) =>
             SearchMessagesAction?.Invoke(query, beforeMessageId, limit, cancellationToken) ?? Task.FromResult(new MessageQueryPage([], false, true, true));
+        public Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(CancellationToken cancellationToken = default) =>
+            AvailableChannelsAction?.Invoke(cancellationToken) ?? Task.FromResult<IReadOnlyList<ChannelSummary>>([]);
 
         public Task SendAsync(string content, CancellationToken cancellationToken = default)
         {

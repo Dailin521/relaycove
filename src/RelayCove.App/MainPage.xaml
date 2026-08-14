@@ -94,7 +94,7 @@
                                 Background="{StaticResource GroundBrush}"
                                 Stroke="{StaticResource BorderBrush}"
                                 StrokeThickness="1">
-                            <controls:ConversationPaneView />
+                            <controls:ConversationPaneView x:Name="ConversationPane" />
                         </Border>
 
                         <Grid Grid.Column="1"
@@ -689,6 +689,51 @@
                                         IsEnabled="{Binding CanCloseChannelUnsubscribe}" />
                             </Grid>
                         </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsChannelBrowserOpen}">
+                    <BoxView Background="{StaticResource OverlayBrush}">
+                        <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseChannelBrowserCommand}" /></BoxView.GestureRecognizers>
+                    </BoxView>
+                    <Border Style="{StaticResource DialogBorderStyle}" MaximumWidthRequest="680" MaximumHeightRequest="680">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                        <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="10">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <Label Text="浏览频道" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                                <Button x:Name="ChannelBrowserCloseButton" Grid.Column="1" Text="×" Style="{StaticResource IconButtonStyle}"
+                                        Command="{Binding CloseChannelBrowserCommand}" SemanticProperties.Description="关闭频道浏览" />
+                            </Grid>
+                            <Label Grid.Row="1" Text="仅显示服务器当前目录中的可加入频道；加入前会重新验证频道 ID 和名称。"
+                                   Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                            <Grid Grid.Row="2">
+                                <CollectionView ItemsSource="{Binding AvailableChannels}" SelectionMode="None">
+                                    <CollectionView.EmptyView><Label Text="没有可加入频道" Style="{StaticResource MutedLabelStyle}" Padding="6,18" /></CollectionView.EmptyView>
+                                    <CollectionView.ItemTemplate>
+                                        <DataTemplate x:DataType="viewModels:AvailableChannelItem">
+                                            <Border Padding="8" Margin="0,2" Stroke="{StaticResource BorderBrush}" StrokeThickness="1">
+                                                <Border.StrokeShape><RoundRectangle CornerRadius="8" /></Border.StrokeShape>
+                                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                                    <VerticalStackLayout Spacing="2">
+                                                        <Label Text="{Binding Name, StringFormat='#{0}'}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                                        <Label Text="{Binding DescriptionLabel}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="TailTruncation" />
+                                                        <Label Text="{Binding SubscriberCountLabel}" Style="{StaticResource MutedLabelStyle}" FontSize="11" />
+                                                    </VerticalStackLayout>
+                                                    <Button Grid.Column="1" Text="加入" Style="{StaticResource PrimaryButtonStyle}"
+                                                            Command="{Binding Source={RelativeSource AncestorType={x:Type ContentPage}}, Path=BindingContext.JoinAvailableChannelCommand}"
+                                                            CommandParameter="{Binding .}" SemanticProperties.Description="加入此频道" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </CollectionView.ItemTemplate>
+                                </CollectionView>
+                                <ActivityIndicator IsVisible="{Binding IsChannelBrowserLoading}" IsRunning="{Binding IsChannelBrowserLoading}" />
+                            </Grid>
+                            <VerticalStackLayout Grid.Row="3" Spacing="6">
+                                <Label Text="{Binding ChannelBrowserError}" IsVisible="{Binding HasChannelBrowserError}" Style="{StaticResource DangerLabelStyle}" LineBreakMode="WordWrap" />
+                                <Button Text="重试" Style="{StaticResource BaseButtonStyle}" Command="{Binding OpenChannelBrowserCommand}" IsVisible="{Binding HasChannelBrowserError}" />
+                            </VerticalStackLayout>
+                        </Grid>
                     </Border>
                 </Grid>
 

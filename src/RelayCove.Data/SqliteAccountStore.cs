@@ -8,7 +8,7 @@ namespace RelayCove.Data;
 
 public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 5;
 
     private readonly string _accountsRoot;
     private readonly Channel<IWorkItem> _mutations;
@@ -450,6 +450,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
             INSERT INTO schema_info(version) VALUES(1);
             PRAGMA user_version = 1;
             """, transaction, cancellationToken).ConfigureAwait(false);
+            version = 1;
         }
         if (version < 2)
         {
@@ -471,7 +472,8 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                 );
                 UPDATE schema_info SET version = 2;
                 PRAGMA user_version = 2;
-                """, transaction, cancellationToken).ConfigureAwait(false);
+            """, transaction, cancellationToken).ConfigureAwait(false);
+            version = 2;
         }
         if (version < 3)
         {
@@ -480,7 +482,22 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                 ON message_reactions(message_id);
                 UPDATE schema_info SET version = 3;
                 PRAGMA user_version = 3;
-                """, transaction, cancellationToken).ConfigureAwait(false);
+            """, transaction, cancellationToken).ConfigureAwait(false);
+            version = 3;
+        }
+        if (version < 4)
+        {
+            var hasMuted = await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'is_muted';", transaction, cancellationToken).ConfigureAwait(false) > 0;
+            var hasPinned = await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'is_pinned';", transaction, cancellationToken).ConfigureAwait(false) > 0;
+            if (!hasMuted) await ExecuteNonQueryAsync(connection, "ALTER TABLE subscriptions ADD COLUMN is_muted INTEGER NOT NULL DEFAULT 0 CHECK(is_muted IN (0, 1));", transaction, cancellationToken).ConfigureAwait(false);
+            if (!hasPinned) await ExecuteNonQueryAsync(connection, "ALTER TABLE subscriptions ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0 CHECK(is_pinned IN (0, 1));", transaction, cancellationToken).ConfigureAwait(false);
+            await ExecuteNonQueryAsync(connection, "UPDATE schema_info SET version = 4; PRAGMA user_version = 4;", transaction, cancellationToken).ConfigureAwait(false);
+        }
+        if (version < 5)
+        {
+            var hasColor = await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'color';", transaction, cancellationToken).ConfigureAwait(false) > 0;
+            if (!hasColor) await ExecuteNonQueryAsync(connection, "ALTER TABLE subscriptions ADD COLUMN color TEXT NULL;", transaction, cancellationToken).ConfigureAwait(false);
+            await ExecuteNonQueryAsync(connection, "UPDATE schema_info SET version = 5; PRAGMA user_version = 5;", transaction, cancellationToken).ConfigureAwait(false);
         }
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -648,6 +665,13 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                         ("$active", patched.IsActive is null ? null : patched.IsActive.Value ? 1 : 0),
                         ("$id", patched.ChannelId)).ConfigureAwait(false);
                     break;
+                case SubscriptionPreferenceChangedEvent preference:
+                    await ExecuteAsync(connection, transaction,
+                        preference.Preference == SubscriptionPreference.Muted
+                            ? "UPDATE subscriptions SET is_muted = $value WHERE channel_id = $id;"
+                            : "UPDATE subscriptions SET is_pinned = $value WHERE channel_id = $id;",
+                        cancellationToken, ("$value", preference.Value ? 1 : 0), ("$id", preference.ChannelId)).ConfigureAwait(false);
+                    break;
                 case UserUpsertEvent upsert:
                     await UpsertUserAsync(connection, transaction, upsert.User, cancellationToken).ConfigureAwait(false);
                     break;
@@ -724,12 +748,12 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         var messages = new Dictionary<long, ChatMessage>();
 
         var subscriptions = new Dictionary<long, Subscription>();
-        await using (var command = CreateCommand(connection, transaction, "SELECT channel_id, name, is_active FROM subscriptions;"))
+        await using (var command = CreateCommand(connection, transaction, "SELECT channel_id, name, is_active, is_muted, is_pinned, color FROM subscriptions;"))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                var subscription = new Subscription(reader.GetInt64(0), reader.GetString(1), reader.GetInt64(2) != 0);
+                var subscription = new Subscription(reader.GetInt64(0), reader.GetString(1), reader.GetInt64(2) != 0, reader.GetInt64(3) != 0, reader.GetInt64(4) != 0, reader.IsDBNull(5) ? null : reader.GetString(5));
                 subscriptions[subscription.ChannelId] = subscription;
             }
         }
@@ -830,10 +854,10 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         Subscription subscription,
         CancellationToken cancellationToken) =>
         ExecuteAsync(connection, transaction, """
-            INSERT INTO subscriptions(channel_id, name, is_active) VALUES($id, $name, $active)
-            ON CONFLICT(channel_id) DO UPDATE SET name = excluded.name, is_active = excluded.is_active;
+            INSERT INTO subscriptions(channel_id, name, is_active, is_muted, is_pinned, color) VALUES($id, $name, $active, $muted, $pinned, $color)
+            ON CONFLICT(channel_id) DO UPDATE SET name = excluded.name, is_active = excluded.is_active, is_muted = excluded.is_muted, is_pinned = excluded.is_pinned, color = excluded.color;
             """, cancellationToken,
-            ("$id", subscription.ChannelId), ("$name", subscription.Name), ("$active", subscription.IsActive ? 1 : 0));
+            ("$id", subscription.ChannelId), ("$name", subscription.Name), ("$active", subscription.IsActive ? 1 : 0), ("$muted", subscription.IsMuted ? 1 : 0), ("$pinned", subscription.IsPinned ? 1 : 0), ("$color", subscription.Color));
 
     private static Task UpsertUserAsync(
         SqliteConnection connection,

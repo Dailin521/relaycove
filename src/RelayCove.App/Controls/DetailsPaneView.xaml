@@ -76,6 +76,14 @@
                                      Spacing="8"
                                      IsVisible="{Binding CanUnsubscribeSelectedChannel}">
                     <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                    <Button Text="{Binding SelectedChannelMuteLabel}"
+                            Style="{StaticResource BaseButtonStyle}"
+                            Command="{Binding ToggleSelectedChannelMutedCommand}"
+                            SemanticProperties.Description="切换当前频道静音" />
+                    <Button Text="{Binding SelectedChannelPinLabel}"
+                            Style="{StaticResource BaseButtonStyle}"
+                            Command="{Binding ToggleSelectedChannelPinnedCommand}"
+                            SemanticProperties.Description="切换当前频道置顶" />
                     <Button x:Name="UnsubscribeButton"
                             Text="退出频道"
                             Style="{StaticResource BaseButtonStyle}"

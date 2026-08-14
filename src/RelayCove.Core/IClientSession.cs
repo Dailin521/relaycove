@@ -31,6 +31,9 @@ public interface IClientSession
     Task<UploadedAttachment> UploadAttachmentAsync(AttachmentUpload upload, CancellationToken cancellationToken = default);
     Task<RealmMediaResult> GetRealmMediaAsync(RealmMediaRequest request, CancellationToken cancellationToken = default);
     Task UnsubscribeChannelAsync(long channelId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ChannelSummary>>([]);
+    Task SubscribeToChannelAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException());
+    Task SetSubscriptionPreferenceAsync(long channelId, SubscriptionPreference preference, bool value, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException());
     Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default);
     Task ClearLocalCacheAsync(CancellationToken cancellationToken = default);
     Task StopAsync(CancellationToken cancellationToken = default);

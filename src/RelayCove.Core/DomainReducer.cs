@@ -124,6 +124,11 @@ public static class DomainReducer
                     IsActive = subscriptionPatch.IsActive ?? subscriptionExisting.IsActive
                 };
                 break;
+            case SubscriptionPreferenceChangedEvent preference when subscriptions.TryGetValue(preference.ChannelId, out var preferenceExisting):
+                subscriptions[preference.ChannelId] = preference.Preference == SubscriptionPreference.Muted
+                    ? preferenceExisting with { IsMuted = preference.Value }
+                    : preferenceExisting with { IsPinned = preference.Value };
+                break;
             case UserUpsertEvent user:
                 users[user.User.UserId] = user.User;
                 break;

@@ -16,4 +16,6 @@ public partial class ConversationPaneView : ContentView
             viewModel.OpenSearchCommand.Execute(null);
         }
     }
+
+    public void FocusBrowseChannelsButton() => BrowseChannelsButton.Focus();
 }

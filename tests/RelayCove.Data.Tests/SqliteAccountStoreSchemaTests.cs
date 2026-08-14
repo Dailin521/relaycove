@@ -129,7 +129,9 @@ public sealed class SqliteAccountStoreSchemaTests
         await using var verify = context.Open(account.AccountId);
         Assert.Equal(1, await ScalarLongAsync(verify,
             "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='ix_message_reactions_message_id';"));
-        Assert.Equal(3, await ScalarLongAsync(verify, "PRAGMA user_version;"));
+        Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(verify, "PRAGMA user_version;"));
+        Assert.Equal(1, await ScalarLongAsync(verify, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'is_muted';"));
+        Assert.Equal(1, await ScalarLongAsync(verify, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'is_pinned';"));
     }
 
     [Fact]

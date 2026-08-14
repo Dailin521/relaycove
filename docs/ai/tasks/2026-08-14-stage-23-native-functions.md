@@ -1,6 +1,6 @@
 # Stage 23 — MAUI 普通用户全功能收口
 
-- Status: active; Slice 1 is fixed at local commit `037bcf8`, and Slice 2 server search/saved passed its Fast gate and is ready for its rollback commit
+- Status: active; Slice 1 is fixed at local commit `037bcf8`, Slice 2 at local commit `8a9f07f`, and Slice 3 channel self-service has passed its Fast gate and is ready for its rollback commit
 - Branch/worktree: `codex/stage-23-native-functions` under `E:\WorkSpace\RelayCove-Stage22MParity`
 - Baseline: local commit `8d1a6e5` (`feat(maui): complete native parity and real Zulip flows`)
 - External writes: none for Stage 23 so far; no push, merge, deployment or Live run
@@ -33,8 +33,8 @@ Excluded: Web changes, WebView, BFF/proxy/server changes, authentication redesig
 
 ## Remaining
 
-- Independent Data/Core/App review found no remaining P0/P1 after the cache-gap network-anchor regression and empty-message projection crash were fixed; create the Slice 1 local rollback commit.
-- Implement server search/saved, then channel self-service, each as a separate local Slice commit.
+- Slice 1 and Slice 2 are fixed as separate local rollback commits; Slice 3 is ready for its own local rollback commit.
+- After Slice 3 is fixed, proceed to the explicitly authorized isolated real-Realm acceptance without using a business channel.
 - Final native real-UI password login, long-list real-window acceptance, Full/package and clean Windows 11 VM remain open. Stage 21 is not complete.
 
 ## Slice 2 — server search and saved messages (local, 2026-08-14)
@@ -57,3 +57,26 @@ Excluded: Web changes, WebView, BFF/proxy/server changes, authentication redesig
 - Enter starts an immediate server search unless a result was explicitly selected with navigation keys; closing the dialog restores focus to the search button. Server rows precede local rows and retain all loaded server pages rather than being dropped by a local cap.
 - Final Slice Fast passed with 0 build warnings/errors: Core 98/98, Zulip.Client 43/43, Data 21/21 and App 85/85 (247/247 total); Web deployment-template checks, typecheck, 86/86 unit tests and production build also passed. The App regression loads two 50-message server pages and verifies all 100 remain visible.
 - Independent protocol/Core and App/UI re-review found no remaining P0/P1 after the request-lifecycle, account-isolation, missing-anchor, Enter, error-state and pagination findings were fixed.
+
+## Slice 3 — channel self-service (local, 2026-08-14)
+
+- Status: implemented locally and passed the Slice Fast gate; no commit, push, merge, Realm request, Web change, deployment, Full or Live execution.
+- `ChannelSummary` maps `GET /api/v1/streams` using raw `description`, `is_archived`, and nullable `subscriber_count`; `rendered_description` is intentionally ignored. Subscription preferences use official `PATCH /api/v1/users/me/subscriptions/{id}` properties `is_muted` and `pin_to_top`.
+- The browser can only join catalog items. `SubscribeToChannelAsync(channelId)` re-fetches the catalog and checks ID + exact current name + non-archived before POSTing Zulip's official, name-based `users/me/subscriptions` API. A missing or renamed entry fails before POST, because the server API otherwise permits creating names.
+- Add/remove and stream rename/archive continue to reduce subscription state; subscription preference events update muted/pinned. Confirmed responses alone project a join/preference change; rejected/unknown/401/429/network failures are not retried or optimistically applied.
+- Formal MAUI adds a browse/join overlay, channel detail mute/pin/leave actions, pinned-first/muted-weakened projection, and close/Escape focus behavior. Subscriber count is displayed only when supplied by the catalog.
+
+### Current narrow evidence
+
+- `dotnet build src/RelayCove.App/RelayCove.App.csproj -c Debug --no-restore`: 0 warnings/errors.
+- `dotnet test tests/RelayCove.Zulip.Client.Tests/RelayCove.Zulip.Client.Tests.csproj -c Debug --no-restore`: 45/45.
+- Final Slice Fast passed with 0 build warnings/errors: Core 102/102, Zulip.Client 45/45, Data 21/21 and App 87/87 (255/255 total); Web deployment-template checks, typecheck, 86/86 unit tests and production build also passed.
+- Still unverified: manual MAUI UI/focus at real narrow widths, screenshot/visual review, accessibility, package/clean VM, Full, and Live/real Realm behavior.
+
+### Slice 3 P1 follow-up (local, 2026-08-14)
+
+- Core gates catalog queries by account/run/catalog generation, gates subscribe/preference writes by account/run/session epoch, cancels catalog work on lifecycle transitions, and serializes concurrent joins per channel. A catalog refresh cannot discard a confirmed write, while late cancellation, success and gateway failure cannot project into a replacement session.
+- Subscribe now requires a parseable official structured response with the exact verified current name in `subscribed` or `already_subscribed`; a malformed successful HTTP response is treated as a protocol failure. `ChannelSummary` also carries private/subscribed/color catalog metadata while subscriber count remains nullable.
+- SQLite schema v5 stores `is_muted`/`is_pinned` plus register-provided `color`, persists preference events, and conditionally migrates old schemas without assuming legacy fixture columns. `GET /streams` does not invent subscription/color data; Core merges those fields from current authoritative subscriptions by ID. The migration test verifies the preference columns.
+- The browser cancels the real catalog request and ignores stale completion/error after close/logout/account change, clears its collection on close, and restores focus to the browse trigger. Projection changes notify the mute/pin action labels.
+- Independent protocol/Core/Data and App/UI re-reviews found no remaining P0/P1 after the close-recursion, cancellation, lifecycle, response-shape, persistence, focus and 401 findings were fixed. Full/Live/manual MAUI/screenshot/package/clean-VM remain unrun.

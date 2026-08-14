@@ -6,7 +6,9 @@ public sealed record ChannelItem(
     int UnreadCount = 0,
     string? RecentTopic = null,
     string? RecentPreview = null,
-    string? Timestamp = null)
+    string? Timestamp = null,
+    bool IsMuted = false,
+    bool IsPinned = false)
 {
     public bool HasUnread => UnreadCount > 0;
     public string UnreadLabel => UnreadCount > 99 ? "99+" : UnreadCount.ToString();
@@ -15,6 +17,7 @@ public sealed record ChannelItem(
         ? $"# {Name}"
         : $"# {Name} · {RecentPreview}";
     public bool HasTimestamp => !string.IsNullOrWhiteSpace(Timestamp);
+    public double ItemOpacity => IsMuted ? 0.62d : 1d;
     public Brush ToneBrush => new SolidColorBrush(
         Color.FromArgb(TonePalette[(int)(Math.Abs(ChannelId % TonePalette.Length))]));
 

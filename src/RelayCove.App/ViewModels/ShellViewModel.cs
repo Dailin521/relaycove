@@ -46,6 +46,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private double _composerHeight = DefaultComposerHeight;
     private double _viewportWidth = 1440d;
     private long? _channelUnsubscribeTargetId;
+    private long _channelBrowserGeneration;
+    private AccountId? _channelBrowserAccountId;
+    private CancellationTokenSource? _channelBrowserCancellation;
     private string? _projectedConversationKey;
     private long? _newestProjectedMessageId;
     private long _lastAutomaticLoadOlderMilliseconds = long.MinValue;
@@ -93,6 +96,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public ObservableCollection<MessageItem> Messages { get; } = [];
     public ObservableCollection<SearchResultItem> SearchResults { get; } = [];
     public ObservableCollection<SavedMessageItem> SavedMessages { get; } = [];
+    public ObservableCollection<AvailableChannelItem> AvailableChannels { get; } = [];
     public ObservableCollection<AttachmentDraftItem> Attachments { get; } = [];
     public ObservableCollection<ConversationContactChoice> NewConversationChoices { get; } = [];
     public IReadOnlyList<EmojiChoice> EmojiChoices { get; } =
@@ -143,6 +147,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial bool IsNewConversationOpen { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsChannelBrowserOpen { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsChannelBrowserLoading { get; set; }
+
+    [ObservableProperty]
+    public partial string? ChannelBrowserError { get; set; }
 
     [ObservableProperty]
     public partial bool IsAccountMenuOpen { get; set; }
@@ -374,7 +387,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool IsModalOverlayVisible => IsOverlayDetailsVisible || IsSearchOpen || IsMessageMenuOpen || IsAccountMenuOpen ||
         IsComposerEmojiPickerOpen || IsReactionPickerOpen || IsEditDialogOpen ||
         IsDeleteConfirmationOpen || IsChannelUnsubscribeConfirmationOpen || IsImageViewerOpen ||
-        IsNewConversationOpen || LogoutConfirmationVisible;
+        IsNewConversationOpen || IsChannelBrowserOpen || LogoutConfirmationVisible;
     public bool IsPrimaryShellEnabled => !IsModalOverlayVisible || IsMessageMenuOpen || IsAccountMenuOpen ||
         IsComposerEmojiPickerOpen || IsReactionPickerOpen;
     public bool CanCompose =>
@@ -409,6 +422,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
     public bool HasChannelUnsubscribeError => !string.IsNullOrWhiteSpace(ChannelUnsubscribeError);
     public bool CanCloseChannelUnsubscribe => !IsChannelUnsubscribeBusy;
+    public bool HasChannelBrowserError => !string.IsNullOrWhiteSpace(ChannelBrowserError);
+    public bool CanManageSelectedChannel => CanUnsubscribeSelectedChannel;
+    public string SelectedChannelMuteLabel => _session.SelectedConversation is ChannelTopic selected &&
+        _projectedState.Subscriptions.GetValueOrDefault(selected.ChannelId)?.IsMuted == true ? "取消静音" : "静音频道";
+    public string SelectedChannelPinLabel => _session.SelectedConversation is ChannelTopic selected &&
+        _projectedState.Subscriptions.GetValueOrDefault(selected.ChannelId)?.IsPinned == true ? "取消置顶" : "置顶频道";
     public string ActiveMessageStarActionLabel => ActiveMessageAction?.IsStarred == true
         ? "取消收藏"
         : "收藏消息";
@@ -1547,6 +1566,119 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
     }
 
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task OpenChannelBrowserAsync()
+    {
+        CloseTransientOverlays();
+        IsChannelBrowserOpen = true;
+        IsChannelBrowserLoading = true;
+        ChannelBrowserError = null;
+        var generation = ++_channelBrowserGeneration;
+        var accountId = _session.AccountId;
+        _channelBrowserAccountId = accountId;
+        _channelBrowserCancellation?.Cancel();
+        _channelBrowserCancellation?.Dispose();
+        var browserCancellation = _channelBrowserCancellation = new CancellationTokenSource();
+        try
+        {
+            var subscribed = _projectedState.Subscriptions.Keys;
+            var channels = await _session.GetAvailableChannelsAsync(browserCancellation.Token);
+            if (!IsChannelBrowserCurrent(generation, accountId, browserCancellation)) return;
+            Reconcile(AvailableChannels,
+                channels.Where(channel => !channel.IsArchived && !subscribed.Contains(channel.ChannelId))
+                    .OrderBy(channel => channel.Name, StringComparer.Ordinal)
+                    .Select(channel => new AvailableChannelItem(channel.ChannelId, channel.Name, channel.Description, channel.SubscriberCount)),
+                channel => channel.ChannelId);
+        }
+        catch (GatewayException exception)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId, browserCancellation)) ChannelBrowserError = DescribeGatewayFailure(exception);
+        }
+        catch (OperationCanceledException)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId, browserCancellation)) ChannelBrowserError = "加载频道已取消，请重试。";
+        }
+        catch (Exception)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId, browserCancellation)) ChannelBrowserError = "无法加载可加入频道，请确认连接后重试。";
+        }
+        finally
+        {
+            if (IsChannelBrowserCurrent(generation, accountId, browserCancellation)) IsChannelBrowserLoading = false;
+        }
+    }
+
+    [RelayCommand]
+    private void CloseChannelBrowser()
+    {
+        _channelBrowserCancellation?.Cancel();
+        _channelBrowserCancellation?.Dispose();
+        _channelBrowserCancellation = null;
+        _channelBrowserGeneration++;
+        _channelBrowserAccountId = null;
+        ChannelBrowserError = null;
+        IsChannelBrowserLoading = false;
+        IsChannelBrowserOpen = false;
+        Reconcile(AvailableChannels, [], item => item.ChannelId);
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task JoinAvailableChannelAsync(AvailableChannelItem? channel)
+    {
+        if (channel is null || IsChannelBrowserLoading) return;
+        IsChannelBrowserLoading = true;
+        ChannelBrowserError = null;
+        var generation = _channelBrowserGeneration;
+        var accountId = _channelBrowserAccountId;
+        try
+        {
+            await _session.SubscribeToChannelAsync(channel.ChannelId);
+            if (!IsChannelBrowserCurrent(generation, accountId)) return;
+            AvailableChannels.Remove(channel);
+            Project(_session.State);
+        }
+        catch (GatewayException exception)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId)) ChannelBrowserError = DescribeGatewayFailure(exception);
+        }
+        catch (InvalidOperationException exception)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId)) ChannelBrowserError = DescribeInvalidOperation(exception);
+        }
+        catch (OperationCanceledException)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId)) ChannelBrowserError = "加入频道未完成；结果未知时不会自动重试。";
+        }
+        catch (Exception)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId)) ChannelBrowserError = "加入频道失败；结果未知时不会自动重试。";
+        }
+        finally
+        {
+            if (IsChannelBrowserCurrent(generation, accountId)) IsChannelBrowserLoading = false;
+        }
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ToggleSelectedChannelMutedAsync()
+    {
+        await SetSelectedChannelPreferenceAsync(SubscriptionPreference.Muted);
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ToggleSelectedChannelPinnedAsync()
+    {
+        await SetSelectedChannelPreferenceAsync(SubscriptionPreference.Pinned);
+    }
+
+    private async Task SetSelectedChannelPreferenceAsync(SubscriptionPreference preference)
+    {
+        if (_session.SelectedConversation is not ChannelTopic selected ||
+            !_projectedState.Subscriptions.TryGetValue(selected.ChannelId, out var subscription)) return;
+        var value = preference == SubscriptionPreference.Muted ? !subscription.IsMuted : !subscription.IsPinned;
+        await ExecuteSessionActionAsync(() => _session.SetSubscriptionPreferenceAsync(selected.ChannelId, preference, value));
+    }
+
     [RelayCommand]
     private void ToggleDetails()
     {
@@ -1640,6 +1772,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ChannelUnsubscribeError = null;
         IsImageViewerOpen = false;
         IsNewConversationOpen = false;
+        IsChannelBrowserOpen = false;
         ActiveImageAttachment = null;
         MediaActionStatus = null;
         ActiveMessageAction = null;
@@ -1652,6 +1785,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(WorkspaceDisplayName));
         if (!value)
         {
+            CloseChannelBrowser();
             ResetDrafts();
         }
     }
@@ -1662,6 +1796,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     partial void OnChannelUnsubscribeErrorChanged(string? value) =>
         OnPropertyChanged(nameof(HasChannelUnsubscribeError));
+
+    partial void OnChannelBrowserErrorChanged(string? value) => OnPropertyChanged(nameof(HasChannelBrowserError));
 
     partial void OnIsChannelUnsubscribeBusyChanged(bool value) =>
         OnPropertyChanged(nameof(CanCloseChannelUnsubscribe));
@@ -1723,8 +1859,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         if (!value) ClearNewConversationChoices();
         NotifyOverlayProperties();
     }
+    partial void OnIsChannelBrowserOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsComposerEmojiPickerOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsReactionPickerOpenChanged(bool value) => NotifyOverlayProperties();
+
+    private bool IsChannelBrowserCurrent(long generation, AccountId? accountId, CancellationTokenSource? cancellation = null) =>
+        IsChannelBrowserOpen && generation == _channelBrowserGeneration && accountId == _channelBrowserAccountId && accountId == _session.AccountId &&
+        (cancellation is null || ReferenceEquals(cancellation, _channelBrowserCancellation) && !cancellation.IsCancellationRequested);
     partial void OnSelectedComposerEmojiChanged(EmojiChoice? oldValue, EmojiChoice? newValue)
     {
         if (oldValue is not null) oldValue.IsComposerSelected = false;
@@ -1843,6 +1984,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasSelectedChannel));
         OnPropertyChanged(nameof(TopicListHeight));
         OnPropertyChanged(nameof(ShowTopicPicker));
+        OnPropertyChanged(nameof(SelectedChannelMuteLabel));
+        OnPropertyChanged(nameof(SelectedChannelPinLabel));
         if (value?.ChannelId == _loadedTopicsChannelId) return;
         _ = SelectChannelAsync(value);
     }
@@ -2050,7 +2193,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             Channels,
             state.Subscriptions.Values
                 .Where(subscription => subscription.IsActive)
-                .OrderBy(subscription => subscription.Name, StringComparer.Ordinal)
+                .OrderByDescending(subscription => subscription.IsPinned)
+                .ThenBy(subscription => subscription.IsMuted)
+                .ThenBy(subscription => subscription.Name, StringComparer.Ordinal)
                 .Select(subscription => CreateChannelItem(state, subscription)),
             item => item.ChannelId);
 
@@ -2608,7 +2753,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             GetChannelUnread(state.Unread, subscription.ChannelId),
             recentTopic?.Topic,
             preview,
-            latestMessage is null ? null : FormatConversationTimestamp(latestMessage.Timestamp.LocalDateTime));
+            latestMessage is null ? null : FormatConversationTimestamp(latestMessage.Timestamp.LocalDateTime),
+            subscription.IsMuted,
+            subscription.IsPinned);
     }
 
     private void SynchronizeSelection(ConversationKey? selected)
@@ -2730,6 +2877,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanSend));
         OnPropertyChanged(nameof(CanMarkRead));
         OnPropertyChanged(nameof(CanUnsubscribeSelectedChannel));
+        OnPropertyChanged(nameof(SelectedChannelMuteLabel));
+        OnPropertyChanged(nameof(SelectedChannelPinLabel));
         OnPropertyChanged(nameof(MessageEmptyTitle));
         OnPropertyChanged(nameof(WorkspaceDisplayName));
         OnPropertyChanged(nameof(IsNativePreview));

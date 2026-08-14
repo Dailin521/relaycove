@@ -22,6 +22,9 @@ public interface IZulipGateway
     Task<UploadedAttachment> UploadAttachmentAsync(UploadAttachmentRequest request, CancellationToken cancellationToken = default);
     Task<RealmMediaResult> GetRealmMediaAsync(GetRealmMediaRequest request, CancellationToken cancellationToken = default);
     Task<UnsubscribeChannelResult> UnsubscribeChannelAsync(UnsubscribeChannelRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(AvailableChannelsRequest request, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ChannelSummary>>([]);
+    Task<SubscribeChannelResult> SubscribeToChannelAsync(SubscribeChannelRequest request, CancellationToken cancellationToken = default) => Task.FromException<SubscribeChannelResult>(new NotSupportedException());
+    Task SetSubscriptionPreferenceAsync(SetSubscriptionPreferenceRequest request, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException());
     Task MarkReadAsync(MarkReadRequest request, CancellationToken cancellationToken = default);
     Task DeleteQueueAsync(DeleteQueueRequest request, CancellationToken cancellationToken = default);
 }

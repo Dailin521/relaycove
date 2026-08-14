@@ -1411,6 +1411,79 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task SubscribeToChannelAsync_WhenRefetchedCatalogMatches_AddsOnlyConfirmedChannel()
+    {
+        var gateway = new FakeGateway
+        {
+            AvailableChannelsHandler = (_, _) => Task.FromResult<IReadOnlyList<ChannelSummary>>([new ChannelSummary(7, "engineering", "raw", false, 2)])
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.GetAvailableChannelsAsync();
+        await session.SubscribeToChannelAsync(7);
+
+        Assert.Equal(2, gateway.AvailableChannelsCalls);
+        Assert.Single(gateway.SubscribeRequests);
+        Assert.Equal("engineering", gateway.SubscribeRequests[0].Channel.Name);
+        Assert.Contains(7, session.State.Subscriptions.Keys);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task SubscribeToChannelAsync_WhenRefetchedCatalogChanged_DoesNotPost()
+    {
+        var calls = 0;
+        var gateway = new FakeGateway
+        {
+            AvailableChannelsHandler = (_, _) => Task.FromResult<IReadOnlyList<ChannelSummary>>(
+                ++calls == 1 ? [new ChannelSummary(7, "engineering", null, false, null)] : [new ChannelSummary(7, "renamed", null, false, null)])
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.GetAvailableChannelsAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => session.SubscribeToChannelAsync(7));
+
+        Assert.Empty(gateway.SubscribeRequests);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task SubscribeToChannelAsync_WhenPostIsUnauthorized_ClearsCredentialsAndDoesNotAddSubscription()
+    {
+        var gateway = new FakeGateway
+        {
+            AvailableChannelsHandler = (_, _) => Task.FromResult<IReadOnlyList<ChannelSummary>>([new ChannelSummary(7, "engineering", null, false, null)]),
+            SubscribeChannelHandler = (_, _) => Task.FromException<SubscribeChannelResult>(new GatewayException(GatewayErrorKind.ReauthRequired, GatewayErrorCode.Unauthorized))
+        };
+        var vault = new FakeCredentialVault();
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), vault);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.GetAvailableChannelsAsync();
+        await Assert.ThrowsAsync<GatewayException>(() => session.SubscribeToChannelAsync(7));
+
+        Assert.Equal(ConnectionStatus.ReauthRequired, session.State.Connection.Status);
+        Assert.DoesNotContain(7, session.State.Subscriptions.Keys);
+        Assert.True(vault.RemoveCalls > 0);
+    }
+
+    [Fact]
+    public async Task SetSubscriptionPreferenceAsync_WhenConfirmed_UpdatesReducerState()
+    {
+        var gateway = new FakeGateway { RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(7, "engineering")])) };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.SetSubscriptionPreferenceAsync(7, SubscriptionPreference.Pinned, true);
+
+        Assert.Single(gateway.PreferenceRequests);
+        Assert.True(session.State.Subscriptions[7].IsPinned);
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task UnsubscribeChannelAsync_WhenServerConfirms_RemovesChannelAndSelection()
     {
         var channel = new Subscription(7, "Engineering");
@@ -1774,6 +1847,9 @@ public sealed class ClientSessionTests
         public List<SendRequest> SendRequests { get; } = [];
         public List<MarkReadRequest> MarkReadRequests { get; } = [];
         public List<DeleteQueueRequest> DeleteQueueRequests { get; } = [];
+        public List<SubscribeChannelRequest> SubscribeRequests { get; } = [];
+        public List<SetSubscriptionPreferenceRequest> PreferenceRequests { get; } = [];
+        public int AvailableChannelsCalls { get; private set; }
         public Func<RegisterRequest, CancellationToken, Task<RegisterResult>> RegisterHandler { get; set; } = (_, _) => Task.FromResult(Register());
         public Func<GetEventsRequest, CancellationToken, Task<EventBatch>>? GetEventsHandler { get; set; }
         public Func<HistoryRequest, CancellationToken, Task<HistoryResult>> HistoryHandler { get; set; } = (_, _) => Task.FromResult(new HistoryResult([], false, false));
@@ -1789,6 +1865,9 @@ public sealed class ClientSessionTests
         public Func<UploadAttachmentRequest, CancellationToken, Task<UploadedAttachment>>? UploadAttachmentHandler { get; set; }
         public Func<GetRealmMediaRequest, CancellationToken, Task<RealmMediaResult>>? GetRealmMediaHandler { get; set; }
         public Func<UnsubscribeChannelRequest, CancellationToken, Task<UnsubscribeChannelResult>>? UnsubscribeChannelHandler { get; set; }
+        public Func<AvailableChannelsRequest, CancellationToken, Task<IReadOnlyList<ChannelSummary>>>? AvailableChannelsHandler { get; set; }
+        public Func<SubscribeChannelRequest, CancellationToken, Task<SubscribeChannelResult>>? SubscribeChannelHandler { get; set; }
+        public Func<SetSubscriptionPreferenceRequest, CancellationToken, Task>? SetSubscriptionPreferenceHandler { get; set; }
         public Func<DeleteQueueRequest, CancellationToken, Task>? DeleteQueueHandler { get; set; }
         public Func<TopicsRequest, CancellationToken, Task<TopicsResult>> TopicsHandler { get; set; } = (_, _) => Task.FromResult(new TopicsResult([]));
 
@@ -1907,6 +1986,25 @@ public sealed class ClientSessionTests
             CancellationToken cancellationToken = default) =>
             UnsubscribeChannelHandler?.Invoke(request, cancellationToken) ??
             Task.FromResult(new UnsubscribeChannelResult([request.ChannelName], []));
+
+        public Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(AvailableChannelsRequest request, CancellationToken cancellationToken = default)
+        {
+            AvailableChannelsCalls++;
+            return AvailableChannelsHandler?.Invoke(request, cancellationToken) ?? Task.FromResult<IReadOnlyList<ChannelSummary>>([]);
+        }
+
+        public Task<SubscribeChannelResult> SubscribeToChannelAsync(SubscribeChannelRequest request, CancellationToken cancellationToken = default)
+        {
+            SubscribeRequests.Add(request);
+            return SubscribeChannelHandler?.Invoke(request, cancellationToken) ??
+                Task.FromResult(new SubscribeChannelResult([request.Channel.Name], [], []));
+        }
+
+        public Task SetSubscriptionPreferenceAsync(SetSubscriptionPreferenceRequest request, CancellationToken cancellationToken = default)
+        {
+            PreferenceRequests.Add(request);
+            return SetSubscriptionPreferenceHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
+        }
 
         public Task DeleteQueueAsync(DeleteQueueRequest request, CancellationToken cancellationToken = default)
         {

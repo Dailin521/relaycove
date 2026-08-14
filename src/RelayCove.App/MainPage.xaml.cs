@@ -101,6 +101,12 @@ public partial class MainPage : ContentPage
             case nameof(ShellViewModel.IsNewConversationOpen) when _viewModel.IsNewConversationOpen:
                 Dispatcher.Dispatch(() => NewConversationSearchEntry.Focus());
                 break;
+            case nameof(ShellViewModel.IsChannelBrowserOpen) when _viewModel.IsChannelBrowserOpen:
+                Dispatcher.Dispatch(() => ChannelBrowserCloseButton.Focus());
+                break;
+            case nameof(ShellViewModel.IsChannelBrowserOpen):
+                Dispatcher.Dispatch(ConversationPane.FocusBrowseChannelsButton);
+                break;
             case nameof(ShellViewModel.IsComposerEmojiPickerOpen) when _viewModel.IsComposerEmojiPickerOpen:
                 Dispatcher.Dispatch(() => ComposerEmojiCollection.Focus());
                 break;
@@ -159,7 +165,8 @@ public partial class MainPage : ContentPage
 
     private bool CloseTopOverlay()
     {
-        if (_viewModel.IsNewConversationOpen) _viewModel.CloseNewConversationCommand.Execute(null);
+        if (_viewModel.IsChannelBrowserOpen) _viewModel.CloseChannelBrowserCommand.Execute(null);
+        else if (_viewModel.IsNewConversationOpen) _viewModel.CloseNewConversationCommand.Execute(null);
         else if (_viewModel.IsImageViewerOpen) _viewModel.CloseImageViewerCommand.Execute(null);
         else if (_viewModel.IsChannelUnsubscribeConfirmationOpen) _viewModel.CancelChannelUnsubscribeCommand.Execute(null);
         else if (_viewModel.IsDeleteConfirmationOpen) _viewModel.CancelDeleteMessageCommand.Execute(null);

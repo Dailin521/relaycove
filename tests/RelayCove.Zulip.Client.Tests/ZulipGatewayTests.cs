@@ -385,7 +385,7 @@ public sealed class ZulipGatewayTests
     }
 
     [Fact]
-    public async Task Event_SubscriptionUpdate_IsExplicitlyIgnoredWhenPropertyIsOutsideMvp()
+    public async Task Event_SubscriptionUpdate_MapsMutedPreference()
     {
         using var handler = new RecordingHandler(Json("""{"events":[{"id":22,"type":"subscription","op":"update","stream_id":4,"property":"is_muted","value":true}]}"""));
         using var gateway = new ZulipGateway(handler);
@@ -393,8 +393,10 @@ public sealed class ZulipGatewayTests
         var batch = await gateway.GetEventsAsync(
             new GetEventsRequest(Credentials, "queue-1", 21, TimeSpan.FromSeconds(30)));
 
-        var ignored = Assert.IsType<IgnoredDomainEvent>(Assert.Single(batch.Events));
-        Assert.Equal("subscription_property_outside_mvp", ignored.ReasonCode);
+        var changed = Assert.IsType<SubscriptionPreferenceChangedEvent>(Assert.Single(batch.Events));
+        Assert.Equal(4, changed.ChannelId);
+        Assert.Equal(SubscriptionPreference.Muted, changed.Preference);
+        Assert.True(changed.Value);
     }
 
     [Fact]
@@ -517,6 +519,49 @@ public sealed class ZulipGatewayTests
         Assert.Equal(["工程频道"], subscriptions);
         Assert.Equal(["工程频道"], result.Removed);
         Assert.Empty(result.NotRemoved);
+    }
+
+    [Fact]
+    public async Task AvailableChannels_UsesRawDescriptionAndSubscriberCount()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"streams":[{"stream_id":7,"name":"engineering","description":"raw markdown","rendered_description":"<p>unsafe</p>","subscriber_count":12,"is_archived":false}]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var channels = await gateway.GetAvailableChannelsAsync(new AvailableChannelsRequest(Credentials));
+
+        var channel = Assert.Single(channels);
+        Assert.Equal("raw markdown", channel.Description);
+        Assert.Equal(12, channel.SubscriberCount);
+        Assert.Equal(HttpMethod.Get, Assert.Single(handler.Requests).Method);
+        Assert.EndsWith("/api/v1/streams", handler.Requests[0].Uri!.AbsolutePath, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SubscribeAndPreferences_UseOfficialEndpointsAndForms()
+    {
+        using var handler = new RecordingHandler(
+            Json("""{"result":"success","subscribed":{"10":["engineering"]},"already_subscribed":{"10":[]},"unauthorized":{"10":[]}}"""),
+            Json("""{"result":"success"}"""),
+            Json("""{"result":"success"}"""));
+        using var gateway = new ZulipGateway(handler);
+        var channel = new ChannelSummary(8, "engineering", null, false, null);
+
+        await gateway.SubscribeToChannelAsync(new SubscribeChannelRequest(Credentials, channel));
+        await gateway.SetSubscriptionPreferenceAsync(new SetSubscriptionPreferenceRequest(Credentials, 8, SubscriptionPreference.Muted, true));
+        await gateway.SetSubscriptionPreferenceAsync(new SetSubscriptionPreferenceRequest(Credentials, 8, SubscriptionPreference.Pinned, false));
+
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
+        Assert.EndsWith("/api/v1/users/me/subscriptions", handler.Requests[0].Uri!.AbsolutePath, StringComparison.Ordinal);
+        Assert.Equal("[{\"name\":\"engineering\"}]", ParseForm(handler.Requests[0].Body)["subscriptions"]);
+        Assert.All(handler.Requests.Skip(1), request => Assert.Equal(HttpMethod.Patch, request.Method));
+        Assert.All(handler.Requests.Skip(1), request => Assert.EndsWith("/api/v1/users/me/subscriptions/8", request.Uri!.AbsolutePath, StringComparison.Ordinal));
+        Assert.Equal("is_muted", ParseForm(handler.Requests[1].Body)["property"]);
+        Assert.Equal("true", ParseForm(handler.Requests[1].Body)["value"]);
+        Assert.Equal("pin_to_top", ParseForm(handler.Requests[2].Body)["property"]);
+        Assert.Equal("false", ParseForm(handler.Requests[2].Body)["value"]);
     }
 
     [Fact]
