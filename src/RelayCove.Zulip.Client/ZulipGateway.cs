@@ -224,7 +224,93 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         return new HistoryResult(
             GetArray(root, "messages").Select(item => ToMessage(item, request.Credentials.UserId)).Where(static item => item is not null).Cast<ChatMessage>().ToArray(),
             GetBoolean(root, "found_oldest") ?? false,
-            GetBoolean(root, "found_newest") ?? false);
+            GetBoolean(root, "found_newest") ?? false,
+            GetBoolean(root, "found_anchor") ?? request.AnchorMessageId is null);
+    }
+
+    public async Task<HistoryResult> GetMessagesAroundAsync(
+        MessageAroundRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.MessageId <= 0) throw new ArgumentOutOfRangeException(nameof(request));
+        if (request.BeforeCount is < 0 or > 50 || request.AfterCount is < 0 or > 50)
+            throw new ArgumentOutOfRangeException(nameof(request));
+        var query = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["narrow"] = SerializeNarrow(request.Conversation, request.Credentials.UserId),
+            ["anchor"] = request.MessageId.ToString(CultureInfo.InvariantCulture),
+            ["include_anchor"] = "true",
+            ["num_before"] = request.BeforeCount.ToString(CultureInfo.InvariantCulture),
+            ["num_after"] = request.AfterCount.ToString(CultureInfo.InvariantCulture),
+            ["apply_markdown"] = "false",
+            ["client_gravatar"] = "false",
+            ["allow_empty_topic_name"] = "true"
+        };
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "messages", query, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        var root = document.RootElement;
+        return new HistoryResult(
+            GetArray(root, "messages").Select(item => ToMessage(item, request.Credentials.UserId)).Where(static item => item is not null).Cast<ChatMessage>().ToArray(),
+            GetBoolean(root, "found_oldest") ?? false,
+            GetBoolean(root, "found_newest") ?? false,
+            GetBoolean(root, "found_anchor") ?? false);
+    }
+
+    private async Task<MessageQueryPage> GetMessagesPageAsync(
+        CredentialEnvelope credentials,
+        string narrow,
+        long? beforeMessageId,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        if (limit is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(limit));
+        var query = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["narrow"] = narrow,
+            ["anchor"] = beforeMessageId?.ToString(CultureInfo.InvariantCulture) ?? "newest",
+            ["include_anchor"] = "false",
+            ["num_before"] = limit.ToString(CultureInfo.InvariantCulture),
+            ["num_after"] = "0",
+            ["apply_markdown"] = "false",
+            ["client_gravatar"] = "false",
+            ["allow_empty_topic_name"] = "true"
+        };
+        using var response = await SendAsync(credentials.Realm, HttpMethod.Get, "messages", query, credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        var root = document.RootElement;
+        return new MessageQueryPage(
+            GetArray(root, "messages").Select(item => ToMessage(item, credentials.UserId)).Where(static item => item is not null).Cast<ChatMessage>().ToArray(),
+            GetBoolean(root, "found_oldest") ?? false,
+            GetBoolean(root, "found_newest") ?? false,
+            GetBoolean(root, "found_anchor") ?? beforeMessageId is null);
+    }
+
+    public Task<MessageQueryPage> SearchMessagesAsync(
+        MessageSearchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(request.Query)) throw new ArgumentException("A search query is required.", nameof(request));
+        return GetMessagesPageAsync(
+            request.Credentials,
+            SerializeTerms([NarrowTerm("search", request.Query)]),
+            request.BeforeMessageId,
+            request.Limit,
+            cancellationToken);
+    }
+
+    public Task<MessageQueryPage> LoadSavedMessagesAsync(
+        SavedMessagesRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return GetMessagesPageAsync(
+            request.Credentials,
+            SerializeTerms([NarrowTerm("is", "starred")]),
+            request.BeforeMessageId,
+            request.Limit,
+            cancellationToken);
     }
 
     public async Task<TopicsResult> GetTopicsAsync(TopicsRequest request, CancellationToken cancellationToken = default)
@@ -867,8 +953,11 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             ],
             _ => throw new ArgumentOutOfRangeException(nameof(conversation), "Unsupported conversation type.")
         };
-        return JsonSerializer.Serialize(narrow, JsonOptions);
+        return SerializeTerms(narrow);
     }
+
+    private static string SerializeTerms(IReadOnlyList<IReadOnlyDictionary<string, object>> terms) =>
+        JsonSerializer.Serialize(terms, JsonOptions);
 
     private static string SerializeUnreadNarrow(ConversationKey conversation, long currentUserId)
     {

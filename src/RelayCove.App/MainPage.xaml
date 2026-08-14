@@ -133,6 +133,43 @@
                 </Grid>
 
                 <controls:ContactsPageView IsVisible="{Binding IsContactsSection}" />
+                <Grid IsVisible="{Binding IsSavedSection}" Padding="28" RowDefinitions="Auto,Auto,*" RowSpacing="14">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <VerticalStackLayout Spacing="3">
+                            <Label Text="已保存消息" Style="{StaticResource BaseLabelStyle}" FontSize="22" FontAttributes="Bold" />
+                            <Label Text="来自当前账号的服务器 starred 消息；不会写入本地搜索缓存。" Style="{StaticResource MutedLabelStyle}" />
+                        </VerticalStackLayout>
+                        <Button Grid.Column="1" Text="刷新" Style="{StaticResource BaseButtonStyle}" Command="{Binding RefreshSavedCommand}" />
+                    </Grid>
+                    <VerticalStackLayout Grid.Row="1" Spacing="3">
+                        <Label Text="其他设备的新收藏可刷新查看。" IsVisible="{Binding SavedRefreshSuggested}" Style="{StaticResource MutedLabelStyle}" />
+                        <Label Text="正在读取已保存消息…" IsVisible="{Binding IsSavedLoading}" Style="{StaticResource MutedLabelStyle}" />
+                        <Label Text="{Binding SavedError}" IsVisible="{Binding HasSavedError}" Style="{StaticResource MutedLabelStyle}" />
+                    </VerticalStackLayout>
+                    <Grid Grid.Row="2">
+                        <CollectionView ItemsSource="{Binding SavedMessages}" SelectionMode="None">
+                            <CollectionView.ItemTemplate>
+                                <DataTemplate x:DataType="viewModels:SavedMessageItem">
+                                    <Border Padding="12" Margin="0,0,0,8" Style="{StaticResource CardBorderStyle}">
+                                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10">
+                                            <Label Text="{Binding Sender}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                            <Label Grid.Column="1" Text="{Binding Timestamp}" Style="{StaticResource MutedLabelStyle}" />
+                                            <Label Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Content}" Style="{StaticResource BaseLabelStyle}" LineBreakMode="TailTruncation" MaxLines="2" />
+                                            <HorizontalStackLayout Grid.Row="2" Grid.ColumnSpan="2" Spacing="8" Margin="0,8,0,0">
+                                                <Button Text="跳转" Style="{StaticResource BaseButtonStyle}" Command="{Binding ViewModel.OpenSavedMessageCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}" CommandParameter="{Binding .}" />
+                                                <Button Text="取消收藏" Style="{StaticResource BaseButtonStyle}" Command="{Binding ViewModel.UnstarSavedMessageCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}" CommandParameter="{Binding .}" />
+                                            </HorizontalStackLayout>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </CollectionView.ItemTemplate>
+                            <CollectionView.Footer>
+                                <Button Text="加载更早消息" IsVisible="{Binding BindingContext.HasMoreSavedMessages, Source={x:Reference RootPage}}" Command="{Binding BindingContext.LoadOlderSavedCommand, Source={x:Reference RootPage}}" Style="{StaticResource BaseButtonStyle}" />
+                            </CollectionView.Footer>
+                        </CollectionView>
+                        <Label Text="尚无已保存消息。" IsVisible="{Binding IsSavedEmpty}" Style="{StaticResource MutedLabelStyle}" HorizontalOptions="Center" VerticalOptions="Center" />
+                    </Grid>
+                </Grid>
                 <controls:SettingsPageView IsVisible="{Binding IsSettingsSection}" />
 
                 <Grid IsVisible="{Binding IsAccountMenuOpen}">
@@ -195,6 +232,7 @@
                                    x:Name="SearchEntry"
                                    Style="{StaticResource BaseEntryStyle}"
                                    Text="{Binding SearchQuery, Mode=TwoWay}"
+                                   Completed="OnSearchCompleted"
                                    Placeholder="键入以搜索"
                                    SemanticProperties.Description="搜索频道、话题、联系人和已加载消息" />
                             <Grid Grid.Row="2">
@@ -216,12 +254,22 @@
                                             </Border>
                                         </DataTemplate>
                                     </CollectionView.ItemTemplate>
+                                    <CollectionView.Footer>
+                                        <Button Text="加载更多服务器结果"
+                                                IsVisible="{Binding BindingContext.HasMoreSearchResults, Source={x:Reference RootPage}}"
+                                                Command="{Binding BindingContext.LoadOlderSearchCommand, Source={x:Reference RootPage}}"
+                                                Style="{StaticResource BaseButtonStyle}" />
+                                    </CollectionView.Footer>
                                 </CollectionView>
-                                <Label Text="没有匹配的本地结果；服务器全文搜索尚未接入。"
+                                <Label Text="没有匹配结果。"
                                        IsVisible="{Binding IsSearchEmpty}"
                                        Style="{StaticResource MutedLabelStyle}"
                                        HorizontalOptions="Center"
                                        VerticalOptions="Center" />
+                                <VerticalStackLayout HorizontalOptions="Center" VerticalOptions="End" Spacing="4">
+                                    <Label Text="正在搜索服务器…" IsVisible="{Binding IsSearchBusy}" Style="{StaticResource MutedLabelStyle}" />
+                                    <Label Text="{Binding SearchError}" IsVisible="{Binding HasSearchError}" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
                             </Grid>
                         </Grid>
                     </Border>

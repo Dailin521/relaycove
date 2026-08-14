@@ -4,5 +4,6 @@ public enum ShellSection
 {
     Messages,
     Contacts,
+    Saved,
     Settings
 }

@@ -1262,6 +1262,78 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task SearchMessagesAsync_WhenNewSearchStarts_CancelsTheOlderRequestAndDoesNotPersistResults()
+    {
+        var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway
+        {
+            SearchHandler = async (_, token) =>
+            {
+                started.TrySetResult(true);
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                return new MessageQueryPage([], false, false, true);
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var first = session.SearchMessagesAsync("first", null, 50);
+        await started.Task;
+        using var secondCancellation = new CancellationTokenSource();
+        var second = session.SearchMessagesAsync("second", null, 50, secondCancellation.Token);
+        secondCancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => second);
+        Assert.Empty(session.State.Messages);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task MessageQueries_WhenSavedStarts_DoesNotCancelAnIndependentSearch()
+    {
+        var releaseSearch = new TaskCompletionSource<MessageQueryPage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway
+        {
+            SearchHandler = (_, _) => releaseSearch.Task,
+            SavedHandler = (_, _) => Task.FromResult(new MessageQueryPage([], false, true, true))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var search = session.SearchMessagesAsync("query", null, 50);
+        var saved = await session.LoadSavedMessagesAsync(null, 50);
+        releaseSearch.SetResult(new MessageQueryPage([], false, true, true));
+
+        Assert.Empty(saved.Messages);
+        Assert.Empty((await search).Messages);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task OpenMessageAsync_WhenAnchorIsFound_LoadsAStableAroundContextWithoutFetchingNewest()
+    {
+        var conversation = new DirectMessage([20]);
+        var message = Message(75, conversation);
+        var gateway = new FakeGateway
+        {
+            AroundHandler = (request, _) => Task.FromResult(new HistoryResult([message], false, false, true))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.OpenMessageAsync(conversation, message.Id);
+
+        var around = Assert.Single(gateway.AroundRequests);
+        Assert.Equal(message.Id, around.MessageId);
+        Assert.Equal(25, around.BeforeCount);
+        Assert.Equal(24, around.AfterCount);
+        Assert.Empty(gateway.HistoryRequests);
+        Assert.Equal(message.Id, Assert.Single(session.State.Messages).Key);
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task EditMessageAsync_WhenGatewayResultIsUnknown_BlocksFurtherMutationAndDoesNotRetry()
     {
         var message = Message(51, new DirectMessage([]));
@@ -1697,6 +1769,7 @@ public sealed class ClientSessionTests
         public Exception? AuthenticateFailure { get; set; }
         public bool BlockAuthenticationUntilCancelled { get; set; }
         public List<HistoryRequest> HistoryRequests { get; } = [];
+        public List<MessageAroundRequest> AroundRequests { get; } = [];
         public List<GetEventsRequest> GetEventsRequests { get; } = [];
         public List<SendRequest> SendRequests { get; } = [];
         public List<MarkReadRequest> MarkReadRequests { get; } = [];
@@ -1704,6 +1777,9 @@ public sealed class ClientSessionTests
         public Func<RegisterRequest, CancellationToken, Task<RegisterResult>> RegisterHandler { get; set; } = (_, _) => Task.FromResult(Register());
         public Func<GetEventsRequest, CancellationToken, Task<EventBatch>>? GetEventsHandler { get; set; }
         public Func<HistoryRequest, CancellationToken, Task<HistoryResult>> HistoryHandler { get; set; } = (_, _) => Task.FromResult(new HistoryResult([], false, false));
+        public Func<MessageSearchRequest, CancellationToken, Task<MessageQueryPage>>? SearchHandler { get; set; }
+        public Func<SavedMessagesRequest, CancellationToken, Task<MessageQueryPage>>? SavedHandler { get; set; }
+        public Func<MessageAroundRequest, CancellationToken, Task<HistoryResult>>? AroundHandler { get; set; }
         public Func<SendRequest, CancellationToken, Task<SendResult>>? SendHandler { get; set; }
         public Func<MarkReadRequest, CancellationToken, Task>? MarkReadHandler { get; set; }
         public Func<SetReactionRequest, CancellationToken, Task>? SetReactionHandler { get; set; }
@@ -1768,6 +1844,21 @@ public sealed class ClientSessionTests
             HistoryRequests.Add(request);
             return HistoryHandler(request, cancellationToken);
         }
+
+        public Task<HistoryResult> GetMessagesAroundAsync(MessageAroundRequest request, CancellationToken cancellationToken = default)
+        {
+            AroundRequests.Add(request);
+            return AroundHandler?.Invoke(request, cancellationToken) ??
+                HistoryHandler(
+                    new HistoryRequest(request.Credentials, request.Conversation, request.MessageId, includeAnchor: true, limit: request.BeforeCount + request.AfterCount + 1),
+                    cancellationToken);
+        }
+
+        public Task<MessageQueryPage> SearchMessagesAsync(MessageSearchRequest request, CancellationToken cancellationToken = default) =>
+            SearchHandler?.Invoke(request, cancellationToken) ?? Task.FromResult(new MessageQueryPage([], false, false, true));
+
+        public Task<MessageQueryPage> LoadSavedMessagesAsync(SavedMessagesRequest request, CancellationToken cancellationToken = default) =>
+            SavedHandler?.Invoke(request, cancellationToken) ?? Task.FromResult(new MessageQueryPage([], false, false, true));
 
         public Task<TopicsResult> GetTopicsAsync(TopicsRequest request, CancellationToken cancellationToken = default)
         {

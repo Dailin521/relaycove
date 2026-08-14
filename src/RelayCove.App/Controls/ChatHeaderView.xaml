@@ -29,7 +29,8 @@
                        FontSize="11" />
             </VerticalStackLayout>
 
-            <ImageButton Grid.Column="2"
+            <ImageButton x:Name="SearchButton"
+                         Grid.Column="2"
                          Source="icon_search.png"
                          Style="{StaticResource ImageIconButtonStyle}"
                          WidthRequest="39"

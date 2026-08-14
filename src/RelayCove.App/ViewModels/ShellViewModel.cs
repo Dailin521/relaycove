@@ -29,7 +29,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private readonly Dictionary<string, List<AttachmentDraftItem>> _attachmentDrafts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, long> _draftVersions = new(StringComparer.Ordinal);
     private readonly List<ConversationContactChoice> _allNewConversationChoices = [];
+    private IReadOnlyList<SearchResultItem> _serverSearchResults = [];
     private CancellationTokenSource? _navigationCancellation;
+    private CancellationTokenSource? _searchInputCancellation;
+    private long _searchInputGeneration;
+    private long? _searchBeforeMessageId;
+    private AccountId? _searchAccountId;
+    private long? _savedBeforeMessageId;
+    private CancellationTokenSource? _savedLoadCancellation;
+    private long _savedLoadGeneration;
+    private AccountId? _savedAccountId;
     private ClientState _projectedState = ClientState.Empty;
     private IReadOnlyList<TopicSummary> _loadedTopics = [];
     private long? _loadedTopicsChannelId;
@@ -73,6 +82,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ApplyUiPreferences(_uiPreferencesService.Current);
         _suppressUiPreferenceSave = false;
         _session.StateChanged += OnStateChanged;
+        if (_session is IMessageMutationObserver observer) observer.MessageMutationObserved += OnMessageMutationObserved;
         Project(_session.State);
     }
 
@@ -82,6 +92,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public ObservableCollection<ContactItem> KnownContacts { get; } = [];
     public ObservableCollection<MessageItem> Messages { get; } = [];
     public ObservableCollection<SearchResultItem> SearchResults { get; } = [];
+    public ObservableCollection<SavedMessageItem> SavedMessages { get; } = [];
     public ObservableCollection<AttachmentDraftItem> Attachments { get; } = [];
     public ObservableCollection<ConversationContactChoice> NewConversationChoices { get; } = [];
     public IReadOnlyList<EmojiChoice> EmojiChoices { get; } =
@@ -144,6 +155,21 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial SearchResultItem? SelectedSearchResult { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsSearchBusy { get; set; }
+
+    [ObservableProperty]
+    public partial string? SearchError { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsSavedLoading { get; set; }
+
+    [ObservableProperty]
+    public partial string? SavedError { get; set; }
+
+    [ObservableProperty]
+    public partial bool SavedRefreshSuggested { get; set; }
 
     [ObservableProperty]
     public partial bool IsComposerEmojiPickerOpen { get; set; }
@@ -333,6 +359,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool HasKnownContacts => KnownContacts.Count > 0;
     public bool IsMessagesSection => SelectedSection == ShellSection.Messages;
     public bool IsContactsSection => SelectedSection == ShellSection.Contacts;
+    public bool IsSavedSection => SelectedSection == ShellSection.Saved;
     public bool IsSettingsSection => SelectedSection == ShellSection.Settings;
     public bool IsWideLayout => LayoutMode == ShellLayoutMode.Wide;
     public bool IsCompactLayout => LayoutMode == ShellLayoutMode.Compact;
@@ -363,6 +390,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool HasMessageLoadError => !string.IsNullOrWhiteSpace(MessageLoadError);
     public bool HasSearchResults => SearchResults.Count > 0;
     public bool IsSearchEmpty => !HasSearchResults;
+    public bool HasSearchError => !string.IsNullOrWhiteSpace(SearchError);
+    public bool HasMoreSearchResults => _searchBeforeMessageId is not null;
+    public bool HasMoreSavedMessages => _savedBeforeMessageId is not null;
+    public bool HasSavedMessages => SavedMessages.Count > 0;
+    public bool IsSavedEmpty => !HasSavedMessages && !IsSavedLoading && string.IsNullOrWhiteSpace(SavedError);
+    public bool HasSavedError => !string.IsNullOrWhiteSpace(SavedError);
     public bool HasNewConversationChoices => NewConversationChoices.Count > 0;
     public bool IsNewConversationChoiceEmpty => !HasNewConversationChoices;
     public bool CanStartNewConversation => _allNewConversationChoices.Any(choice => choice.IsSelected);
@@ -913,9 +946,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         UnavailableFeatureMessage = null;
     }
 
-    [RelayCommand]
-    private void ShowSavedUnavailable() =>
-        UnavailableFeatureMessage = "已保存消息尚未接入真实 saved/starred 读取契约。";
+    [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
+    private async Task ShowSavedAsync(CancellationToken cancellationToken)
+    {
+        CloseTransientOverlays();
+        SelectedSection = ShellSection.Saved;
+        IsDetailsOpen = false;
+        await RefreshSavedAsync(cancellationToken).ConfigureAwait(false);
+    }
 
     [RelayCommand]
     private void ToggleAccountMenu()
@@ -955,11 +993,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         CloseTransientOverlays();
         IsSearchOpen = true;
         ProjectSearch();
+        ScheduleServerSearch(SearchQuery, immediate: false);
     }
 
     [RelayCommand]
     private void CloseSearch()
     {
+        CancelSearchInput();
+        _serverSearchResults = [];
         IsSearchOpen = false;
         SelectedSearchResult = null;
     }
@@ -977,11 +1018,97 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             return;
         }
         if (result.Conversation is null) return;
-        if (await ExecuteSessionActionAsync(() => _session.SelectConversationAsync(result.Conversation)))
+        Func<Task> open = result.MessageId is { } messageId
+            ? () => _session.OpenMessageAsync(result.Conversation, messageId)
+            : () => _session.SelectConversationAsync(result.Conversation);
+        if (await ExecuteSessionActionAsync(open))
         {
             SelectedSection = ShellSection.Messages;
             if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
             CloseSearch();
+        }
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task SearchNowAsync() => RunServerSearchAsync(SearchQuery, immediate: true, CancellationToken.None);
+
+    [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
+    private async Task LoadOlderSearchAsync(CancellationToken cancellationToken)
+    {
+        var query = SearchQuery.Trim();
+        if (_searchBeforeMessageId is null || string.IsNullOrWhiteSpace(query) || !IsSearchOpen) return;
+        CancelSearchInput();
+        var generation = ++_searchInputGeneration;
+        var accountId = _session.AccountId;
+        if (accountId is null) return;
+        try
+        {
+            IsSearchBusy = true;
+            SearchError = null;
+            var page = await _session.SearchMessagesAsync(query, _searchBeforeMessageId, 50, cancellationToken).ConfigureAwait(false);
+            if (!IsSearchCurrent(generation, accountId.Value) || !IsSearchOpen || !string.Equals(SearchQuery.Trim(), query, StringComparison.Ordinal)) return;
+            if (!page.FoundAnchor)
+            {
+                _searchBeforeMessageId = null;
+                SearchError = "搜索结果已变化，请刷新搜索。";
+                OnPropertyChanged(nameof(HasMoreSearchResults));
+                return;
+            }
+            var existing = _serverSearchResults.Select(result => result.Id).ToHashSet(StringComparer.Ordinal);
+            var older = page.Messages.OrderByDescending(message => message.Id).Select(ToSearchResult)
+                .Where(result => existing.Add(result.Id)).ToArray();
+            _serverSearchResults = _serverSearchResults.Concat(older).ToArray();
+            _searchBeforeMessageId = page.FoundOldest ? null : page.Messages.MinBy(message => message.Id)?.Id;
+            ProjectSearch();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (GatewayException exception)
+        {
+            if (IsSearchCurrent(generation, accountId.Value)) SearchError = DescribeGatewayFailure(exception);
+        }
+        finally
+        {
+            if (IsSearchCurrent(generation, accountId.Value))
+            {
+                IsSearchBusy = false;
+                OnPropertyChanged(nameof(HasMoreSearchResults));
+            }
+        }
+    }
+
+    [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
+    private async Task RefreshSavedAsync(CancellationToken cancellationToken) =>
+        await StartSavedLoadAsync(replace: true, cancellationToken).ConfigureAwait(false);
+
+    [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
+    private Task LoadOlderSavedAsync(CancellationToken cancellationToken) =>
+        _savedBeforeMessageId is null
+            ? Task.CompletedTask
+            : StartSavedLoadAsync(replace: false, cancellationToken);
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task OpenSavedMessageAsync(SavedMessageItem? message)
+    {
+        if (message is null) return;
+        if (await ExecuteSessionActionAsync(() => _session.OpenMessageAsync(message.Conversation, message.MessageId)))
+        {
+            SelectedSection = ShellSection.Messages;
+            if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
+        }
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task UnstarSavedMessageAsync(SavedMessageItem? message)
+    {
+        if (message is null) return;
+        if (await ExecuteSessionActionAsync(() => _session.SetMessageStarredAsync(message.MessageId, false)))
+        {
+            SavedMessages.Remove(message);
+            SavedRefreshSuggested = false;
+            OnPropertyChanged(nameof(HasSavedMessages));
+            OnPropertyChanged(nameof(IsSavedEmpty));
         }
     }
 
@@ -1552,7 +1679,17 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ComposerSelectionLength = Math.Clamp(ComposerSelectionLength, 0, value.Length - ComposerCursorPosition);
     }
 
-    partial void OnSearchQueryChanged(string value) => ProjectSearch();
+    partial void OnSearchQueryChanged(string value)
+    {
+        ProjectSearch();
+        ScheduleServerSearch(value, immediate: false);
+    }
+    partial void OnSearchErrorChanged(string? value) => OnPropertyChanged(nameof(HasSearchError));
+    partial void OnSavedErrorChanged(string? value)
+    {
+        OnPropertyChanged(nameof(HasSavedError));
+        OnPropertyChanged(nameof(IsSavedEmpty));
+    }
     partial void OnNewConversationQueryChanged(string value) => ProjectNewConversationChoices();
     partial void OnConversationTitleChanged(string value) =>
         OnPropertyChanged(nameof(ComposerPlaceholder));
@@ -1621,6 +1758,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(IsMessagesSection));
         OnPropertyChanged(nameof(IsContactsSection));
+        OnPropertyChanged(nameof(IsSavedSection));
         OnPropertyChanged(nameof(IsSettingsSection));
         NotifyLayoutProperties();
     }
@@ -1840,9 +1978,66 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void OnStateChanged(object? sender, ClientStateChangedEventArgs eventArgs) =>
         _dispatcher.Dispatch(() => Project(eventArgs.State));
 
+    private void OnMessageMutationObserved(object? sender, MessageMutationObservedEventArgs eventArgs) =>
+        _dispatcher.Dispatch(() =>
+        {
+            if (eventArgs.Deleted || eventArgs.IsStarred is false)
+            {
+                var ids = eventArgs.MessageIds.ToHashSet();
+                foreach (var saved in SavedMessages.Where(item => ids.Contains(item.MessageId)).ToArray())
+                {
+                    SavedMessages.Remove(saved);
+                }
+                OnPropertyChanged(nameof(HasSavedMessages));
+                OnPropertyChanged(nameof(IsSavedEmpty));
+            }
+            else if (eventArgs.IsStarred is true)
+            {
+                SavedRefreshSuggested = true;
+            }
+        });
+
     private void Project(ClientState state)
     {
         _projectedState = state;
+        if (_searchAccountId != _session.AccountId)
+        {
+            CancelSearchInput();
+            _searchAccountId = _session.AccountId;
+            _searchBeforeMessageId = null;
+            _serverSearchResults = [];
+            SearchError = null;
+            ProjectSearch();
+            OnPropertyChanged(nameof(HasMoreSearchResults));
+        }
+        if (_savedAccountId != _session.AccountId)
+        {
+            CancelSavedLoad();
+            _savedAccountId = _session.AccountId;
+            _savedBeforeMessageId = null;
+            SavedMessages.Clear();
+            SavedRefreshSuggested = false;
+            SavedError = null;
+            OnPropertyChanged(nameof(HasSavedMessages));
+            OnPropertyChanged(nameof(HasMoreSavedMessages));
+            OnPropertyChanged(nameof(IsSavedEmpty));
+        }
+        if (SavedMessages.Count > 0)
+        {
+            var savedIds = SavedMessages.Select(item => item.MessageId).ToHashSet();
+            foreach (var saved in SavedMessages.ToArray())
+            {
+                if (state.Messages.TryGetValue(saved.MessageId, out var message) && !message.IsStarred)
+                {
+                    SavedMessages.Remove(saved);
+                }
+            }
+            if (state.Messages.Values.Any(message => message.IsStarred && !savedIds.Contains(message.Id)))
+            {
+                SavedRefreshSuggested = true;
+            }
+            OnPropertyChanged(nameof(HasSavedMessages));
+        }
         IsLoggedIn = state.Connection.Status is
             RelayCove.Core.ConnectionStatus.Connected or
             RelayCove.Core.ConnectionStatus.Offline or
@@ -2045,20 +2240,199 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         return projected;
     }
 
+    private void ScheduleServerSearch(string query, bool immediate)
+    {
+        CancelSearchInput();
+        if (!IsSearchOpen || string.IsNullOrWhiteSpace(query))
+        {
+            _serverSearchResults = [];
+            IsSearchBusy = false;
+            SearchError = null;
+            return;
+        }
+        var cancellation = new CancellationTokenSource();
+        _searchInputCancellation = cancellation;
+        var generation = ++_searchInputGeneration;
+        var accountId = _session.AccountId;
+        if (accountId is null)
+        {
+            CancelSearchInput();
+            return;
+        }
+        _searchAccountId = accountId;
+        _ = RunServerSearchCoreAsync(query.Trim(), immediate, generation, accountId.Value, cancellation);
+    }
+
+    private async Task RunServerSearchAsync(string query, bool immediate, CancellationToken cancellationToken)
+    {
+        CancelSearchInput();
+        if (!IsSearchOpen || string.IsNullOrWhiteSpace(query)) return;
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _searchInputCancellation = cancellation;
+        var accountId = _session.AccountId;
+        if (accountId is null)
+        {
+            CancelSearchInput();
+            return;
+        }
+        _searchAccountId = accountId;
+        await RunServerSearchCoreAsync(query.Trim(), immediate, ++_searchInputGeneration, accountId.Value, cancellation).ConfigureAwait(false);
+    }
+
+    private async Task RunServerSearchCoreAsync(string query, bool immediate, long generation, AccountId accountId, CancellationTokenSource cancellation)
+    {
+        try
+        {
+            if (!immediate) await Task.Delay(TimeSpan.FromMilliseconds(300), cancellation.Token).ConfigureAwait(false);
+            if (!IsSearchCurrent(generation, accountId) || !IsSearchOpen) return;
+            IsSearchBusy = true;
+            SearchError = null;
+            _searchBeforeMessageId = null;
+            var page = await _session.SearchMessagesAsync(query, null, 50, cancellation.Token).ConfigureAwait(false);
+            if (!IsSearchCurrent(generation, accountId) || !IsSearchOpen || !string.Equals(SearchQuery.Trim(), query, StringComparison.Ordinal)) return;
+            _serverSearchResults = page.Messages.OrderByDescending(message => message.Id).Select(ToSearchResult).ToArray();
+            ProjectSearch();
+            _searchBeforeMessageId = page.FoundOldest ? null : page.Messages.MinBy(message => message.Id)?.Id;
+            OnPropertyChanged(nameof(HasMoreSearchResults));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (GatewayException exception)
+        {
+            if (IsSearchCurrent(generation, accountId)) SearchError = DescribeGatewayFailure(exception);
+        }
+        catch (Exception)
+        {
+            if (IsSearchCurrent(generation, accountId)) SearchError = "服务器搜索失败，请稍后重试。";
+        }
+        finally
+        {
+            if (IsSearchCurrent(generation, accountId)) IsSearchBusy = false;
+            if (ReferenceEquals(_searchInputCancellation, cancellation)) _searchInputCancellation = null;
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task StartSavedLoadAsync(bool replace, CancellationToken cancellationToken)
+    {
+        var prior = _savedLoadCancellation;
+        prior?.Cancel();
+        var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _savedLoadCancellation = linked;
+        var generation = ++_savedLoadGeneration;
+        var accountId = _session.AccountId;
+        if (accountId is null)
+        {
+            if (ReferenceEquals(_savedLoadCancellation, linked)) _savedLoadCancellation = null;
+            linked.Dispose();
+            return;
+        }
+        if (replace)
+        {
+            _savedBeforeMessageId = null;
+            SavedRefreshSuggested = false;
+        }
+        await LoadSavedPageAsync(replace, accountId.Value, generation, linked).ConfigureAwait(false);
+    }
+
+    private async Task LoadSavedPageAsync(
+        bool replace,
+        AccountId accountId,
+        long generation,
+        CancellationTokenSource cancellation)
+    {
+        try
+        {
+            IsSavedLoading = true;
+            SavedError = null;
+            var beforeMessageId = replace ? null : _savedBeforeMessageId;
+            var page = await _session.LoadSavedMessagesAsync(beforeMessageId, 50, cancellation.Token).ConfigureAwait(false);
+            if (!IsSavedLoadCurrent(accountId, generation)) return;
+            if (!replace && !page.FoundAnchor)
+            {
+                _savedBeforeMessageId = null;
+                SavedError = "已保存消息已变化，请刷新列表。";
+                OnPropertyChanged(nameof(HasMoreSavedMessages));
+                return;
+            }
+            var items = page.Messages.OrderByDescending(message => message.Id).Select(ToSavedMessage).ToArray();
+            if (replace)
+            {
+                Reconcile(SavedMessages, items, item => item.MessageId);
+            }
+            else
+            {
+                var known = SavedMessages.Select(item => item.MessageId).ToHashSet();
+                foreach (var item in items.Where(item => known.Add(item.MessageId))) SavedMessages.Add(item);
+            }
+            _savedBeforeMessageId = page.FoundOldest ? null : page.Messages.MinBy(message => message.Id)?.Id;
+            _savedAccountId = accountId;
+            OnPropertyChanged(nameof(HasSavedMessages));
+            OnPropertyChanged(nameof(HasMoreSavedMessages));
+            OnPropertyChanged(nameof(IsSavedEmpty));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (GatewayException exception)
+        {
+            if (IsSavedLoadCurrent(accountId, generation)) SavedError = DescribeGatewayFailure(exception);
+        }
+        catch (Exception)
+        {
+            if (IsSavedLoadCurrent(accountId, generation)) SavedError = "已保存消息读取失败，请稍后重试。";
+        }
+        finally
+        {
+            if (IsSavedLoadCurrent(accountId, generation))
+            {
+                IsSavedLoading = false;
+                if (ReferenceEquals(_savedLoadCancellation, cancellation)) _savedLoadCancellation = null;
+                OnPropertyChanged(nameof(IsSavedEmpty));
+            }
+            cancellation.Dispose();
+        }
+    }
+
+    private bool IsSavedLoadCurrent(AccountId accountId, long generation) =>
+        generation == _savedLoadGeneration && _session.AccountId == accountId;
+
+    private bool IsSearchCurrent(long generation, AccountId accountId) =>
+        generation == _searchInputGeneration && _session.AccountId == accountId;
+
+    private void CancelSavedLoad()
+    {
+        _savedLoadGeneration++;
+        _savedLoadCancellation?.Cancel();
+        _savedLoadCancellation = null;
+    }
+
+    private SearchResultItem ToSearchResult(ChatMessage message)
+    {
+        var sender = message.SenderDisplayName ?? _projectedState.Users.GetValueOrDefault(message.SenderId)?.FullName ?? $"用户 {message.SenderId}";
+        return new SearchResultItem($"server-message:{message.Id}", "服务器消息", sender, TruncateForSearch(message.Content), message.Conversation, message.Id);
+    }
+
+    private SavedMessageItem ToSavedMessage(ChatMessage message)
+    {
+        var sender = message.SenderDisplayName ?? _projectedState.Users.GetValueOrDefault(message.SenderId)?.FullName ?? $"用户 {message.SenderId}";
+        return new SavedMessageItem(message.Id, message.Conversation, sender, TruncateForSearch(message.Content), message.Timestamp.LocalDateTime.ToString("g"));
+    }
+
+    private void CancelSearchInput()
+    {
+        _searchInputCancellation?.Cancel();
+        _searchInputCancellation = null;
+        _searchInputGeneration++;
+    }
+
     private void ProjectSearch()
     {
         var query = SearchQuery.Trim();
-        if (query.Length == 0)
-        {
-            Reconcile(SearchResults, [], item => item.Id);
-            OnPropertyChanged(nameof(HasSearchResults));
-            OnPropertyChanged(nameof(IsSearchEmpty));
-            return;
-        }
-
         var results = new List<SearchResultItem>();
         foreach (var channel in _projectedState.Subscriptions.Values
-                     .Where(channel => channel.IsActive && Contains(channel.Name, query))
+                     .Where(channel => channel.IsActive && (query.Length == 0 || Contains(channel.Name, query)))
                      .OrderBy(channel => channel.Name, StringComparer.Ordinal))
         {
             results.Add(new SearchResultItem(
@@ -2069,7 +2443,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 ChannelId: channel.ChannelId));
         }
         foreach (var topic in _projectedState.Topics.Values
-                     .Where(topic => Contains(topic.Topic, query) ||
+                     .Where(topic => query.Length == 0 || Contains(topic.Topic, query) ||
                                      Contains(_projectedState.Subscriptions.GetValueOrDefault(topic.ChannelId)?.Name, query))
                      .OrderByDescending(topic => topic.MaxMessageId)
                      .ThenBy(topic => topic.Topic, StringComparer.Ordinal))
@@ -2084,7 +2458,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 conversation));
         }
         foreach (var user in _projectedState.Users.Values
-                     .Where(user => user.IsActive && Contains(user.FullName, query))
+                     .Where(user => user.IsActive && (query.Length == 0 || Contains(user.FullName, query)))
                      .OrderBy(user => user.FullName, StringComparer.Ordinal)
                      .ThenBy(user => user.UserId))
         {
@@ -2099,7 +2473,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 conversation));
         }
         foreach (var message in _projectedState.Messages.Values
-                     .Where(message => Contains(message.Content, query) ||
+                     .Where(message => query.Length == 0 || Contains(message.Content, query) ||
                                        Contains(message.SenderDisplayName, query))
                      .OrderByDescending(message => message.Id))
         {
@@ -2113,7 +2487,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 message.Id));
         }
 
-        Reconcile(SearchResults, results.Take(50), item => item.Id);
+        Reconcile(SearchResults, _serverSearchResults.Concat(results.Take(50)), item => item.Id);
         OnPropertyChanged(nameof(HasSearchResults));
         OnPropertyChanged(nameof(IsSearchEmpty));
     }
@@ -2741,7 +3115,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         if (_disposed) return;
         _disposed = true;
         CancelNavigation();
+        CancelSearchInput();
         ClearNewConversationChoices();
         _session.StateChanged -= OnStateChanged;
+        if (_session is IMessageMutationObserver observer) observer.MessageMutationObserved -= OnMessageMutationObserved;
     }
 }

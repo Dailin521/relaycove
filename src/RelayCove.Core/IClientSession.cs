@@ -16,6 +16,12 @@ public interface IClientSession
     Task LogoutAsync(CancellationToken cancellationToken = default);
     Task SelectConversationAsync(ConversationKey conversation, CancellationToken cancellationToken = default);
     Task LoadOlderAsync(CancellationToken cancellationToken = default);
+    Task<MessageQueryPage> SearchMessagesAsync(string query, long? beforeMessageId, int limit, CancellationToken cancellationToken = default) =>
+        Task.FromException<MessageQueryPage>(new NotSupportedException("Server message search is not available."));
+    Task<MessageQueryPage> LoadSavedMessagesAsync(long? beforeMessageId, int limit, CancellationToken cancellationToken = default) =>
+        Task.FromException<MessageQueryPage>(new NotSupportedException("Saved messages are not available."));
+    Task OpenMessageAsync(ConversationKey conversation, long messageId, CancellationToken cancellationToken = default) =>
+        Task.FromException(new NotSupportedException("Opening a message is not available."));
     Task<IReadOnlyList<TopicSummary>> LoadTopicsAsync(long channelId, CancellationToken cancellationToken = default);
     Task SendAsync(string content, CancellationToken cancellationToken = default);
     Task SetReactionAsync(long messageId, EmojiReactionIdentity reaction, bool add, CancellationToken cancellationToken = default);

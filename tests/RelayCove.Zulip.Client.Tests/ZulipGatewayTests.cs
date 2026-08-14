@@ -137,6 +137,42 @@ public sealed class ZulipGatewayTests
     }
 
     [Fact]
+    public async Task SearchMessages_UsesSearchNarrowRawMarkdownAndDoesNotExposeMatchHtml()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"messages":[{"id":44,"type":"stream","stream_id":42,"subject":"topic","sender_id":9,"content":"**raw**","match_content":"<span>raw</span>","match_subject":"<span>topic</span>","timestamp":100,"flags":[]}],"found_oldest":false,"found_newest":true,"found_anchor":true}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.SearchMessagesAsync(new MessageSearchRequest(Credentials, "raw words", 90, 50));
+
+        var query = ParseQuery(Assert.Single(handler.Requests).Uri!);
+        Assert.Equal("[{\"operator\":\"search\",\"operand\":\"raw words\"}]", query["narrow"]);
+        Assert.Equal("90", query["anchor"]);
+        Assert.Equal("false", query["include_anchor"]);
+        Assert.Equal("50", query["num_before"]);
+        Assert.Equal("false", query["apply_markdown"]);
+        Assert.Equal("**raw**", Assert.Single(result.Messages).Content);
+        Assert.True(result.FoundAnchor);
+    }
+
+    [Fact]
+    public async Task LoadSavedMessages_UsesStarredNarrowAndSupportsPaging()
+    {
+        using var handler = new RecordingHandler(Json("""{"messages":[],"found_oldest":true,"found_newest":false,"found_anchor":false}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.LoadSavedMessagesAsync(new SavedMessagesRequest(Credentials, 77, 25));
+
+        var query = ParseQuery(Assert.Single(handler.Requests).Uri!);
+        Assert.Equal("[{\"operator\":\"is\",\"operand\":\"starred\"}]", query["narrow"]);
+        Assert.Equal("77", query["anchor"]);
+        Assert.Equal("25", query["num_before"]);
+        Assert.Equal("false", query["apply_markdown"]);
+        Assert.False(result.FoundAnchor);
+    }
+
+    [Fact]
     public async Task Mark_read_uses_a_json_encoded_narrow()
     {
         using var handler = new RecordingHandler(Json("""{"result":"success"}"""));

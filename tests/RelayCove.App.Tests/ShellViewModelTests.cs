@@ -24,6 +24,68 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task LoadOlderSaved_WhenServerAnchorIsMissing_PreservesRowsAndRequiresRefresh()
+    {
+        var account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 10);
+        var conversation = new DirectMessage([20]);
+        var calls = 0;
+        var session = new FakeSession
+        {
+            Account = account,
+            SavedMessagesAction = (_, _, _) =>
+            {
+                calls++;
+                return calls == 1
+                    ? Task.FromResult(new MessageQueryPage([new ChatMessage(50, conversation, 20, "saved", DateTimeOffset.UnixEpoch)], false, true, true))
+                    : Task.FromResult(new MessageQueryPage([], false, true, false));
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await ((IAsyncRelayCommand)viewModel.ShowSavedCommand).ExecuteAsync(null);
+        await ((IAsyncRelayCommand)viewModel.LoadOlderSavedCommand).ExecuteAsync(null);
+
+        Assert.Single(viewModel.SavedMessages);
+        Assert.Equal("已保存消息已变化，请刷新列表。", viewModel.SavedError);
+        Assert.False(viewModel.HasMoreSavedMessages);
+    }
+
+    [Fact]
+    public async Task LoadOlderSearch_WhenTwoServerPagesExist_KeepsBothPagesVisible()
+    {
+        var calls = 0;
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 10),
+            SearchMessagesAction = (_, beforeMessageId, _, _) =>
+            {
+                calls++;
+                var ids = beforeMessageId is null
+                    ? Enumerable.Range(51, 50)
+                    : Enumerable.Range(1, 50);
+                var messages = ids.Select(id => new ChatMessage(
+                    id,
+                    new DirectMessage([20]),
+                    20,
+                    $"server {id}",
+                    DateTimeOffset.UnixEpoch)).ToArray();
+                return Task.FromResult(new MessageQueryPage(messages, beforeMessageId is not null, true, true));
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenSearchCommand.Execute(null);
+        viewModel.SearchQuery = "server";
+
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
+        await ((IAsyncRelayCommand)viewModel.LoadOlderSearchCommand).ExecuteAsync(null);
+
+        Assert.Equal(2, calls);
+        Assert.Equal(100, viewModel.SearchResults.Count);
+        Assert.Contains(viewModel.SearchResults, item => item.Id == "server-message:1");
+        Assert.Contains(viewModel.SearchResults, item => item.Id == "server-message:100");
+    }
+
+    [Fact]
     public void SessionStateChanged_WhenNoConversationOrMessages_ProjectsEmptyState()
     {
         var session = new FakeSession();
@@ -1283,6 +1345,8 @@ public sealed class ShellViewModelTests
         public Func<long, CancellationToken, Task>? UnsubscribeChannelAction { get; set; }
         public Func<long, CancellationToken, Task<IReadOnlyList<TopicSummary>>>? LoadTopicsAction { get; set; }
         public Func<CancellationToken, Task>? LoadOlderAction { get; set; }
+        public Func<long?, int, CancellationToken, Task<MessageQueryPage>>? SavedMessagesAction { get; set; }
+        public Func<string, long?, int, CancellationToken, Task<MessageQueryPage>>? SearchMessagesAction { get; set; }
         public int LoginCalls { get; private set; }
         public List<string> SentContents { get; } = [];
         public int UploadCalls { get; private set; }
@@ -1321,6 +1385,10 @@ public sealed class ShellViewModelTests
         }
         public Task<IReadOnlyList<TopicSummary>> LoadTopicsAsync(long channelId, CancellationToken cancellationToken = default) =>
             LoadTopicsAction?.Invoke(channelId, cancellationToken) ?? Task.FromResult<IReadOnlyList<TopicSummary>>([]);
+        public Task<MessageQueryPage> LoadSavedMessagesAsync(long? beforeMessageId, int limit, CancellationToken cancellationToken = default) =>
+            SavedMessagesAction?.Invoke(beforeMessageId, limit, cancellationToken) ?? Task.FromResult(new MessageQueryPage([], false, true, true));
+        public Task<MessageQueryPage> SearchMessagesAsync(string query, long? beforeMessageId, int limit, CancellationToken cancellationToken = default) =>
+            SearchMessagesAction?.Invoke(query, beforeMessageId, limit, cancellationToken) ?? Task.FromResult(new MessageQueryPage([], false, true, true));
 
         public Task SendAsync(string content, CancellationToken cancellationToken = default)
         {

@@ -23,6 +23,9 @@ public partial class MainPage : ContentPage
 
     public ShellViewModel ViewModel => _viewModel;
 
+    private void OnSearchCompleted(object? sender, EventArgs eventArgs) =>
+        _viewModel.SearchNowCommand.Execute(null);
+
     private static void OnEmojiPointerEntered(object? sender, Microsoft.Maui.Controls.PointerEventArgs eventArgs)
     {
         if (sender is BindableObject { BindingContext: EmojiChoice choice }) choice.IsPointerOver = true;
@@ -88,6 +91,9 @@ public partial class MainPage : ContentPage
                 break;
             case nameof(ShellViewModel.IsSearchOpen) when _viewModel.IsSearchOpen:
                 Dispatcher.Dispatch(() => SearchEntry.Focus());
+                break;
+            case nameof(ShellViewModel.IsSearchOpen):
+                Dispatcher.Dispatch(ChatHeader.FocusSearchButton);
                 break;
             case nameof(ShellViewModel.IsAccountMenuOpen) when _viewModel.IsAccountMenuOpen:
                 Dispatcher.Dispatch(() => FirstAccountMenuButton.Focus());
@@ -176,9 +182,9 @@ public partial class MainPage : ContentPage
     private bool HandleSearchKey(VirtualKey key)
     {
         if (_viewModel.SearchResults.Count == 0) return false;
-        if (key == VirtualKey.Enter)
+        if (key == VirtualKey.Enter && _viewModel.SelectedSearchResult is not null)
         {
-            _viewModel.SelectSearchResultCommand.Execute(_viewModel.SelectedSearchResult ?? _viewModel.SearchResults[0]);
+            _viewModel.SelectSearchResultCommand.Execute(_viewModel.SelectedSearchResult);
             return true;
         }
         var current = _viewModel.SelectedSearchResult is { } selected

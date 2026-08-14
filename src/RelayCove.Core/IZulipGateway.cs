@@ -7,6 +7,12 @@ public interface IZulipGateway
     Task<RegisterResult> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default);
     Task<EventBatch> GetEventsAsync(GetEventsRequest request, CancellationToken cancellationToken = default);
     Task<HistoryResult> GetHistoryAsync(HistoryRequest request, CancellationToken cancellationToken = default);
+    Task<HistoryResult> GetMessagesAroundAsync(MessageAroundRequest request, CancellationToken cancellationToken = default) =>
+        Task.FromException<HistoryResult>(new NotSupportedException("Loading message context is not available."));
+    Task<MessageQueryPage> SearchMessagesAsync(MessageSearchRequest request, CancellationToken cancellationToken = default) =>
+        Task.FromException<MessageQueryPage>(new NotSupportedException("Server message search is not available."));
+    Task<MessageQueryPage> LoadSavedMessagesAsync(SavedMessagesRequest request, CancellationToken cancellationToken = default) =>
+        Task.FromException<MessageQueryPage>(new NotSupportedException("Saved messages are not available."));
     Task<TopicsResult> GetTopicsAsync(TopicsRequest request, CancellationToken cancellationToken = default);
     Task<SendResult> SendAsync(SendRequest request, CancellationToken cancellationToken = default);
     Task SetReactionAsync(SetReactionRequest request, CancellationToken cancellationToken = default);

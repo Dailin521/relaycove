@@ -8,4 +8,5 @@ public partial class ChatHeaderView : ContentView
     }
 
     internal void FocusDetailsButton() => DetailsButton.Focus();
+    internal void FocusSearchButton() => SearchButton.Focus();
 }
