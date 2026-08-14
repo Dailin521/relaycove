@@ -1,4 +1,3 @@
-#if DEBUG
 using RelayCove.Core;
 
 namespace RelayCove.App.Services;
@@ -6,104 +5,158 @@ namespace RelayCove.App.Services;
 internal sealed class NativeShellPreviewSession : IClientSession
 {
     private const string PreviewVariable = "RELAYCOVE_NATIVE_UI_PREVIEW";
+    private const string PreviewSceneVariable = "RELAYCOVE_NATIVE_UI_PREVIEW_SCENE";
+    private const string PreviewThemeVariable = "RELAYCOVE_NATIVE_UI_PREVIEW_THEME";
+    private const string PreviewWidthVariable = "RELAYCOVE_NATIVE_UI_PREVIEW_WIDTH";
+    private const string PreviewHeightVariable = "RELAYCOVE_NATIVE_UI_PREVIEW_HEIGHT";
+    private const long CurrentUser = 6;
     private readonly IReadOnlyList<ConversationKey> _recentDirectMessages;
     private ClientState _state;
     private ConversationKey? _selectedConversation;
 
     public NativeShellPreviewSession()
     {
-        var release = new ChannelTopic(4, "release");
-        var design = new ChannelTopic(5, "native-ui");
-        var direct = new DirectMessage([8]);
-        var group = new DirectMessage([8, 9]);
+        var uiDesign = new ChannelTopic(6, "UI 设计讨论");
+        var windowsClient = new ChannelTopic(12, "Windows 客户端");
+        var productRoadmap = new ChannelTopic(3, "产品路线图");
+        var release = new ChannelTopic(1, "版本发布");
+        var mayaDirect = new DirectMessage([9]);
+        var alexDirect = new DirectMessage([8]);
+        var danielDirect = new DirectMessage([11]);
+        var sarahDirect = new DirectMessage([7]);
         var self = new DirectMessage([]);
-        var timestamp = new DateTimeOffset(2026, 8, 12, 10, 0, 0, TimeSpan.FromHours(8));
+        var today = DateTime.Today;
+        var timestamp = AtLocalTime(today, 9, 28);
+        var yesterday = today.AddDays(-1);
+        var previousSunday = today.AddDays(-DaysSincePreviousSunday(today.DayOfWeek));
         var thumbsUp = new EmojiReactionIdentity("+1", "1f44d", "unicode_emoji");
-        var celebration = new EmojiReactionIdentity("tada", "1f389", "unicode_emoji");
 
         _state = new ClientState(
             messages: new Dictionary<long, ChatMessage>
             {
                 [101] = new ChatMessage(
                     101,
-                    release,
-                    7,
-                    "Stage 22M 使用纯原生 MAUI 组件，并直接投影 IClientSession 状态。",
+                    uiDesign,
+                    9,
+                    "顶部按微信逻辑收敛，只保留置顶、最小化、最大化和关闭。",
                     timestamp,
                     isRead: true,
-                    senderDisplayName: "Ada",
-                    senderAvatarUrl: "/user_avatars/7/avatar.png",
-                    isStarred: true,
-                    reactions:
-                    [
-                        new EmojiReaction(thumbsUp, 7, "Ada"),
-                        new EmojiReaction(thumbsUp, 8, "Bea"),
-                        new EmojiReaction(celebration, 9, "Chen")
-                    ]),
+                    senderDisplayName: "Maya Chen"),
                 [102] = new ChatMessage(
                     102,
-                    release,
-                    8,
-                    "@_**Ada|7** [said](https://preview.invalid/#narrow/near/101):\n```quote\nStage 22M 使用纯原生 MAUI 组件，并直接投影 IClientSession 状态。\n```\n\n当前预览完全离线，不连接真实 Realm。",
-                    timestamp.AddMinutes(4),
-                    senderDisplayName: "Bea",
-                    senderAvatarUrl: "/user_avatars/8/avatar.png"),
-                [105] = new ChatMessage(
-                    105,
-                    release,
+                    uiDesign,
                     9,
-                    "图片与附件由受控同 Realm 媒体层读取。\n![native-shell.png](https://preview.invalid/user_uploads/preview/native-shell.png)\n[interaction-spec.pdf](https://preview.invalid/user_uploads/preview/interaction-spec.pdf)",
-                    timestamp.AddMinutes(6),
-                    senderDisplayName: "Chen",
-                    senderAvatarUrl: "/user_avatars/9/avatar.png"),
-                [103] = new ChatMessage(103, direct, 8, "1024 × 768 下详情默认收起。", timestamp.AddMinutes(8), senderDisplayName: "Bea"),
-                [104] = new ChatMessage(104, design, 9, "浅色、深色与键盘焦点使用同一组原生 Token。", timestamp.AddMinutes(12), senderDisplayName: "Chen")
+                    "中栏不要再加额外工具区，只要搜索、新建，以及清楚区分的频道和私信列表。",
+                    timestamp.AddMinutes(1),
+                    isRead: true,
+                    senderDisplayName: "Maya Chen",
+                    reactions:
+                    [
+                        new EmojiReaction(thumbsUp, 9, "Maya Chen"),
+                        new EmojiReaction(thumbsUp, 8, "Alex Wu"),
+                        new EmojiReaction(thumbsUp, 11, "Daniel Okafor")
+                    ]),
+                [103] = new ChatMessage(
+                    103,
+                    uiDesign,
+                    CurrentUser,
+                    "@_**Maya Chen|9** [said](https://preview.invalid/#narrow/near/102):\n```quote\n只要搜索、新建，以及频道和私信列表\n```\n\n可以。私信区直接列出当前工作区可靠获知的成员，频道仍保留话题上下文。",
+                    timestamp.AddMinutes(13),
+                    isRead: true,
+                    senderDisplayName: "林远"),
+                [104] = new ChatMessage(
+                    104,
+                    uiDesign,
+                    8,
+                    "我会让失败发送保持显式恢复，不做自动重试。\n![relaycove-team-avatars.png](https://preview.invalid/user_uploads/relaycove-team-avatars.png)",
+                    timestamp.AddMinutes(18),
+                    senderDisplayName: "Alex Wu"),
+                [201] = new ChatMessage(201, windowsClient, 8, "类型检查和生产构建已经纳入本地验证。", AtLocalTime(today, 10, 39), true, "Alex Wu"),
+                [202] = new ChatMessage(202, windowsClient, CurrentUser, "收到，浏览器测试继续只使用 mock HTTP。", AtLocalTime(today, 10, 42), true, "林远"),
+                [301] = new ChatMessage(301, productRoadmap, 7, "Web 是正式产品，MAUI 在交互版本冻结后原生复刻。", AtLocalTime(yesterday, 17, 40), true, "Sarah Li"),
+                [401] = new ChatMessage(401, release, 11, "本轮不推送、不发布，也不触发真实消息写入。", AtLocalTime(previousSunday, 18, 22), true, "Daniel Okafor"),
+                [501] = new ChatMessage(501, mayaDirect, 9, "我把下一轮检查项整理好了", AtLocalTime(today, 9, 56), true, "Maya Chen"),
+                [502] = new ChatMessage(502, alexDirect, 8, "发送状态那块可以开始联调", AtLocalTime(today, 9, 31), senderDisplayName: "Alex Wu"),
+                [503] = new ChatMessage(503, danielDirect, 11, "今晚跑一轮 Windows 11 验收", AtLocalTime(yesterday, 18, 10), true, "Daniel Okafor"),
+                [504] = new ChatMessage(504, sarahDirect, 7, "范围说明我补到文档里了", AtLocalTime(yesterday, 17, 20), true, "Sarah Li"),
+                [505] = new ChatMessage(505, self, CurrentUser, "备忘：逐个审查设置和失败状态", AtLocalTime(previousSunday, 12, 0), true, "林远")
             },
             subscriptions: new Dictionary<long, Subscription>
             {
-                [4] = new Subscription(4, "engineering"),
-                [5] = new Subscription(5, "product-design")
+                [6] = new Subscription(6, "design"),
+                [12] = new Subscription(12, "engineering"),
+                [3] = new Subscription(3, "product"),
+                [1] = new Subscription(1, "release")
             },
             users: new Dictionary<long, UserProfile>
             {
-                [7] = new UserProfile(7, "Ada", avatarUrl: "/user_avatars/7/avatar.png"),
-                [8] = new UserProfile(8, "Bea", avatarUrl: "/user_avatars/8/avatar.png"),
-                [9] = new UserProfile(9, "Chen", avatarUrl: "/user_avatars/9/avatar.png", isBot: true)
+                [CurrentUser] = new UserProfile(CurrentUser, "林远"),
+                [9] = new UserProfile(9, "Maya Chen"),
+                [8] = new UserProfile(8, "Alex Wu"),
+                [11] = new UserProfile(11, "Daniel Okafor"),
+                [7] = new UserProfile(7, "Sarah Li")
             },
             topics: new Dictionary<string, TopicSummary>
             {
-                [release.CanonicalKey] = new TopicSummary(4, "release", 105),
-                [design.CanonicalKey] = new TopicSummary(5, "native-ui", 104)
-            },
-            outbox: new Dictionary<string, OutboxEntry>
-            {
-                ["1"] = new OutboxEntry("1", release, "等待服务器事件的只读状态示例", timestamp.AddMinutes(16), OutboxState.Waiting)
+                [uiDesign.CanonicalKey] = new TopicSummary(6, "UI 设计讨论", 104),
+                [windowsClient.CanonicalKey] = new TopicSummary(12, "Windows 客户端", 202),
+                [productRoadmap.CanonicalKey] = new TopicSummary(3, "产品路线图", 301),
+                [release.CanonicalKey] = new TopicSummary(1, "版本发布", 401)
             },
             unread: new UnreadState(
                 new Dictionary<string, int>
                 {
-                    [release.CanonicalKey] = 2,
-                    [direct.CanonicalKey] = 1
+                    [windowsClient.CanonicalKey] = 5,
+                    [productRoadmap.CanonicalKey] = 2,
+                    [alexDirect.CanonicalKey] = 1
                 }),
             connection: new ConnectionState(ConnectionStatus.Connected, "native_ui_preview"));
-        _selectedConversation = release;
-        _recentDirectMessages = [direct, group, self];
+        _selectedConversation = uiDesign;
+        _recentDirectMessages = [mayaDirect, alexDirect, danielDirect, sarahDirect, self];
     }
 
     public static bool IsRequested =>
         string.Equals(Environment.GetEnvironmentVariable(PreviewVariable), "1", StringComparison.Ordinal);
 
+    public static string RequestedScene =>
+        Environment.GetEnvironmentVariable(PreviewSceneVariable)?.Trim().ToLowerInvariant() ?? "shell";
+
+    public static string RequestedTheme =>
+        Environment.GetEnvironmentVariable(PreviewThemeVariable)?.Trim().ToLowerInvariant() ?? "light";
+
+    public static int RequestedWidth => ParsePreviewDimension(
+        Environment.GetEnvironmentVariable(PreviewWidthVariable),
+        defaultValue: 1440,
+        minimum: 480,
+        maximum: 3840);
+
+    public static int RequestedHeight => ParsePreviewDimension(
+        Environment.GetEnvironmentVariable(PreviewHeightVariable),
+        defaultValue: 900,
+        minimum: 560,
+        maximum: 2160);
+
     public AccountId? AccountId { get; } = RelayCove.Core.AccountId.Create(
         RealmEndpoint.Parse("https://preview.invalid"),
-        7);
+        CurrentUser);
 
     public RealmEndpoint? ActiveRealm { get; } = RealmEndpoint.Parse("https://preview.invalid");
-    public long? CurrentUserId => 7;
+    public long? CurrentUserId => CurrentUser;
     public long MaxFileUploadBytes => 10L * 1024 * 1024;
 
     public ClientState State => _state;
     public ConversationKey? SelectedConversation => _selectedConversation;
+    public ConversationHistoryState HistoryState => new(
+        _selectedConversation,
+        1,
+        false,
+        true,
+        false,
+        _state.Messages.Values.Where(message => message.Conversation == _selectedConversation).Select(message => (long?)message.Id).Min(),
+        null);
     public IReadOnlyList<ConversationKey> RecentDirectMessages => _recentDirectMessages;
+    internal long UnreadDividerAfterMessageId => 102;
+    internal string UnreadDividerLabel => "4 条未读消息";
     public event EventHandler<ClientStateChangedEventArgs>? StateChanged;
 
     public Task<bool> RestoreAsync(CancellationToken cancellationToken = default)
@@ -150,7 +203,7 @@ internal sealed class NativeShellPreviewSession : IClientSession
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
         var conversation = _selectedConversation ?? throw new InvalidOperationException("No conversation is selected.");
         var id = _state.Messages.Keys.DefaultIfEmpty(100).Max() + 1;
-        var message = new ChatMessage(id, conversation, 7, content, DateTimeOffset.Now, true, "Ada");
+        var message = new ChatMessage(id, conversation, CurrentUser, content, DateTimeOffset.Now, true, "林远");
         _state = DomainReducer.Apply(_state, new MessageUpsertEvent(message, Source: DomainEventSource.Local));
         Publish();
         return Task.CompletedTask;
@@ -165,7 +218,7 @@ internal sealed class NativeShellPreviewSession : IClientSession
         cancellationToken.ThrowIfCancellationRequested();
         _state = DomainReducer.Apply(_state, new MessageReactionChangedEvent(
             messageId,
-            new EmojiReaction(reaction, 7, "Ada"),
+            new EmojiReaction(reaction, CurrentUser, "林远"),
             add,
             Source: DomainEventSource.Local));
         Publish();
@@ -223,6 +276,20 @@ internal sealed class NativeShellPreviewSession : IClientSession
         return Task.FromResult(new RealmMediaResult(pixel, "image/png"));
     }
 
+    public Task UnsubscribeChannelAsync(long channelId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _state = DomainReducer.Apply(
+            _state,
+            new SubscriptionRemovedEvent(channelId, Source: DomainEventSource.Local));
+        if (SelectedConversation is ChannelTopic selected && selected.ChannelId == channelId)
+        {
+            _selectedConversation = null;
+        }
+        Publish();
+        return Task.CompletedTask;
+    }
+
     public Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default) =>
         Task.FromException(new InvalidOperationException("The native UI preview cannot change read state."));
 
@@ -240,5 +307,21 @@ internal sealed class NativeShellPreviewSession : IClientSession
     }
 
     private void Publish() => StateChanged?.Invoke(this, new ClientStateChangedEventArgs(_state));
+
+    private static DateTimeOffset AtLocalTime(DateTime date, int hour, int minute)
+    {
+        var local = DateTime.SpecifyKind(date.Date.AddHours(hour).AddMinutes(minute), DateTimeKind.Unspecified);
+        return new DateTimeOffset(local, TimeZoneInfo.Local.GetUtcOffset(local));
+    }
+
+    private static int DaysSincePreviousSunday(DayOfWeek dayOfWeek)
+    {
+        var days = (int)dayOfWeek;
+        return days == 0 ? 7 : days;
+    }
+
+    internal static int ParsePreviewDimension(string? value, int defaultValue, int minimum, int maximum) =>
+        int.TryParse(value, out var parsed) && parsed >= minimum && parsed <= maximum
+            ? parsed
+            : defaultValue;
 }
-#endif

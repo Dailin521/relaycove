@@ -224,7 +224,93 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         return new HistoryResult(
             GetArray(root, "messages").Select(item => ToMessage(item, request.Credentials.UserId)).Where(static item => item is not null).Cast<ChatMessage>().ToArray(),
             GetBoolean(root, "found_oldest") ?? false,
-            GetBoolean(root, "found_newest") ?? false);
+            GetBoolean(root, "found_newest") ?? false,
+            GetBoolean(root, "found_anchor") ?? request.AnchorMessageId is null);
+    }
+
+    public async Task<HistoryResult> GetMessagesAroundAsync(
+        MessageAroundRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.MessageId <= 0) throw new ArgumentOutOfRangeException(nameof(request));
+        if (request.BeforeCount is < 0 or > 50 || request.AfterCount is < 0 or > 50)
+            throw new ArgumentOutOfRangeException(nameof(request));
+        var query = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["narrow"] = SerializeNarrow(request.Conversation, request.Credentials.UserId),
+            ["anchor"] = request.MessageId.ToString(CultureInfo.InvariantCulture),
+            ["include_anchor"] = "true",
+            ["num_before"] = request.BeforeCount.ToString(CultureInfo.InvariantCulture),
+            ["num_after"] = request.AfterCount.ToString(CultureInfo.InvariantCulture),
+            ["apply_markdown"] = "false",
+            ["client_gravatar"] = "false",
+            ["allow_empty_topic_name"] = "true"
+        };
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "messages", query, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        var root = document.RootElement;
+        return new HistoryResult(
+            GetArray(root, "messages").Select(item => ToMessage(item, request.Credentials.UserId)).Where(static item => item is not null).Cast<ChatMessage>().ToArray(),
+            GetBoolean(root, "found_oldest") ?? false,
+            GetBoolean(root, "found_newest") ?? false,
+            GetBoolean(root, "found_anchor") ?? false);
+    }
+
+    private async Task<MessageQueryPage> GetMessagesPageAsync(
+        CredentialEnvelope credentials,
+        string narrow,
+        long? beforeMessageId,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        if (limit is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(limit));
+        var query = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["narrow"] = narrow,
+            ["anchor"] = beforeMessageId?.ToString(CultureInfo.InvariantCulture) ?? "newest",
+            ["include_anchor"] = "false",
+            ["num_before"] = limit.ToString(CultureInfo.InvariantCulture),
+            ["num_after"] = "0",
+            ["apply_markdown"] = "false",
+            ["client_gravatar"] = "false",
+            ["allow_empty_topic_name"] = "true"
+        };
+        using var response = await SendAsync(credentials.Realm, HttpMethod.Get, "messages", query, credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        var root = document.RootElement;
+        return new MessageQueryPage(
+            GetArray(root, "messages").Select(item => ToMessage(item, credentials.UserId)).Where(static item => item is not null).Cast<ChatMessage>().ToArray(),
+            GetBoolean(root, "found_oldest") ?? false,
+            GetBoolean(root, "found_newest") ?? false,
+            GetBoolean(root, "found_anchor") ?? beforeMessageId is null);
+    }
+
+    public Task<MessageQueryPage> SearchMessagesAsync(
+        MessageSearchRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(request.Query)) throw new ArgumentException("A search query is required.", nameof(request));
+        return GetMessagesPageAsync(
+            request.Credentials,
+            SerializeTerms([NarrowTerm("search", request.Query)]),
+            request.BeforeMessageId,
+            request.Limit,
+            cancellationToken);
+    }
+
+    public Task<MessageQueryPage> LoadSavedMessagesAsync(
+        SavedMessagesRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return GetMessagesPageAsync(
+            request.Credentials,
+            SerializeTerms([NarrowTerm("is", "starred")]),
+            request.BeforeMessageId,
+            request.Limit,
+            cancellationToken);
     }
 
     public async Task<TopicsResult> GetTopicsAsync(TopicsRequest request, CancellationToken cancellationToken = default)
@@ -427,6 +513,64 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         }
         var bytes = await ReadBytesWithLimitAsync(response.Content, maximumBytes, cancellationToken).ConfigureAwait(false);
         return new RealmMediaResult(bytes, contentType ?? "application/octet-stream");
+    }
+
+    public async Task<UnsubscribeChannelResult> UnsubscribeChannelAsync(
+        UnsubscribeChannelRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.ChannelName);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["subscriptions"] = JsonSerializer.Serialize(new[] { request.ChannelName }, JsonOptions)
+        };
+        using var response = await SendAsync(
+            request.Credentials.Realm,
+            HttpMethod.Delete,
+            "users/me/subscriptions",
+            fields,
+            request.Credentials,
+            cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        return new UnsubscribeChannelResult(
+            GetStringArray(document.RootElement, "removed"),
+            GetStringArray(document.RootElement, "not_removed"));
+    }
+
+    public async Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(AvailableChannelsRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "streams", null, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        return GetArray(document.RootElement, "streams").Select(ToChannelSummary).Where(static item => item is not null).Cast<ChannelSummary>().ToArray();
+    }
+
+    public async Task<SubscribeChannelResult> SubscribeToChannelAsync(SubscribeChannelRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["subscriptions"] = JsonSerializer.Serialize(new[] { new { name = request.Channel.Name } }, JsonOptions)
+        };
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Post, "users/me/subscriptions", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        var root = document.RootElement;
+        if (!root.TryGetProperty("subscribed", out _) && !root.TryGetProperty("already_subscribed", out _))
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        return new SubscribeChannelResult(
+            GetSubscriptionResponseNames(root, "subscribed", request.Credentials),
+            GetSubscriptionResponseNames(root, "already_subscribed", request.Credentials),
+            GetSubscriptionResponseNames(root, "unauthorized", request.Credentials));
+    }
+
+    public async Task SetSubscriptionPreferenceAsync(SetSubscriptionPreferenceRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var property = request.Preference == SubscriptionPreference.Muted ? "is_muted" : "pin_to_top";
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal) { ["property"] = property, ["value"] = request.Value ? "true" : "false" };
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Patch, $"users/me/subscriptions/{request.ChannelId.ToString(CultureInfo.InvariantCulture)}", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var ignored = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task MarkReadAsync(MarkReadRequest request, CancellationToken cancellationToken = default)
@@ -844,8 +988,11 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             ],
             _ => throw new ArgumentOutOfRangeException(nameof(conversation), "Unsupported conversation type.")
         };
-        return JsonSerializer.Serialize(narrow, JsonOptions);
+        return SerializeTerms(narrow);
     }
+
+    private static string SerializeTerms(IReadOnlyList<IReadOnlyDictionary<string, object>> terms) =>
+        JsonSerializer.Serialize(terms, JsonOptions);
 
     private static string SerializeUnreadNarrow(ConversationKey conversation, long currentUserId)
     {
@@ -926,14 +1073,19 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             return [new UnknownDomainEvent("message", eventId, source)];
         }
 
-        return
-        [
+        var events = new List<DomainEvent>
+        {
             new MessageUpsertEvent(
                 chat,
                 eventId,
                 source,
                 GetString(value, "local_message_id", "local_id"))
-        ];
+        };
+        if (chat.Conversation is ChannelTopic channel)
+        {
+            events.Add(new TopicUpsertEvent(new TopicSummary(channel.ChannelId, channel.Topic, chat.Id), eventId, source));
+        }
+        return events;
     }
 
     private static IReadOnlyList<DomainEvent> ToDeleteMessageEvents(
@@ -996,6 +1148,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             if (ids.Length > 0 && channelId is > 0 && topic is not null)
             {
                 events.Add(new MessageMovedEvent(ids, new ChannelTopic(channelId.Value, topic), eventId, source));
+                events.Add(new TopicUpsertEvent(new TopicSummary(channelId.Value, topic, ids.Max()), eventId, source));
             }
         }
 
@@ -1084,14 +1237,19 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
 
         if (string.Equals(op, "update", StringComparison.OrdinalIgnoreCase))
         {
-            return
-            [
-                new IgnoredDomainEvent(
-                    "subscription",
-                    "subscription_property_outside_mvp",
-                    eventId,
-                    source)
-            ];
+            var property = GetString(value, "property");
+            var channelId = GetInt64(value, "stream_id");
+            var preference = string.Equals(property, "is_muted", StringComparison.OrdinalIgnoreCase)
+                ? SubscriptionPreference.Muted
+                : string.Equals(property, "pin_to_top", StringComparison.OrdinalIgnoreCase)
+                    ? SubscriptionPreference.Pinned
+                    : (SubscriptionPreference?)null;
+            if (channelId is { } id && preference is { } known && GetBoolean(value, "value") is { } preferenceValue)
+            {
+                return [new SubscriptionPreferenceChangedEvent(id, known, preferenceValue, eventId, source)];
+            }
+
+            return [new IgnoredDomainEvent("subscription", "subscription_property_outside_mvp", eventId, source)];
         }
 
         return [new UnknownDomainEvent("subscription", eventId, source)];
@@ -1201,8 +1359,30 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         var id = GetInt64(value, "stream_id", "channel_id");
         var name = GetString(value, "name", "stream_name");
         return id is > 0 && !string.IsNullOrWhiteSpace(name)
-            ? new Subscription(id.Value, name, !(GetBoolean(value, "is_archived") ?? false))
+            ? new Subscription(id.Value, name, !(GetBoolean(value, "is_archived") ?? false), GetBoolean(value, "is_muted") ?? false, GetBoolean(value, "pin_to_top") ?? false, GetString(value, "color"))
             : null;
+    }
+
+    private static ChannelSummary? ToChannelSummary(JsonElement value)
+    {
+        var id = GetInt64(value, "stream_id", "channel_id");
+        var name = GetString(value, "name");
+        return id is > 0 && !string.IsNullOrWhiteSpace(name)
+            ? new ChannelSummary(id.Value, name, GetString(value, "description"), GetBoolean(value, "is_archived") ?? false, GetInt32(value, "subscriber_count"), GetBoolean(value, "invite_only") ?? false)
+            : null;
+    }
+
+    private static IReadOnlyList<string> GetSubscriptionResponseNames(JsonElement root, string property, CredentialEnvelope credentials)
+    {
+        if (!root.TryGetProperty(property, out var value)) return [];
+        if (value.ValueKind == JsonValueKind.Array) return GetStringArray(root, property);
+        if (value.ValueKind != JsonValueKind.Object) return [];
+        var userId = credentials.UserId.ToString(CultureInfo.InvariantCulture);
+        if (value.TryGetProperty(userId, out var names) && names.ValueKind == JsonValueKind.Array)
+            return names.EnumerateArray().Where(static item => item.ValueKind == JsonValueKind.String).Select(static item => item.GetString()!).ToArray();
+        if (value.TryGetProperty(credentials.Email, out names) && names.ValueKind == JsonValueKind.Array)
+            return names.EnumerateArray().Where(static item => item.ValueKind == JsonValueKind.String).Select(static item => item.GetString()!).ToArray();
+        return [];
     }
 
     private static UserProfile? ToUserOrNull(JsonElement value)

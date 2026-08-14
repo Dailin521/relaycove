@@ -148,6 +148,8 @@
 - Visual Studio 内保存的 XAML 优先走 XAML Hot Reload、Live Visual Tree；Codex 或其他外部工具修改 XAML 时不能假定 VS 会接管。当前 `dotnet watch` 也不监听原始 XAML，外部修改应先成批完成，再运行 App-only `dotnet build ... --no-restore` 并只重启一次预览。
 - C# 类型、Behavior、新资源项、DI、项目文件、编译绑定和窗口启动逻辑必须增量编译/重启。编译失败时保留旧预览，不得先误杀其他 worktree 的同名进程。
 - Debug preview 每次启动自动选择非主显示器，无副屏时安全回退；生产窗口不强制移动。副屏定位按目标 monitor 的物理缩放换算 DIP，不能使用移动前的窗口 DPI。
+- 固定视觉状态使用 `start-maui-preview.ps1 -Scene/-Theme/-Width/-Height` 直接注入 Debug ViewModel；截图使用记录 PID/EXE 的 `capture-maui-preview.ps1` 和 `PrintWindow`。不得用鼠标移动、系统点击、键盘注入或依赖桌面前台焦点打开弹层。
+- 启动器先构建到唯一的忽略目录，成功后才替换自己记录的旧进程，并以 EXE 输出目录作为 WinUI 工作目录；捕获器等待副屏 DPI 与启动定位稳定后再按 DWM 边界调整目标尺寸。
 - 一个组件或响应式状态完成后才运行最窄 App/ViewModel 测试并保留一张证据图；一个完整 Slice 完成后才运行 Fast。Release/Full、全视口截图和独立复核仍留在提交门禁。
 - 不得为预览速度绕过 XAML 编译、切换到 WebView、把 fixture 接入生产会话，或用预览截图替代真实 Realm、安装包和干净 VM 验收。
 

@@ -11,6 +11,7 @@ namespace RelayCove.App.ViewModels;
 public sealed partial class ShellViewModel : ObservableObject, IDisposable
 {
     private const double WideLayoutMinimum = 1121d;
+    private const double IntermediateLayoutMaximum = 820d;
     private const double NarrowLayoutMaximum = 720d;
     private const double DefaultComposerHeight = 112d;
     private const double MinimumComposerHeight = 72d;
@@ -29,17 +30,46 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private readonly Dictionary<string, List<AttachmentDraftItem>> _attachmentDrafts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, long> _draftVersions = new(StringComparer.Ordinal);
     private readonly List<ConversationContactChoice> _allNewConversationChoices = [];
+    private readonly Dictionary<long, string> _lastSelectedTopicByChannel = [];
+    private IReadOnlyList<SearchResultItem> _serverSearchResults = [];
     private CancellationTokenSource? _navigationCancellation;
+    private long _navigationGeneration;
+    private bool _hasAuthoritativeTopics;
+    private string? _displayedConversationKey;
+    private string? _pendingActivationScrollConversationKey;
+    private long _pendingActivationScrollGeneration;
+    private MessageScrollReason? _pendingActivationScrollReason;
+    private long _messageScrollSequence;
+    private CancellationTokenSource? _searchInputCancellation;
+    private long _searchInputGeneration;
+    private long? _searchBeforeMessageId;
+    private AccountId? _searchAccountId;
+    private long? _savedBeforeMessageId;
+    private CancellationTokenSource? _savedLoadCancellation;
+    private long _savedLoadGeneration;
+    private AccountId? _savedAccountId;
     private ClientState _projectedState = ClientState.Empty;
     private IReadOnlyList<TopicSummary> _loadedTopics = [];
     private long? _loadedTopicsChannelId;
     private string? _activeDraftKey;
     private double _composerHeight = DefaultComposerHeight;
     private double _viewportWidth = 1440d;
+    private long? _channelUnsubscribeTargetId;
+    private long _channelBrowserGeneration;
+    private AccountId? _channelBrowserAccountId;
+    private CancellationTokenSource? _channelBrowserCancellation;
+    private string? _projectedConversationKey;
+    private long? _newestProjectedMessageId;
+    private long _lastAutomaticLoadOlderMilliseconds = long.MinValue;
+    private int _automaticLoadOlderInFlight;
+    private bool _isMessageViewportNearBottom = true;
     private int _initialized;
     private int _loginInFlight;
     private bool _suppressDraftTracking;
     private bool _suppressUiPreferenceSave = true;
+    private bool _preserveContinuousPreference;
+    private double _fontSize = 14d;
+    private double _conversationPaneWidth = 310d;
     private bool _disposed;
 
     public ShellViewModel(
@@ -67,15 +97,20 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ApplyUiPreferences(_uiPreferencesService.Current);
         _suppressUiPreferenceSave = false;
         _session.StateChanged += OnStateChanged;
+        if (_session is IMessageMutationObserver observer) observer.MessageMutationObserved += OnMessageMutationObserved;
         Project(_session.State);
     }
 
     public ObservableCollection<ChannelItem> Channels { get; } = [];
+    public ObservableCollection<ChannelItem> FilteredChannels { get; } = [];
     public ObservableCollection<TopicItem> Topics { get; } = [];
     public ObservableCollection<NavigationItem> DirectMessages { get; } = [];
+    public ObservableCollection<NavigationItem> FilteredDirectMessages { get; } = [];
     public ObservableCollection<ContactItem> KnownContacts { get; } = [];
     public ObservableCollection<MessageItem> Messages { get; } = [];
     public ObservableCollection<SearchResultItem> SearchResults { get; } = [];
+    public ObservableCollection<SavedMessageItem> SavedMessages { get; } = [];
+    public ObservableCollection<AvailableChannelItem> AvailableChannels { get; } = [];
     public ObservableCollection<AttachmentDraftItem> Attachments { get; } = [];
     public ObservableCollection<ConversationContactChoice> NewConversationChoices { get; } = [];
     public IReadOnlyList<EmojiChoice> EmojiChoices { get; } =
@@ -125,7 +160,28 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial string SearchQuery { get; set; } = string.Empty;
 
     [ObservableProperty]
+    public partial string ConversationFilterQuery { get; set; } = string.Empty;
+
+    [ObservableProperty]
     public partial bool IsNewConversationOpen { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsNewChannelConversationMode { get; set; }
+
+    [ObservableProperty]
+    public partial ChannelItem? NewConversationChannel { get; set; }
+
+    [ObservableProperty]
+    public partial string NewConversationTopic { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial bool IsChannelBrowserOpen { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsChannelBrowserLoading { get; set; }
+
+    [ObservableProperty]
+    public partial string? ChannelBrowserError { get; set; }
 
     [ObservableProperty]
     public partial bool IsAccountMenuOpen { get; set; }
@@ -140,7 +196,28 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial SearchResultItem? SelectedSearchResult { get; set; }
 
     [ObservableProperty]
+    public partial bool IsSearchBusy { get; set; }
+
+    [ObservableProperty]
+    public partial string? SearchError { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsSavedLoading { get; set; }
+
+    [ObservableProperty]
+    public partial string? SavedError { get; set; }
+
+    [ObservableProperty]
+    public partial bool SavedRefreshSuggested { get; set; }
+
+    [ObservableProperty]
     public partial bool IsComposerEmojiPickerOpen { get; set; }
+
+    [ObservableProperty]
+    public partial double ComposerEmojiAnchorX { get; set; }
+
+    [ObservableProperty]
+    public partial double ComposerEmojiAnchorY { get; set; }
 
     [ObservableProperty]
     public partial bool IsReactionPickerOpen { get; set; }
@@ -162,6 +239,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial bool IsDeleteConfirmationOpen { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsChannelUnsubscribeConfirmationOpen { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsChannelUnsubscribeBusy { get; set; }
+
+    [ObservableProperty]
+    public partial string ChannelUnsubscribeTargetName { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string? ChannelUnsubscribeError { get; set; }
 
     [ObservableProperty]
     public partial string EditMessageText { get; set; } = string.Empty;
@@ -201,6 +290,24 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial string? MessageLoadError { get; set; }
+
+    [ObservableProperty]
+    public partial bool HasReachedOldestMessage { get; set; }
+
+    [ObservableProperty]
+    public partial int NewMessageCount { get; set; }
+
+    [ObservableProperty]
+    public partial MessageScrollRequest? PendingMessageScrollRequest { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsNavigationPending { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsAuthoritativeEmptyChannel { get; set; }
+
+    [ObservableProperty]
+    public partial bool HasConversationActivationError { get; set; }
 
     [ObservableProperty]
     public partial int MessageActionFocusRequest { get; set; }
@@ -289,16 +396,36 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool LoginVisible => !IsLoggedIn;
     public bool MainVisible => IsLoggedIn;
     public bool HasSelectedConversation => _session.SelectedConversation is not null;
+    public bool IsConversationContentVisible =>
+        !IsNavigationPending &&
+        !IsAuthoritativeEmptyChannel &&
+        !HasConversationActivationError &&
+        _session.SelectedConversation is { } selected &&
+        string.Equals(_displayedConversationKey, selected.CanonicalKey, StringComparison.Ordinal);
+    public string ComposerPlaceholder => HasSelectedConversation
+        ? $"发送到 {ConversationTitle}"
+        : "发送到当前会话";
     public bool HasMessages => Messages.Count > 0;
     public bool IsMessageListEmpty => !HasMessages;
+    public bool IsMessageCollectionVisible => IsConversationContentVisible && HasMessages;
+    public bool ShowMessageEmptyState => IsConversationContentVisible && !HasMessages;
     public bool HasTopics => Topics.Count > 0;
     public bool HasSelectedChannel => SelectedChannel is not null;
+    public bool ShowTopicPicker => AreChannelsExpanded && HasSelectedChannel && Topics.Count > 1;
+    public bool ShowEmptyChannelTopicState =>
+        HasSelectedChannel &&
+        _hasAuthoritativeTopics &&
+        !IsNavigationPending &&
+        !HasConversationActivationError &&
+        !HasTopics;
     public bool HasKnownContacts => KnownContacts.Count > 0;
     public bool IsMessagesSection => SelectedSection == ShellSection.Messages;
     public bool IsContactsSection => SelectedSection == ShellSection.Contacts;
+    public bool IsSavedSection => SelectedSection == ShellSection.Saved;
     public bool IsSettingsSection => SelectedSection == ShellSection.Settings;
     public bool IsWideLayout => LayoutMode == ShellLayoutMode.Wide;
     public bool IsCompactLayout => LayoutMode == ShellLayoutMode.Compact;
+    public bool IsIntermediateLayout => LayoutMode == ShellLayoutMode.Compact && _viewportWidth <= IntermediateLayoutMaximum;
     public bool IsNarrowLayout => LayoutMode == ShellLayoutMode.Narrow;
     public bool IsNotNarrowLayout => !IsNarrowLayout;
     public bool IsConversationPaneVisible =>
@@ -309,10 +436,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool IsOverlayDetailsVisible => IsMessagesSection && !IsWideLayout && IsDetailsOpen;
     public bool IsModalOverlayVisible => IsOverlayDetailsVisible || IsSearchOpen || IsMessageMenuOpen || IsAccountMenuOpen ||
         IsComposerEmojiPickerOpen || IsReactionPickerOpen || IsEditDialogOpen ||
-        IsDeleteConfirmationOpen || IsImageViewerOpen || IsNewConversationOpen || LogoutConfirmationVisible;
-    public bool IsPrimaryShellEnabled => !IsModalOverlayVisible || IsMessageMenuOpen || IsAccountMenuOpen;
+        IsDeleteConfirmationOpen || IsChannelUnsubscribeConfirmationOpen || IsImageViewerOpen ||
+        IsNewConversationOpen || IsChannelBrowserOpen || LogoutConfirmationVisible;
+    public bool IsPrimaryShellEnabled => !IsModalOverlayVisible || IsMessageMenuOpen || IsAccountMenuOpen ||
+        IsComposerEmojiPickerOpen || IsReactionPickerOpen;
     public bool CanCompose =>
-        HasSelectedConversation && _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
+        IsConversationContentVisible && _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
     public bool CanSend => CanCompose && (!string.IsNullOrWhiteSpace(ComposerText) || HasAttachments) &&
         Attachments.All(attachment => attachment.Status != AttachmentUploadStatus.Uploading);
     public bool CanMarkRead => CanCompose;
@@ -322,15 +451,42 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool HasAttachmentError => !string.IsNullOrWhiteSpace(AttachmentError);
     public bool HasMediaActionStatus => !string.IsNullOrWhiteSpace(MediaActionStatus);
     public bool HasMessageLoadError => !string.IsNullOrWhiteSpace(MessageLoadError);
+    public bool ShowHistoryRetry => HasMessageLoadError && !HasConversationActivationError;
     public bool HasSearchResults => SearchResults.Count > 0;
     public bool IsSearchEmpty => !HasSearchResults;
+    public bool HasSearchError => !string.IsNullOrWhiteSpace(SearchError);
+    public bool HasMoreSearchResults => _searchBeforeMessageId is not null;
+    public bool HasMoreSavedMessages => _savedBeforeMessageId is not null;
+    public bool HasSavedMessages => SavedMessages.Count > 0;
+    public bool IsSavedEmpty => !HasSavedMessages && !IsSavedLoading && string.IsNullOrWhiteSpace(SavedError);
+    public bool HasSavedError => !string.IsNullOrWhiteSpace(SavedError);
     public bool HasNewConversationChoices => NewConversationChoices.Count > 0;
     public bool IsNewConversationChoiceEmpty => !HasNewConversationChoices;
+    public bool IsNewConversationChoicesVisible => IsNewDirectConversationMode && HasNewConversationChoices;
+    public bool IsNewConversationChoiceEmptyVisible => IsNewDirectConversationMode && IsNewConversationChoiceEmpty;
     public bool CanStartNewConversation => _allNewConversationChoices.Any(choice => choice.IsSelected);
+    public bool IsNewDirectConversationMode => !IsNewChannelConversationMode;
+    public bool CanStartNewChannelConversation => NewConversationChannel is not null &&
+        !string.IsNullOrWhiteSpace(NewConversationTopic);
     public bool HasActiveMessageAction => ActiveMessageAction is not null;
     public bool CanEditActiveMessage => ActiveMessageAction?.CanEditOrDelete == true;
     public bool CanDeleteActiveMessage => ActiveMessageAction?.CanEditOrDelete == true;
     public bool CanStarActiveMessage => ActiveMessageAction?.CanMutate == true && CanCompose;
+    public bool CanUnsubscribeSelectedChannel =>
+        _session.SelectedConversation is ChannelTopic selected &&
+        _projectedState.Subscriptions.ContainsKey(selected.ChannelId) &&
+        _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
+    public bool HasChannelUnsubscribeError => !string.IsNullOrWhiteSpace(ChannelUnsubscribeError);
+    public bool CanCloseChannelUnsubscribe => !IsChannelUnsubscribeBusy;
+    public bool HasChannelBrowserError => !string.IsNullOrWhiteSpace(ChannelBrowserError);
+    public bool CanManageSelectedChannel => CanUnsubscribeSelectedChannel;
+    public string SelectedChannelMuteLabel => _session.SelectedConversation is ChannelTopic selected &&
+        _projectedState.Subscriptions.GetValueOrDefault(selected.ChannelId)?.IsMuted == true ? "取消静音" : "静音频道";
+    public string SelectedChannelPinLabel => _session.SelectedConversation is ChannelTopic selected &&
+        _projectedState.Subscriptions.GetValueOrDefault(selected.ChannelId)?.IsPinned == true ? "取消置顶" : "置顶频道";
+    public string ActiveMessageStarActionLabel => ActiveMessageAction?.IsStarred == true
+        ? "取消收藏"
+        : "收藏消息";
     public string ActiveMessageTitle => ActiveMessageAction is null
         ? "消息操作"
         : $"{ActiveMessageAction.Sender} · {ActiveMessageAction.Timestamp}";
@@ -352,38 +508,44 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool IsAccountSettings => SelectedSettingsCategory == SettingsCategory.Account;
     public double FontScaleSliderValue
     {
-        get => FontScaleMode switch
+        get => _fontSize;
+        set
         {
-            UiFontScaleMode.Small => 12d,
-            UiFontScaleMode.Large => 16d,
-            _ => 14d
-        };
-        set => FontScaleMode = value <= 13d
-            ? UiFontScaleMode.Small
-            : value >= 15d
-                ? UiFontScaleMode.Large
-                : UiFontScaleMode.Default;
+            var normalized = Math.Clamp(Math.Round(value), 11d, 18d);
+            if (Math.Abs(_fontSize - normalized) < 0.01d) return;
+            _fontSize = normalized;
+            _preserveContinuousPreference = true;
+            FontScaleMode = normalized <= 13d ? UiFontScaleMode.Small : normalized >= 15d ? UiFontScaleMode.Large : UiFontScaleMode.Default;
+            _preserveContinuousPreference = false;
+            OnPropertyChanged(nameof(FontScaleSliderValue));
+            OnPropertyChanged(nameof(CurrentFontSizeLabel));
+            SaveUiPreferences();
+        }
     }
     public string CurrentFontSizeLabel => $"{FontScaleSliderValue:0} px";
     public double ConversationWidthSliderValue
     {
-        get => ConversationWidthMode switch
+        get => _conversationPaneWidth;
+        set
         {
-            UiConversationWidthMode.Narrow => 264d,
-            UiConversationWidthMode.Wide => 352d,
-            _ => 310d
-        };
-        set => ConversationWidthMode = value < 288d
-            ? UiConversationWidthMode.Narrow
-            : value >= 336d
-                ? UiConversationWidthMode.Wide
-                : UiConversationWidthMode.Standard;
+            var normalized = Math.Clamp(Math.Round(value), 240d, 380d);
+            if (Math.Abs(_conversationPaneWidth - normalized) < 0.01d) return;
+            _conversationPaneWidth = normalized;
+            _preserveContinuousPreference = true;
+            ConversationWidthMode = normalized < 288d ? UiConversationWidthMode.Narrow : normalized >= 336d ? UiConversationWidthMode.Wide : UiConversationWidthMode.Standard;
+            _preserveContinuousPreference = false;
+            OnPropertyChanged(nameof(ConversationWidthSliderValue));
+            OnPropertyChanged(nameof(CurrentConversationWidthLabel));
+            OnPropertyChanged(nameof(ConversationPaneWidth));
+            OnPropertyChanged(nameof(MessageRowMaximumWidth));
+            SaveUiPreferences();
+        }
     }
     public string CurrentConversationWidthLabel => $"{ConversationWidthSliderValue:0} px";
     public string ChannelGroupCountLabel => Channels.Count.ToString();
     public string DirectMessageGroupCountLabel => $"{DirectMessages.Count} 个会话";
-    public double ChannelListHeight => AreChannelsExpanded ? Math.Min(Channels.Count * 67d, 268d) : 0d;
-    public double TopicListHeight => AreChannelsExpanded && HasSelectedChannel
+    public double ChannelListHeight => AreChannelsExpanded ? Math.Min(FilteredChannels.Count * 67d, 268d) : 0d;
+    public double TopicListHeight => ShowTopicPicker
         ? Math.Min(Topics.Count * 36d, 144d)
         : 0d;
     public string CurrentUserDisplayName => _session.CurrentUserId is { } currentUserId &&
@@ -403,14 +565,22 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             var host = _session.ActiveRealm?.Uri.Host ?? TryGetRealmHost(Realm);
             return string.Equals(host, "preview.invalid", StringComparison.OrdinalIgnoreCase)
-                ? "本地预览"
+                ? "Acme Workspace"
                 : host ?? "RelayCove";
         }
     }
+    public bool IsNativePreview => string.Equals(
+        _session.ActiveRealm?.Uri.Host,
+        "preview.invalid",
+        StringComparison.OrdinalIgnoreCase);
+    public string NativePreviewStatus => "本地演示数据 · 不连接 Zulip";
     public bool ShowConnectionStatus => IsLoggedIn &&
         _projectedState.Connection.Status != RelayCove.Core.ConnectionStatus.Connected;
     public bool HasCurrentConversationUnread => _session.SelectedConversation is { } selected &&
         GetConversationUnread(_projectedState.Unread, selected) > 0;
+    public bool ShowLoadOlderButton => IsConversationContentVisible && !IsNativePreview && !HasReachedOldestMessage;
+    public bool ShowNewMessagesButton => NewMessageCount > 0;
+    public string NewMessagesButtonText => $"{NewMessageCount} 条新消息";
     public string MessageEmptyTitle => !HasSelectedConversation
         ? "从左侧选择频道话题或私信"
         : _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Offline
@@ -420,12 +590,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public GridLength ConversationPaneWidth =>
         IsNarrowLayout
             ? IsConversationListVisibleOnNarrow ? GridLength.Star : new GridLength(0)
-            : new GridLength(ConversationWidthMode switch
-            {
-                UiConversationWidthMode.Narrow => 264,
-                UiConversationWidthMode.Wide => 352,
-                _ => 310
-            });
+            : new GridLength(ConversationWidthSliderValue);
+    public GridLength NavigationRailWidth => new(IsIntermediateLayout ? 48d : 60d);
     public GridLength ChatPaneWidth =>
         IsNarrowLayout
             ? IsConversationListVisibleOnNarrow ? new GridLength(0) : GridLength.Star
@@ -433,6 +599,19 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public GridLength InlineDetailsWidth => IsInlineDetailsVisible
         ? new GridLength(284)
         : new GridLength(0);
+    public double MessageRowMaximumWidth
+    {
+        get
+        {
+            var conversationWidth = IsNarrowLayout ? 0d : ConversationWidthSliderValue;
+            var detailsWidth = IsInlineDetailsVisible ? 284d : 0d;
+            var chatPaneWidth = Math.Max(0d, _viewportWidth - NavigationRailWidth.Value - conversationWidth - detailsWidth);
+            var messageContentWidth = Math.Max(0d, chatPaneWidth - 40d);
+            var rowWidth = Math.Min(690d, messageContentWidth * (IsNarrowLayout ? 0.90d : 0.76d));
+
+            return Math.Max(0d, rowWidth);
+        }
+    }
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -463,7 +642,72 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             {
                 IsDetailsOpen = true;
             }
+#if DEBUG
+            if (NativeShellPreviewSession.IsRequested)
+            {
+                ApplyNativePreviewTheme(NativeShellPreviewSession.RequestedTheme);
+                ApplyNativePreviewScene(NativeShellPreviewSession.RequestedScene);
+            }
+#endif
         }
+    }
+
+    internal void ApplyNativePreviewScene(string? scene)
+    {
+        switch (scene?.Trim().ToLowerInvariant())
+        {
+            case "composer-emoji":
+                OpenComposerEmojiPickerAt(new PopoverAnchorRequest(402d, 820d));
+                break;
+            case "message-menu":
+                if (Messages.FirstOrDefault(message => message.IsOwn && message.MessageId is not null) is { } menuMessage)
+                {
+                    OpenMessageMenuAt(new MessageMenuRequest(
+                        menuMessage,
+                        Math.Max(420d, _viewportWidth - 232d),
+                        210d));
+                }
+                break;
+            case "reaction-picker":
+                if (Messages.FirstOrDefault(message => message.CanMutate) is { } reactionMessage)
+                {
+                    MessageMenuAnchorX = Math.Max(420d, _viewportWidth - 232d);
+                    MessageMenuAnchorY = 210d;
+                    OpenReactionPicker(reactionMessage);
+                }
+                break;
+            case "account-menu":
+                CloseTransientOverlays();
+                IsAccountMenuOpen = true;
+                break;
+            case "settings":
+                ShowSettings();
+                break;
+            case "details":
+                CloseTransientOverlays();
+                IsDetailsOpen = true;
+                break;
+            case "narrow-list":
+                CloseTransientOverlays();
+                IsDetailsOpen = false;
+                IsConversationListVisibleOnNarrow = true;
+                break;
+            case "narrow-chat":
+                CloseTransientOverlays();
+                IsDetailsOpen = false;
+                IsConversationListVisibleOnNarrow = false;
+                break;
+        }
+    }
+
+    internal void ApplyNativePreviewTheme(string? theme)
+    {
+        AppearanceMode = theme?.Trim().ToLowerInvariant() switch
+        {
+            "dark" => AppAppearanceMode.Dark,
+            "system" => AppAppearanceMode.System,
+            _ => AppAppearanceMode.Light
+        };
     }
 
     public void UpdateViewport(double width)
@@ -475,7 +719,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             : width <= NarrowLayoutMaximum
                 ? ShellLayoutMode.Narrow
                 : ShellLayoutMode.Compact;
-        if (next == LayoutMode) return;
+        if (next == LayoutMode)
+        {
+            OnPropertyChanged(nameof(MessageRowMaximumWidth));
+            OnPropertyChanged(nameof(IsIntermediateLayout));
+            OnPropertyChanged(nameof(NavigationRailWidth));
+            return;
+        }
 
         var previous = LayoutMode;
         LayoutMode = next;
@@ -490,6 +740,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
 
         NotifyLayoutProperties();
+#if DEBUG
+        if (NativeShellPreviewSession.IsRequested)
+        {
+            ApplyNativePreviewScene(NativeShellPreviewSession.RequestedScene);
+        }
+#endif
     }
 
     [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
@@ -537,8 +793,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
     private async Task LoadOlderAsync(CancellationToken cancellationToken)
     {
-        if (_session.SelectedConversation is null) return;
-        IsLoadingOlder = true;
+        if (_session.SelectedConversation is null || HasReachedOldestMessage) return;
         MessageLoadError = null;
         try
         {
@@ -549,7 +804,84 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
         finally
         {
-            IsLoadingOlder = false;
+            ProjectHistoryState(_session.SelectedConversation);
+        }
+    }
+
+    internal async Task ReportMessageViewportAsync(
+        int firstVisibleItemIndex,
+        int lastVisibleItemIndex,
+        double verticalOffset,
+        long? timestampMilliseconds = null,
+        double? bottomDistanceDip = null)
+    {
+        _ = verticalOffset;
+        UpdateMessageViewportBottomState(bottomDistanceDip, lastVisibleItemIndex);
+
+        var now = timestampMilliseconds ?? Environment.TickCount64;
+        if (!MessageViewportPolicy.ShouldRequestOlder(
+                firstVisibleItemIndex,
+                ShowLoadOlderButton,
+                IsLoadingOlder,
+                HasMessageLoadError,
+                now,
+                _lastAutomaticLoadOlderMilliseconds) ||
+            Interlocked.Exchange(ref _automaticLoadOlderInFlight, 1) != 0)
+        {
+            return;
+        }
+
+        _lastAutomaticLoadOlderMilliseconds = now;
+        try
+        {
+            await LoadOlderCommand.ExecuteAsync(null);
+        }
+        finally
+        {
+            Volatile.Write(ref _automaticLoadOlderInFlight, 0);
+        }
+    }
+
+    [RelayCommand]
+    private void ScrollToLatest()
+    {
+        QueueScrollToLatest(MessageScrollReason.ManualJumpToLatest);
+    }
+
+    [RelayCommand]
+    private void RetryConversationActivation()
+    {
+        if (SelectedDirectMessage is { } directMessage)
+        {
+            ActivateDirectMessage(directMessage);
+            return;
+        }
+        if (SelectedTopic is { } topic)
+        {
+            ActivateTopic(topic);
+            return;
+        }
+        if (SelectedChannel is { } channel)
+        {
+            ActivateChannel(channel);
+        }
+    }
+
+    internal void ReportMessageBottomDistance(double bottomDistanceDip)
+    {
+        if (!double.IsFinite(bottomDistanceDip)) return;
+        UpdateMessageViewportBottomState(Math.Max(0d, bottomDistanceDip), -1);
+    }
+
+    private void UpdateMessageViewportBottomState(double? bottomDistanceDip, int lastVisibleItemIndex)
+    {
+        var isNearBottom = MessageViewportPolicy.IsNearBottom(bottomDistanceDip, lastVisibleItemIndex, Messages.Count);
+        _isMessageViewportNearBottom = isNearBottom;
+        if (isNearBottom &&
+            NewMessageCount > 0 &&
+            PendingMessageScrollRequest?.Reason != MessageScrollReason.ManualJumpToLatest)
+        {
+            NewMessageCount = 0;
         }
     }
 
@@ -626,7 +958,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             var sendContent = string.Join(
                 "\n",
                 new[] { content.TrimEnd() }.Where(value => value.Length > 0).Concat(uploadedMarkdown));
-            await _session.SendAsync(sendContent, cancellationToken);
+            await _session.SendAsync(conversation, sendContent, cancellationToken);
             if (_draftVersions.GetValueOrDefault(key) != version) return;
             var current = _drafts.GetValueOrDefault(key, string.Empty);
             if (!string.Equals(current, content, StringComparison.Ordinal)) return;
@@ -722,9 +1054,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         UnavailableFeatureMessage = null;
     }
 
-    [RelayCommand]
-    private void ShowSavedUnavailable() =>
-        UnavailableFeatureMessage = "已保存消息尚未接入真实 saved/starred 读取契约。";
+    [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
+    private async Task ShowSavedAsync(CancellationToken cancellationToken)
+    {
+        CloseTransientOverlays();
+        SelectedSection = ShellSection.Saved;
+        IsDetailsOpen = false;
+        await RefreshSavedAsync(cancellationToken).ConfigureAwait(false);
+    }
 
     [RelayCommand]
     private void ToggleAccountMenu()
@@ -764,11 +1101,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         CloseTransientOverlays();
         IsSearchOpen = true;
         ProjectSearch();
+        ScheduleServerSearch(SearchQuery, immediate: false);
     }
 
     [RelayCommand]
     private void CloseSearch()
     {
+        CancelSearchInput();
+        _serverSearchResults = [];
         IsSearchOpen = false;
         SelectedSearchResult = null;
     }
@@ -781,12 +1121,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         if (result.Conversation is null && result.ChannelId is { } channelId)
         {
             SelectedSection = ShellSection.Messages;
-            SelectedChannel = Channels.FirstOrDefault(channel => channel.ChannelId == channelId);
+            if (Channels.FirstOrDefault(channel => channel.ChannelId == channelId) is { } channel)
+            {
+                ActivateChannel(channel);
+            }
             CloseSearch();
             return;
         }
         if (result.Conversation is null) return;
-        if (await ExecuteSessionActionAsync(() => _session.SelectConversationAsync(result.Conversation)))
+        var opened = result.MessageId is { } messageId
+            ? await ExecuteSessionActionAsync(() => _session.OpenMessageAsync(result.Conversation, messageId))
+            : await ActivateConversationFromNavigationAsync(result.Conversation, null, null, null);
+        if (opened)
         {
             SelectedSection = ShellSection.Messages;
             if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
@@ -794,10 +1140,96 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
     }
 
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task SearchNowAsync() => RunServerSearchAsync(SearchQuery, immediate: true, CancellationToken.None);
+
+    [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
+    private async Task LoadOlderSearchAsync(CancellationToken cancellationToken)
+    {
+        var query = SearchQuery.Trim();
+        if (_searchBeforeMessageId is null || string.IsNullOrWhiteSpace(query) || !IsSearchOpen) return;
+        CancelSearchInput();
+        var generation = ++_searchInputGeneration;
+        var accountId = _session.AccountId;
+        if (accountId is null) return;
+        try
+        {
+            IsSearchBusy = true;
+            SearchError = null;
+            var page = await _session.SearchMessagesAsync(query, _searchBeforeMessageId, 50, cancellationToken).ConfigureAwait(false);
+            if (!IsSearchCurrent(generation, accountId.Value) || !IsSearchOpen || !string.Equals(SearchQuery.Trim(), query, StringComparison.Ordinal)) return;
+            if (!page.FoundAnchor)
+            {
+                _searchBeforeMessageId = null;
+                SearchError = "搜索结果已变化，请刷新搜索。";
+                OnPropertyChanged(nameof(HasMoreSearchResults));
+                return;
+            }
+            var existing = _serverSearchResults.Select(result => result.Id).ToHashSet(StringComparer.Ordinal);
+            var older = page.Messages.OrderByDescending(message => message.Id).Select(ToSearchResult)
+                .Where(result => existing.Add(result.Id)).ToArray();
+            _serverSearchResults = _serverSearchResults.Concat(older).ToArray();
+            _searchBeforeMessageId = page.FoundOldest ? null : page.Messages.MinBy(message => message.Id)?.Id;
+            ProjectSearch();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (GatewayException exception)
+        {
+            if (IsSearchCurrent(generation, accountId.Value)) SearchError = DescribeGatewayFailure(exception);
+        }
+        finally
+        {
+            if (IsSearchCurrent(generation, accountId.Value))
+            {
+                IsSearchBusy = false;
+                OnPropertyChanged(nameof(HasMoreSearchResults));
+            }
+        }
+    }
+
+    [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
+    private async Task RefreshSavedAsync(CancellationToken cancellationToken) =>
+        await StartSavedLoadAsync(replace: true, cancellationToken).ConfigureAwait(false);
+
+    [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
+    private Task LoadOlderSavedAsync(CancellationToken cancellationToken) =>
+        _savedBeforeMessageId is null
+            ? Task.CompletedTask
+            : StartSavedLoadAsync(replace: false, cancellationToken);
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task OpenSavedMessageAsync(SavedMessageItem? message)
+    {
+        if (message is null) return;
+        if (await ExecuteSessionActionAsync(() => _session.OpenMessageAsync(message.Conversation, message.MessageId)))
+        {
+            SelectedSection = ShellSection.Messages;
+            if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
+        }
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task UnstarSavedMessageAsync(SavedMessageItem? message)
+    {
+        if (message is null) return;
+        if (await ExecuteSessionActionAsync(() => _session.SetMessageStarredAsync(message.MessageId, false)))
+        {
+            SavedMessages.Remove(message);
+            SavedRefreshSuggested = false;
+            OnPropertyChanged(nameof(HasSavedMessages));
+            OnPropertyChanged(nameof(IsSavedEmpty));
+        }
+    }
+
     [RelayCommand]
     private void OpenNewConversation()
     {
         CloseTransientOverlays();
+        IsNewChannelConversationMode = false;
+        NewConversationChannel = Channels.FirstOrDefault();
+        NewConversationTopic = string.Empty;
         ClearNewConversationChoices();
         foreach (var user in _projectedState.Users.Values
                      .Where(user => user.IsActive && user.UserId != _session.CurrentUserId)
@@ -818,7 +1250,53 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         IsNewConversationOpen = false;
         NewConversationQuery = string.Empty;
+        NewConversationTopic = string.Empty;
         ClearNewConversationChoices();
+    }
+
+    [RelayCommand]
+    private void ShowNewDirectConversation() => IsNewChannelConversationMode = false;
+
+    [RelayCommand]
+    private void ShowNewChannelConversation()
+    {
+        if (!IsNewConversationOpen) OpenNewConversation();
+        IsNewChannelConversationMode = true;
+        NewConversationChannel ??= Channels.FirstOrDefault();
+    }
+
+    [RelayCommand]
+    private void OpenNewChannelTopic()
+    {
+        OpenNewConversation();
+        IsNewChannelConversationMode = true;
+        NewConversationChannel = SelectedChannel ?? Channels.FirstOrDefault();
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task StartNewChannelConversationAsync()
+    {
+        var channel = NewConversationChannel;
+        var topic = NewConversationTopic.Trim();
+        if (channel is null || topic.Length == 0) return;
+        var conversation = new ChannelTopic(channel.ChannelId, topic);
+        _loadedTopics = _loadedTopics
+            .Where(item => !string.Equals(
+                new ChannelTopic(item.ChannelId, item.Topic).CanonicalKey,
+                conversation.CanonicalKey,
+                StringComparison.Ordinal))
+            .Append(new TopicSummary(channel.ChannelId, topic))
+            .ToArray();
+        _loadedTopicsChannelId = channel.ChannelId;
+        _hasAuthoritativeTopics = true;
+        var topicItem = new TopicItem(channel.ChannelId, topic, null, IsSelected: true);
+        if (await ActivateConversationFromNavigationAsync(conversation, channel, topicItem, null))
+        {
+            _lastSelectedTopicByChannel[channel.ChannelId] = topic;
+            SelectedSection = ShellSection.Messages;
+            if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
+            CloseNewConversation();
+        }
     }
 
     [RelayCommand(AllowConcurrentExecutions = false)]
@@ -830,7 +1308,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             .OrderBy(userId => userId)
             .ToArray();
         if (userIds.Length == 0) return;
-        if (await ExecuteSessionActionAsync(() => _session.SelectConversationAsync(new DirectMessage(userIds))))
+        if (await ActivateConversationFromNavigationAsync(new DirectMessage(userIds), null, null, null))
         {
             SelectedSection = ShellSection.Messages;
             if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
@@ -841,7 +1319,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     [RelayCommand(AllowConcurrentExecutions = false)]
     private async Task StartSelfConversationAsync()
     {
-        if (await ExecuteSessionActionAsync(() => _session.SelectConversationAsync(new DirectMessage([]))))
+        if (await ActivateConversationFromNavigationAsync(new DirectMessage([]), null, null, null))
         {
             SelectedSection = ShellSection.Messages;
             if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
@@ -958,7 +1436,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         var open = !IsComposerEmojiPickerOpen;
         CloseTransientOverlays();
         IsComposerEmojiPickerOpen = open;
-        SelectedComposerEmoji = open ? EmojiChoices[0] : null;
+        SelectedComposerEmoji = null;
+    }
+
+    [RelayCommand]
+    private void OpenComposerEmojiPickerAt(PopoverAnchorRequest? request)
+    {
+        if (request is null) return;
+        CloseTransientOverlays();
+        ComposerEmojiAnchorX = request.X;
+        ComposerEmojiAnchorY = request.Y;
+        IsComposerEmojiPickerOpen = true;
+        SelectedComposerEmoji = null;
     }
 
     [RelayCommand]
@@ -1055,7 +1544,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         CloseTransientOverlays();
         ActiveMessageAction = message;
         IsReactionPickerOpen = true;
-        SelectedReactionEmoji = EmojiChoices[0];
+        SelectedReactionEmoji = null;
     }
 
     [RelayCommand]
@@ -1156,6 +1645,182 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
+    private void RequestChannelUnsubscribe()
+    {
+        if (_session.SelectedConversation is not ChannelTopic selected ||
+            !_projectedState.Subscriptions.TryGetValue(selected.ChannelId, out var subscription) ||
+            !CanUnsubscribeSelectedChannel)
+        {
+            return;
+        }
+        CloseTransientOverlays();
+        _channelUnsubscribeTargetId = selected.ChannelId;
+        ChannelUnsubscribeTargetName = subscription.Name;
+        ChannelUnsubscribeError = null;
+        IsChannelUnsubscribeConfirmationOpen = true;
+    }
+
+    [RelayCommand]
+    private void CancelChannelUnsubscribe()
+    {
+        if (IsChannelUnsubscribeBusy) return;
+        IsChannelUnsubscribeConfirmationOpen = false;
+        _channelUnsubscribeTargetId = null;
+        ChannelUnsubscribeTargetName = string.Empty;
+        ChannelUnsubscribeError = null;
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ConfirmChannelUnsubscribeAsync()
+    {
+        if (_channelUnsubscribeTargetId is not { } channelId || IsChannelUnsubscribeBusy) return;
+        IsChannelUnsubscribeBusy = true;
+        ChannelUnsubscribeError = null;
+        try
+        {
+            await _session.UnsubscribeChannelAsync(channelId);
+            IsChannelUnsubscribeConfirmationOpen = false;
+            _channelUnsubscribeTargetId = null;
+            ChannelUnsubscribeTargetName = string.Empty;
+            IsDetailsOpen = false;
+        }
+        catch (GatewayException exception)
+        {
+            ChannelUnsubscribeError = DescribeGatewayFailure(exception);
+        }
+        catch (OperationCanceledException)
+        {
+            ChannelUnsubscribeError = "退出频道未完成，请确认连接状态。";
+        }
+        catch (InvalidOperationException exception)
+        {
+            ChannelUnsubscribeError = DescribeInvalidOperation(exception);
+        }
+        catch (Exception)
+        {
+            ChannelUnsubscribeError = "退出频道失败，请稍后重试。";
+        }
+        finally
+        {
+            IsChannelUnsubscribeBusy = false;
+            Project(_session.State);
+        }
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task OpenChannelBrowserAsync()
+    {
+        CloseTransientOverlays();
+        IsChannelBrowserOpen = true;
+        IsChannelBrowserLoading = true;
+        ChannelBrowserError = null;
+        var generation = ++_channelBrowserGeneration;
+        var accountId = _session.AccountId;
+        _channelBrowserAccountId = accountId;
+        _channelBrowserCancellation?.Cancel();
+        _channelBrowserCancellation?.Dispose();
+        var browserCancellation = _channelBrowserCancellation = new CancellationTokenSource();
+        try
+        {
+            var subscribed = _projectedState.Subscriptions.Keys;
+            var channels = await _session.GetAvailableChannelsAsync(browserCancellation.Token);
+            if (!IsChannelBrowserCurrent(generation, accountId, browserCancellation)) return;
+            Reconcile(AvailableChannels,
+                channels.Where(channel => !channel.IsArchived && !subscribed.Contains(channel.ChannelId))
+                    .OrderBy(channel => channel.Name, StringComparer.Ordinal)
+                    .Select(channel => new AvailableChannelItem(channel.ChannelId, channel.Name, channel.Description, channel.SubscriberCount)),
+                channel => channel.ChannelId);
+        }
+        catch (GatewayException exception)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId, browserCancellation)) ChannelBrowserError = DescribeGatewayFailure(exception);
+        }
+        catch (OperationCanceledException)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId, browserCancellation)) ChannelBrowserError = "加载频道已取消，请重试。";
+        }
+        catch (Exception)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId, browserCancellation)) ChannelBrowserError = "无法加载可加入频道，请确认连接后重试。";
+        }
+        finally
+        {
+            if (IsChannelBrowserCurrent(generation, accountId, browserCancellation)) IsChannelBrowserLoading = false;
+        }
+    }
+
+    [RelayCommand]
+    private void CloseChannelBrowser()
+    {
+        _channelBrowserCancellation?.Cancel();
+        _channelBrowserCancellation?.Dispose();
+        _channelBrowserCancellation = null;
+        _channelBrowserGeneration++;
+        _channelBrowserAccountId = null;
+        ChannelBrowserError = null;
+        IsChannelBrowserLoading = false;
+        IsChannelBrowserOpen = false;
+        Reconcile(AvailableChannels, [], item => item.ChannelId);
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task JoinAvailableChannelAsync(AvailableChannelItem? channel)
+    {
+        if (channel is null || IsChannelBrowserLoading) return;
+        IsChannelBrowserLoading = true;
+        ChannelBrowserError = null;
+        var generation = _channelBrowserGeneration;
+        var accountId = _channelBrowserAccountId;
+        try
+        {
+            await _session.SubscribeToChannelAsync(channel.ChannelId);
+            if (!IsChannelBrowserCurrent(generation, accountId)) return;
+            AvailableChannels.Remove(channel);
+            Project(_session.State);
+        }
+        catch (GatewayException exception)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId)) ChannelBrowserError = DescribeGatewayFailure(exception);
+        }
+        catch (InvalidOperationException exception)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId)) ChannelBrowserError = DescribeInvalidOperation(exception);
+        }
+        catch (OperationCanceledException)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId)) ChannelBrowserError = "加入频道未完成；结果未知时不会自动重试。";
+        }
+        catch (Exception)
+        {
+            if (IsChannelBrowserCurrent(generation, accountId)) ChannelBrowserError = "加入频道失败；结果未知时不会自动重试。";
+        }
+        finally
+        {
+            if (IsChannelBrowserCurrent(generation, accountId)) IsChannelBrowserLoading = false;
+        }
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ToggleSelectedChannelMutedAsync()
+    {
+        await SetSelectedChannelPreferenceAsync(SubscriptionPreference.Muted);
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ToggleSelectedChannelPinnedAsync()
+    {
+        await SetSelectedChannelPreferenceAsync(SubscriptionPreference.Pinned);
+    }
+
+    private async Task SetSelectedChannelPreferenceAsync(SubscriptionPreference preference)
+    {
+        if (_session.SelectedConversation is not ChannelTopic selected ||
+            !_projectedState.Subscriptions.TryGetValue(selected.ChannelId, out var subscription)) return;
+        var value = preference == SubscriptionPreference.Muted ? !subscription.IsMuted : !subscription.IsPinned;
+        await ExecuteSessionActionAsync(() => _session.SetSubscriptionPreferenceAsync(selected.ChannelId, preference, value));
+    }
+
+    [RelayCommand]
     private void ToggleDetails()
     {
         if (!HasSelectedConversation) return;
@@ -1242,8 +1907,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IsMessageMenuOpen = false;
         IsEditDialogOpen = false;
         IsDeleteConfirmationOpen = false;
+        IsChannelUnsubscribeConfirmationOpen = false;
+        _channelUnsubscribeTargetId = null;
+        ChannelUnsubscribeTargetName = string.Empty;
+        ChannelUnsubscribeError = null;
         IsImageViewerOpen = false;
         IsNewConversationOpen = false;
+        IsChannelBrowserOpen = false;
         ActiveImageAttachment = null;
         MediaActionStatus = null;
         ActiveMessageAction = null;
@@ -1256,6 +1926,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(WorkspaceDisplayName));
         if (!value)
         {
+            CloseChannelBrowser();
             ResetDrafts();
         }
     }
@@ -1263,6 +1934,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     partial void OnRealmChanged(string value) => OnPropertyChanged(nameof(WorkspaceDisplayName));
 
     partial void OnLoginErrorChanged(string? value) => OnPropertyChanged(nameof(HasLoginError));
+
+    partial void OnChannelUnsubscribeErrorChanged(string? value) =>
+        OnPropertyChanged(nameof(HasChannelUnsubscribeError));
+
+    partial void OnChannelBrowserErrorChanged(string? value) => OnPropertyChanged(nameof(HasChannelBrowserError));
+
+    partial void OnIsChannelUnsubscribeBusyChanged(bool value) =>
+        OnPropertyChanged(nameof(CanCloseChannelUnsubscribe));
 
     partial void OnComposerTextChanged(string value)
     {
@@ -1277,27 +1956,76 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ComposerSelectionLength = Math.Clamp(ComposerSelectionLength, 0, value.Length - ComposerCursorPosition);
     }
 
-    partial void OnSearchQueryChanged(string value) => ProjectSearch();
+    partial void OnSearchQueryChanged(string value)
+    {
+        ProjectSearch();
+        ScheduleServerSearch(value, immediate: false);
+    }
+    partial void OnSearchErrorChanged(string? value) => OnPropertyChanged(nameof(HasSearchError));
+    partial void OnSavedErrorChanged(string? value)
+    {
+        OnPropertyChanged(nameof(HasSavedError));
+        OnPropertyChanged(nameof(IsSavedEmpty));
+    }
     partial void OnNewConversationQueryChanged(string value) => ProjectNewConversationChoices();
+    partial void OnConversationTitleChanged(string value) =>
+        OnPropertyChanged(nameof(ComposerPlaceholder));
     partial void OnAttachmentErrorChanged(string? value) =>
         OnPropertyChanged(nameof(HasAttachmentError));
     partial void OnMediaActionStatusChanged(string? value) =>
         OnPropertyChanged(nameof(HasMediaActionStatus));
-    partial void OnMessageLoadErrorChanged(string? value) =>
+    partial void OnMessageLoadErrorChanged(string? value)
+    {
         OnPropertyChanged(nameof(HasMessageLoadError));
+        OnPropertyChanged(nameof(ShowHistoryRetry));
+    }
+    partial void OnNewMessageCountChanged(int value)
+    {
+        OnPropertyChanged(nameof(ShowNewMessagesButton));
+        OnPropertyChanged(nameof(NewMessagesButtonText));
+    }
 
-    partial void OnIsSearchOpenChanged(bool value) => NotifyOverlayProperties();
+    partial void OnIsSearchOpenChanged(bool value)
+    {
+#if DEBUG
+        if (value && NativeShellPreviewSession.IsRequested &&
+            string.Equals(NativeShellPreviewSession.RequestedScene, "details", StringComparison.OrdinalIgnoreCase))
+        {
+            IsSearchOpen = false;
+            return;
+        }
+#endif
+        NotifyOverlayProperties();
+    }
     partial void OnIsAccountMenuOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsNewConversationOpenChanged(bool value)
     {
         if (!value) ClearNewConversationChoices();
         NotifyOverlayProperties();
     }
+    partial void OnIsChannelBrowserOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsComposerEmojiPickerOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsReactionPickerOpenChanged(bool value) => NotifyOverlayProperties();
+
+    private bool IsChannelBrowserCurrent(long generation, AccountId? accountId, CancellationTokenSource? cancellation = null) =>
+        IsChannelBrowserOpen && generation == _channelBrowserGeneration && accountId == _channelBrowserAccountId && accountId == _session.AccountId &&
+        (cancellation is null || ReferenceEquals(cancellation, _channelBrowserCancellation) && !cancellation.IsCancellationRequested);
+    partial void OnSelectedComposerEmojiChanged(EmojiChoice? oldValue, EmojiChoice? newValue)
+    {
+        if (oldValue is not null) oldValue.IsComposerSelected = false;
+        if (newValue is not null) newValue.IsComposerSelected = true;
+    }
+
+    partial void OnSelectedReactionEmojiChanged(EmojiChoice? oldValue, EmojiChoice? newValue)
+    {
+        if (oldValue is not null) oldValue.IsReactionSelected = false;
+        if (newValue is not null) newValue.IsReactionSelected = true;
+    }
+
     partial void OnIsMessageMenuOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsEditDialogOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsDeleteConfirmationOpenChanged(bool value) => NotifyOverlayProperties();
+    partial void OnIsChannelUnsubscribeConfirmationOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsImageViewerOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnLogoutConfirmationVisibleChanged(bool value) => NotifyOverlayProperties();
 
@@ -1307,6 +2035,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanEditActiveMessage));
         OnPropertyChanged(nameof(CanDeleteActiveMessage));
         OnPropertyChanged(nameof(CanStarActiveMessage));
+        OnPropertyChanged(nameof(ActiveMessageStarActionLabel));
         OnPropertyChanged(nameof(ActiveMessageTitle));
     }
 
@@ -1314,6 +2043,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(IsMessagesSection));
         OnPropertyChanged(nameof(IsContactsSection));
+        OnPropertyChanged(nameof(IsSavedSection));
         OnPropertyChanged(nameof(IsSettingsSection));
         NotifyLayoutProperties();
     }
@@ -1335,6 +2065,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsOverlayDetailsVisible));
         OnPropertyChanged(nameof(IsPrimaryShellEnabled));
         OnPropertyChanged(nameof(InlineDetailsWidth));
+        OnPropertyChanged(nameof(MessageRowMaximumWidth));
         OnPropertyChanged(nameof(DetailsButtonDescription));
     }
 
@@ -1357,6 +2088,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     partial void OnFontScaleModeChanged(UiFontScaleMode value)
     {
+        if (!_preserveContinuousPreference)
+        {
+            _fontSize = value switch { UiFontScaleMode.Small => 12d, UiFontScaleMode.Large => 16d, _ => 14d };
+        }
         OnPropertyChanged(nameof(IsSmallFont));
         OnPropertyChanged(nameof(IsDefaultFont));
         OnPropertyChanged(nameof(IsLargeFont));
@@ -1367,10 +2102,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     partial void OnConversationWidthModeChanged(UiConversationWidthMode value)
     {
+        if (!_preserveContinuousPreference)
+        {
+            _conversationPaneWidth = value switch { UiConversationWidthMode.Narrow => 264d, UiConversationWidthMode.Wide => 352d, _ => 310d };
+        }
         OnPropertyChanged(nameof(IsNarrowConversationWidth));
         OnPropertyChanged(nameof(IsStandardConversationWidth));
         OnPropertyChanged(nameof(IsWideConversationWidth));
         OnPropertyChanged(nameof(ConversationPaneWidth));
+        OnPropertyChanged(nameof(MessageRowMaximumWidth));
         OnPropertyChanged(nameof(ConversationWidthSliderValue));
         OnPropertyChanged(nameof(CurrentConversationWidthLabel));
         SaveUiPreferences();
@@ -1382,6 +2122,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(ChannelListHeight));
         OnPropertyChanged(nameof(TopicListHeight));
+        OnPropertyChanged(nameof(ShowTopicPicker));
+        OnPropertyChanged(nameof(ShowEmptyChannelTopicState));
         SaveUiPreferences();
     }
 
@@ -1394,99 +2136,256 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(HasSelectedChannel));
         OnPropertyChanged(nameof(TopicListHeight));
-        if (value?.ChannelId == _loadedTopicsChannelId) return;
-        _ = SelectChannelAsync(value);
+        OnPropertyChanged(nameof(ShowTopicPicker));
+        OnPropertyChanged(nameof(ShowEmptyChannelTopicState));
+        OnPropertyChanged(nameof(SelectedChannelMuteLabel));
+        OnPropertyChanged(nameof(SelectedChannelPinLabel));
+        RefreshNavigationSelectionProjection();
     }
 
     partial void OnSelectedTopicChanged(TopicItem? value)
     {
-        if (value is null) return;
-        var conversation = new ChannelTopic(value.ChannelId, value.Topic);
-        if (string.Equals(_session.SelectedConversation?.CanonicalKey, conversation.CanonicalKey, StringComparison.Ordinal)) return;
-        _ = SelectConversationAsync(conversation);
+        RefreshNavigationSelectionProjection();
     }
 
     partial void OnSelectedDirectMessageChanged(NavigationItem? value)
     {
-        if (value is null) return;
-        if (string.Equals(_session.SelectedConversation?.CanonicalKey, value.Conversation.CanonicalKey, StringComparison.Ordinal)) return;
-        _ = SelectConversationAsync(value.Conversation);
+        RefreshNavigationSelectionProjection();
     }
 
-    private async Task SelectChannelAsync(ChannelItem? channel)
-    {
-        CancelNavigation();
-        LoginError = null;
-        _loadedTopics = [];
-        _loadedTopicsChannelId = channel?.ChannelId;
-        ProjectTopics(_projectedState, channel?.ChannelId);
-        if (channel is null) return;
+    partial void OnConversationFilterQueryChanged(string value) => ProjectConversationFilter();
 
-        var cancellation = new CancellationTokenSource();
-        _navigationCancellation = cancellation;
+    public void SelectFirstFilteredConversation()
+    {
+        if (FilteredChannels.FirstOrDefault() is { } channel)
+        {
+            ActivateChannel(channel);
+            return;
+        }
+        if (FilteredDirectMessages.FirstOrDefault() is { } directMessage)
+        {
+            ActivateDirectMessage(directMessage);
+        }
+    }
+
+    public void ClearConversationFilter() => ConversationFilterQuery = string.Empty;
+
+    internal void ActivateChannel(ChannelItem channel)
+    {
+        ArgumentNullException.ThrowIfNull(channel);
+        ConversationFilterQuery = string.Empty;
+        _ = ActivateChannelAsync(channel);
+    }
+
+    internal void ActivateTopic(TopicItem topic)
+    {
+        ArgumentNullException.ThrowIfNull(topic);
+        ConversationFilterQuery = string.Empty;
+        _ = ActivateConversationFromNavigationAsync(
+            new ChannelTopic(topic.ChannelId, topic.Topic),
+            Channels.FirstOrDefault(channel => channel.ChannelId == topic.ChannelId),
+            topic,
+            null);
+    }
+
+    internal void ActivateDirectMessage(NavigationItem directMessage)
+    {
+        ArgumentNullException.ThrowIfNull(directMessage);
+        ConversationFilterQuery = string.Empty;
+        _ = ActivateConversationFromNavigationAsync(directMessage.Conversation, null, null, directMessage);
+    }
+
+    partial void OnIsNewChannelConversationModeChanged(bool value) =>
+        NotifyNewConversationModeProperties();
+
+    partial void OnNewConversationChannelChanged(ChannelItem? value) =>
+        OnPropertyChanged(nameof(CanStartNewChannelConversation));
+
+    partial void OnNewConversationTopicChanged(string value) =>
+        OnPropertyChanged(nameof(CanStartNewChannelConversation));
+
+    private void NotifyNewConversationModeProperties()
+    {
+        OnPropertyChanged(nameof(IsNewDirectConversationMode));
+        OnPropertyChanged(nameof(IsNewConversationChoicesVisible));
+        OnPropertyChanged(nameof(IsNewConversationChoiceEmptyVisible));
+    }
+
+    private async Task ActivateChannelAsync(ChannelItem channel)
+    {
+        var (generation, cancellation) = BeginNavigation();
+        SelectedChannel = Channels.FirstOrDefault(item => item.ChannelId == channel.ChannelId) ?? channel;
+        SelectedTopic = null;
+        SelectedDirectMessage = null;
+        _loadedTopics = [];
+        _loadedTopicsChannelId = channel.ChannelId;
+        _hasAuthoritativeTopics = false;
+        ProjectTopics(_projectedState, channel.ChannelId);
         try
         {
             var topics = await _session.LoadTopicsAsync(channel.ChannelId, cancellation.Token);
-            if (cancellation.IsCancellationRequested || SelectedChannel?.ChannelId != channel.ChannelId) return;
-            _dispatcher.Dispatch(() =>
+            if (!IsNavigationCurrent(generation, cancellation)) return;
+
+            _loadedTopics = topics;
+            _loadedTopicsChannelId = channel.ChannelId;
+            _hasAuthoritativeTopics = true;
+            ProjectTopics(_projectedState, channel.ChannelId);
+            if (Topics.Count == 0)
             {
-                _loadedTopics = topics;
-                _loadedTopicsChannelId = channel.ChannelId;
-                ProjectTopics(_projectedState, channel.ChannelId);
-                SynchronizeSelection(_session.SelectedConversation);
-            });
+                IsAuthoritativeEmptyChannel = true;
+                return;
+            }
+
+            var remembered = _lastSelectedTopicByChannel.GetValueOrDefault(channel.ChannelId);
+            var topic = remembered is null
+                ? Topics.OrderByDescending(item => item.MaxMessageId)
+                    .ThenBy(item => item.Topic, StringComparer.Ordinal)
+                    .First()
+                : Topics.FirstOrDefault(item => string.Equals(item.Topic, remembered, StringComparison.Ordinal)) ??
+                  Topics.OrderByDescending(item => item.MaxMessageId)
+                      .ThenBy(item => item.Topic, StringComparer.Ordinal)
+                      .First();
+            SelectedTopic = topic;
+            await SelectConversationForNavigationAsync(
+                new ChannelTopic(topic.ChannelId, topic.Topic),
+                generation,
+                cancellation);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
         }
         catch (GatewayException exception)
         {
-            _dispatcher.Dispatch(() => LoginError = DescribeGatewayFailure(exception));
+            SetNavigationFailure(generation, cancellation, DescribeGatewayFailure(exception));
         }
         catch (InvalidOperationException exception)
         {
-            _dispatcher.Dispatch(() => LoginError = DescribeInvalidOperation(exception));
+            SetNavigationFailure(generation, cancellation, DescribeInvalidOperation(exception));
         }
         catch (Exception)
         {
-            _dispatcher.Dispatch(() => LoginError = "无法读取频道话题，请稍后重试。");
+            SetNavigationFailure(generation, cancellation, "无法读取频道话题，请稍后重试。");
         }
         finally
         {
-            if (ReferenceEquals(Interlocked.CompareExchange(ref _navigationCancellation, null, cancellation), cancellation))
-            {
-                cancellation.Dispose();
-            }
+            CompleteNavigation(generation, cancellation);
         }
     }
 
-    private async Task SelectConversationAsync(ConversationKey conversation)
+    private async Task<bool> ActivateConversationFromNavigationAsync(
+        ConversationKey conversation,
+        ChannelItem? channel,
+        TopicItem? topic,
+        NavigationItem? directMessage)
     {
-        IsConversationLoading = true;
-        MessageLoadError = null;
+        var (generation, cancellation) = BeginNavigation();
+        SelectedChannel = channel;
+        SelectedTopic = topic;
+        SelectedDirectMessage = directMessage;
+        _hasAuthoritativeTopics = topic is not null && _loadedTopicsChannelId == topic.ChannelId && _hasAuthoritativeTopics;
         try
         {
-            var success = await ExecuteSessionActionAsync(async () =>
-            {
-                await _session.SelectConversationAsync(conversation);
-                if (IsNarrowLayout)
-                {
-                    IsConversationListVisibleOnNarrow = false;
-                }
-            });
-            if (!success && LoginError is not null)
-            {
-                MessageLoadError = LoginError;
-            }
-            else if (success && OpenDetailsByDefault && IsWideLayout)
-            {
-                IsDetailsOpen = true;
-            }
+            return await SelectConversationForNavigationAsync(conversation, generation, cancellation);
         }
         finally
         {
-            IsConversationLoading = false;
+            CompleteNavigation(generation, cancellation);
         }
+    }
+
+    private async Task<bool> SelectConversationForNavigationAsync(
+        ConversationKey conversation,
+        long navigationGeneration,
+        CancellationTokenSource cancellation)
+    {
+        var wasRepeatedActivation = string.Equals(
+            _session.SelectedConversation?.CanonicalKey,
+            conversation.CanonicalKey,
+            StringComparison.Ordinal);
+        var success = await ExecuteSessionActionAsync(
+            () => _session.SelectConversationAsync(conversation, cancellation.Token));
+        if (!IsNavigationCurrent(navigationGeneration, cancellation)) return false;
+        if (!success)
+        {
+            SetNavigationFailure(
+                navigationGeneration,
+                cancellation,
+                LoginError ?? "无法加载会话，请稍后重试。");
+            return false;
+        }
+
+        var history = _session.HistoryState;
+        if (!string.Equals(history.Conversation?.CanonicalKey, conversation.CanonicalKey, StringComparison.Ordinal) ||
+            history.Error is not null)
+        {
+            SetNavigationFailure(navigationGeneration, cancellation, DescribeHistoryError(history.Error) ?? "无法加载会话，请稍后重试。");
+            return false;
+        }
+
+        _displayedConversationKey = conversation.CanonicalKey;
+        IsAuthoritativeEmptyChannel = false;
+        HasConversationActivationError = false;
+        MessageLoadError = null;
+        if (conversation is ChannelTopic channelTopic)
+        {
+            _lastSelectedTopicByChannel[channelTopic.ChannelId] = channelTopic.Topic;
+        }
+        SynchronizeSelection(conversation);
+        _pendingActivationScrollConversationKey = conversation.CanonicalKey;
+        _pendingActivationScrollGeneration = history.Generation;
+        _pendingActivationScrollReason = wasRepeatedActivation
+            ? MessageScrollReason.ConversationReactivated
+            : MessageScrollReason.ConversationActivated;
+        TryPublishPendingActivationScroll();
+        if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
+        if (OpenDetailsByDefault && IsWideLayout) IsDetailsOpen = true;
+        NotifyConversationAvailability();
+        return true;
+    }
+
+    private (long Generation, CancellationTokenSource Cancellation) BeginNavigation()
+    {
+        CancelNavigation();
+        var cancellation = new CancellationTokenSource();
+        _navigationCancellation = cancellation;
+        var generation = ++_navigationGeneration;
+        IsNavigationPending = true;
+        IsConversationLoading = true;
+        IsAuthoritativeEmptyChannel = false;
+        HasConversationActivationError = false;
+        MessageLoadError = null;
+        _displayedConversationKey = null;
+        _pendingActivationScrollConversationKey = null;
+        _pendingActivationScrollReason = null;
+        PendingMessageScrollRequest = null;
+        NewMessageCount = 0;
+        if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
+        NotifyConversationAvailability();
+        return (generation, cancellation);
+    }
+
+    private bool IsNavigationCurrent(long generation, CancellationTokenSource cancellation) =>
+        !cancellation.IsCancellationRequested &&
+        generation == _navigationGeneration &&
+        ReferenceEquals(_navigationCancellation, cancellation);
+
+    private void SetNavigationFailure(long generation, CancellationTokenSource cancellation, string message)
+    {
+        if (!IsNavigationCurrent(generation, cancellation)) return;
+        HasConversationActivationError = true;
+        MessageLoadError = message;
+        _displayedConversationKey = null;
+        NotifyConversationAvailability();
+    }
+
+    private void CompleteNavigation(long generation, CancellationTokenSource cancellation)
+    {
+        if (!IsNavigationCurrent(generation, cancellation)) return;
+        Interlocked.CompareExchange(ref _navigationCancellation, null, cancellation);
+        cancellation.Dispose();
+        IsNavigationPending = false;
+        IsConversationLoading = false;
+        NotifyConversationAvailability();
     }
 
     private async Task<bool> ExecuteSessionActionAsync(Func<Task> action, string? failureMessage = null)
@@ -1527,9 +2426,66 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void OnStateChanged(object? sender, ClientStateChangedEventArgs eventArgs) =>
         _dispatcher.Dispatch(() => Project(eventArgs.State));
 
+    private void OnMessageMutationObserved(object? sender, MessageMutationObservedEventArgs eventArgs) =>
+        _dispatcher.Dispatch(() =>
+        {
+            if (eventArgs.Deleted || eventArgs.IsStarred is false)
+            {
+                var ids = eventArgs.MessageIds.ToHashSet();
+                foreach (var saved in SavedMessages.Where(item => ids.Contains(item.MessageId)).ToArray())
+                {
+                    SavedMessages.Remove(saved);
+                }
+                OnPropertyChanged(nameof(HasSavedMessages));
+                OnPropertyChanged(nameof(IsSavedEmpty));
+            }
+            else if (eventArgs.IsStarred is true)
+            {
+                SavedRefreshSuggested = true;
+            }
+        });
+
     private void Project(ClientState state)
     {
         _projectedState = state;
+        if (_searchAccountId != _session.AccountId)
+        {
+            CancelSearchInput();
+            _searchAccountId = _session.AccountId;
+            _searchBeforeMessageId = null;
+            _serverSearchResults = [];
+            SearchError = null;
+            ProjectSearch();
+            OnPropertyChanged(nameof(HasMoreSearchResults));
+        }
+        if (_savedAccountId != _session.AccountId)
+        {
+            CancelSavedLoad();
+            _savedAccountId = _session.AccountId;
+            _savedBeforeMessageId = null;
+            SavedMessages.Clear();
+            SavedRefreshSuggested = false;
+            SavedError = null;
+            OnPropertyChanged(nameof(HasSavedMessages));
+            OnPropertyChanged(nameof(HasMoreSavedMessages));
+            OnPropertyChanged(nameof(IsSavedEmpty));
+        }
+        if (SavedMessages.Count > 0)
+        {
+            var savedIds = SavedMessages.Select(item => item.MessageId).ToHashSet();
+            foreach (var saved in SavedMessages.ToArray())
+            {
+                if (state.Messages.TryGetValue(saved.MessageId, out var message) && !message.IsStarred)
+                {
+                    SavedMessages.Remove(saved);
+                }
+            }
+            if (state.Messages.Values.Any(message => message.IsStarred && !savedIds.Contains(message.Id)))
+            {
+                SavedRefreshSuggested = true;
+            }
+            OnPropertyChanged(nameof(HasSavedMessages));
+        }
         IsLoggedIn = state.Connection.Status is
             RelayCove.Core.ConnectionStatus.Connected or
             RelayCove.Core.ConnectionStatus.Offline or
@@ -1542,42 +2498,20 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             Channels,
             state.Subscriptions.Values
                 .Where(subscription => subscription.IsActive)
-                .OrderBy(subscription => subscription.Name, StringComparer.Ordinal)
-                .Select(subscription => new ChannelItem(
-                    subscription.ChannelId,
-                    subscription.Name,
-                    GetChannelUnread(state.Unread, subscription.ChannelId),
-                    state.Topics.Values
-                        .Where(topic => topic.ChannelId == subscription.ChannelId)
-                        .OrderByDescending(topic => topic.MaxMessageId)
-                        .Select(topic => topic.Topic)
-                        .FirstOrDefault())),
+                .OrderByDescending(subscription => subscription.IsPinned)
+                .ThenBy(subscription => subscription.IsMuted)
+                .ThenBy(subscription => subscription.Name, StringComparer.Ordinal)
+                .Select(subscription => CreateChannelItem(state, subscription)),
             item => item.ChannelId);
 
         Reconcile(
             DirectMessages,
             _session.RecentDirectMessages
                 .OfType<DirectMessage>()
-                .OrderBy(item => item.CanonicalKey, StringComparer.Ordinal)
-                .Select(item =>
-                {
-                    var avatar = GetDirectMessageAvatar(item, state.Users);
-                    var latestMessage = state.Messages.Values
-                        .Where(message => message.Conversation == item)
-                        .OrderByDescending(message => message.Id)
-                        .FirstOrDefault();
-                    return new NavigationItem(
-                        item,
-                        DescribeDirectMessage(item, state.Users),
-                        latestMessage is null
-                            ? DescribeDirectMessageKind(item)
-                            : TruncateForSearch(latestMessage.Content),
-                        GetConversationUnread(state.Unread, item),
-                        avatar?.AvatarUrl,
-                        avatar?.IsBot ?? false,
-                        latestMessage?.Timestamp.LocalDateTime.ToString("H:mm"));
-                }),
+                .Select(item => CreateDirectNavigationItem(state, item)),
             item => item.Conversation.CanonicalKey);
+
+        ProjectConversationFilter();
 
         Reconcile(
             KnownContacts,
@@ -1591,10 +2525,57 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ProjectTopics(state, SelectedChannel?.ChannelId);
 
         var selected = _session.SelectedConversation;
+        var selectedKey = selected?.CanonicalKey;
+        var conversationChanged = !string.Equals(_projectedConversationKey, selectedKey, StringComparison.Ordinal);
+        var previousNewestMessageId = conversationChanged ? null : _newestProjectedMessageId;
         var projectedMessages = BuildMessageItems(state, selected);
         Reconcile(Messages, projectedMessages, item => item.Id);
 
-        SynchronizeSelection(selected);
+        var newestMessageId = projectedMessages
+            .Select(message => message.MessageId)
+            .Max();
+        if (conversationChanged)
+        {
+            NewMessageCount = 0;
+            _lastAutomaticLoadOlderMilliseconds = long.MinValue;
+            PendingMessageScrollRequest = null;
+            if (!IsNavigationPending &&
+                selectedKey is not null &&
+                _session.HistoryState is { Error: null } history &&
+                string.Equals(history.Conversation?.CanonicalKey, selectedKey, StringComparison.Ordinal))
+            {
+                _displayedConversationKey = selectedKey;
+                _pendingActivationScrollConversationKey = selectedKey;
+                _pendingActivationScrollGeneration = history.Generation;
+                _pendingActivationScrollReason = MessageScrollReason.ConversationActivated;
+            }
+        }
+        else if (previousNewestMessageId is { } previousNewest &&
+                 !IsNavigationPending &&
+                 !_session.HistoryState.IsLoading)
+        {
+            var appendedCount = projectedMessages.Count(message =>
+                message.MessageId is { } messageId && messageId > previousNewest);
+            if (appendedCount > 0)
+            {
+                if (_isMessageViewportNearBottom)
+                {
+                    QueueScrollToLatest(MessageScrollReason.RealtimeFollow);
+                }
+                else
+                {
+                    NewMessageCount += appendedCount;
+                }
+            }
+        }
+        _projectedConversationKey = selectedKey;
+        _newestProjectedMessageId = newestMessageId;
+
+        ProjectHistoryState(selected);
+        RetargetPendingScrollIfNeeded();
+        TryPublishPendingActivationScroll();
+
+        if (!IsNavigationPending) SynchronizeSelection(selected);
         ProjectConversation(selected, state);
         ProjectDraft(selected);
         ProjectUnread(state.Unread);
@@ -1609,6 +2590,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         var currentUserId = _session.CurrentUserId;
         DateOnly? previousDate = null;
         var unreadDividerAdded = false;
+        long? previousMessageId = null;
+        long? previewUnreadAfterMessageId = null;
+        string? previewUnreadDividerLabel = null;
+#if DEBUG
+        if (_session is NativeShellPreviewSession previewSession)
+        {
+            previewUnreadAfterMessageId = previewSession.UnreadDividerAfterMessageId;
+            previewUnreadDividerLabel = previewSession.UnreadDividerLabel;
+        }
+#endif
         foreach (var message in state.Messages.Values
                      .Where(message => message.Conversation == selected)
                      .OrderBy(message => message.Id))
@@ -1618,6 +2609,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             var date = DateOnly.FromDateTime(localTime);
             var isOwn = currentUserId == message.SenderId;
             var isUnread = !isOwn && !message.IsRead;
+            var showPreviewUnreadDivider = previewUnreadAfterMessageId is { } previewAfter &&
+                previousMessageId == previewAfter;
             var mutation = state.MessageMutations.GetValueOrDefault(message.Id);
             var reactions = message.Reactions
                 .GroupBy(reaction => reaction.Identity.CanonicalKey, StringComparer.Ordinal)
@@ -1655,13 +2648,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 reactions,
                 CreatePermalink(message.Id),
                 previousDate != date,
-                DescribeDate(date),
-                isUnread && !unreadDividerAdded,
+                DescribeDate(date, localTime),
+                showPreviewUnreadDivider || isUnread && !unreadDividerAdded,
+                showPreviewUnreadDivider ? previewUnreadDividerLabel : null,
                 DescribeMutation(mutation),
                 mutation?.Status is MessageMutationStatus.Submitting or MessageMutationStatus.Uncertain,
                 realm: _session.ActiveRealm));
             previousDate = date;
-            if (isUnread) unreadDividerAdded = true;
+            previousMessageId = message.Id;
+            if (showPreviewUnreadDivider || isUnread) unreadDividerAdded = true;
         }
 
         foreach (var entry in state.Outbox.Values
@@ -1679,7 +2674,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 localTime.ToString("t"),
                 isOwn: true,
                 showDateDivider: previousDate != date,
-                dateDividerLabel: DescribeDate(date),
+                dateDividerLabel: DescribeDate(date, localTime),
                 deliveryState: DescribeOutbox(entry.State),
                 canRecover: entry.State is OutboxState.WaitExpired or OutboxState.Failed,
                 recoverCommand: RecoverOutboxCommand,
@@ -1690,20 +2685,199 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         return projected;
     }
 
+    private void ScheduleServerSearch(string query, bool immediate)
+    {
+        CancelSearchInput();
+        if (!IsSearchOpen || string.IsNullOrWhiteSpace(query))
+        {
+            _serverSearchResults = [];
+            IsSearchBusy = false;
+            SearchError = null;
+            return;
+        }
+        var cancellation = new CancellationTokenSource();
+        _searchInputCancellation = cancellation;
+        var generation = ++_searchInputGeneration;
+        var accountId = _session.AccountId;
+        if (accountId is null)
+        {
+            CancelSearchInput();
+            return;
+        }
+        _searchAccountId = accountId;
+        _ = RunServerSearchCoreAsync(query.Trim(), immediate, generation, accountId.Value, cancellation);
+    }
+
+    private async Task RunServerSearchAsync(string query, bool immediate, CancellationToken cancellationToken)
+    {
+        CancelSearchInput();
+        if (!IsSearchOpen || string.IsNullOrWhiteSpace(query)) return;
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _searchInputCancellation = cancellation;
+        var accountId = _session.AccountId;
+        if (accountId is null)
+        {
+            CancelSearchInput();
+            return;
+        }
+        _searchAccountId = accountId;
+        await RunServerSearchCoreAsync(query.Trim(), immediate, ++_searchInputGeneration, accountId.Value, cancellation).ConfigureAwait(false);
+    }
+
+    private async Task RunServerSearchCoreAsync(string query, bool immediate, long generation, AccountId accountId, CancellationTokenSource cancellation)
+    {
+        try
+        {
+            if (!immediate) await Task.Delay(TimeSpan.FromMilliseconds(300), cancellation.Token).ConfigureAwait(false);
+            if (!IsSearchCurrent(generation, accountId) || !IsSearchOpen) return;
+            IsSearchBusy = true;
+            SearchError = null;
+            _searchBeforeMessageId = null;
+            var page = await _session.SearchMessagesAsync(query, null, 50, cancellation.Token).ConfigureAwait(false);
+            if (!IsSearchCurrent(generation, accountId) || !IsSearchOpen || !string.Equals(SearchQuery.Trim(), query, StringComparison.Ordinal)) return;
+            _serverSearchResults = page.Messages.OrderByDescending(message => message.Id).Select(ToSearchResult).ToArray();
+            ProjectSearch();
+            _searchBeforeMessageId = page.FoundOldest ? null : page.Messages.MinBy(message => message.Id)?.Id;
+            OnPropertyChanged(nameof(HasMoreSearchResults));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (GatewayException exception)
+        {
+            if (IsSearchCurrent(generation, accountId)) SearchError = DescribeGatewayFailure(exception);
+        }
+        catch (Exception)
+        {
+            if (IsSearchCurrent(generation, accountId)) SearchError = "服务器搜索失败，请稍后重试。";
+        }
+        finally
+        {
+            if (IsSearchCurrent(generation, accountId)) IsSearchBusy = false;
+            if (ReferenceEquals(_searchInputCancellation, cancellation)) _searchInputCancellation = null;
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task StartSavedLoadAsync(bool replace, CancellationToken cancellationToken)
+    {
+        var prior = _savedLoadCancellation;
+        prior?.Cancel();
+        var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _savedLoadCancellation = linked;
+        var generation = ++_savedLoadGeneration;
+        var accountId = _session.AccountId;
+        if (accountId is null)
+        {
+            if (ReferenceEquals(_savedLoadCancellation, linked)) _savedLoadCancellation = null;
+            linked.Dispose();
+            return;
+        }
+        if (replace)
+        {
+            _savedBeforeMessageId = null;
+            SavedRefreshSuggested = false;
+        }
+        await LoadSavedPageAsync(replace, accountId.Value, generation, linked).ConfigureAwait(false);
+    }
+
+    private async Task LoadSavedPageAsync(
+        bool replace,
+        AccountId accountId,
+        long generation,
+        CancellationTokenSource cancellation)
+    {
+        try
+        {
+            IsSavedLoading = true;
+            SavedError = null;
+            var beforeMessageId = replace ? null : _savedBeforeMessageId;
+            var page = await _session.LoadSavedMessagesAsync(beforeMessageId, 50, cancellation.Token).ConfigureAwait(false);
+            if (!IsSavedLoadCurrent(accountId, generation)) return;
+            if (!replace && !page.FoundAnchor)
+            {
+                _savedBeforeMessageId = null;
+                SavedError = "已保存消息已变化，请刷新列表。";
+                OnPropertyChanged(nameof(HasMoreSavedMessages));
+                return;
+            }
+            var items = page.Messages.OrderByDescending(message => message.Id).Select(ToSavedMessage).ToArray();
+            if (replace)
+            {
+                Reconcile(SavedMessages, items, item => item.MessageId);
+            }
+            else
+            {
+                var known = SavedMessages.Select(item => item.MessageId).ToHashSet();
+                foreach (var item in items.Where(item => known.Add(item.MessageId))) SavedMessages.Add(item);
+            }
+            _savedBeforeMessageId = page.FoundOldest ? null : page.Messages.MinBy(message => message.Id)?.Id;
+            _savedAccountId = accountId;
+            OnPropertyChanged(nameof(HasSavedMessages));
+            OnPropertyChanged(nameof(HasMoreSavedMessages));
+            OnPropertyChanged(nameof(IsSavedEmpty));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (GatewayException exception)
+        {
+            if (IsSavedLoadCurrent(accountId, generation)) SavedError = DescribeGatewayFailure(exception);
+        }
+        catch (Exception)
+        {
+            if (IsSavedLoadCurrent(accountId, generation)) SavedError = "已保存消息读取失败，请稍后重试。";
+        }
+        finally
+        {
+            if (IsSavedLoadCurrent(accountId, generation))
+            {
+                IsSavedLoading = false;
+                if (ReferenceEquals(_savedLoadCancellation, cancellation)) _savedLoadCancellation = null;
+                OnPropertyChanged(nameof(IsSavedEmpty));
+            }
+            cancellation.Dispose();
+        }
+    }
+
+    private bool IsSavedLoadCurrent(AccountId accountId, long generation) =>
+        generation == _savedLoadGeneration && _session.AccountId == accountId;
+
+    private bool IsSearchCurrent(long generation, AccountId accountId) =>
+        generation == _searchInputGeneration && _session.AccountId == accountId;
+
+    private void CancelSavedLoad()
+    {
+        _savedLoadGeneration++;
+        _savedLoadCancellation?.Cancel();
+        _savedLoadCancellation = null;
+    }
+
+    private SearchResultItem ToSearchResult(ChatMessage message)
+    {
+        var sender = message.SenderDisplayName ?? _projectedState.Users.GetValueOrDefault(message.SenderId)?.FullName ?? $"用户 {message.SenderId}";
+        return new SearchResultItem($"server-message:{message.Id}", "服务器消息", sender, TruncateForSearch(message.Content), message.Conversation, message.Id);
+    }
+
+    private SavedMessageItem ToSavedMessage(ChatMessage message)
+    {
+        var sender = message.SenderDisplayName ?? _projectedState.Users.GetValueOrDefault(message.SenderId)?.FullName ?? $"用户 {message.SenderId}";
+        return new SavedMessageItem(message.Id, message.Conversation, sender, TruncateForSearch(message.Content), message.Timestamp.LocalDateTime.ToString("g"));
+    }
+
+    private void CancelSearchInput()
+    {
+        _searchInputCancellation?.Cancel();
+        _searchInputCancellation = null;
+        _searchInputGeneration++;
+    }
+
     private void ProjectSearch()
     {
         var query = SearchQuery.Trim();
-        if (query.Length == 0)
-        {
-            Reconcile(SearchResults, [], item => item.Id);
-            OnPropertyChanged(nameof(HasSearchResults));
-            OnPropertyChanged(nameof(IsSearchEmpty));
-            return;
-        }
-
         var results = new List<SearchResultItem>();
         foreach (var channel in _projectedState.Subscriptions.Values
-                     .Where(channel => channel.IsActive && Contains(channel.Name, query))
+                     .Where(channel => channel.IsActive && (query.Length == 0 || Contains(channel.Name, query)))
                      .OrderBy(channel => channel.Name, StringComparer.Ordinal))
         {
             results.Add(new SearchResultItem(
@@ -1714,7 +2888,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 ChannelId: channel.ChannelId));
         }
         foreach (var topic in _projectedState.Topics.Values
-                     .Where(topic => Contains(topic.Topic, query) ||
+                     .Where(topic => query.Length == 0 || Contains(topic.Topic, query) ||
                                      Contains(_projectedState.Subscriptions.GetValueOrDefault(topic.ChannelId)?.Name, query))
                      .OrderByDescending(topic => topic.MaxMessageId)
                      .ThenBy(topic => topic.Topic, StringComparer.Ordinal))
@@ -1729,7 +2903,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 conversation));
         }
         foreach (var user in _projectedState.Users.Values
-                     .Where(user => user.IsActive && Contains(user.FullName, query))
+                     .Where(user => user.IsActive && (query.Length == 0 || Contains(user.FullName, query)))
                      .OrderBy(user => user.FullName, StringComparer.Ordinal)
                      .ThenBy(user => user.UserId))
         {
@@ -1744,7 +2918,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 conversation));
         }
         foreach (var message in _projectedState.Messages.Values
-                     .Where(message => Contains(message.Content, query) ||
+                     .Where(message => query.Length == 0 || Contains(message.Content, query) ||
                                        Contains(message.SenderDisplayName, query))
                      .OrderByDescending(message => message.Id))
         {
@@ -1758,7 +2932,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 message.Id));
         }
 
-        Reconcile(SearchResults, results.Take(50), item => item.Id);
+        Reconcile(SearchResults, _serverSearchResults.Concat(results.Take(50)), item => item.Id);
         OnPropertyChanged(nameof(HasSearchResults));
         OnPropertyChanged(nameof(IsSearchEmpty));
     }
@@ -1772,7 +2946,23 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             choice => choice.UserId);
         OnPropertyChanged(nameof(HasNewConversationChoices));
         OnPropertyChanged(nameof(IsNewConversationChoiceEmpty));
+        OnPropertyChanged(nameof(IsNewConversationChoicesVisible));
+        OnPropertyChanged(nameof(IsNewConversationChoiceEmptyVisible));
         OnPropertyChanged(nameof(CanStartNewConversation));
+    }
+
+    private void ProjectConversationFilter()
+    {
+        var query = ConversationFilterQuery.Trim();
+        Reconcile(
+            FilteredChannels,
+            Channels.Where(item => query.Length == 0 || Contains(item.DisplayTitle, query) || Contains(item.Detail, query)),
+            item => item.ChannelId);
+        Reconcile(
+            FilteredDirectMessages,
+            DirectMessages.Where(item => query.Length == 0 || Contains(item.Title, query) || Contains(item.Detail, query)),
+            item => item.Conversation.CanonicalKey);
+        OnPropertyChanged(nameof(ChannelListHeight));
     }
 
     private void OnNewConversationChoiceChanged(object? sender, PropertyChangedEventArgs eventArgs)
@@ -1793,6 +2983,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         Reconcile(NewConversationChoices, [], choice => choice.UserId);
         OnPropertyChanged(nameof(HasNewConversationChoices));
         OnPropertyChanged(nameof(IsNewConversationChoiceEmpty));
+        OnPropertyChanged(nameof(IsNewConversationChoicesVisible));
+        OnPropertyChanged(nameof(IsNewConversationChoiceEmptyVisible));
         OnPropertyChanged(nameof(CanStartNewConversation));
     }
 
@@ -1802,12 +2994,19 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             Reconcile(Topics, [], item => item.CanonicalKey);
             OnPropertyChanged(nameof(HasTopics));
+            OnPropertyChanged(nameof(ShowTopicPicker));
+            OnPropertyChanged(nameof(ShowEmptyChannelTopicState));
+            OnPropertyChanged(nameof(TopicListHeight));
             return;
         }
 
-        var topicMap = state.Topics.Values
-            .Where(topic => topic.ChannelId == selectedChannelId)
-            .Concat(_loadedTopics.Where(topic => topic.ChannelId == selectedChannelId))
+        var authoritativeTopicsAvailable = _hasAuthoritativeTopics && _loadedTopicsChannelId == selectedChannelId;
+        var topicSource = authoritativeTopicsAvailable
+            ? _loadedTopics.Where(topic => topic.ChannelId == selectedChannelId)
+            : state.Topics.Values
+                .Where(topic => topic.ChannelId == selectedChannelId)
+                .Concat(_loadedTopics.Where(topic => topic.ChannelId == selectedChannelId));
+        var topicMap = topicSource
             .GroupBy(topic => new ChannelTopic(topic.ChannelId, topic.Topic).CanonicalKey, StringComparer.Ordinal)
             .Select(group => group.OrderByDescending(topic => topic.MaxMessageId).First())
             .ToDictionary(
@@ -1815,7 +3014,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 topic => topic,
                 StringComparer.Ordinal);
 
-        if (_session.SelectedConversation is ChannelTopic selected && selected.ChannelId == selectedChannelId)
+        if (!authoritativeTopicsAvailable &&
+            _session.SelectedConversation is ChannelTopic selected &&
+            selected.ChannelId == selectedChannelId)
         {
             topicMap.TryAdd(selected.CanonicalKey, new TopicSummary(selected.ChannelId, selected.Topic));
         }
@@ -1829,9 +3030,62 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                     topic.ChannelId,
                     topic.Topic,
                     topic.MaxMessageId,
-                    GetConversationUnread(state.Unread, new ChannelTopic(topic.ChannelId, topic.Topic)))),
+                    GetConversationUnread(state.Unread, new ChannelTopic(topic.ChannelId, topic.Topic)),
+                    string.Equals(SelectedTopic?.CanonicalKey, new ChannelTopic(topic.ChannelId, topic.Topic).CanonicalKey, StringComparison.Ordinal))),
             item => item.CanonicalKey);
         OnPropertyChanged(nameof(HasTopics));
+        OnPropertyChanged(nameof(ShowTopicPicker));
+        OnPropertyChanged(nameof(ShowEmptyChannelTopicState));
+        OnPropertyChanged(nameof(TopicListHeight));
+    }
+
+    private void SelectOnlyTopicWhenUnambiguous()
+    {
+        if (Topics.Count == 1 && !string.Equals(
+                SelectedTopic?.CanonicalKey,
+                Topics[0].CanonicalKey,
+                StringComparison.Ordinal))
+        {
+            SelectedTopic = Topics[0];
+        }
+    }
+
+    private ChannelItem CreateChannelItem(ClientState state, Subscription subscription)
+    {
+        var recentTopic = state.Topics.Values
+            .Where(topic => topic.ChannelId == subscription.ChannelId)
+            .OrderByDescending(topic => topic.MaxMessageId)
+            .FirstOrDefault();
+        var conversation = recentTopic is null
+            ? null
+            : new ChannelTopic(subscription.ChannelId, recentTopic.Topic);
+        var latestMessage = conversation is not null && state.ConversationSummaries.TryGetValue(conversation.CanonicalKey, out var summary)
+            ? summary.LatestMessage
+            : conversation is null
+                ? null
+                : state.Messages.Values
+                .Where(message => message.Conversation == conversation)
+                .OrderByDescending(message => message.Id)
+                .FirstOrDefault();
+        var sender = latestMessage is null
+            ? null
+            : latestMessage.SenderDisplayName ??
+              state.Users.GetValueOrDefault(latestMessage.SenderId)?.FullName ??
+              $"用户 {latestMessage.SenderId}";
+        var preview = latestMessage is null
+            ? null
+            : $"{sender}: {TruncateForSearch(latestMessage.Content)}";
+
+        return new ChannelItem(
+            subscription.ChannelId,
+            subscription.Name,
+            GetChannelUnread(state.Unread, subscription.ChannelId),
+            recentTopic?.Topic,
+            preview,
+            latestMessage is null ? null : FormatConversationTimestamp(latestMessage.Timestamp.LocalDateTime),
+            subscription.IsMuted,
+            subscription.IsPinned,
+            SelectedChannel?.ChannelId == subscription.ChannelId);
     }
 
     private void SynchronizeSelection(ConversationKey? selected)
@@ -1870,10 +3124,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                         SelectedDirectMessage = direct;
                     }
 
+                    if (SelectedChannel is not null) SelectedChannel = null;
                     if (SelectedTopic is not null) SelectedTopic = null;
                     break;
                 }
             default:
+                if (SelectedChannel is not null) SelectedChannel = null;
                 if (SelectedTopic is not null) SelectedTopic = null;
                 if (SelectedDirectMessage is not null) SelectedDirectMessage = null;
                 break;
@@ -1891,16 +3147,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                     ConversationSubtitle = $"# {channelName}";
                     DetailsTitle = $"# {channelName}";
                     DetailsBody = $"当前话题：{ConversationTitle}";
-                    DetailsUnavailableMessage = "成员数、频道成员关系、presence 与频道管理尚无原生真实契约。";
+                    DetailsUnavailableMessage = "成员数、频道成员关系与 presence 尚不可用；退出频道已接入真实 Realm。";
                     break;
                 }
             case DirectMessage directMessage:
-                ConversationTitle = DescribeDirectMessage(directMessage, state.Users);
+                ConversationTitle = DescribeDirectMessage(directMessage, state.Users, _session.CurrentUserId);
                 ConversationSubtitle = DescribeDirectMessageKind(directMessage);
                 DetailsTitle = ConversationTitle;
                 DetailsBody = directMessage.OtherUserIds.Count == 0
                     ? "这是给自己的私信。"
-                    : $"可靠参与者：{DescribeDirectMessage(directMessage, state.Users)}";
+                    : $"可靠参与者：{DescribeDirectMessage(directMessage, state.Users, _session.CurrentUserId)}";
                 DetailsUnavailableMessage = "presence、共同频道、静音与成员管理尚不可用。";
                 break;
             default:
@@ -1945,14 +3201,26 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void NotifyProjectionProperties()
     {
         OnPropertyChanged(nameof(HasSelectedConversation));
+        OnPropertyChanged(nameof(ComposerPlaceholder));
         OnPropertyChanged(nameof(HasMessages));
         OnPropertyChanged(nameof(IsMessageListEmpty));
+        OnPropertyChanged(nameof(IsConversationContentVisible));
+        OnPropertyChanged(nameof(IsMessageCollectionVisible));
+        OnPropertyChanged(nameof(ShowMessageEmptyState));
+        OnPropertyChanged(nameof(ShowEmptyChannelTopicState));
         OnPropertyChanged(nameof(HasKnownContacts));
         OnPropertyChanged(nameof(CanCompose));
         OnPropertyChanged(nameof(CanSend));
         OnPropertyChanged(nameof(CanMarkRead));
+        OnPropertyChanged(nameof(CanUnsubscribeSelectedChannel));
+        OnPropertyChanged(nameof(SelectedChannelMuteLabel));
+        OnPropertyChanged(nameof(SelectedChannelPinLabel));
         OnPropertyChanged(nameof(MessageEmptyTitle));
         OnPropertyChanged(nameof(WorkspaceDisplayName));
+        OnPropertyChanged(nameof(IsNativePreview));
+        OnPropertyChanged(nameof(ShowLoadOlderButton));
+        OnPropertyChanged(nameof(ShowNewMessagesButton));
+        OnPropertyChanged(nameof(NewMessagesButtonText));
         OnPropertyChanged(nameof(ShowConnectionStatus));
         OnPropertyChanged(nameof(ChannelGroupCountLabel));
         OnPropertyChanged(nameof(DirectMessageGroupCountLabel));
@@ -1965,10 +3233,148 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         NotifyLayoutProperties();
     }
 
+    private void ProjectHistoryState(ConversationKey? selected)
+    {
+        var history = _session.HistoryState;
+        var matchesSelected = selected is not null &&
+            string.Equals(history.Conversation?.CanonicalKey, selected.CanonicalKey, StringComparison.Ordinal);
+        IsLoadingOlder = matchesSelected && history.IsLoading;
+        HasReachedOldestMessage = matchesSelected && history.FoundOldest;
+        if (!HasConversationActivationError)
+        {
+            MessageLoadError = matchesSelected ? DescribeHistoryError(history.Error) : null;
+        }
+        OnPropertyChanged(nameof(ShowLoadOlderButton));
+    }
+
+    private void QueueScrollToLatest(MessageScrollReason reason)
+    {
+        var selected = _session.SelectedConversation;
+        var history = _session.HistoryState;
+        if (selected is null ||
+            history.IsLoading ||
+            history.Error is not null ||
+            !string.Equals(history.Conversation?.CanonicalKey, selected.CanonicalKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var targetMessageId = Messages
+            .Where(message => message.MessageId is not null)
+            .Select(message => message.MessageId!.Value)
+            .DefaultIfEmpty()
+            .Max();
+        if (targetMessageId <= 0) return;
+        PendingMessageScrollRequest = new MessageScrollRequest(
+            ++_messageScrollSequence,
+            selected.CanonicalKey,
+            history.Generation,
+            targetMessageId,
+            reason);
+    }
+
+    private void TryPublishPendingActivationScroll()
+    {
+        if (_pendingActivationScrollConversationKey is not { } conversationKey ||
+            _pendingActivationScrollReason is not { } reason)
+        {
+            return;
+        }
+
+        var history = _session.HistoryState;
+        if (history.Generation != _pendingActivationScrollGeneration ||
+            !string.Equals(history.Conversation?.CanonicalKey, conversationKey, StringComparison.Ordinal))
+        {
+            return;
+        }
+        if (history.Error is not null)
+        {
+            _pendingActivationScrollConversationKey = null;
+            _pendingActivationScrollReason = null;
+            return;
+        }
+        if (history.IsLoading) return;
+
+        var targetMessageId = Messages
+            .Where(message => message.MessageId is not null)
+            .Select(message => message.MessageId!.Value)
+            .DefaultIfEmpty()
+            .Max();
+        _pendingActivationScrollConversationKey = null;
+        _pendingActivationScrollReason = null;
+        if (targetMessageId <= 0) return;
+        PendingMessageScrollRequest = new MessageScrollRequest(
+            ++_messageScrollSequence,
+            conversationKey,
+            history.Generation,
+            targetMessageId,
+            reason);
+    }
+
+    private void RetargetPendingScrollIfNeeded()
+    {
+        var request = PendingMessageScrollRequest;
+        if (request is null ||
+            Messages.Any(message => message.MessageId == request.TargetMessageId))
+        {
+            return;
+        }
+
+        var targetMessageId = Messages
+            .Where(message => message.MessageId is not null)
+            .Select(message => message.MessageId!.Value)
+            .DefaultIfEmpty()
+            .Max();
+        PendingMessageScrollRequest = targetMessageId <= 0
+            ? null
+            : request with { Sequence = ++_messageScrollSequence, TargetMessageId = targetMessageId };
+    }
+
+    internal bool IsMessageScrollRequestCurrent(MessageScrollRequest request) =>
+        PendingMessageScrollRequest?.Sequence == request.Sequence &&
+        _session.HistoryState.Generation == request.Generation &&
+        string.Equals(_session.SelectedConversation?.CanonicalKey, request.ConversationKey, StringComparison.Ordinal);
+
+    internal void AcknowledgeMessageScrollRequest(MessageScrollRequest request)
+    {
+        if (!IsMessageScrollRequestCurrent(request)) return;
+        PendingMessageScrollRequest = null;
+        _isMessageViewportNearBottom = true;
+        if (request.Reason == MessageScrollReason.ManualJumpToLatest)
+        {
+            NewMessageCount = 0;
+        }
+    }
+
+    internal string? CurrentConversationKey => _session.SelectedConversation?.CanonicalKey;
+
+    internal long CurrentHistoryGeneration => _session.HistoryState.Generation;
+
+    private void NotifyConversationAvailability()
+    {
+        OnPropertyChanged(nameof(IsConversationContentVisible));
+        OnPropertyChanged(nameof(IsMessageCollectionVisible));
+        OnPropertyChanged(nameof(ShowMessageEmptyState));
+        OnPropertyChanged(nameof(ShowEmptyChannelTopicState));
+        OnPropertyChanged(nameof(CanCompose));
+        OnPropertyChanged(nameof(CanSend));
+        OnPropertyChanged(nameof(CanMarkRead));
+        OnPropertyChanged(nameof(HasMessageLoadError));
+        OnPropertyChanged(nameof(ShowHistoryRetry));
+    }
+
+    private static string? DescribeHistoryError(string? error) => error switch
+    {
+        null or "" => null,
+        "offline" => "当前离线，无法加载更早消息。",
+        _ => "无法加载更早消息，请稍后重试。"
+    };
+
     private void NotifyLayoutProperties()
     {
         OnPropertyChanged(nameof(IsWideLayout));
         OnPropertyChanged(nameof(IsCompactLayout));
+        OnPropertyChanged(nameof(IsIntermediateLayout));
         OnPropertyChanged(nameof(IsNarrowLayout));
         OnPropertyChanged(nameof(IsNotNarrowLayout));
         OnPropertyChanged(nameof(IsConversationPaneVisible));
@@ -1977,8 +3383,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsOverlayDetailsVisible));
         OnPropertyChanged(nameof(IsPrimaryShellEnabled));
         OnPropertyChanged(nameof(ConversationPaneWidth));
+        OnPropertyChanged(nameof(NavigationRailWidth));
         OnPropertyChanged(nameof(ChatPaneWidth));
         OnPropertyChanged(nameof(InlineDetailsWidth));
+        OnPropertyChanged(nameof(MessageRowMaximumWidth));
     }
 
     private void NotifyOverlayProperties()
@@ -1996,6 +3404,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             DensityMode = preferences.Density;
             FontScaleMode = preferences.FontScale;
             ConversationWidthMode = preferences.ConversationWidth;
+            _fontSize = preferences.FontSize ?? FontScaleSliderValue;
+            _conversationPaneWidth = preferences.ConversationPaneWidth ?? ConversationWidthSliderValue;
             OpenDetailsByDefault = preferences.OpenDetailsByDefault;
             AreChannelsExpanded = preferences.ChannelsExpanded;
             AreDirectMessagesExpanded = preferences.DirectMessagesExpanded;
@@ -2016,7 +3426,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             ConversationWidthMode,
             OpenDetailsByDefault,
             AreChannelsExpanded,
-            AreDirectMessagesExpanded));
+            AreDirectMessagesExpanded,
+            FontScaleSliderValue,
+            ConversationWidthSliderValue));
     }
 
     private void SetComposerTextWithoutTracking(string value)
@@ -2124,10 +3536,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         return new Uri(realm.Uri, $"#narrow/near/{messageId}").AbsoluteUri;
     }
 
-    private static string DescribeDate(DateOnly date)
+    private static string DescribeDate(DateOnly date, DateTime firstMessageTime)
     {
         var today = DateOnly.FromDateTime(DateTime.Now);
-        if (date == today) return "今天";
+        if (date == today) return $"今天 {firstMessageTime:H:mm}";
         if (date == today.AddDays(-1)) return "昨天";
         return date.ToString("yyyy年M月d日");
     }
@@ -2243,9 +3655,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _ => "连接故障"
     };
 
-    private static string DescribeDirectMessage(DirectMessage message, IReadOnlyDictionary<long, UserProfile> users) =>
+    private static string DescribeDirectMessage(
+        DirectMessage message,
+        IReadOnlyDictionary<long, UserProfile> users,
+        long? currentUserId) =>
         message.OtherUserIds.Count == 0
-            ? "给自己"
+            ? currentUserId is { } current && users.GetValueOrDefault(current) is { } currentUser
+                ? $"{currentUser.FullName}（自己）"
+                : "给自己"
             : string.Join(", ", message.OtherUserIds.Select(id => users.GetValueOrDefault(id)?.FullName ?? $"用户 {id}"));
 
     private static string DescribeDirectMessageKind(DirectMessage message) => message.OtherUserIds.Count switch
@@ -2257,10 +3674,115 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     private static UserProfile? GetDirectMessageAvatar(
         DirectMessage message,
-        IReadOnlyDictionary<long, UserProfile> users) =>
-        message.OtherUserIds.Count == 1
-            ? users.GetValueOrDefault(message.OtherUserIds[0])
-            : null;
+        IReadOnlyDictionary<long, UserProfile> users,
+        long? currentUserId) => message.OtherUserIds.Count switch
+        {
+            0 when currentUserId is { } current => users.GetValueOrDefault(current),
+            1 => users.GetValueOrDefault(message.OtherUserIds[0]),
+            _ => null
+        };
+
+    private NavigationItem CreateDirectNavigationItem(ClientState state, DirectMessage conversation)
+    {
+        var avatar = GetDirectMessageAvatar(conversation, state.Users, _session.CurrentUserId);
+        var latestMessage = state.ConversationSummaries.TryGetValue(conversation.CanonicalKey, out var summary)
+            ? summary.LatestMessage
+            : state.Messages.Values
+                .Where(message => message.Conversation == conversation)
+                .OrderByDescending(message => message.Id)
+                .FirstOrDefault();
+        var existing = DirectMessages.FirstOrDefault(item =>
+            string.Equals(item.Conversation.CanonicalKey, conversation.CanonicalKey, StringComparison.Ordinal));
+
+        // The bounded history window is deliberately cleared while a new
+        // conversation loads. Keep the existing navigation preview during
+        // that transient state so every direct-message row is not replaced
+        // (and its avatar media control needlessly recreated) twice.
+        var detail = latestMessage is null
+            ? existing?.Detail ?? DescribeDirectMessageKind(conversation)
+            : TruncateForSearch(latestMessage.Content);
+        var timestamp = latestMessage is null
+            ? existing?.Timestamp
+            : FormatConversationTimestamp(latestMessage.Timestamp.LocalDateTime);
+
+        return new NavigationItem(
+            conversation,
+            DescribeDirectMessage(conversation, state.Users, _session.CurrentUserId),
+            detail,
+            GetConversationUnread(state.Unread, conversation),
+            avatar?.AvatarUrl,
+            avatar?.IsBot ?? false,
+            timestamp,
+            string.Equals(
+                SelectedDirectMessage?.Conversation.CanonicalKey,
+                conversation.CanonicalKey,
+                StringComparison.Ordinal));
+    }
+
+    private void RefreshNavigationSelectionProjection()
+    {
+        for (var index = 0; index < Channels.Count; index++)
+        {
+            var item = Channels[index];
+            var isSelected = SelectedChannel?.ChannelId == item.ChannelId;
+            if (item.IsSelected != isSelected) Channels[index] = item with { IsSelected = isSelected };
+        }
+
+        for (var index = 0; index < Topics.Count; index++)
+        {
+            var item = Topics[index];
+            var isSelected = string.Equals(SelectedTopic?.CanonicalKey, item.CanonicalKey, StringComparison.Ordinal);
+            if (item.IsSelected != isSelected) Topics[index] = item with { IsSelected = isSelected };
+        }
+
+        for (var index = 0; index < DirectMessages.Count; index++)
+        {
+            var item = DirectMessages[index];
+            var isSelected = string.Equals(
+                SelectedDirectMessage?.Conversation.CanonicalKey,
+                item.Conversation.CanonicalKey,
+                StringComparison.Ordinal);
+            if (item.IsSelected != isSelected) DirectMessages[index] = item with { IsSelected = isSelected };
+        }
+
+        ProjectConversationFilter();
+    }
+
+    private void SelectLastOrRecentTopic(long channelId)
+    {
+        var remembered = _lastSelectedTopicByChannel.GetValueOrDefault(channelId);
+        var target = remembered is null
+            ? Topics.OrderByDescending(item => item.MaxMessageId).FirstOrDefault()
+            : Topics.FirstOrDefault(item => string.Equals(item.Topic, remembered, StringComparison.Ordinal));
+        if (target is not null && !string.Equals(SelectedTopic?.CanonicalKey, target.CanonicalKey, StringComparison.Ordinal))
+        {
+            SelectedTopic = target;
+            return;
+        }
+        SelectOnlyTopicWhenUnambiguous();
+    }
+
+    internal static string FormatConversationTimestamp(DateTime timestamp, DateTime? now = null)
+    {
+        var current = now ?? DateTime.Now;
+        if (timestamp.Date == current.Date) return timestamp.ToString("H:mm");
+        if (timestamp.Date == current.Date.AddDays(-1)) return "昨天";
+        if (timestamp.Date >= current.Date.AddDays(-6))
+        {
+            return timestamp.DayOfWeek switch
+            {
+                DayOfWeek.Monday => "周一",
+                DayOfWeek.Tuesday => "周二",
+                DayOfWeek.Wednesday => "周三",
+                DayOfWeek.Thursday => "周四",
+                DayOfWeek.Friday => "周五",
+                DayOfWeek.Saturday => "周六",
+                _ => "周日"
+            };
+        }
+
+        return timestamp.ToString("M/d");
+    }
 
     private static string DescribeOutbox(OutboxState state) => state switch
     {
@@ -2283,7 +3805,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         if (_disposed) return;
         _disposed = true;
         CancelNavigation();
+        CancelSearchInput();
         ClearNewConversationChoices();
         _session.StateChanged -= OnStateChanged;
+        if (_session is IMessageMutationObserver observer) observer.MessageMutationObserved -= OnMessageMutationObserved;
     }
 }

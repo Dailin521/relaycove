@@ -24,7 +24,8 @@ public sealed class RealmMediaService : IRealmMediaService, IDisposable
         CancellationToken cancellationToken = default)
     {
         if (kind == RealmMediaKind.File) throw new ArgumentOutOfRangeException(nameof(kind));
-        var key = $"{kind}:{sourceUrl}";
+        var accountId = _session.AccountId ?? throw new InvalidOperationException("No account is active.");
+        var key = CreateCacheKey(accountId, kind, sourceUrl);
         if (TryGet(key, out var cached)) return ToImageSource(cached);
         await _reads.WaitAsync(cancellationToken);
         try
@@ -87,6 +88,9 @@ public sealed class RealmMediaService : IRealmMediaService, IDisposable
 
     private static ImageSource ToImageSource(byte[] content) =>
         ImageSource.FromStream(() => new MemoryStream(content, writable: false));
+
+    internal static string CreateCacheKey(AccountId accountId, RealmMediaKind kind, string sourceUrl) =>
+        $"{accountId.Value}:{kind}:{sourceUrl}";
 
     public void Dispose()
     {

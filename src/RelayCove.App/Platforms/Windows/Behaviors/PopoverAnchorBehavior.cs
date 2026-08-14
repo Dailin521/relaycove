@@ -90,8 +90,21 @@ public sealed class PopoverAnchorBehavior : Behavior<Border>
         var y = AnchorY + 4d;
         if (y + height > root.ActualHeight - EdgeMargin) y = AnchorY - height - 4d;
         y = Math.Clamp(y, EdgeMargin, Math.Max(EdgeMargin, root.ActualHeight - height - EdgeMargin));
-        popover.RenderTransform = new TranslateTransform { X = x, Y = y };
+        var currentTranslation = popover.RenderTransform as TranslateTransform;
+        var currentPosition = popover.TransformToVisual(root)
+            .TransformPoint(new global::Windows.Foundation.Point(0d, 0d));
+        popover.RenderTransform = new TranslateTransform
+        {
+            X = CalculateRelativeTranslation(x, currentPosition.X, currentTranslation?.X ?? 0d),
+            Y = CalculateRelativeTranslation(y, currentPosition.Y, currentTranslation?.Y ?? 0d)
+        };
     }
+
+    internal static double CalculateRelativeTranslation(
+        double targetPosition,
+        double currentPosition,
+        double currentTranslation) =>
+        targetPosition - (currentPosition - currentTranslation);
 
     private static WinUiFrameworkElement? GetRoot(DependencyObject element)
     {

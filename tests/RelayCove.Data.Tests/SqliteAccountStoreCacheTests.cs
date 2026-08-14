@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using RelayCove.Core;
 
 namespace RelayCove.Data.Tests;
@@ -41,7 +42,8 @@ public sealed class SqliteAccountStoreCacheTests
         await context.Store.SetCacheUnlockedAsync(account.AccountId, true);
         var unlocked = await context.Store.LoadAsync(account.AccountId);
         Assert.True(unlocked!.IsCacheUnlocked);
-        Assert.Single(unlocked.State.Messages);
+        Assert.Empty(unlocked.State.Messages);
+        Assert.Single(await context.Store.QueryMessagesAsync(account.AccountId, conversation, null, 20));
     }
 
     [Fact]
@@ -72,10 +74,10 @@ public sealed class SqliteAccountStoreCacheTests
 
         var state = (await context.Store.LoadAsync(account.AccountId))!.State;
         Assert.DoesNotContain(1, state.Subscriptions.Keys);
-        Assert.DoesNotContain(1, state.Messages.Keys);
         Assert.DoesNotContain(removed.CanonicalKey, state.Topics.Keys);
         Assert.Equal(1, state.Unread.Total);
-        Assert.Contains(2, state.Messages.Keys);
+        Assert.Empty(await context.Store.QueryMessagesAsync(account.AccountId, removed, null, 20));
+        Assert.Equal(2, Assert.Single(await context.Store.QueryMessagesAsync(account.AccountId, retained, null, 20)).Id);
     }
 
     [Fact]
@@ -106,10 +108,10 @@ public sealed class SqliteAccountStoreCacheTests
         ]);
 
         var state = (await context.Store.LoadAsync(account.AccountId))!.State;
-        Assert.Single(state.Messages);
-        Assert.Equal("edited", state.Messages[1].Content);
-        Assert.Equal(destination, state.Messages[1].Conversation);
-        Assert.True(state.Messages[1].IsRead);
+        var message = Assert.Single(await context.Store.QueryMessagesAsync(account.AccountId, destination, null, 20));
+        Assert.Equal("edited", message.Content);
+        Assert.Equal(destination, message.Conversation);
+        Assert.True(message.IsRead);
         Assert.Equal("Renamed", state.Subscriptions[2].Name);
         Assert.False(state.Subscriptions[2].IsActive);
         Assert.Equal("New Sender", state.Users[10].FullName);
@@ -132,13 +134,12 @@ public sealed class SqliteAccountStoreCacheTests
                 new MessageUpsertEvent(StoreTestData.Message(2, new UnsupportedConversation()))
             ]));
 
-        var state = (await context.Store.LoadAsync(account.AccountId))!.State;
-        Assert.Single(state.Messages);
-        Assert.Equal("message-1", state.Messages[1].Content);
+        var messages = await context.Store.QueryMessagesAsync(account.AccountId, conversation, null, 20);
+        Assert.Equal("message-1", Assert.Single(messages).Content);
     }
 
     [Fact]
-    public async Task LoadAsync_WhenMessageHasAvatarStarAndReactions_RoundTripsSchemaV2()
+    public async Task QueryMessagePageAsync_WhenMessageHasAvatarStarAndReactions_RoundTripsSchemaV3()
     {
         await using var context = StoreTestContext.Create();
         var account = StoreTestData.Account();
@@ -166,7 +167,8 @@ public sealed class SqliteAccountStoreCacheTests
 
         var loaded = (await context.Store.LoadAsync(account.AccountId))!;
 
-        var actual = Assert.Single(loaded.State.Messages).Value;
+        Assert.Empty(loaded.State.Messages);
+        var actual = Assert.Single((await context.Store.QueryMessagePageAsync(account.AccountId, conversation, null, 20)).Messages);
         Assert.True(actual.IsStarred);
         Assert.Equal("/avatar.png", actual.SenderAvatarUrl);
         Assert.Equal("1f44d", Assert.Single(actual.Reactions).Identity.EmojiCode);
@@ -186,8 +188,8 @@ public sealed class SqliteAccountStoreCacheTests
                 [new MessageUpsertEvent(StoreTestData.Message(id, new DirectMessage([])))]));
         await Task.WhenAll(writes);
 
-        var state = (await context.Store.LoadAsync(account.AccountId))!.State;
-        Assert.Equal(30, state.Messages.Count);
+        var page = await context.Store.QueryMessagePageAsync(account.AccountId, new DirectMessage([]), null, 100);
+        Assert.Equal(30, page.Messages.Count);
     }
 
     [Fact]
@@ -241,6 +243,113 @@ public sealed class SqliteAccountStoreCacheTests
     }
 
     [Fact]
+    public async Task StoreAndQueryMessagePageAsync_WhenCacheHasTenThousandMessages_PagesFiveThousandWithoutLoadingWholeCache()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var primary = new DirectMessage([20]);
+        var secondary = new DirectMessage([30]);
+        await context.Store.InitializeAsync(account);
+        var messages = Enumerable.Range(1, 10_000)
+            .Select(id => StoreTestData.Message(id, id <= 5_000 ? primary : secondary, isRead: true))
+            .ToArray();
+
+        await context.Store.StoreMessagePageAsync(account.AccountId, messages);
+
+        Assert.Empty((await context.Store.LoadAsync(account.AccountId))!.State.Messages);
+        var seen = new HashSet<long>();
+        long? before = null;
+        for (var pageIndex = 0; pageIndex < 100; pageIndex++)
+        {
+            var page = await context.Store.QueryMessagePageAsync(account.AccountId, primary, before, 50);
+            Assert.Equal(50, page.Messages.Count);
+            Assert.Equal(pageIndex < 99, page.HasOlderInCache);
+            Assert.All(page.Messages, message => Assert.True(seen.Add(message.Id)));
+            before = page.Messages[0].Id;
+        }
+        Assert.Equal(5_000, seen.Count);
+
+        var timings = new List<double>();
+        foreach (var offset in Enumerable.Range(0, 20))
+        {
+            var update = messages.Skip(offset * 50).Take(50)
+                .Select(message => message with { Content = $"updated-{message.Id}" })
+                .ToArray();
+            var stopwatch = Stopwatch.StartNew();
+            await context.Store.StoreMessagePageAsync(account.AccountId, update);
+            stopwatch.Stop();
+            timings.Add(stopwatch.Elapsed.TotalMilliseconds);
+        }
+        timings.Sort();
+        Assert.True(timings[18] <= 150, $"50-message page insert p95 was {timings[18]:F1} ms.");
+    }
+
+    [Fact]
+    public async Task StoreMessagePageAsync_WhenOnePageIsUpdated_PreservesOtherMessageReactions()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var conversation = new DirectMessage([20]);
+        var identity = new EmojiReactionIdentity("thumbs_up", "1f44d", "unicode_emoji");
+        var first = StoreTestData.Message(1, conversation) with { Reactions = [new EmojiReaction(identity, 20)] };
+        var second = StoreTestData.Message(2, conversation) with { Reactions = [new EmojiReaction(identity, 30)] };
+        await context.Store.InitializeAsync(account);
+        await context.Store.StoreMessagePageAsync(account.AccountId, [first, second]);
+
+        await context.Store.StoreMessagePageAsync(account.AccountId, [first with { Reactions = [] }]);
+
+        var page = await context.Store.QueryMessagePageAsync(account.AccountId, conversation, null, 20);
+        Assert.Empty(page.Messages[0].Reactions);
+        Assert.Equal(30, Assert.Single(page.Messages[1].Reactions).UserId);
+    }
+
+    [Fact]
+    public async Task ApplyBatchAsync_WhenOneMessageChanges_DoesNotRewriteUnrelatedRows()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var conversation = new DirectMessage([20]);
+        await context.Store.InitializeAsync(account);
+        await context.Store.StoreMessagePageAsync(account.AccountId,
+            Enumerable.Range(1, 1_000).Select(id => StoreTestData.Message(id, conversation, isRead: true)).ToArray());
+
+        await context.Store.ApplyBatchAsync(account.AccountId, [new MessageContentChangedEvent(500, "changed")]);
+
+        await using var connection = context.Open(account.AccountId);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*), SUM(CASE WHEN content = 'changed' THEN 1 ELSE 0 END) FROM messages;";
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        Assert.Equal(1_000, reader.GetInt32(0));
+        Assert.Equal(1, reader.GetInt32(1));
+    }
+
+    [Fact]
+    public async Task QueryTopicSummariesAsync_AfterMoveAndDelete_ReturnsOnlyAuthoritativeAffectedTopics()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var source = new ChannelTopic(7, "old");
+        var destination = new ChannelTopic(7, "new");
+        await context.Store.InitializeAsync(account);
+        await context.Store.ApplyBatchAsync(account.AccountId,
+        [
+            new SubscriptionChangedEvent(new Subscription(7, "Build"), false),
+            new MessageUpsertEvent(StoreTestData.Message(50, source)),
+            new MessageUpsertEvent(StoreTestData.Message(100, source))
+        ]);
+
+        await context.Store.ApplyBatchAsync(account.AccountId, [new MessageMovedEvent([100], destination)]);
+        var moved = await context.Store.QueryTopicSummariesAsync(account.AccountId, [source, destination]);
+
+        Assert.Equal(50, Assert.Single(moved, topic => topic.Topic == source.Topic).MaxMessageId);
+        Assert.Equal(100, Assert.Single(moved, topic => topic.Topic == destination.Topic).MaxMessageId);
+
+        await context.Store.ApplyBatchAsync(account.AccountId, [new MessageDeletedEvent([50])]);
+        Assert.Empty(await context.Store.QueryTopicSummariesAsync(account.AccountId, [source]));
+    }
+
+    [Fact]
     public async Task ApplyBatchAsync_WhenCoreUpsertsAndOutboxEventsArrive_PersistsDomainRowsButNotEphemeralState()
     {
         await using var context = StoreTestContext.Create();
@@ -259,7 +368,7 @@ public sealed class SqliteAccountStoreCacheTests
         ]);
 
         var state = (await context.Store.LoadAsync(account.AccountId))!.State;
-        Assert.Equal("updated", state.Messages[50].Content);
+        Assert.Equal("updated", Assert.Single((await context.Store.QueryMessagePageAsync(account.AccountId, conversation, null, 20)).Messages).Content);
         Assert.Equal("Builder", state.Users[70].FullName);
         Assert.Equal(50, state.Topics[conversation.CanonicalKey].MaxMessageId);
         Assert.Empty(state.Outbox);
@@ -382,6 +491,9 @@ public sealed class SqliteAccountStoreCacheTests
             throw new NotSupportedException();
 
         public Task<RealmMediaResult> GetRealmMediaAsync(GetRealmMediaRequest request, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<UnsubscribeChannelResult> UnsubscribeChannelAsync(UnsubscribeChannelRequest request, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
         public Task MarkReadAsync(MarkReadRequest request, CancellationToken cancellationToken = default) =>

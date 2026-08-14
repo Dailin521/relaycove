@@ -1,10 +1,10 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：Stage 21 外部门禁保留；Stage 22W Slice 1/2/3 已合并部署，后续消息操作/附件/导航修订已实现并通过 Full；Stage 22M 原生壳与消息交互对齐已实现并通过 Full 和受限真实窗口验收。真实 Realm/Stage 21/完整 Windows 人工验收仍未完成
+文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M 已形成原生回滚基线；Stage 23 的普通用户能力与隔离 Live 已完成；Stage 24 正在本地收口 MAUI 未读、会话刷新、稳定导航、Composer 和频道/话题产品行为。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
-最后更新：2026-08-13
+最后更新：2026-08-14
 
 ## 1. 决策摘要
 
@@ -52,10 +52,10 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 | 门禁 | 状态 | 完成条件 |
 |---|---|---|
 | 干净 Windows 11 x64 VM 启动 | 未验证 | 在未安装 .NET 与 Windows App SDK Runtime 的 VM 中运行最终 ZIP |
-| 真实 Realm Live 测试 | 未验证 | 两个专用账号 API key、隔离私有频道和显式写入授权齐全 |
+| 真实 Realm Live 测试 | 已通过（2026-08-14） | DAL/zhang 两个专用账号在两个独立私有双人频道完成 2/2 Live；覆盖消息/事件/已读、reaction、编辑、收藏、附件、删除、队列恢复、生产 `ClientSession` 密码登录与当前用户退订；测试消息按用户要求保留，退订探针成员已恢复 |
 | 人工密码登录 | 未验证 | 专用测试账号在最终 MAUI UI 中完成一次登录 |
 | Stage 22W Web 验收 | Slice 1/2/3 已完成并部署；后续已完成 reaction/edit/delete/star、任意附件、导航折叠、当前用户退订、真实本地入口、86 单测、Full 和限定 self-DM 真实写闭环 | 后续 Web 版本尚未部署；真实已读/附件上传/频道退订仍需隔离目标，Stage 21/22M 门禁不受此结果替代 |
-| Stage 22M MAUI 视觉验收 | 部分完成 | 原生壳与消息操作已通过 Full，并完成 1440×900 / 1024×768、浅色/深色、150% 副屏窗口截图及指针/UI Automation 检查；真实 Realm、100%/200%、完整键盘/高对比/长列表仍待人工验收 |
+| Stage 22M MAUI 视觉验收 | 部分完成 | 原生壳与消息操作已通过历史 Full，并完成 1440×900 / 1024×768、浅色/深色、150% 副屏窗口截图及指针/UI Automation 检查；真实 Realm 的 headless 生产会话路径已通过，最终 MAUI UI 人工密码登录、100%/200%、完整键盘/高对比/长列表仍待验收 |
 | 签名/安装器/公开发布 | 不在范围 | 需要单独授权和发布方案 |
 
 任何门禁失败都必须保留证据并停止对应交付声明，不得静默切换凭据后端、关闭 TLS 校验或扩大测试目标。
@@ -77,7 +77,7 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 
 ### 3.2 当前仍不可用或未完成真实验收的能力
 
-完整成员目录/频道关系、频道订阅/创建/重命名/归档/成员管理、服务器范围搜索与 `@` 候选、saved 消息列表、typing、presence、通知、push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux 仍不可用或不在当前范围。Stage 22W 已实现任意附件、当前用户退订、reaction、本人消息编辑/删除和收藏；Stage 22M 已实现 reaction/edit/delete/star、图片/文件附件、受控媒体和本地已加载状态搜索，但原生写路径仅有 fake/in-memory 证据，不能据此关闭 Live 门禁。
+完整成员目录/频道关系、管理员级频道创建/重命名/归档/成员与权限管理、服务器 `@` 候选、typing、presence、通知、push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux 仍不可用或不在当前范围。Stage 23 已为 MAUI 实现普通用户服务器搜索、saved 消息、频道发现/加入/退订及个人静音/置顶；其隔离双账号 Live 已通过。Stage 22W 仍保有任意附件、当前用户退订、reaction、本人消息编辑/删除和收藏。最终 MAUI UI 人工密码登录、真实窗口长列表与干净 VM 仍是独立门禁。
 
 后续平台可以复用 Core、Zulip.Client 与 Data，但必须另行增加目标框架、图标、签名、后台生命周期和发布验证。本阶段不声称可交付这些平台；Linux 不支持。
 
@@ -121,7 +121,7 @@ Slice 3 完成首批完整交互能力，而不是只添加视觉按钮：
 - 同 Realm 非图片上传使用受控下载卡片：先以 Basic 换取临时 URL，再用无 Authorization、无 referrer 的请求读取有大小上限的 Blob；不内嵌 SVG/HTML/PDF/Office 等主动内容。
 - 频道详情支持当前用户按真实订阅名调用 `DELETE /users/me/subscriptions` 退订；确认成功或已退订都复用既有 `subscriptionRemoved` 清理，结果未知不自动重试。
 
-所有仓库自动门禁继续只使用 mock/fake HTTP。2026-08-13 在用户明确授权后，使用用户指定成员账号对发给自己的临时私信执行发送、reaction、收藏、编辑、事件 flags 核对和删除闭环，测试消息均已删除；没有操作其他用户消息、频道、上传或标记已读。本地 Chromium 另验证正式登录、真实会话和消息读取，控制台无错误。任意附件与退订已通过 fake HTTP/浏览器链路验证；真实上传和真实频道退订没有执行。全局/服务端搜索、mention 候选、saved 列表页、presence、通知和其余频道管理仍是独立能力门。
+所有仓库普通自动门禁继续只使用 mock/fake HTTP；Live 始终是显式授权的独立模式。2026-08-13 的 Web/早期 MAUI 证据曾只覆盖有限消息链路。2026-08-14 Stage 23 进一步以 DAL/zhang 隔离频道完成服务器搜索、saved、按锚点打开、个人频道偏好、退订恢复和自助重加的真实 Live。mention 候选、presence、通知、完整成员关系和管理员频道管理仍是独立能力门。
 
 ## 4. 架构和依赖边界
 
@@ -340,7 +340,7 @@ ViewModel 使用 CommunityToolkit.Mvvm，只调用 `IClientSession`。code-behin
 
 登录错误分类：不兼容 Realm、认证失败、限流、离线、凭据存储失败。最后 Realm 可用 Preferences 保存为非敏感配置；密码字段完成登录后立即清空。
 
-用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/`。该目录继续保持不可变，只作为初始视觉/交互基线和哈希证据，不是日常运行时资产。正式 RelayCove.Web 是当前 Web 交互事实基准；Stage 22M 使用原生 XAML/ViewModel 复刻，不得以 WebView 承载 Web。Web 已实现任意附件、当前用户退订和完整消息操作；MAUI 已覆盖 reaction/edit/delete/star、图片/文件附件、本地搜索和已知用户新会话，但真实 Realm 原生写入、完整目录/服务器搜索、`@` 候选、saved 列表和频道管理仍是独立门禁。
+用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/`。该目录继续保持不可变，只作为初始视觉/交互基线和哈希证据，不是日常运行时资产。正式 RelayCove.Web 的已验收行为是当前交互事实基准；Stage 22M/23/24 使用原生 XAML/ViewModel 复刻，不得以 WebView 承载 Web。Web 已实现任意附件、当前用户退订和完整消息操作；MAUI 已覆盖 reaction/edit/delete/star、图片/文件附件、服务器搜索、saved、已知用户新会话，以及普通用户频道发现/加入/退订/静音/置顶。Stage 24 进一步统一本人消息已读、重复激活最新页、自动标读、稳定摘要/头像、频道话题和 Composer/滚动行为。完整成员目录、`@` 候选、管理员频道管理及最终原生 UI/clean-VM 验收仍是独立门禁。
 
 ## 10. 实施切片与完成定义
 
@@ -362,6 +362,18 @@ ViewModel 使用 CommunityToolkit.Mvvm，只调用 `IClientSession`。code-behin
 Web 对应交互版本冻结后，按 Token/规格/功能矩阵/场景用原生 MAUI 复刻。不得共享 React 运行时代码或使用 WebView；MAUI 继续通过 `IClientSession` 使用 Zulip 权威状态。Web 浏览器验收不能替代 Windows 真实窗口、200% 缩放、人工登录或干净 VM 验收。
 
 截至 2026-08-13，隔离分支 `codex/stage-22m-native-shell` 已实现原生 Token/主题/响应式壳、消息结构、Composer、详情/设置、菜单/emoji/搜索/新会话、附件/媒体以及 reaction/edit/delete/star 的共享 `Core → Zulip.Client → Data → ClientSession → MAUI` 路径。未知写结果按消息冻结且不自动重试；Debug 预览只修改内存，不连接 Realm。两个前端实现合并后的 `main` 已通过最终 Full：.NET Debug/Release 每个配置 178/178、Web 86/86、Playwright 6/6 + 1/1，Windows 包生成且零构建警告/错误；并已在副屏 150% 完成浅/深色 1440×900/1024×768 内部窗口证据。真实 Zulip 写入、100%/200%、完整键盘/高对比/长列表、人工密码登录和干净 VM 仍未验证。
+
+### Stage 23：MAUI 普通用户全功能收口
+
+Stage 23 从本地回滚基线 `8d1a6e5` 开始，不修改 Web、认证架构、Zulip 服务端或直连模式。顺序固定为：SQLite v3 增量缓存与长列表、服务器搜索和已保存消息、现有频道发现/加入/退订/静音/置顶、最终真实 MAUI UI/包/干净 VM 验收。管理员级频道创建、改名、成员/权限管理和归档不在范围内。每个 Slice 独立本地提交；开发期只跑定向 Debug，Slice 收口跑 Fast，Stage 候选交付才跑 Full。
+
+截至 2026-08-14，前三个 Slice 已分别固定为本地提交 `037bcf8`、`8a9f07f`、`bba0cbb`。隔离 Stage 23 Live 通过 3/3，覆盖搜索、收藏、按锚点打开、个人静音/置顶恢复、私有退订恢复，以及专用可发现频道的退订/发现/重加。由于 Zulip 私有频道在普通用户退订后不可发现，加入探针使用非业务的公开非归档频道，但其订阅者严格限制为 DAL/zhang 两人；这不改变产品“不创建/管理频道”的范围。最终候选 Full 通过：Debug/Release 各 255/255、Web 86/86、Playwright 6+1、Windows 包 SHA-256 `75B176F07531DAD9D1DEF1412B37778B1B876840ACA4862F663BE8FC586A0994`。最终原生窗口人工密码登录、长列表真实窗口、安装包实装和干净 VM 仍是门禁。
+
+### Stage 24：MAUI 产品化交互与状态一致性
+
+Stage 24 在 `codex/stage-24-native-product-polish` 上以正式 Web 的已修行为和 Zulip 权威状态为准，不修改 Web、认证架构、服务端或直连模式。本批统一本人消息已读、重复激活会话刷新最新页、成功历史后的自动标读、SQLite 会话摘要、稳定头像/导航投影、Composer 原生指针拖动、真实 96 DIP 底部阈值、频道/话题选择与空频道新话题，以及连续字号/会话栏宽度偏好。实时删除/移动对窗口外消息只定向回查受影响摘要和话题，不扫描全库。
+
+开发期按用户明确要求只运行 App Debug 编译和 Fake 定向测试；不运行 Fast、Full、自动 Live，也不进行真实 Realm 写入。当前代码通过 App Debug 0 warning/error，以及 Core 107/107、Zulip.Client 45/45、Data 23/23、App 98/98。独立 App/UI 与协议/会话/Data 复核的确认 P0/P1 已处理；正式 Windows Machine 人工验证、截图、100%/200%、长列表真实窗口、Full、安装包和 clean VM 仍未执行，因此 Stage 24 尚不是交付提交。
 
 ### Stage 21 历史实施切片
 
@@ -436,7 +448,7 @@ artifact: RelayCove-2.0.0-alpha.1-win-x64.zip
 pwsh ./scripts/verify.ps1 -Mode Live
 ```
 
-必须同时提供目标 Realm、测试账号 A/B 的 email/API key、写入确认变量和 recipient allowlist；任意缺失都 fail-closed。日常 Live 复用 API key，不调用 `/fetch_api_key`。
+必须同时提供目标 Realm、测试账号 A/B 的 email/API key、写入确认变量和 recipient allowlist；任意缺失都 fail-closed。普通手工配置的 Live 可复用 API key。专用 DAL/zhang Stage 23 runner 是明确记录的例外：它在额外外部确认后，才从忽略的私密档案读取密码并在进程内调用 `/fetch_api_key`，随后执行三频道权威 preflight；密钥不会写入仓库或输出。
 
 一次性 bootstrap 只能在独立高权限凭据和额外授权下创建私有频道 `relaycove-client-e2e`。已存在同名频道时，只有它仍为私有且成员集合精确等于两个测试账号才可复用，否则停止且不修改。
 

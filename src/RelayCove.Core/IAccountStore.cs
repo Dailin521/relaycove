@@ -12,6 +12,26 @@ public interface IAccountStore
         long? beforeMessageId,
         int limit,
         CancellationToken cancellationToken = default);
+    Task<MessagePage> QueryMessagePageAsync(
+        AccountId accountId,
+        ConversationKey conversation,
+        long? beforeMessageId,
+        int limit,
+        CancellationToken cancellationToken = default);
+    Task StoreMessagePageAsync(
+        AccountId accountId,
+        IReadOnlyCollection<ChatMessage> messages,
+        CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ConversationSummary>> QueryConversationSummariesAsync(
+        AccountId accountId,
+        IReadOnlyCollection<ConversationKey>? conversations = null,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<ConversationSummary>>([]);
+    Task<IReadOnlyList<TopicSummary>> QueryTopicSummariesAsync(
+        AccountId accountId,
+        IReadOnlyCollection<ChannelTopic> topics,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<TopicSummary>>([]);
     Task ReplaceRegisterSnapshotAsync(
         AccountId accountId,
         RegisterResult snapshot,

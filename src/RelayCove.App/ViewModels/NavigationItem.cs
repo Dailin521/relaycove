@@ -9,7 +9,8 @@ public sealed record NavigationItem(
     int UnreadCount = 0,
     string? AvatarUrl = null,
     bool IsBot = false,
-    string? Timestamp = null)
+    string? Timestamp = null,
+    bool IsSelected = false)
 {
     public bool HasUnread => UnreadCount > 0;
     public string UnreadLabel => UnreadCount > 99 ? "99+" : UnreadCount.ToString();
@@ -18,11 +19,7 @@ public sealed record NavigationItem(
     public bool HasTimestamp => !string.IsNullOrWhiteSpace(Timestamp);
     public Brush ToneBrush => new SolidColorBrush(
         Color.FromArgb(TonePalette[StableToneIndex(Conversation.CanonicalKey)]));
-    public string Initial => IsBot
-        ? "BOT"
-        : string.IsNullOrWhiteSpace(Title)
-            ? "?"
-            : Title.Trim()[0].ToString().ToUpperInvariant();
+    public string Initial => AvatarInitials.Create(Title, IsBot);
 
     private static readonly string[] TonePalette =
     [

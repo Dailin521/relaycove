@@ -77,8 +77,14 @@
                 Text="已保存"
                 ImageSource="icon_bookmark.png"
                 Style="{StaticResource NavigationButtonStyle}"
-                Command="{Binding ShowSavedUnavailableCommand}"
-                SemanticProperties.Description="已保存消息，暂不可用" />
+                Command="{Binding ShowSavedCommand}"
+                SemanticProperties.Description="查看已保存消息">
+            <Button.Triggers>
+                <DataTrigger TargetType="Button" Binding="{Binding IsSavedSection}" Value="True">
+                    <Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
+                </DataTrigger>
+            </Button.Triggers>
+        </Button>
 
         <Button Grid.Row="5"
                 Text="设置"

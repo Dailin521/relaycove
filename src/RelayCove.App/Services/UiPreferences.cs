@@ -6,4 +6,6 @@ public sealed record UiPreferences(
     UiConversationWidthMode ConversationWidth = UiConversationWidthMode.Standard,
     bool OpenDetailsByDefault = false,
     bool ChannelsExpanded = true,
-    bool DirectMessagesExpanded = true);
+    bool DirectMessagesExpanded = true,
+    double? FontSize = null,
+    double? ConversationPaneWidth = null);

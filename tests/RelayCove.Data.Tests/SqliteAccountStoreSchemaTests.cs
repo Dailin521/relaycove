@@ -53,7 +53,7 @@ public sealed class SqliteAccountStoreSchemaTests
         await context.Store.InitializeAsync(account);
         await using (var connection = context.Open(account.AccountId))
         {
-            await ExecuteAsync(connection, "UPDATE schema_info SET version = 2;");
+            await ExecuteAsync(connection, $"UPDATE schema_info SET version = {SqliteAccountStore.CurrentSchemaVersion};");
         }
 
         await context.Store.MigrateAsync(account.AccountId);
@@ -92,17 +92,46 @@ public sealed class SqliteAccountStoreSchemaTests
 
         await context.Store.MigrateAsync(account.AccountId);
 
-        var loaded = await context.Store.LoadAsync(account.AccountId);
-        Assert.Equal("preserve-me", loaded!.State.Messages[9].Content);
-        Assert.False(loaded.State.Messages[9].IsStarred);
-        Assert.Empty(loaded.State.Messages[9].Reactions);
+        var loaded = Assert.IsType<AccountSnapshot>(await context.Store.LoadAsync(account.AccountId));
+        var message = Assert.Single((await context.Store.QueryMessagePageAsync(account.AccountId, conversation, null, 20)).Messages);
+        Assert.Equal("preserve-me", message.Content);
+        Assert.False(message.IsStarred);
+        Assert.Empty(message.Reactions);
         Assert.Equal("Bea", loaded.State.Users[20].FullName);
         await using var verify = context.Open(account.AccountId);
-        Assert.Equal(2, await ScalarLongAsync(verify, "PRAGMA user_version;"));
-        Assert.Equal(2, await ScalarLongAsync(verify, "SELECT version FROM schema_info;"));
+        Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(verify, "PRAGMA user_version;"));
+        Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(verify, "SELECT version FROM schema_info;"));
         Assert.Equal(1, await ScalarLongAsync(
             verify,
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='message_reactions';"));
+    }
+
+    [Fact]
+    public async Task MigrateAsync_WhenSchemaIsVersionTwo_PreservesMessagesAndAddsReactionLookupIndex()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var conversation = new DirectMessage([20]);
+        await context.Store.InitializeAsync(account);
+        await context.Store.StoreMessagePageAsync(account.AccountId, [StoreTestData.Message(9, conversation)]);
+        await using (var connection = context.Open(account.AccountId))
+        {
+            await ExecuteAsync(connection, """
+                DROP INDEX ix_message_reactions_message_id;
+                UPDATE schema_info SET version = 2;
+                PRAGMA user_version = 2;
+                """);
+        }
+
+        await context.Store.MigrateAsync(account.AccountId);
+
+        Assert.Equal(9, Assert.Single((await context.Store.QueryMessagePageAsync(account.AccountId, conversation, null, 20)).Messages).Id);
+        await using var verify = context.Open(account.AccountId);
+        Assert.Equal(1, await ScalarLongAsync(verify,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='ix_message_reactions_message_id';"));
+        Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(verify, "PRAGMA user_version;"));
+        Assert.Equal(1, await ScalarLongAsync(verify, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'is_muted';"));
+        Assert.Equal(1, await ScalarLongAsync(verify, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'is_pinned';"));
     }
 
     [Fact]

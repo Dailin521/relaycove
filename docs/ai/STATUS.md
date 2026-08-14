@@ -1,9 +1,69 @@
-# RelayCove Status — Stage 21 / 22W / 22M
+# RelayCove Status — Stage 21 / 22W / 22M / 23 / 24
 
-Updated: 2026-08-13
-Branch: `codex/stage-22m-web-parity` (isolated worktree `E:\WorkSpace\RelayCove-Stage22MParity`)
+Updated: 2026-08-14
+Branch: `codex/stage-24-native-product-polish` (isolated worktree `E:\WorkSpace\RelayCove-Stage22MParity`)
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W and both current Stage 22M slices are integrated. The native Web-parity follow-up passed its current-tree Full gate and independent review, was pushed on `codex/stage-22m-web-parity`, and fast-forwarded to remote `main` at `259e176`. The concurrently dirty primary worktree was intentionally left unchanged.
+Current delivery: Stage 22W/22M and Stage 23 local slices remain preserved in history. Stage 24 is active and uncommitted on `codex/stage-24-native-product-polish`; it has not been pushed, merged, deployed or exercised against the Realm. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun for Stage 24.
+
+## Stage 24 native product polish — current local evidence, 2026-08-14
+
+- Stage 24.1 replaces the Composer Button drag surface with a neutral 16-DIP native handle, stable-root pointer capture and handled routed events; removes the channel/topic/DM `SelectedItem` + Tap double path; and gates old chat/Composer while authoritative topic or conversation activation is pending, empty or failed.
+- Conversation activation publishes a structured conversation/generation/target/reason scroll request only after the latest generation settles. The native view waits for item, handler, extent and target layout, verifies the bottom before acknowledgement, and lets current-generation explicit bottom requests supersede prepend anchors.
+- Message layout now follows Web 18/20/16 content insets, reserves a separate 16-DIP scrollbar safety column, removes the unused opposite avatar slot and uses the Web 76%/690 or narrow 90% cap. Native layout changes also refresh the real 96-DIP distance and maintain pagination anchors by message ID plus DIP unless pointer/wheel/keyboard input takes control.
+- Draft sends carry their captured conversation into the Core command gate. If navigation changes the selected conversation during attachment upload, the send fails closed before outbox creation or POST and retains the original draft/attachments.
+
+- Own history/register/realtime messages are normalized read before reducer/cache projection. Activating a different or already-selected conversation always starts a latest-page generation without publishing an empty message window; only the still-current successful generation attempts server mark-read.
+- Automatic mark-read is isolated from history success. Network/429/protocol failure keeps the loaded page and unread state; 401 retains fail-closed reauthentication; a confirmed server read followed by cache failure keeps the page and reports `mark_read_cache_failed` rather than `history_failed`.
+- `ConversationSummary` is restored from the existing indexed SQLite messages table, not a second summary table. Navigation uses summaries instead of the selected 250-message window. Realtime message/edit/delete/move/read updates are incremental; affected window-external topics and summaries are re-read only by exact conversation/topic keys.
+- DM/channel navigation keeps stable keys and summaries. Avatar media keys include `AccountId`, unchanged sources do not restart loading, and account changes cannot reuse another account's avatar bytes.
+- Native Composer resizing uses WinUI pointer capture/cancel/lost-focus cleanup and stays within 72–300 DIP. The message viewport uses actual `ScrollableHeight - VerticalOffset`; <=96 DIP follows new messages and >96 DIP preserves position and exposes the new-message action.
+- Channel clicks restore the run-local last topic or most recent server topic; empty channels expose a channel-bound new-topic path. The new-conversation surface supports DM and subscribed-channel topic modes. Realtime topic creation/move and current-channel archive/removal update selection and Composer availability.
+- Conversation filtering, repeated row activation, an 820-DIP intermediate rail, and continuous persisted font/conversation-width values are implemented natively. The Web runtime and frozen `chat-ui-v1` files are unchanged.
+- The prior Stage 24 narrow build and fake-test counts predate Stage 24.1. Per the user's expedited instruction, Stage 24.1 ran no tests, Fast, Full, Live, preview or PrintWindow. The exact App Debug Rebuild passed with 0 warnings and 0 errors: `dotnet build src/RelayCove.App/RelayCove.App.csproj -c Debug --no-restore --nologo -t:Rebuild`.
+- Independent App/UI and protocol/session/Data reviews found two P1 classes (automatic mark-read failure contaminating history state; window-external topic move/delete not returning SQLite authority). Both were fixed with regressions; the final reviews found no remaining confirmed P0/P1.
+- Not run for Stage 24: Fast, Full, Live, real credentials/Realm traffic, formal Windows Machine manual interaction, screenshot matrix, 100%/200%, high contrast, package installation or clean Windows 11 VM. These remain explicit gates; no current screenshot or package hash is claimed.
+
+## Stage 23 real-Realm acceptance — 2026-08-14
+
+- With explicit user authorization, the ignored local runner used the existing DAL/zhang credential archive without printing or tracking secrets. Before every write, tracked LiveTests independently verified two distinct users, three distinct channel IDs, exact names, the two private probes' private/non-archived state, the join probe's public/non-archived state, and an exact two-user subscriber set.
+- `pwsh ./scripts/verify.ps1 -Mode Live` passed 3/3 in 1 minute 17 seconds. It covered server search, saved messages, fresh-session around-anchor open, one star/unstar cycle, mute/pin toggle and authoritative restoration, private unsubscribe restoration, and public dedicated `relaycove-join-e2e` unsubscribe → catalog discovery → rejoin. All temporary register queues were deleted and cleanup reported no restoration failure.
+- The first authorized run passed 2/3 and exposed only an invalid test assumption that a unique topic must contain an adjacent message. The regression was corrected without weakening the fresh empty-store anchor proof, independently reviewed, and the complete Live suite then passed.
+- Zulip private channels are not discoverable by an unsubscribed ordinary user. Therefore the join probe is a dedicated public, non-archived channel with exactly DAL and zhang subscribed; it is not a business channel, and RelayCove still does not implement channel creation or administration.
+- This Live evidence does not replace final manual password login through the MAUI window, long-list real-window acceptance, package installation, 100%/200%, high contrast or clean Windows 11 VM acceptance.
+
+## Stage 23 final offline gate — 2026-08-14
+
+- After correcting five Release XamlC source bindings with the existing strongly typed `MainPage.ViewModel` bridge, `pwsh ./scripts/verify.ps1 -Mode Full` passed on the exact candidate tree. Debug and Release each passed Core 102/102, Zulip.Client 45/45, Data 21/21 and App 87/87 (255/255 per configuration), with zero build warnings/errors.
+- Web deployment-template checks, typecheck, 86/86 unit tests, production build, Playwright 6/6 and fixed deployment-path 1/1 passed without changing Web source or contacting the Realm.
+- Windows publish/package passed. `artifacts/package/RelayCove-2.0.0-alpha.1-win-x64.zip` SHA-256 is `75B176F07531DAD9D1DEF1412B37778B1B876840ACA4862F663BE8FC586A0994`.
+- Full did not run Live or use credentials. The final manual MAUI password-login/window acceptance and clean Windows 11 VM installation remain open.
+- Visual Studio launch profiles are explicit: `Windows Machine` opens the formal real-login client, while `RelayCove Native Preview` keeps the Debug-only in-memory/no-network scene. This prevents final manual acceptance from accidentally starting `preview.invalid`.
+
+## Stage 23 native functions — Slice 2 (local, narrow verification only), 2026-08-14
+
+- Native server search and saved messages now use transient structured `GET /api/v1/messages` pages: `search` and `is:starred` narrows, raw Markdown only, first/older paging, old-request cancellation and no SQLite/cache projection. Server-supplied match HTML is deliberately absent from all domain/UI types.
+- Search debounces for 300 ms, Enter runs immediately, keeps local navigation results for an empty query and offers explicit older server-page loading. Saved has a native page with refresh, pagination, jump-to-message and successful-unstar removal. 401, 429 and network failures have explicit state/error paths and no auto-retry.
+- `OpenMessageAsync` uses a 25-before/anchor/24-after raw context query and verifies `found_anchor`; session/account/conversation generation rejects late results. A narrow observer only exposes message IDs plus delete/starred outcome so external unstar/delete removes saved rows and external star marks the view stale, without putting saved results into the 250-message selected window.
+- Slice Fast passed on this exact tree with zero build warnings/errors: Core 98/98, Zulip.Client 43/43, Data 21/21 and App 85/85 (247/247 total); Web deployment-template checks, typecheck, 86/86 unit tests and production build also passed. Full, Live, manual MAUI UI, screenshots, package and clean-VM gates did not run. No Web, Realm, deployment or server change occurred.
+- P1 follow-up narrowed the lifecycle boundary: search and saved own account/run/epoch-guarded cancellation lanes; saved clears on account change; an older page with `found_anchor=false` preserves rows and explicitly requires refresh. Search Enter no longer opens an implicit first result, while keyboard-selected results still open; close restores search-button focus. Server search retains all loaded pages ahead of locally limited navigation results; an App regression verifies two 50-message pages stay visible. Independent protocol/Core and App/UI re-review found no remaining P0/P1.
+
+## Stage 23 native functions — Slice 3 channel self-service (local, narrow verification only), 2026-08-14
+
+- Core models the server catalog as `ChannelSummary` with raw `description` and nullable `subscriber_count`. `GET /api/v1/streams` maps raw description only; rendered HTML is ignored. Existing subscriptions retain authoritative `is_muted` and `pin_to_top` state, which projects pinned channels first and weakens muted rows.
+- The browse dialog joins only an item selected from the current catalog. Before `POST /api/v1/users/me/subscriptions`, Core re-fetches the catalog and requires the same channel ID, exact name, and non-archived state, preventing Zulip's name-based subscribe endpoint from creating a stale or arbitrary channel. Confirmed joins and `PATCH /api/v1/users/me/subscriptions/{id}` muted/pinned changes update state; errors have no optimistic update or automatic retry. Existing confirmed unsubscribe remains reused.
+- Realtime subscription `is_muted`/`pin_to_top` updates now reduce into subscriptions; stream rename/archive handling remains in the stream event reducer. The MAUI formal surface provides catalog browse/join, detail mute/pin/leave, and close-button/Escape overlay focus behavior. No member/presence/count inference is made.
+- Slice Fast passed on this exact tree with zero build warnings/errors: Core 102/102, Zulip.Client 45/45, Data 21/21 and App 87/87 (255/255 total); Web deployment-template checks, typecheck, 86/86 unit tests and production build also passed. Gateway tests cover raw description/subscriber count, per-user subscribe responses and muted/pinned PATCH; Core tests cover catalog revalidation, confirmed join, 401 fail-closed and preference reduction.
+- Not run for this Slice: Full, Live, real Realm/credential calls, manual MAUI UI, screenshots, package, clean-VM, accessibility and long-list acceptance. No Web source, server, deployment, push, merge or commit changed.
+- P1 follow-up: subscribe and preference writes are account/run/session-epoch guarded and serialized per channel; directory refreshes cannot discard a completed write, while a late success or gateway failure cannot mutate a replacement session. Subscribe parses the official per-user structured `subscribed`/`already_subscribed`/`unauthorized` response and projects only an explicit matching name; malformed 2xx or unauthorized response remains protocol-unknown. SQLite v5 persists muted/pinned plus subscription color and reduces preference events, with conditional migration for legacy fixtures. Catalog subscription/color presentation is merged only from authoritative register state, not fabricated from `GET /streams`. The browser clears on close/logout, ignores late projection/errors, and returns focus to its trigger; its action labels now refresh with selected-channel projection.
+- The independent protocol/Core/Data and App/UI re-reviews confirmed all reported P0/P1 findings closed, including the channel-browser close recursion, real request cancellation, action-label refresh, per-user subscribe response shape, lifecycle guards, POST/PATCH 401 fail-closed behavior and schema v5 persistence. Full, Live and manual UI gates remain unrun.
+
+## Stage 23 native functions — Slice 1, 2026-08-14
+
+- SQLite v3 adds page-scoped message UPSERT/reaction replacement and event-scoped incremental persistence. Restore no longer reads the complete message table; register replacement preserves valid cached history.
+- Cache queries use the conversation/message index, fetch `limit + 1` and load reactions only for returned message IDs. A deterministic 10,000-message test pages 5,000 messages in one conversation and checks 50-message write p95 <= 150 ms on this development machine.
+- Core history uses 50-message pages, a 250-message selected window, generation invalidation and single-flight older loading. Cached gaps cannot alter the network anchor or skip a server page.
+- MAUI automatically requests older history near the top, keeps the manual accessible action, restores a prepend anchor by message ID and viewport DIP offset, follows arrivals only near the bottom and otherwise presents a new-message button.
+- Slice Fast passed on this exact tree with zero build warnings/errors: Core 95/95, Zulip.Client 41/41, Data 21/21 and App 83/83 (240/240 total); Web deployment-template checks, typecheck, 86/86 unit tests and production build also passed. Full, Live, package, screenshot and clean-VM gates have not run for this Slice.
 
 ## Product direction
 
@@ -12,6 +72,51 @@ Current delivery: Stage 22W and both current Stage 22M slices are integrated. Th
 - Both frontends connect directly to the same Zulip Realm. Zulip remains the only business source of truth; there is no RelayCove server, BFF, proxy protocol or second message backend.
 - Web is implemented and accepted first. A versioned interaction contract then becomes the input for Stage 22M native parity.
 - The two frontends share visual tokens, interaction specifications, capability matrices and acceptance scenarios, but no UI runtime code.
+
+## Stage 22M native parity polish — 2026-08-14
+
+- `NativeShellPreviewSession` now mirrors the formal Web acceptance fixture for channels, topics, direct messages, current user, timestamps, unread boundary, quote, reaction and image attachment. It remains an in-memory Debug-only session with no credentials, HTTP, Realm access or real writes.
+- The native projection now uses the Web-facing workspace/name/order/timestamp semantics, deterministic avatar initials and the Web unread/date layout. Wide/compact/narrow shell surfaces retain 40 DIP product bar, 60 DIP primary navigation, 310 DIP conversation pane, 284 DIP details pane and 1 DIP region separators.
+- The second polish pass corrects the shell as a composition rather than a collection of fixed distances: the chat `Surface` now fills through the bottom of the window so the `SurfaceSoft` Composer reads as a floating card; message rows follow the Web 76%/90% responsive cap; single-topic channels enter directly without a duplicate topic strip; channel rows now carry their latest summary and timestamp.
+- A native `Border.Shadow` experiment was rejected after a real WinUI capture showed the local popover shadow spreading across a large page region. Popovers retain clear raised-surface contrast, border, anchoring and safe-edge constraints without shipping a visually false/economically expensive CSS-shadow imitation.
+- Message/account menus use bundled native icons with stable left alignment. Composer and reaction emoji pickers, details overlay, account panel, settings and narrow list/chat states can be opened directly as Debug preview scenes without mouse or keyboard automation.
+- `start-maui-preview.ps1` accepts `-Scene`, `-Theme`, `-Width`, `-Height` and `-NoBuild`. It builds into a unique ignored directory and replaces only its own prior process after success; the child WinUI process uses its output directory as working directory. `capture-maui-preview.ps1` verifies the recorded PID and EXE, moves only that HWND to `DISPLAY2`, waits for per-monitor DPI stabilization and captures with `PrintWindow` without input injection.
+- The exact baseline candidate passed `pwsh ./scripts/verify.ps1 -Mode Full` on 2026-08-14. Debug and Release builds had zero warnings/errors; Core 90/90, Zulip.Client 41/41, Data 17/17 and App 78/78 passed in each configuration (226/226 per configuration); Web deployment-template checks, typecheck, 86/86 unit tests and production build passed; Playwright passed 6/6 plus deployment-path 1/1. The generated Windows package SHA-256 is `34B5EA915FE11244D399145AF1C310D6FBAAEB0BF94BB6D33E9805E9E9752BD2`. Full was offline-safe and did not run Live or use credentials.
+- Known visual acceptance boundary: these captures verify native composition at `DISPLAY2` 150%/DPI 144. They do not verify long-list performance, 100%/200%, high contrast, package installation or a clean VM.
+
+## Stage 21 / 22M real Realm acceptance — 2026-08-14
+
+- With explicit user authorization, the ignored local harness read DAL and zhang credentials only from the private server-admin archive, created/verified the private `relaycove-client-e2e` channel with exactly those two members, and kept secrets out of repository files and command output.
+- `pwsh ./scripts/verify.ps1 -Mode Live` passed 2/2 against the target Realm after the fail-closed gate was expanded to require the password and separate approval of two distinct private two-member channels before any test runs. The two-account contract covered register, channel send, cross-account event delivery, history, mark-read, direct message, queue expiry and register rebuild. The message mutation flow covered reaction add/remove, SHA-256 guarded edit, star/unstar, file upload, same-Realm controlled download and a dedicated delete probe.
+- A second Live path used the production `ClientSession` rather than direct gateway calls: real password authentication, register/event loop, channel selection, send, reaction, edit, star, upload/download, delete, unsubscribe and logout all completed. The fixed private unsubscribe probe was restored to the same two-member state by zhang after the test; normal test messages were intentionally retained per user instruction.
+- MAUI/Web parity now includes current-user channel unsubscribe through `DELETE /users/me/subscriptions`. It uses the exact authoritative subscription name, serializes per channel, clears local subscription/messages/topics/unread/selection only after `removed` or `not_removed`, and never retries an unknown result.
+- Narrow unsubscribe verification passed before the baseline gate: App Debug and LiveTests Release builds had 0 warnings/errors; Core unsubscribe/event-selection tests 5/5, Zulip.Client unsubscribe 1/1 and App ViewModel unsubscribe 1/1 passed. A cache-purge failure regression proves that a server-confirmed unsubscribe remains removed from memory and selection while the session reports a recoverable fault. The later exact-tree Fast/Full result is recorded above.
+- This closes the Stage 21 isolated two-account Live gate and proves headless production-session password authentication. It does not replace one manual password-login acceptance through the final MAUI UI, clean Windows 11 VM, package/install, 100%/200%, high-contrast or long-list acceptance.
+
+Current ignored screenshot evidence under `artifacts/maui/screenshots/parity-polish/`:
+
+| Evidence | Target DIP | Actual pixels | SHA-256 |
+|---|---:|---:|---|
+| `shell-1440-light.png` | 1440×900 | 2160×1350 | `0C398FE56A176264E15AB4F07ADC716C8F50CA21D130A9238B17F06053516A1B` |
+| `shell-1440-dark.png` | 1440×900 | 2160×1350 | `B7ADD0ECB6D99E23523475D250416CABFE5A767D11AEB415AF57F1550C001C2B` |
+| `shell-1024-light.png` | 1024×768 | 1536×1152 | `1F545685139DAE0A9859A14AD7AED1387EF929BCC94379F40631532C4DD19BB9` |
+| `details-1024-light.png` | 1024×768 | 1536×1152 | `D541EC19DAC1F1405E3F6336FF8A7EE45557BB388A74807A4D7F9C7FAE169FDB` |
+| `settings-1024-light.png` | 1024×768 | 1536×1152 | `246C8CCFE9E4ACA31857EF6A7ED6C985A693437824CBECE32FE36215B5F994B4` |
+| `narrow-list-640-light.png` | 640×900 | 960×1350 | `7B2A4223C3B4EF029B7983C36E76E6A211B9FB4BFDCFB168F6533FC70434DB86` |
+| `narrow-chat-640-light.png` | 640×900 | 960×1350 | `8D5C2E0314DE5A74D0FE35293F415687D9B10376929B8EAAA0EF6EB7339BC381` |
+| `message-menu-1440-light.png` | 1440×900 | 2160×1350 | `287D688091EB2D85A4D7470AEFC214A493CC53D9D8791B39AF197867B4940DEC` |
+| `account-menu-1440-light.png` | 1440×900 | 2160×1350 | `4E290DF66D900F96ADAAD0E641376FE02F1EC01E26540EA5BBCAF5D33B924CA2` |
+| `composer-emoji-1440-light.png` | 1440×900 | 2160×1350 | `044B5853CD5BA05F68BF00ADF9241AF680D0C78C27C4B97AF12D5D58DF093759` |
+| `reaction-picker-1440-light.png` | 1440×900 | 2160×1350 | `5DBF4B2F2C4D0A70CB9F88E3BAA4E461A175F4DE4E3C38C6D8125264BD606487` |
+
+Second-pass whole-window evidence (the earlier matrix remains the complete scene baseline):
+
+| Evidence | Target DIP | Actual pixels | SHA-256 |
+|---|---:|---:|---|
+| `batch-2-overall-1440-light.png` | 1440×900 | 2160×1350 | `E0B9545A9C28C7EAB5450263E886DE235D89DD178762F47C230FA6D4353C0B1C` |
+| `batch-2-overall-1024-light.png` | 1024×768 | 1536×1152 | `D761C57D92C1327B63F24A8685C848845E232A026742E05B6CC42E0F62BA28AB` |
+| `batch-2-overall-640-chat-light.png` | 640×900 | 960×1350 | `21CF0E7A743DD0F6D647FD26657BFAAC4572FFD73DDFEF5662524BC40ADD9446` |
+| `batch-2-emoji-pixel-aligned-1024-light.png` | 1024×768 | 1536×1152 | `7A63530BC2A7D933E365BE2C63B9386A9289C7B0D3344C8569D57981CD67E499` |
 
 ## Stage 22M native Web-parity follow-up — 2026-08-13
 
@@ -44,7 +149,7 @@ Current native evidence on `DISPLAY2` at 150% / DPI 144:
 | `artifacts/maui/screenshots/stage22m-web-parity/maui-settings-1440-light-final.png` | 1440×900 | 2160×1350 | `A79F7F73C817BAE26444C8153FEA748219302823F23ABC6460F8DF5E0B50CEF7` |
 | `artifacts/maui/screenshots/stage22m-web-parity/maui-settings-640-light-final.png` | 640×900 | 960×1350 | `3D57B1C4F27AB70ED2CAFE15A566E7AD1247F3615E8C64A94BF0683D338358B2` |
 
-These captures prove deterministic native composition and responsive/theme behavior, not Live Zulip behavior. Stage 21 Live, native manual password login, real-Realm message/file writes, 100%/200%, high-contrast, package/install and clean-VM gates remain unverified.
+These captures prove deterministic native composition and responsive/theme behavior, not Live Zulip behavior. Separate 2026-08-14 Live evidence above verifies the real Realm/session paths; native manual UI password login, 100%/200%, high-contrast, package/install and clean-VM gates remain unverified.
 
 ## Stage 22M native shell and message interactions — 2026-08-13
 
@@ -63,8 +168,8 @@ These captures prove deterministic native composition and responsive/theme behav
 - Production DI resolves the same `ClientSession` boundary over `RelayCove.Core`, `RelayCove.Zulip.Client` and `RelayCove.Data`. `ShellViewModel` subscribes to `IClientSession.StateChanged` and projects subscriptions, topics, recent DMs, users, messages, authoritative unread, connection, outbox and per-message mutation state; Views do not call HTTP or SQLite.
 - Restore, manual password login, selection, topic/older-history loading, server-confirmed mark-read, logout and per-account cache clearing remain intact. Shared contracts now also cover reaction, edit with `prev_content_sha256`, permanent delete, star/unstar, attachment upload and controlled same-Realm media reads.
 - Each message has one mutation lane. Submitting or uncertain operations block later mutations for that message; ambiguous network/protocol outcomes become `Uncertain`, switch offline where appropriate and are never automatically retried. Upload and message send remain two separate non-idempotent stages; a confirmed upload reference can be reused only by an explicit user retry.
-- The native shell implements right-click/`Shift+F10`/touch message menus, quote/copy/permalink/ID actions, 24-emoji Composer/reaction pickers, edit/delete confirmation, local loaded-workspace search, new 1:1/group/self-DM selection, image preview/download and per-conversation attachment drafts. All server writes still flow only through `IClientSession`.
-- Contacts and new-DM candidates are explicitly the active users currently known to the session, not a complete member directory. Member counts/relationships, presence, common channels, the saved-message list, server-wide search/mentions and channel management remain hidden or labelled unavailable; users are never reinterpreted as channel membership.
+- At the Stage 22M baseline, the native shell implemented right-click/`Shift+F10`/touch message menus, quote/copy/permalink/ID actions, 24-emoji Composer/reaction pickers, edit/delete confirmation, local loaded-workspace search, new 1:1/group/self-DM selection, image preview/download and per-conversation attachment drafts. Stage 23 Slice 2 now adds server search and saved messages; all server writes still flow only through `IClientSession`.
+- Contacts and new-DM candidates remain the active users currently known to the session, not a complete member directory. Stage 23 provides ordinary-user channel discovery/join/leave/mute/pin; member counts/relationships, presence, common channels, mentions and administrator channel management remain separate gates. Users are never reinterpreted as channel membership.
 - A `#if DEBUG` `NativeShellPreviewSession` is selected only when `RELAYCOVE_NATIVE_UI_PREVIEW=1`. It has deterministic in-memory `IClientSession` state, no gateway/HTTP dependency, and applies send/reaction/edit/delete/star/upload interactions only to local memory for visual testing. It cannot write to a Realm. Release and ordinary Debug startup continue to use the production session.
 
 ### Current validation evidence
@@ -133,13 +238,13 @@ The final Debug binary started with the no-network preview session and rendered 
 - Independent protocol/security and UI/state reviews found no remaining P0/P1 after the public-avatar origin boundary was tightened and regression-tested.
 - The post-review repository `Full` gate passed on this exact Web follow-up tree: .NET Debug/Release 135/135, Web 86/86, Playwright 6/6 plus fixed deployment path 1/1, Windows package generation, and zero build warnings/errors. No commit, push or deployment had been performed when this evidence was recorded.
 
-## Current repository verification evidence
+## Integrated repository verification evidence — 2026-08-13
 
 - Final combined-main `pwsh ./scripts/verify.ps1 -Mode Full` passed on 2026-08-13 after integrating both owning commits. Debug and Release each passed Core 85/85, Zulip.Client 40/40, Data 17/17 and App 36/36 (178/178 per configuration) with zero build warnings/errors.
 - The same Full run passed Web typecheck, 86/86 unit tests, production build, Playwright 6/6 fixture/formal scenarios and 1/1 production deployment-path scenario.
 - Fast/Full require explicitly pre-provisioned NuGet/npm/Chromium assets and use no `.NET restore`, package install, real credential or target-Realm request. Playwright serves only `127.0.0.1` and intercepts the fake Zulip origin.
 - Playwright covered mocked login/restore/logout, console errors and warnings, keyboard focus, Composer clamp, details Escape, 640 px list/chat switching and both list/chat horizontal-overflow checks.
-- Windows package: `artifacts/package/RelayCove-2.0.0-alpha.1-win-x64.zip`, SHA-256 `8EE2375AC79A181B4E1106A3B68D905D7D7E083C6653500F083B117DB2E0734C`. It was generated locally and not published.
+- Historical Windows package SHA-256 from that run: `8EE2375AC79A181B4E1106A3B68D905D7D7E083C6653500F083B117DB2E0734C`. Generated `artifacts/` are ignored and may be overwritten by later validation, so the current file at that path is not evidence for this historical run.
 
 ## Slice 2 historical evidence
 
@@ -157,7 +262,9 @@ The final Debug binary started with the no-network preview session and rendered 
 - Production output before gzip: JavaScript `295.77 kB` (`90.61 kB` gzip), CSS `29.88 kB` (`6.43 kB` gzip); fixture imports/markers remain absent.
 - Final repository Fast and Full both passed after all P1 fixes and the visible login-copy correction. The final deployment reran Web typecheck, 63/63 unit tests, production build and both Playwright suites before changing the server symlink.
 
-### Browser screenshots
+### Historical browser screenshots
+
+The hashes below belong to their recorded Web Slice run. Because screenshot artifacts are ignored and reused by later runs, current files at the same paths are not expected to retain these historical bytes.
 
 | Evidence | Dimensions | SHA-256 |
 |---|---:|---|
@@ -193,25 +300,24 @@ The HTML Playwright report is under `artifacts/web/playwright/report/`. All gene
 
 ## Remaining capability gates / known differences
 
-- Web implements arbitrary attachment cards/upload, current-user unsubscribe, reaction, own-message edit/delete and per-account starred state; its bounded self-DM mutation probe was deleted after verification. MAUI implements loaded-state local search, image/file attachment presentation/upload contracts, reactions, edit/delete and star/unstar UI/session paths, but these native writes have deterministic fake/in-memory coverage only. Server-wide search/mentions, complete membership/presence/common-channel data, saved-message list, channel subscribe/create/rename/archive/member management and resumable large-file upload remain separate gates.
+- Web and MAUI implement arbitrary attachment upload/presentation, current-user unsubscribe, reaction, own-message edit/delete and per-account starred state. MAUI now also implements server search, saved messages, channel discovery/join and personal mute/pin, with isolated Stage 23 Live evidence. Mentions, complete membership/presence/common-channel data, administrator channel management and resumable large-file upload remain separate gates.
 - The fixture still proves visual/interaction structure only. The production login now starts the formal Zulip session path; no fixture account/message enters that graph.
 - Messages, queue/cursor and outbox are page-memory only. RelayCove.Web does not yet claim refresh-offline history or Service Worker/IndexedDB caching.
 - Loaded messages are currently rendered directly. Automatic scroll-threshold paging, long-list virtualization and cross-page visual-anchor preservation remain a Web performance slice; the current verified control loads explicit 50-message pages.
 - The chosen same-origin static deployment and HTTPS/CSP/security headers are verified. A future move to another origin would reopen the Zulip CORS gate; no proxy/BFF may be added to bypass it.
-- A user-authorized member credential first completed bounded Web login/read checks. On 2026-08-13 the user separately authorized the temporary self-DM mutation sequence documented above; it passed and all probe messages were deleted. This verifies the implemented Web endpoint set against the target Realm, but not the Stage 21 two-account isolated-channel Live gate, real image upload, channel unsubscribe or mark-read.
-- Stage 22M native shell and message-interaction parity are implemented and have bounded real-window light/dark/menu/focus evidence. Full external acceptance remains open: browser evidence does not prove native behavior, and native local/fake protocol coverage does not prove real Realm writes.
+- A user-authorized member credential first completed bounded Web checks. On 2026-08-14 DAL and zhang then completed the isolated two-account native Live matrix, including mark-read, attachment and unsubscribe. The retained test messages are confined to the two approved private channels and their direct conversation.
+- Stage 22M native shell and message-interaction parity are implemented with real-window visual evidence plus real gateway/session evidence. Manual final-UI, clean-VM and platform acceptance remain open.
 
-## Stage 21 external gates still unverified
+## Remaining Stage 21 / native external gates
 
 - Final ZIP launch on a clean Windows 11 x64 VM without .NET or Windows App SDK Runtime.
-- Live contract/write test using two dedicated test accounts and an isolated private channel.
 - One manual password-login acceptance in the final MAUI UI using a dedicated account.
 - Remaining native MAUI acceptance at 100%/200%, full manual keyboard/high-contrast/long-list scenarios, plus signing, installer and public release.
 
-Do not mark Stage 21 complete until the clean-VM, Live and manual MAUI password-login evidence exists.
+Do not mark Stage 21 complete until the clean-VM and manual MAUI password-login evidence exists.
 
 ## Git handoff
 
 - Web commit `573a33d` and MAUI commit `c1c4da9` preserve the two implementations as independently reviewable history and are integrated into `main` under the user's explicit commit/merge/push authorization.
 - The fixed static Web entrance remains on the previously recorded Slice 3 server release; this integration does not deploy a new Web build or alter the Zulip host.
-- Stage 22M made no target-Realm request, real mark-read or message write. The Web credential was used only for the documented bounded read and temporary self-DM checks; all temporary messages were deleted and no secret was printed or persisted by the harness.
+- Stage 22M and Stage 23 now have the bounded two-account Live evidence documented above. No secret was printed or persisted in tracked files; the credential bootstrap remains ignored local tooling. Stage 23 has three local Slice commits plus the current final acceptance/documentation changes; nothing has been pushed.

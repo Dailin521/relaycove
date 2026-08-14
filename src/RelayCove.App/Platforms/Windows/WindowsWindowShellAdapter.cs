@@ -33,8 +33,13 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
         }
 
         _window = window;
+#if DEBUG
+        _window.Width = NativeShellPreviewSession.IsRequested ? NativeShellPreviewSession.RequestedWidth : 1440;
+        _window.Height = NativeShellPreviewSession.IsRequested ? NativeShellPreviewSession.RequestedHeight : 900;
+#else
         _window.Width = 1440;
         _window.Height = 900;
+#endif
         // The first HWND can be created on a 200% monitor before moving to a
         // 150% monitor. This track minimum keeps the intended 640-DIP narrow
         // shell reachable across that per-monitor DPI transition.
@@ -141,7 +146,12 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
                     _previewPlacementTimer = null;
                 }
 
-                TryResizePreviewWindow(windowHandle, workArea, targetDpi);
+                TryResizePreviewWindow(
+                    windowHandle,
+                    workArea,
+                    targetDpi,
+                    NativeShellPreviewSession.RequestedWidth,
+                    NativeShellPreviewSession.RequestedHeight);
             };
             _previewPlacementTimer = timer;
             timer.Start();
@@ -156,12 +166,14 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
     private static void TryResizePreviewWindow(
         nint windowHandle,
         NativeRectangle workArea,
-        uint dpi)
+        uint dpi,
+        int widthDip,
+        int heightDip)
     {
         try
         {
-            var width = ScaleDipToPixels(1440, dpi);
-            var height = ScaleDipToPixels(900, dpi);
+            var width = ScaleDipToPixels(widthDip, dpi);
+            var height = ScaleDipToPixels(heightDip, dpi);
             var availableWidth = workArea.Right - workArea.Left;
             var availableHeight = workArea.Bottom - workArea.Top;
             var x = workArea.Left + Math.Max(0, (availableWidth - width) / 2);

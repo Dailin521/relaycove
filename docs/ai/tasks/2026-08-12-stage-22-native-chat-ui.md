@@ -1,8 +1,8 @@
 # Stage 22 — RelayCove 双前端（22W Web / 22M Native MAUI）
 
-- Status: Stage 22W, the first Stage 22M slice and native Web-parity follow-up are integrated; the follow-up passed current-tree Full and independent review, and remote `main` contains implementation commit `259e176`
-- Source branch/worktree: `codex/stage-22m-web-parity` under `E:\WorkSpace\RelayCove-Stage22MParity`; the dirty primary worktree was preserved and remote `main` was updated by verified fast-forward
-- Starting point: the integrated Web/first native slices descend from `main@53a4f1a`; this follow-up starts from integrated `main@46e5608`
+- Status: Stage 22W and earlier Stage 22M slices are integrated; the native parity-polish plus real-function baseline candidate is complete and uncommitted. Its exact tree passed Fast/Full and the isolated DAL/zhang Live suite passed 2/2; no push, merge or deployment has occurred.
+- Source branch/worktree: `codex/stage-22m-parity-polish` under `E:\WorkSpace\RelayCove-Stage22MParity`; the primary worktree remains untouched
+- Starting point: current parity-polish work starts from integrated `main@d67ff6f`
 - Design source: immutable `docs/ui/baselines/chat-ui-v1/`
 - Interaction source: `docs/ui/INTERACTION_SPEC.md`
 
@@ -16,7 +16,7 @@
 6. 两端共享视觉 Token、交互规格、功能矩阵和验收场景，但不共享 UI 运行时代码。
 7. Web 默认“记住登录”，允许把 API Key 保存在当前浏览器 local storage；注销清除 local/session storage。
 
-Stage 21 的真实 Realm Live、MAUI 人工密码登录和干净 Windows 11 x64 VM 门禁仍未完成。本任务不能被用来把 Stage 21 标记为完成。
+Stage 21 的真实 Realm 双账号 Live 已于 2026-08-14 通过；MAUI 最终 UI 人工密码登录和干净 Windows 11 x64 VM 门禁仍未完成。本任务不能被用来把 Stage 21 标记为完成。
 
 ## Stage split
 
@@ -26,9 +26,20 @@ Stage 21 的真实 Realm Live、MAUI 人工密码登录和干净 Windows 11 x64 
 
 ### Stage 22M — MAUI native parity
 
-状态：Slice 1 and message-interaction parity implemented；Web-parity follow-up active。使用原生 XAML、ResourceDictionary、ViewModel、Behavior 和 Windows adapter，不引用 React runtime，不加载 WebView。当前 follow-up 对齐正式 Web 的区域表面层级、310 DIP 会话栏、1121/720 响应式断点、连续可折叠分组、消息/引用/附件/Composer、浮动快捷操作、详情、设置和真实深色切换；真实 Realm 写入和完整 Windows 人工验收仍是独立未验证门禁。
+状态：Slice 1 and message-interaction parity implemented；parity-polish and real-function follow-up active。使用原生 XAML、ResourceDictionary、ViewModel、Behavior 和 Windows adapter，不引用 React runtime，不加载 WebView。当前 follow-up 对齐正式 Web 的区域表面层级、310 DIP 会话栏、1121/720 响应式断点、连续可折叠分组、消息/引用/附件/Composer、浮动快捷操作、详情、设置和真实深色切换；双账号真实 Realm 写入已验证，完整 Windows 人工验收仍是独立门禁。
 
-当前 follow-up 的 Full 门禁已通过：Debug/Release 均为 0 warning/error，Core 85/85、Zulip.Client 40/40、Data 17/17、App 45/45（每配置 187/187），Web 86/86/typecheck/build、Playwright 6/6 与部署路径 1/1 通过；最终 Windows 包 SHA-256 为 `65900B913C0CD5AAC169ED6383BAF0DCD2A0441520F38C2466415BABE0D7B505`。Live 未运行。证据截图和 SHA-256 记录在 `docs/ai/STATUS.md`，这些均为无网络 Debug preview，不替代真实 Realm、人工登录、100%/200%、高对比度或干净 VM 验收。
+此前 Web-parity follow-up 的 Full 门禁已通过：Debug/Release 均为 0 warning/error，Core 85/85、Zulip.Client 40/40、Data 17/17、App 45/45（每配置 187/187），Web 86/86/typecheck/build、Playwright 6/6 与部署路径 1/1 通过；最终 Windows 包 SHA-256 为 `65900B913C0CD5AAC169ED6383BAF0DCD2A0441520F38C2466415BABE0D7B505`。该次 Full 没有运行 Live；本批后续的独立 2/2 Live 证据记录如下。截图和 SHA-256 仍只是无网络 Debug preview，不替代人工登录、100%/200%、高对比度或干净 VM 验收。
+
+### Stage 22M parity-polish batch — baseline candidate complete
+
+- Web acceptance fixture has been independently mirrored into `NativeShellPreviewSession`; production MAUI and Web still share no runtime UI code. The preview session is Debug-only, credential-free and cannot reach a Realm.
+- The native shell now has deterministic scene/theme/viewport injection for `shell`, `details`, `message-menu`, `composer-emoji`, `reaction-picker`, `account-menu`, `settings`, `narrow-list` and `narrow-chat`.
+- Preview startup builds to a unique ignored directory, starts WinUI from that directory, and only replaces its own tracked prior process after a successful build. Window placement and `PrintWindow` capture use PID/EXE verification and no mouse/keyboard input.
+- Current parity evidence covers 1440×900 light/dark, 1024×768 shell/details/settings, 640×900 list/chat and the four popover scenes. Paths, exact pixels and SHA-256 are recorded in `docs/ai/STATUS.md`.
+- The second visual pass treats the chat pane as one continuous `Surface` canvas with the Composer floating over it, applies the Web 76%/90% responsive message-row width, suppresses a duplicate topic strip for single-topic channels, and projects latest channel summary/time into each row. A MAUI shadow imitation was explicitly rejected after capture proved it distorted the whole-region contrast. Emoji selection now uses a centered template-owned overlay border instead of the clipped WinUI `CollectionView` selection visual.
+- The exact baseline candidate passed Fast and Full on 2026-08-14: Debug/Release builds had zero warnings/errors; Core 90/90, Zulip.Client 41/41, Data 17/17 and App 78/78 passed in each configuration (226/226 per configuration); Web typecheck/unit 86/86/build, Playwright 6/6 and deployment path 1/1 passed. The Windows package SHA-256 is `34B5EA915FE11244D399145AF1C310D6FBAAEB0BF94BB6D33E9805E9E9752BD2`.
+- The user expanded this batch to native real-function completion. Production Core/Client/App gained current-user channel unsubscribe without changing Web, authentication, persistence schema or the direct-to-Zulip architecture. Long-list performance, manual final-UI login, package installation and clean VM remain unverified.
+- Explicit DAL/zhang Live verification passed 2/2 on two distinct fixed private two-member channels after password and both channel approvals were validated before the test process started. It covered two-account delivery/read/DM/queue recovery plus production gateway and `ClientSession` send, reaction, guarded edit, delete, star, attachment upload/download, unsubscribe and logout. Test messages remain by user choice; the unsubscribe probe membership was restored after the run.
 
 ## Stage 22W / Slice 1 — production foundation
 
@@ -130,12 +141,12 @@ Formal automation covers avatar/media Basic boundaries, temporary upload URLs wi
 ## Remaining independent capability gates
 
 - global/server search, mentions, complete membership/common-channel data, saved-message list, presence, channel subscribe/create/rename/archive/member management, and resumable large-file upload;
-- real-Realm acceptance for native image/file upload, reaction, edit, delete, star and message-send writes;
+- final installed MAUI UI manual acceptance for the already Live-verified message/upload/mutation paths;
 - formal Web service worker or offline cache;
 - automatic scroll-threshold paging, long-list virtualization and cross-page visual-anchor preservation;
 - Stage 22M native 100%/200%, complete keyboard/high-contrast/long-list, manual password login, package/install and clean-VM acceptance.
 
-Visual buttons for capabilities without a real contract stay hidden, disabled or explicitly marked unavailable. The bounded Web self-DM write proves its implemented mutation endpoints on the target Realm but does not satisfy Stage 21 Live, two-account event delivery, mark-read, upload or channel-unsubscribe acceptance. Fake HTTP and the no-network native preview do not prove MAUI real-Realm writes.
+Visual buttons for capabilities without a real contract stay hidden, disabled or explicitly marked unavailable. The 2026-08-14 native Live run satisfies the isolated two-account delivery, mark-read, upload, mutation and channel-unsubscribe protocol/session gates. Fake HTTP and the no-network native preview still do not replace final installed-UI, clean-VM or platform acceptance.
 
 ## Validation matrix
 
@@ -281,7 +292,7 @@ The reusable local preview workflow is documented in `docs/ui/MAUI_PREVIEW_WORKF
 | `artifacts/maui/screenshots/native-shell-compact-display2-150pct-dark-stage22m-parity.png` | 1024×768 | 1536×1152 | `CD60F951E394D569AFB73CA1870240B257C283DFDF95C7F8A472AC617EF95F12` |
 | `artifacts/maui/screenshots/native-message-menu-compact-display2-150pct-dark-stage22m-parity.png` | 1024×768 | 1536×1152 | `6C8A2FB72E4DED1CD86CD26FF91EF1EB54CC034DDD1316F779DCB15A705B3E3C` |
 
-The captures verify startup and visible native shell composition at both target sizes, light/dark resources, details, quote/reaction/image presentation, Composer and the complete message menu, with no visible horizontal clipping at 1024×768. Real pointer/UI Automation checks opened the menu, focused its first action, closed back to the trigger, navigated settings and changed theme. They do not verify real Realm state/writes, 100%/200%, complete manual keyboard/high contrast, long-list anchors, package/sign/install or clean VM. Stage 21 Live, dedicated manual password login and clean Windows VM gates remain explicitly unverified.
+The captures verify startup and visible native shell composition at both target sizes, light/dark resources, details, quote/reaction/image presentation, Composer and the complete message menu, with no visible horizontal clipping at 1024×768. Real pointer/UI Automation checks opened the menu, focused its first action, closed back to the trigger, navigated settings and changed theme. They do not themselves verify real Realm state/writes, 100%/200%, complete manual keyboard/high contrast, long-list anchors, package/sign/install or clean VM. The later 2026-08-14 two-account Live evidence is independent; dedicated manual final-UI password login and clean Windows VM remain explicitly unverified.
 
 ## Review and completion
 

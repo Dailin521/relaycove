@@ -106,6 +106,7 @@
         <Setter Property="MinimumHeightRequest" Value="35" />
         <Setter Property="Padding" Value="9,0" />
         <Setter Property="FontSize" Value="13" />
+        <Setter Property="ContentLayout" Value="Left,7" />
         <Setter Property="CornerRadius" Value="7" />
         <Setter Property="BorderWidth" Value="0" />
         <Setter Property="BackgroundColor" Value="Transparent" />
@@ -116,6 +117,25 @@
         <Setter Property="Background" Value="{StaticResource SurfaceRaisedBrush}" />
         <Setter Property="Stroke" Value="{StaticResource BorderBrush}" />
         <Setter Property="StrokeThickness" Value="1" />
+    </Style>
+
+    <Style x:Key="EmojiPickerButtonStyle" TargetType="Button" BasedOn="{StaticResource IconButtonStyle}">
+        <Setter Property="WidthRequest" Value="30" />
+        <Setter Property="HeightRequest" Value="30" />
+        <Setter Property="MinimumWidthRequest" Value="30" />
+        <Setter Property="MinimumHeightRequest" Value="30" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="FontSize" Value="20" />
+        <Setter Property="HorizontalOptions" Value="Center" />
+        <Setter Property="VerticalOptions" Value="Center" />
+    </Style>
+
+    <Style x:Key="SettingsNavigationButtonStyle" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
+        <Setter Property="HeightRequest" Value="41" />
+        <Setter Property="MinimumHeightRequest" Value="41" />
+        <Setter Property="Padding" Value="11,0" />
+        <Setter Property="HorizontalOptions" Value="Fill" />
+        <Setter Property="ContentLayout" Value="Left,10" />
     </Style>
 
     <Style x:Key="ReactionButtonStyle" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">

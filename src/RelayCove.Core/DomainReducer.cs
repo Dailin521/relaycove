@@ -55,6 +55,7 @@ public static class DomainReducer
         var subscriptions = new Dictionary<long, Subscription>(state.Subscriptions);
         var users = new Dictionary<long, UserProfile>(state.Users);
         var topics = new Dictionary<string, TopicSummary>(state.Topics);
+        var summaries = new Dictionary<string, ConversationSummary>(state.ConversationSummaries);
         var outbox = new Dictionary<string, OutboxEntry>(state.Outbox, StringComparer.Ordinal);
         var messageMutations = new Dictionary<long, MessageMutationState>(state.MessageMutations);
         var unread = state.Unread;
@@ -65,6 +66,8 @@ public static class DomainReducer
             case MessageUpsertEvent upsert:
                 unread = AdjustForReplacement(unread, messages, upsert.Message, upsert.Source);
                 messages[upsert.Message.Id] = upsert.Message;
+                UpdateConversationSummary(summaries, upsert.Message);
+                UpdateTopicFromMessage(topics, upsert.Message);
                 if (upsert.LocalId is { } localId) outbox.Remove(localId);
                 break;
             case MessagesUpdatedEvent updated:
@@ -72,10 +75,13 @@ public static class DomainReducer
                 {
                     unread = AdjustForReplacement(unread, messages, message, updated.Source);
                     messages[message.Id] = message;
+                    UpdateConversationSummary(summaries, message);
+                    UpdateTopicFromMessage(topics, message);
                 }
                 break;
             case MessageContentChangedEvent changed when messages.TryGetValue(changed.MessageId, out var existing):
                 messages[changed.MessageId] = existing with { Content = changed.Content };
+                UpdateConversationSummary(summaries, messages[changed.MessageId]);
                 messageMutations.Remove(changed.MessageId);
                 break;
             case MessageReactionChangedEvent changed when messages.TryGetValue(changed.MessageId, out var reactionMessage):
@@ -96,6 +102,8 @@ public static class DomainReducer
                 break;
             case SendConfirmedEvent sent:
                 messages[sent.Message.Id] = sent.Message;
+                UpdateConversationSummary(summaries, sent.Message);
+                UpdateTopicFromMessage(topics, sent.Message);
                 outbox.Remove(sent.LocalId);
                 break;
             case OutboxQueuedEvent queued:
@@ -108,11 +116,13 @@ public static class DomainReducer
                 subscriptions.Remove(subscription.Subscription.ChannelId);
                 unread = unread.RemoveChannel(subscription.Subscription.ChannelId);
                 RemoveChannel(subscription.Subscription.ChannelId, messages, topics);
+                RemoveChannelSummaries(subscription.Subscription.ChannelId, summaries);
                 break;
             case SubscriptionRemovedEvent removed:
                 subscriptions.Remove(removed.ChannelId);
                 unread = unread.RemoveChannel(removed.ChannelId);
                 RemoveChannel(removed.ChannelId, messages, topics);
+                RemoveChannelSummaries(removed.ChannelId, summaries);
                 break;
             case SubscriptionChangedEvent subscription:
                 subscriptions[subscription.Subscription.ChannelId] = subscription.Subscription;
@@ -123,6 +133,11 @@ public static class DomainReducer
                     Name = subscriptionPatch.Name ?? subscriptionExisting.Name,
                     IsActive = subscriptionPatch.IsActive ?? subscriptionExisting.IsActive
                 };
+                break;
+            case SubscriptionPreferenceChangedEvent preference when subscriptions.TryGetValue(preference.ChannelId, out var preferenceExisting):
+                subscriptions[preference.ChannelId] = preference.Preference == SubscriptionPreference.Muted
+                    ? preferenceExisting with { IsMuted = preference.Value }
+                    : preferenceExisting with { IsPinned = preference.Value };
                 break;
             case UserUpsertEvent user:
                 users[user.User.UserId] = user.User;
@@ -139,6 +154,11 @@ public static class DomainReducer
                 topics[TopicKey(topic.Topic.ChannelId, topic.Topic.Topic)] = topic.Topic;
                 break;
             case MessageDeletedEvent deleted:
+                var deletedTopics = deleted.MessageIds
+                    .Select(id => messages.GetValueOrDefault(id)?.Conversation)
+                    .OfType<ChannelTopic>()
+                    .DistinctBy(topic => topic.CanonicalKey)
+                    .ToArray();
                 foreach (var id in deleted.MessageIds)
                 {
                     if (messages.TryGetValue(id, out var deletedMessage) && !deletedMessage.IsRead)
@@ -148,8 +168,15 @@ public static class DomainReducer
                     messages.Remove(id);
                     messageMutations.Remove(id);
                 }
+                RefreshConversationSummaries(summaries, messages, deleted.MessageIds);
+                foreach (var topic in deletedTopics) RecomputeTopicSummary(topics, messages, topic);
                 break;
             case MessageMovedEvent moved:
+                var sourceTopics = moved.MessageIds
+                    .Select(id => messages.GetValueOrDefault(id)?.Conversation)
+                    .OfType<ChannelTopic>()
+                    .DistinctBy(topic => topic.CanonicalKey)
+                    .ToArray();
                 foreach (var id in moved.MessageIds)
                 {
                     if (!messages.TryGetValue(id, out var movedMessage)) continue;
@@ -160,12 +187,20 @@ public static class DomainReducer
                     }
                     messages[id] = movedMessage with { Conversation = moved.Destination };
                 }
+                RefreshConversationSummaries(summaries, messages, moved.MessageIds);
+                RefreshConversationSummary(summaries, messages, moved.Destination);
+                foreach (var topic in sourceTopics) RecomputeTopicSummary(topics, messages, topic);
+                if (moved.Destination is ChannelTopic destination) RecomputeTopicSummary(topics, messages, destination);
                 break;
             case MessageFlagsChangedEvent flags when string.Equals(flags.Flag, "read", StringComparison.OrdinalIgnoreCase):
                 var read = flags.Operation == MessageFlagOperation.Add;
                 if (flags.AllMessages && read)
                 {
-                    foreach (var pair in messages.ToArray()) messages[pair.Key] = pair.Value with { IsRead = true };
+                    foreach (var pair in messages.ToArray())
+                    {
+                        messages[pair.Key] = pair.Value with { IsRead = true };
+                        UpdateConversationSummary(summaries, messages[pair.Key]);
+                    }
                     unread = new UnreadState();
                     break;
                 }
@@ -176,6 +211,7 @@ public static class DomainReducer
                     if (!messages.TryGetValue(id, out var flagged) || flagged.IsRead == read) continue;
                     unread = unread.Adjust(flagged.Conversation.CanonicalKey, read ? -1 : 1);
                     messages[id] = flagged with { IsRead = read };
+                    UpdateConversationSummary(summaries, messages[id]);
                 }
                 break;
             case MessageFlagsChangedEvent flags when string.Equals(flags.Flag, "starred", StringComparison.OrdinalIgnoreCase):
@@ -186,6 +222,7 @@ public static class DomainReducer
                     if (messages.TryGetValue(id, out var flagged))
                     {
                         messages[id] = flagged with { IsStarred = starred };
+                        UpdateConversationSummary(summaries, messages[id]);
                         messageMutations.Remove(id);
                     }
                 }
@@ -201,7 +238,7 @@ public static class DomainReducer
         var lastEventId = advanceCursor && domainEvent.EventId is { } incoming
             ? incoming
             : state.LastEventId;
-        return new ClientState(messages, subscriptions, users, topics, outbox, unread, connection, lastEventId, messageMutations);
+        return new ClientState(messages, subscriptions, users, topics, summaries, outbox, unread, connection, lastEventId, messageMutations);
     }
 
     private static UnreadState AdjustForReplacement(
@@ -248,6 +285,85 @@ public static class DomainReducer
                      .ToArray())
         {
             topics.Remove(key);
+        }
+    }
+
+    private static void UpdateConversationSummary(
+        IDictionary<string, ConversationSummary> summaries,
+        ChatMessage message)
+    {
+        var key = message.Conversation.CanonicalKey;
+        if (!summaries.TryGetValue(key, out var existing) || existing.LatestMessage.Id <= message.Id)
+        {
+            summaries[key] = new ConversationSummary(message.Conversation, message);
+        }
+    }
+
+    private static void UpdateTopicFromMessage(IDictionary<string, TopicSummary> topics, ChatMessage message) =>
+        UpdateTopicFromConversation(topics, message.Conversation, message.Id);
+
+    private static void UpdateTopicFromConversation(
+        IDictionary<string, TopicSummary> topics,
+        ConversationKey conversation,
+        long messageId)
+    {
+        if (conversation is not ChannelTopic channel) return;
+        var key = TopicKey(channel.ChannelId, channel.Topic);
+        if (!topics.TryGetValue(key, out var existing) || existing.MaxMessageId is null || existing.MaxMessageId < messageId)
+        {
+            topics[key] = new TopicSummary(channel.ChannelId, channel.Topic, messageId);
+        }
+    }
+
+    private static void RecomputeTopicSummary(
+        IDictionary<string, TopicSummary> topics,
+        IReadOnlyDictionary<long, ChatMessage> messages,
+        ChannelTopic topic)
+    {
+        var maximumId = messages.Values
+            .Where(message => message.Conversation == topic)
+            .Select(message => (long?)message.Id)
+            .Max();
+        var key = TopicKey(topic.ChannelId, topic.Topic);
+        if (maximumId is null) topics.Remove(key);
+        else topics[key] = new TopicSummary(topic.ChannelId, topic.Topic, maximumId);
+    }
+
+    private static void RefreshConversationSummaries(
+        IDictionary<string, ConversationSummary> summaries,
+        IReadOnlyDictionary<long, ChatMessage> messages,
+        IEnumerable<long> messageIds)
+    {
+        var affected = messageIds
+            .Select(id => summaries.Values.FirstOrDefault(summary => summary.LatestMessage.Id == id)?.Conversation)
+            .Where(static conversation => conversation is not null)
+            .Cast<ConversationKey>()
+            .DistinctBy(conversation => conversation.CanonicalKey)
+            .ToArray();
+        foreach (var conversation in affected) RefreshConversationSummary(summaries, messages, conversation);
+    }
+
+    private static void RefreshConversationSummary(
+        IDictionary<string, ConversationSummary> summaries,
+        IReadOnlyDictionary<long, ChatMessage> messages,
+        ConversationKey conversation)
+    {
+        var latest = messages.Values
+            .Where(message => message.Conversation == conversation)
+            .OrderByDescending(message => message.Id)
+            .FirstOrDefault();
+        if (latest is null) summaries.Remove(conversation.CanonicalKey);
+        else summaries[conversation.CanonicalKey] = new ConversationSummary(conversation, latest);
+    }
+
+    private static void RemoveChannelSummaries(long channelId, IDictionary<string, ConversationSummary> summaries)
+    {
+        foreach (var key in summaries
+                     .Where(pair => pair.Value.Conversation is ChannelTopic channel && channel.ChannelId == channelId)
+                     .Select(pair => pair.Key)
+                     .ToArray())
+        {
+            summaries.Remove(key);
         }
     }
 
