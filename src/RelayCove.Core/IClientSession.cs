@@ -8,6 +8,7 @@ public interface IClientSession
     long MaxFileUploadBytes { get; }
     ClientState State { get; }
     ConversationKey? SelectedConversation { get; }
+    ConversationHistoryState HistoryState { get; }
     IReadOnlyList<ConversationKey> RecentDirectMessages { get; }
     event EventHandler<ClientStateChangedEventArgs>? StateChanged;
     Task<bool> RestoreAsync(CancellationToken cancellationToken = default);

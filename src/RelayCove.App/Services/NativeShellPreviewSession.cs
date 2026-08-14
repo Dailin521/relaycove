@@ -146,6 +146,14 @@ internal sealed class NativeShellPreviewSession : IClientSession
 
     public ClientState State => _state;
     public ConversationKey? SelectedConversation => _selectedConversation;
+    public ConversationHistoryState HistoryState => new(
+        _selectedConversation,
+        1,
+        false,
+        true,
+        false,
+        _state.Messages.Values.Where(message => message.Conversation == _selectedConversation).Select(message => (long?)message.Id).Min(),
+        null);
     public IReadOnlyList<ConversationKey> RecentDirectMessages => _recentDirectMessages;
     internal long UnreadDividerAfterMessageId => 102;
     internal string UnreadDividerLabel => "4 条未读消息";

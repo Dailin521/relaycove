@@ -363,6 +363,10 @@ Web 对应交互版本冻结后，按 Token/规格/功能矩阵/场景用原生 
 
 截至 2026-08-13，隔离分支 `codex/stage-22m-native-shell` 已实现原生 Token/主题/响应式壳、消息结构、Composer、详情/设置、菜单/emoji/搜索/新会话、附件/媒体以及 reaction/edit/delete/star 的共享 `Core → Zulip.Client → Data → ClientSession → MAUI` 路径。未知写结果按消息冻结且不自动重试；Debug 预览只修改内存，不连接 Realm。两个前端实现合并后的 `main` 已通过最终 Full：.NET Debug/Release 每个配置 178/178、Web 86/86、Playwright 6/6 + 1/1，Windows 包生成且零构建警告/错误；并已在副屏 150% 完成浅/深色 1440×900/1024×768 内部窗口证据。真实 Zulip 写入、100%/200%、完整键盘/高对比/长列表、人工密码登录和干净 VM 仍未验证。
 
+### Stage 23：MAUI 普通用户全功能收口
+
+Stage 23 从本地回滚基线 `8d1a6e5` 开始，不修改 Web、认证架构、Zulip 服务端或直连模式。顺序固定为：SQLite v3 增量缓存与长列表、服务器搜索和已保存消息、现有频道发现/加入/退订/静音/置顶、最终真实 MAUI UI/包/干净 VM 验收。管理员级频道创建、改名、成员/权限管理和归档不在范围内。每个 Slice 独立本地提交；开发期只跑定向 Debug，Slice 收口跑 Fast，Stage 候选交付才跑 Full。
+
 ### Stage 21 历史实施切片
 
 ### Slice A：删除与平台门禁

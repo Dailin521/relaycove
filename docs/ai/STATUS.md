@@ -1,9 +1,17 @@
 # RelayCove Status — Stage 21 / 22W / 22M
 
 Updated: 2026-08-14
-Branch: `codex/stage-22m-parity-polish` (isolated worktree `E:\WorkSpace\RelayCove-Stage22MParity`)
+Branch: `codex/stage-23-native-functions` (isolated worktree `E:\WorkSpace\RelayCove-Stage22MParity`)
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W and the earlier Stage 22M slices are integrated. The native parity-polish and real-function baseline candidate is complete but still uncommitted on `codex/stage-22m-parity-polish` from `d67ff6f`; it is isolated from and does not touch the primary worktree. The exact candidate tree passed Fast and Full on 2026-08-14 and has not been pushed, merged or deployed.
+Current delivery: Stage 22W and Stage 22M are fixed locally at baseline commit `8d1a6e5`. Stage 23 is active on `codex/stage-23-native-functions`; Slice 1 implements SQLite v3 incremental persistence, bounded Core history and native near-top/new-message behavior. Nothing from Stage 23 has been pushed, merged, deployed or run against a real Realm.
+
+## Stage 23 native functions — Slice 1, 2026-08-14
+
+- SQLite v3 adds page-scoped message UPSERT/reaction replacement and event-scoped incremental persistence. Restore no longer reads the complete message table; register replacement preserves valid cached history.
+- Cache queries use the conversation/message index, fetch `limit + 1` and load reactions only for returned message IDs. A deterministic 10,000-message test pages 5,000 messages in one conversation and checks 50-message write p95 <= 150 ms on this development machine.
+- Core history uses 50-message pages, a 250-message selected window, generation invalidation and single-flight older loading. Cached gaps cannot alter the network anchor or skip a server page.
+- MAUI automatically requests older history near the top, keeps the manual accessible action, restores a prepend anchor by message ID and viewport DIP offset, follows arrivals only near the bottom and otherwise presents a new-message button.
+- Slice Fast passed on this exact tree with zero build warnings/errors: Core 95/95, Zulip.Client 41/41, Data 21/21 and App 83/83 (240/240 total); Web deployment-template checks, typecheck, 86/86 unit tests and production build also passed. Full, Live, package, screenshot and clean-VM gates have not run for this Slice.
 
 ## Product direction
 

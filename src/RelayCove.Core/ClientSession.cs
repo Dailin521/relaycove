@@ -9,6 +9,8 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
 {
     private static long s_nextLocalId;
     private static readonly TimeSpan ServerRestartRecoveryWindow = TimeSpan.FromMinutes(5);
+    private const int HistoryPageSize = 50;
+    private const int MessageWindowLimit = 250;
 
     private readonly IZulipGateway _gateway;
     private readonly IAccountStore _store;
@@ -27,6 +29,12 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
     private ClientState _state = ClientState.Empty;
     private AccountId? _accountId;
     private ConversationKey? _selectedConversation;
+    private ConversationHistoryState _historyState = ConversationHistoryState.Empty;
+    private long _historyGeneration;
+    private Task? _latestHistoryTask;
+    private Task? _loadOlderTask;
+    private CancellationTokenSource? _historyCancellation;
+    private bool _retainOldestWindow;
     private IReadOnlyList<ConversationKey> _recentDirectMessages = [];
     private CredentialEnvelope? _credentials;
     private string? _queueId;
@@ -85,6 +93,11 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
     public ConversationKey? SelectedConversation
     {
         get { lock (_stateGate) return _selectedConversation; }
+    }
+
+    public ConversationHistoryState HistoryState
+    {
+        get { lock (_stateGate) return _historyState; }
     }
 
     public IReadOnlyList<ConversationKey> RecentDirectMessages
@@ -281,6 +294,7 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
                 _credentials = null;
                 _queueId = null;
                 _selectedConversation = null;
+                InvalidateHistoryLocked(clearConversation: true);
                 _recentDirectMessages = [];
                 _accountId = accountId;
                 _state = ClientState.Empty with
@@ -301,84 +315,76 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(conversation);
         ThrowIfDisposed();
+        Task loadTask;
+        var publish = false;
+        CancellationTokenSource? priorHistoryCancellation = null;
         await _commands.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            AccountId accountId;
-            CredentialEnvelope? credentials;
             lock (_stateGate)
             {
-                if (_selectedConversation == conversation) return;
-                accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
-                _selectedConversation = conversation;
-                credentials = _credentials;
-            }
-
-            var cached = await _store.QueryMessagesAsync(accountId, conversation, null, 50, cancellationToken).ConfigureAwait(false);
-            ApplyLocalMessages(cached);
-            if (credentials is null || State.Connection.Status != ConnectionStatus.Connected) return;
-            try
-            {
-                var history = await _gateway.GetHistoryAsync(
-                    new HistoryRequest(credentials, conversation, limit: 50), cancellationToken).ConfigureAwait(false);
-                await StoreThenApplyAsync(ToHistoryEvents(history.Messages), cancellationToken).ConfigureAwait(false);
-            }
-            catch (GatewayException exception) when (IsUnauthorized(exception))
-            {
-                await HandleUnauthorizedAsync().ConfigureAwait(false);
-            }
-            catch (GatewayException exception) when (IsNetwork(exception))
-            {
-                Mutate(state => state with { Connection = new ConnectionState(ConnectionStatus.Offline) });
+                if (_selectedConversation == conversation)
+                {
+                    loadTask = _latestHistoryTask ?? Task.CompletedTask;
+                }
+                else
+                {
+                    var accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+                    priorHistoryCancellation = _historyCancellation;
+                    var runToken = _runCancellation?.Token ?? _disposeCancellation.Token;
+                    _historyCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                        _disposeCancellation.Token,
+                        runToken);
+                    _selectedConversation = conversation;
+                    var generation = ++_historyGeneration;
+                    _state = _state with { Messages = new Dictionary<long, ChatMessage>() };
+                    _historyState = new ConversationHistoryState(conversation, generation, true, false, false, null, null);
+                    _retainOldestWindow = false;
+                    _loadOlderTask = null;
+                    var credentials = _state.Connection.Status == ConnectionStatus.Connected ? _credentials : null;
+                    loadTask = LoadLatestAsync(accountId, credentials, conversation, generation, _historyCancellation.Token);
+                    _latestHistoryTask = loadTask;
+                    publish = true;
+                }
             }
         }
         finally
         {
             _commands.Release();
         }
+        priorHistoryCancellation?.Cancel();
+        priorHistoryCancellation?.Dispose();
+        if (publish) RaiseStateChanged();
+        await loadTask.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task LoadOlderAsync(CancellationToken cancellationToken = default)
+    public Task LoadOlderAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        await _commands.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        if (cancellationToken.IsCancellationRequested) return Task.FromCanceled(cancellationToken);
+        Task task;
+        lock (_stateGate)
         {
-            ConversationKey conversation;
-            AccountId accountId;
-            CredentialEnvelope? credentials;
-            lock (_stateGate)
+            var conversation = _selectedConversation ?? throw new InvalidOperationException("No conversation is selected.");
+            var accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+            var generation = _historyState.Generation;
+            if (_historyState.FoundOldest) return Task.CompletedTask;
+            if (_loadOlderTask is { IsCompleted: false } &&
+                _historyState.Conversation == conversation)
             {
-                conversation = _selectedConversation ?? throw new InvalidOperationException("No conversation is selected.");
-                accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
-                credentials = _credentials;
+                return _loadOlderTask;
             }
-            var minimum = MinimumMessageId(conversation);
-            if (minimum is null) return;
-            var cached = await _store.QueryMessagesAsync(accountId, conversation, minimum, 50, cancellationToken).ConfigureAwait(false);
-            ApplyLocalMessages(cached);
-            minimum = MinimumMessageId(conversation);
-            if (credentials is null || State.Connection.Status != ConnectionStatus.Connected || minimum is null) return;
-            try
-            {
-                var history = await _gateway.GetHistoryAsync(
-                    new HistoryRequest(credentials, conversation, minimum, includeAnchor: false, limit: 50),
-                    cancellationToken).ConfigureAwait(false);
-                await StoreThenApplyAsync(ToHistoryEvents(history.Messages), cancellationToken).ConfigureAwait(false);
-            }
-            catch (GatewayException exception) when (IsUnauthorized(exception))
-            {
-                await HandleUnauthorizedAsync().ConfigureAwait(false);
-            }
-            catch (GatewayException exception) when (IsNetwork(exception))
-            {
-                Mutate(state => state with { Connection = new ConnectionState(ConnectionStatus.Offline) });
-            }
+            var minimum = MinimumMessageIdLocked(conversation);
+            if (minimum is null) return Task.CompletedTask;
+            var credentials = _state.Connection.Status == ConnectionStatus.Connected ? _credentials : null;
+            _historyState = _historyState with { IsLoading = true, Error = null };
+            _retainOldestWindow = true;
+            var historyToken = _historyCancellation?.Token ?? _disposeCancellation.Token;
+            task = LoadOlderCoreAsync(accountId, credentials, conversation, generation, minimum.Value, historyToken);
+            _loadOlderTask = task;
         }
-        finally
-        {
-            _commands.Release();
-        }
+        RaiseStateChanged();
+        return cancellationToken.CanBeCanceled ? task.WaitAsync(cancellationToken) : task;
     }
 
     public async Task<IReadOnlyList<TopicSummary>> LoadTopicsAsync(long channelId, CancellationToken cancellationToken = default)
@@ -798,6 +804,7 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
                 if (_selectedConversation is ChannelTopic selected && selected.ChannelId == channelId)
                 {
                     _selectedConversation = null;
+                    InvalidateHistoryLocked(clearConversation: true);
                 }
             }
             Mutate(state => DomainReducer.Apply(
@@ -1169,8 +1176,9 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
                 !snapshot.Subscriptions.ContainsKey(selected.ChannelId))
             {
                 _selectedConversation = null;
+                InvalidateHistoryLocked(clearConversation: true);
             }
-            _state = snapshot;
+            _state = TrimMessageWindow(snapshot, _selectedConversation, retainOldest: false);
         }
         RaiseStateChanged();
     }
@@ -1297,6 +1305,226 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
         });
     }
 
+    private async Task LoadLatestAsync(
+        AccountId accountId,
+        CredentialEnvelope? credentials,
+        ConversationKey conversation,
+        long generation,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var cached = await _store.QueryMessagePageAsync(
+                accountId, conversation, null, HistoryPageSize, cancellationToken).ConfigureAwait(false);
+            ApplyHistoryPageIfCurrent(conversation, generation, cached.Messages, retainOldest: false);
+            SetHistoryStateIfCurrent(conversation, generation, state => state with
+            {
+                HasOlderInCache = cached.HasOlderInCache
+            });
+
+            if (credentials is null)
+            {
+                SetHistoryStateIfCurrent(conversation, generation, state => state with { IsLoading = false });
+                return;
+            }
+
+            var history = await _gateway.GetHistoryAsync(
+                new HistoryRequest(credentials, conversation, limit: HistoryPageSize), cancellationToken).ConfigureAwait(false);
+            await _store.StoreMessagePageAsync(accountId, history.Messages, cancellationToken).ConfigureAwait(false);
+            ApplyHistoryPageIfCurrent(conversation, generation, history.Messages, retainOldest: false);
+            var hasOlderInCache = history.FoundOldest
+                ? false
+                : await HasOlderInCacheAsync(accountId, conversation, generation, cancellationToken).ConfigureAwait(false);
+            SetHistoryStateIfCurrent(conversation, generation, state => state with
+            {
+                IsLoading = false,
+                FoundOldest = history.FoundOldest,
+                HasOlderInCache = hasOlderInCache,
+                Error = null
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            SetHistoryStateIfCurrent(conversation, generation, state => state with { IsLoading = false });
+            throw;
+        }
+        catch (GatewayException exception) when (IsUnauthorized(exception))
+        {
+            if (IsHistoryCurrent(conversation, generation))
+            {
+                await HandleUnauthorizedAsync().ConfigureAwait(false);
+            }
+        }
+        catch (GatewayException exception) when (IsNetwork(exception))
+        {
+            if (IsHistoryCurrent(conversation, generation))
+            {
+                Mutate(state => state with { Connection = new ConnectionState(ConnectionStatus.Offline) });
+                SetHistoryStateIfCurrent(conversation, generation, state => state with
+                {
+                    IsLoading = false,
+                    Error = "offline"
+                });
+            }
+        }
+        catch
+        {
+            SetHistoryStateIfCurrent(conversation, generation, state => state with
+            {
+                IsLoading = false,
+                Error = "history_failed"
+            });
+            throw;
+        }
+    }
+
+    private async Task LoadOlderCoreAsync(
+        AccountId accountId,
+        CredentialEnvelope? credentials,
+        ConversationKey conversation,
+        long generation,
+        long beforeMessageId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var cached = await _store.QueryMessagePageAsync(
+                accountId, conversation, beforeMessageId, HistoryPageSize, cancellationToken).ConfigureAwait(false);
+            ApplyHistoryPageIfCurrent(conversation, generation, cached.Messages, retainOldest: true);
+            SetHistoryStateIfCurrent(conversation, generation, state => state with
+            {
+                HasOlderInCache = cached.HasOlderInCache
+            });
+
+            if (credentials is null || !IsHistoryCurrent(conversation, generation))
+            {
+                SetHistoryStateIfCurrent(conversation, generation, state => state with { IsLoading = false });
+                return;
+            }
+
+            var history = await _gateway.GetHistoryAsync(
+                new HistoryRequest(credentials, conversation, beforeMessageId, includeAnchor: false, limit: HistoryPageSize),
+                cancellationToken).ConfigureAwait(false);
+            await _store.StoreMessagePageAsync(accountId, history.Messages, cancellationToken).ConfigureAwait(false);
+            ApplyHistoryPageIfCurrent(conversation, generation, history.Messages, retainOldest: true);
+            var hasOlderInCache = history.FoundOldest
+                ? false
+                : await HasOlderInCacheAsync(accountId, conversation, generation, cancellationToken).ConfigureAwait(false);
+            SetHistoryStateIfCurrent(conversation, generation, state => state with
+            {
+                IsLoading = false,
+                FoundOldest = history.FoundOldest,
+                HasOlderInCache = hasOlderInCache,
+                Error = null
+            });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            SetHistoryStateIfCurrent(conversation, generation, state => state with { IsLoading = false });
+            throw;
+        }
+        catch (GatewayException exception) when (IsUnauthorized(exception))
+        {
+            if (IsHistoryCurrent(conversation, generation))
+            {
+                await HandleUnauthorizedAsync().ConfigureAwait(false);
+            }
+        }
+        catch (GatewayException exception) when (IsNetwork(exception))
+        {
+            if (IsHistoryCurrent(conversation, generation))
+            {
+                Mutate(state => state with { Connection = new ConnectionState(ConnectionStatus.Offline) });
+                SetHistoryStateIfCurrent(conversation, generation, state => state with
+                {
+                    IsLoading = false,
+                    Error = "offline"
+                });
+            }
+        }
+        catch
+        {
+            SetHistoryStateIfCurrent(conversation, generation, state => state with
+            {
+                IsLoading = false,
+                Error = "history_failed"
+            });
+            throw;
+        }
+    }
+
+    private async Task<bool> HasOlderInCacheAsync(
+        AccountId accountId,
+        ConversationKey conversation,
+        long generation,
+        CancellationToken cancellationToken)
+    {
+        var minimum = MinimumMessageIdIfCurrent(conversation, generation);
+        if (minimum is null) return false;
+        var page = await _store.QueryMessagePageAsync(
+            accountId, conversation, minimum, 1, cancellationToken).ConfigureAwait(false);
+        return page.Messages.Count > 0;
+    }
+
+    private void ApplyHistoryPageIfCurrent(
+        ConversationKey conversation,
+        long generation,
+        IReadOnlyList<ChatMessage> messages,
+        bool retainOldest)
+    {
+        if (messages.Count == 0) return;
+        var changed = false;
+        lock (_stateGate)
+        {
+            if (!IsHistoryCurrentLocked(conversation, generation)) return;
+            var next = DomainReducer.Apply(_state, ToHistoryEvents(messages));
+            _recentDirectMessages = MergeRecentDirectMessages(_recentDirectMessages, DeriveRecentDirectMessages(next));
+            _state = TrimMessageWindow(next, conversation, retainOldest);
+            _retainOldestWindow = retainOldest;
+            changed = true;
+        }
+        if (changed) RaiseStateChanged();
+    }
+
+    private void SetHistoryStateIfCurrent(
+        ConversationKey conversation,
+        long generation,
+        Func<ConversationHistoryState, ConversationHistoryState> update)
+    {
+        var changed = false;
+        lock (_stateGate)
+        {
+            if (!IsHistoryCurrentLocked(conversation, generation)) return;
+            var next = update(_historyState) with
+            {
+                OldestLoadedMessageId = MinimumMessageIdLocked(conversation)
+            };
+            changed = next != _historyState;
+            _historyState = next;
+        }
+        if (changed) RaiseStateChanged();
+    }
+
+    private bool IsHistoryCurrent(ConversationKey conversation, long generation)
+    {
+        lock (_stateGate) return IsHistoryCurrentLocked(conversation, generation);
+    }
+
+    private bool IsHistoryCurrentLocked(ConversationKey conversation, long generation) =>
+        _selectedConversation == conversation &&
+        _historyState.Conversation == conversation &&
+        _historyState.Generation == generation;
+
+    private long? MinimumMessageIdIfCurrent(ConversationKey conversation, long generation)
+    {
+        lock (_stateGate)
+        {
+            return IsHistoryCurrentLocked(conversation, generation)
+                ? MinimumMessageIdLocked(conversation)
+                : null;
+        }
+    }
+
     private void ApplyLocalMessages(IReadOnlyList<ChatMessage> messages)
     {
         if (messages.Count == 0)
@@ -1324,15 +1552,12 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
             .ToArray();
     }
 
-    private long? MinimumMessageId(ConversationKey conversation)
+    private long? MinimumMessageIdLocked(ConversationKey conversation)
     {
-        lock (_stateGate)
-        {
-            return _state.Messages.Values
-                .Where(message => message.Conversation == conversation)
-                .Select(message => (long?)message.Id)
-                .Min();
-        }
+        return _state.Messages.Values
+            .Where(message => message.Conversation == conversation)
+            .Select(message => (long?)message.Id)
+            .Min();
     }
 
     private void StartOutboxTimer(string localId, CancellationToken cancellationToken)
@@ -1420,6 +1645,7 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
         lock (_stateGate)
         {
             _selectedConversation = null;
+            InvalidateHistoryLocked(clearConversation: true);
             _recentDirectMessages = [];
             _state = ClientState.Empty with
             {
@@ -1443,6 +1669,7 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
             _credentials = null;
             _queueId = null;
             _selectedConversation = null;
+            InvalidateHistoryLocked(clearConversation: true);
             _recentDirectMessages = [];
             _accountId = accountId;
             _state = ClientState.Empty with
@@ -1475,6 +1702,7 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
             _credentials = null;
             _queueId = null;
             _selectedConversation = null;
+            InvalidateHistoryLocked(clearConversation: true);
             _recentDirectMessages = [];
             _accountId = account.AccountId;
             _state = ClientState.Empty with
@@ -1548,6 +1776,7 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
             loop = _eventLoop;
             _runCancellation = null;
             _eventLoop = null;
+            InvalidateHistoryLocked(clearConversation: false);
         }
         cancellation?.Cancel();
         if (loop is not null)
@@ -1573,6 +1802,7 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
             _credentials = null;
             _queueId = null;
             _selectedConversation = null;
+            InvalidateHistoryLocked(clearConversation: true);
             _recentDirectMessages = [];
             if (clearAccount) _accountId = null;
             _state = ClientState.Empty with { Connection = connection };
@@ -1634,15 +1864,16 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
         {
             var next = update(_state);
             changed = !ReferenceEquals(next, _state);
-            _state = next;
+            _recentDirectMessages = MergeRecentDirectMessages(
+                _recentDirectMessages,
+                DeriveRecentDirectMessages(next));
             if (_selectedConversation is ChannelTopic selected &&
                 !next.Subscriptions.ContainsKey(selected.ChannelId))
             {
                 _selectedConversation = null;
+                InvalidateHistoryLocked(clearConversation: true);
             }
-            _recentDirectMessages = MergeRecentDirectMessages(
-                _recentDirectMessages,
-                DeriveRecentDirectMessages(next));
+            _state = TrimMessageWindow(next, _selectedConversation, _retainOldestWindow);
         }
         if (changed || publishWhenUnchanged) RaiseStateChanged();
     }
@@ -1652,6 +1883,57 @@ public sealed class ClientSession : IClientSession, IAsyncDisposable
         ClientState snapshot;
         lock (_stateGate) snapshot = _state;
         StateChanged?.Invoke(this, new ClientStateChangedEventArgs(snapshot));
+    }
+
+    private void InvalidateHistoryLocked(bool clearConversation)
+    {
+        var prior = _historyState;
+        var conversation = clearConversation ? null : _selectedConversation;
+        var generation = ++_historyGeneration;
+        _historyCancellation?.Cancel();
+        _historyCancellation?.Dispose();
+        _historyCancellation = null;
+        _latestHistoryTask = null;
+        _loadOlderTask = null;
+        _retainOldestWindow = false;
+        _historyState = new ConversationHistoryState(
+            conversation,
+            generation,
+            false,
+            conversation is not null && prior.Conversation == conversation && prior.FoundOldest,
+            conversation is not null && prior.Conversation == conversation && prior.HasOlderInCache,
+            conversation is not null && prior.Conversation == conversation ? prior.OldestLoadedMessageId : null,
+            null);
+    }
+
+    private static ClientState TrimMessageWindow(
+        ClientState state,
+        ConversationKey? conversation,
+        bool retainOldest)
+    {
+        if (conversation is null)
+        {
+            return state.Messages.Count == 0
+                ? state
+                : state with { Messages = new Dictionary<long, ChatMessage>() };
+        }
+
+        var selected = state.Messages.Values
+            .Where(message => message.Conversation == conversation)
+            .OrderBy(message => message.Id)
+            .ToArray();
+        if (selected.Length > MessageWindowLimit)
+        {
+            selected = retainOldest
+                ? selected.Take(MessageWindowLimit).ToArray()
+                : selected.TakeLast(MessageWindowLimit).ToArray();
+        }
+        if (selected.Length == state.Messages.Count &&
+            selected.All(message => state.Messages.ContainsKey(message.Id)))
+        {
+            return state;
+        }
+        return state with { Messages = selected.ToDictionary(message => message.Id) };
     }
 
     private static StoredAccount ToStoredAccount(CredentialEnvelope credentials)

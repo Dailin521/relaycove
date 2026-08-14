@@ -487,6 +487,31 @@ public sealed class ZulipLiveContractTests
             }
         }
 
+        public async Task<MessagePage> QueryMessagePageAsync(
+            AccountId accountId,
+            ConversationKey conversation,
+            long? beforeMessageId,
+            int limit,
+            CancellationToken cancellationToken = default)
+        {
+            var messages = await QueryMessagesAsync(accountId, conversation, beforeMessageId, limit + 1, cancellationToken);
+            return new MessagePage(messages.Take(limit).ToArray(), messages.Count > limit);
+        }
+
+        public Task StoreMessagePageAsync(
+            AccountId accountId,
+            IReadOnlyCollection<ChatMessage> messages,
+            CancellationToken cancellationToken = default)
+        {
+            lock (_gate)
+            {
+                _state = DomainReducer.Apply(
+                    _state,
+                    messages.Select(message => new MessageUpsertEvent(message, Source: DomainEventSource.History)));
+            }
+            return Task.CompletedTask;
+        }
+
         public Task ReplaceRegisterSnapshotAsync(
             AccountId accountId,
             RegisterResult snapshot,

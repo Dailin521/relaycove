@@ -24,6 +24,18 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public void SessionStateChanged_WhenNoConversationOrMessages_ProjectsEmptyState()
+    {
+        var session = new FakeSession();
+        using var viewModel = CreateViewModel(session);
+
+        session.Publish();
+
+        Assert.Empty(viewModel.Messages);
+        Assert.Equal(0, viewModel.NewMessageCount);
+    }
+
+    [Fact]
     public async Task LoginCommand_WhenAuthenticationFails_ClassifiesErrorAndClearsPassword()
     {
         var session = new FakeSession
@@ -660,6 +672,104 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public void SessionStateChanged_WhenHistoryChanges_ProjectsLoadingErrorAndOldestState()
+    {
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            HistoryState = new ConversationHistoryState(conversation, 1, true, false, true, 50, null),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        Assert.True(viewModel.IsLoadingOlder);
+        Assert.True(viewModel.ShowLoadOlderButton);
+
+        session.HistoryState = new ConversationHistoryState(conversation, 1, false, true, false, 1, "history_failed");
+        session.Publish();
+
+        Assert.False(viewModel.IsLoadingOlder);
+        Assert.True(viewModel.HasReachedOldestMessage);
+        Assert.False(viewModel.ShowLoadOlderButton);
+        Assert.Equal("无法加载更早消息，请稍后重试。", viewModel.MessageLoadError);
+    }
+
+    [Fact]
+    public async Task MessageViewport_WhenNearTop_DebouncesAutomaticLoadOlder()
+    {
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            HistoryState = new ConversationHistoryState(conversation, 1, false, false, true, 50, null),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await viewModel.ReportMessageViewportAsync(4, 5, 100, 1_000);
+        await viewModel.ReportMessageViewportAsync(3, 5, 100, 1_100);
+        await viewModel.ReportMessageViewportAsync(3, 5, 100, 1_400);
+
+        Assert.Equal(2, session.LoadOlderCalls);
+    }
+
+    [Fact]
+    public async Task LoadOlder_WhenAutomaticLoadIsSuppressedByError_RemainsAvailableManually()
+    {
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            HistoryState = new ConversationHistoryState(conversation, 1, false, false, true, 50, "offline"),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Offline))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await viewModel.ReportMessageViewportAsync(0, 4, 0, 1_000);
+        await ((IAsyncRelayCommand)viewModel.LoadOlderCommand).ExecuteAsync(null);
+
+        Assert.Equal(1, session.LoadOlderCalls);
+        Assert.True(viewModel.ShowLoadOlderButton);
+    }
+
+    [Fact]
+    public async Task Messages_WhenViewportIsAwayFromBottom_ShowsNewMessageButtonUntilJumped()
+    {
+        var conversation = new DirectMessage([8]);
+        var messages = Enumerable.Range(1, 6).ToDictionary(
+            id => (long)id,
+            id => new ChatMessage(id, conversation, 8, $"message {id}", DateTimeOffset.UnixEpoch.AddMinutes(id), senderDisplayName: "Bea"));
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            HistoryState = new ConversationHistoryState(conversation, 1, false, true, false, 1, null),
+            StateValue = new ClientState(messages: messages, connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        var initialScrollRequest = viewModel.ScrollToLatestRequest;
+        await viewModel.ReportMessageViewportAsync(1, 1, 120, 1_000);
+
+        session.StateValue = session.StateValue with
+        {
+            Messages = new Dictionary<long, ChatMessage>(messages)
+            {
+                [7] = new ChatMessage(7, conversation, 8, "message 7", DateTimeOffset.UnixEpoch.AddMinutes(7), senderDisplayName: "Bea")
+            }
+        };
+        session.Publish();
+
+        Assert.Equal(initialScrollRequest, viewModel.ScrollToLatestRequest);
+        Assert.Equal(1, viewModel.NewMessageCount);
+        Assert.True(viewModel.ShowNewMessagesButton);
+
+        viewModel.ScrollToLatestCommand.Execute(null);
+
+        Assert.Equal(initialScrollRequest + 1, viewModel.ScrollToLatestRequest);
+        Assert.Equal(0, viewModel.NewMessageCount);
+    }
+
+    [Fact]
     public async Task LoginCommand_WhenAlreadyExecuting_RejectsConcurrentExecution()
     {
         var blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1172,9 +1282,11 @@ public sealed class ShellViewModelTests
         public Func<AttachmentUpload, CancellationToken, Task<UploadedAttachment>>? UploadAction { get; set; }
         public Func<long, CancellationToken, Task>? UnsubscribeChannelAction { get; set; }
         public Func<long, CancellationToken, Task<IReadOnlyList<TopicSummary>>>? LoadTopicsAction { get; set; }
+        public Func<CancellationToken, Task>? LoadOlderAction { get; set; }
         public int LoginCalls { get; private set; }
         public List<string> SentContents { get; } = [];
         public int UploadCalls { get; private set; }
+        public int LoadOlderCalls { get; private set; }
 
         public AccountId? AccountId => Account;
         public RealmEndpoint? ActiveRealm { get; set; }
@@ -1182,6 +1294,7 @@ public sealed class ShellViewModelTests
         public long MaxFileUploadBytes { get; set; } = 10L * 1024 * 1024;
         public ClientState State => StateValue;
         public ConversationKey? SelectedConversation => Selected;
+        public ConversationHistoryState HistoryState { get; set; } = ConversationHistoryState.Empty;
         public IReadOnlyList<ConversationKey> RecentDirectMessages => Recent;
         public event EventHandler<ClientStateChangedEventArgs>? StateChanged;
 
@@ -1201,7 +1314,11 @@ public sealed class ShellViewModelTests
             return Task.CompletedTask;
         }
 
-        public Task LoadOlderAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task LoadOlderAsync(CancellationToken cancellationToken = default)
+        {
+            LoadOlderCalls++;
+            return LoadOlderAction?.Invoke(cancellationToken) ?? Task.CompletedTask;
+        }
         public Task<IReadOnlyList<TopicSummary>> LoadTopicsAsync(long channelId, CancellationToken cancellationToken = default) =>
             LoadTopicsAction?.Invoke(channelId, cancellationToken) ?? Task.FromResult<IReadOnlyList<TopicSummary>>([]);
 

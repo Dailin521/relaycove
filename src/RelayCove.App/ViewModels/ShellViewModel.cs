@@ -37,6 +37,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private double _composerHeight = DefaultComposerHeight;
     private double _viewportWidth = 1440d;
     private long? _channelUnsubscribeTargetId;
+    private string? _projectedConversationKey;
+    private long? _newestProjectedMessageId;
+    private long _lastAutomaticLoadOlderMilliseconds = long.MinValue;
+    private int _automaticLoadOlderInFlight;
+    private bool _isMessageViewportNearBottom = true;
     private int _initialized;
     private int _loginInFlight;
     private bool _suppressDraftTracking;
@@ -220,6 +225,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial string? MessageLoadError { get; set; }
+
+    [ObservableProperty]
+    public partial bool HasReachedOldestMessage { get; set; }
+
+    [ObservableProperty]
+    public partial int NewMessageCount { get; set; }
+
+    [ObservableProperty]
+    public partial int ScrollToLatestRequest { get; set; }
 
     [ObservableProperty]
     public partial int MessageActionFocusRequest { get; set; }
@@ -450,7 +464,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _projectedState.Connection.Status != RelayCove.Core.ConnectionStatus.Connected;
     public bool HasCurrentConversationUnread => _session.SelectedConversation is { } selected &&
         GetConversationUnread(_projectedState.Unread, selected) > 0;
-    public bool ShowLoadOlderButton => HasSelectedConversation && !IsNativePreview;
+    public bool ShowLoadOlderButton => HasSelectedConversation && !IsNativePreview && !HasReachedOldestMessage;
+    public bool ShowNewMessagesButton => NewMessageCount > 0;
+    public string NewMessagesButtonText => $"{NewMessageCount} 条新消息";
     public string MessageEmptyTitle => !HasSelectedConversation
         ? "从左侧选择频道话题或私信"
         : _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Offline
@@ -667,8 +683,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
     private async Task LoadOlderAsync(CancellationToken cancellationToken)
     {
-        if (_session.SelectedConversation is null) return;
-        IsLoadingOlder = true;
+        if (_session.SelectedConversation is null || HasReachedOldestMessage) return;
         MessageLoadError = null;
         try
         {
@@ -679,8 +694,54 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
         finally
         {
-            IsLoadingOlder = false;
+            ProjectHistoryState(_session.SelectedConversation);
         }
+    }
+
+    internal async Task ReportMessageViewportAsync(
+        int firstVisibleItemIndex,
+        int lastVisibleItemIndex,
+        double verticalOffset,
+        long? timestampMilliseconds = null)
+    {
+        _ = verticalOffset;
+        var isNearBottom = MessageViewportPolicy.IsNearBottom(lastVisibleItemIndex, Messages.Count);
+        _isMessageViewportNearBottom = isNearBottom;
+        if (isNearBottom && NewMessageCount > 0)
+        {
+            NewMessageCount = 0;
+        }
+
+        var now = timestampMilliseconds ?? Environment.TickCount64;
+        if (!MessageViewportPolicy.ShouldRequestOlder(
+                firstVisibleItemIndex,
+                ShowLoadOlderButton,
+                IsLoadingOlder,
+                HasMessageLoadError,
+                now,
+                _lastAutomaticLoadOlderMilliseconds) ||
+            Interlocked.Exchange(ref _automaticLoadOlderInFlight, 1) != 0)
+        {
+            return;
+        }
+
+        _lastAutomaticLoadOlderMilliseconds = now;
+        try
+        {
+            await LoadOlderCommand.ExecuteAsync(null);
+        }
+        finally
+        {
+            Volatile.Write(ref _automaticLoadOlderInFlight, 0);
+        }
+    }
+
+    [RelayCommand]
+    private void ScrollToLatest()
+    {
+        _isMessageViewportNearBottom = true;
+        NewMessageCount = 0;
+        ScrollToLatestRequest++;
     }
 
     [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
@@ -1501,6 +1562,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasMediaActionStatus));
     partial void OnMessageLoadErrorChanged(string? value) =>
         OnPropertyChanged(nameof(HasMessageLoadError));
+    partial void OnNewMessageCountChanged(int value)
+    {
+        OnPropertyChanged(nameof(ShowNewMessagesButton));
+        OnPropertyChanged(nameof(NewMessagesButtonText));
+    }
 
     partial void OnIsSearchOpenChanged(bool value)
     {
@@ -1829,8 +1895,45 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ProjectTopics(state, SelectedChannel?.ChannelId);
 
         var selected = _session.SelectedConversation;
+        var selectedKey = selected?.CanonicalKey;
+        var conversationChanged = !string.Equals(_projectedConversationKey, selectedKey, StringComparison.Ordinal);
+        var previousNewestMessageId = conversationChanged ? null : _newestProjectedMessageId;
         var projectedMessages = BuildMessageItems(state, selected);
         Reconcile(Messages, projectedMessages, item => item.Id);
+
+        var newestMessageId = projectedMessages
+            .Select(message => message.MessageId)
+            .Max();
+        if (conversationChanged)
+        {
+            NewMessageCount = 0;
+            _lastAutomaticLoadOlderMilliseconds = long.MinValue;
+            if (projectedMessages.Count > 0) ScrollToLatestRequest++;
+        }
+        else if (previousNewestMessageId is { } previousNewest)
+        {
+            var appendedCount = projectedMessages.Count(message =>
+                message.MessageId is { } messageId && messageId > previousNewest);
+            if (appendedCount > 0)
+            {
+                if (_isMessageViewportNearBottom)
+                {
+                    ScrollToLatestRequest++;
+                }
+                else
+                {
+                    NewMessageCount += appendedCount;
+                }
+            }
+        }
+        else if (projectedMessages.Count > 0)
+        {
+            ScrollToLatestRequest++;
+        }
+        _projectedConversationKey = selectedKey;
+        _newestProjectedMessageId = newestMessageId;
+
+        ProjectHistoryState(selected);
 
         SynchronizeSelection(selected);
         ProjectConversation(selected, state);
@@ -2257,6 +2360,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(WorkspaceDisplayName));
         OnPropertyChanged(nameof(IsNativePreview));
         OnPropertyChanged(nameof(ShowLoadOlderButton));
+        OnPropertyChanged(nameof(ShowNewMessagesButton));
+        OnPropertyChanged(nameof(NewMessagesButtonText));
         OnPropertyChanged(nameof(ShowConnectionStatus));
         OnPropertyChanged(nameof(ChannelGroupCountLabel));
         OnPropertyChanged(nameof(DirectMessageGroupCountLabel));
@@ -2268,6 +2373,24 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasCurrentConversationUnread));
         NotifyLayoutProperties();
     }
+
+    private void ProjectHistoryState(ConversationKey? selected)
+    {
+        var history = _session.HistoryState;
+        var matchesSelected = selected is not null &&
+            string.Equals(history.Conversation?.CanonicalKey, selected.CanonicalKey, StringComparison.Ordinal);
+        IsLoadingOlder = matchesSelected && history.IsLoading;
+        HasReachedOldestMessage = matchesSelected && history.FoundOldest;
+        MessageLoadError = matchesSelected ? DescribeHistoryError(history.Error) : null;
+        OnPropertyChanged(nameof(ShowLoadOlderButton));
+    }
+
+    private static string? DescribeHistoryError(string? error) => error switch
+    {
+        null or "" => null,
+        "offline" => "当前离线，无法加载更早消息。",
+        _ => "无法加载更早消息，请稍后重试。"
+    };
 
     private void NotifyLayoutProperties()
     {
