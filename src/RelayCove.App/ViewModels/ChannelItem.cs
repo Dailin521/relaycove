@@ -8,7 +8,8 @@ public sealed record ChannelItem(
     string? RecentPreview = null,
     string? Timestamp = null,
     bool IsMuted = false,
-    bool IsPinned = false)
+    bool IsPinned = false,
+    bool IsSelected = false)
 {
     public bool HasUnread => UnreadCount > 0;
     public string UnreadLabel => UnreadCount > 99 ? "99+" : UnreadCount.ToString();

@@ -1,6 +1,6 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M 已形成原生回滚基线；Stage 23 的增量长列表、服务器搜索/已保存消息和普通用户频道自助已实现，其中隔离双账号 Live 3/3 通过。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
+文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M 已形成原生回滚基线；Stage 23 的普通用户能力与隔离 Live 已完成；Stage 24 正在本地收口 MAUI 未读、会话刷新、稳定导航、Composer 和频道/话题产品行为。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
@@ -340,7 +340,7 @@ ViewModel 使用 CommunityToolkit.Mvvm，只调用 `IClientSession`。code-behin
 
 登录错误分类：不兼容 Realm、认证失败、限流、离线、凭据存储失败。最后 Realm 可用 Preferences 保存为非敏感配置；密码字段完成登录后立即清空。
 
-用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/`。该目录继续保持不可变，只作为初始视觉/交互基线和哈希证据，不是日常运行时资产。正式 RelayCove.Web 是当前 Web 交互事实基准；Stage 22M/23 使用原生 XAML/ViewModel 复刻，不得以 WebView 承载 Web。Web 已实现任意附件、当前用户退订和完整消息操作；MAUI 已覆盖 reaction/edit/delete/star、图片/文件附件、服务器搜索、saved、已知用户新会话，以及普通用户频道发现/加入/退订/静音/置顶，并具有隔离 Live 证据。完整成员目录、`@` 候选、管理员频道管理及最终原生 UI/clean-VM 验收仍是独立门禁。
+用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/`。该目录继续保持不可变，只作为初始视觉/交互基线和哈希证据，不是日常运行时资产。正式 RelayCove.Web 的已验收行为是当前交互事实基准；Stage 22M/23/24 使用原生 XAML/ViewModel 复刻，不得以 WebView 承载 Web。Web 已实现任意附件、当前用户退订和完整消息操作；MAUI 已覆盖 reaction/edit/delete/star、图片/文件附件、服务器搜索、saved、已知用户新会话，以及普通用户频道发现/加入/退订/静音/置顶。Stage 24 进一步统一本人消息已读、重复激活最新页、自动标读、稳定摘要/头像、频道话题和 Composer/滚动行为。完整成员目录、`@` 候选、管理员频道管理及最终原生 UI/clean-VM 验收仍是独立门禁。
 
 ## 10. 实施切片与完成定义
 
@@ -368,6 +368,12 @@ Web 对应交互版本冻结后，按 Token/规格/功能矩阵/场景用原生 
 Stage 23 从本地回滚基线 `8d1a6e5` 开始，不修改 Web、认证架构、Zulip 服务端或直连模式。顺序固定为：SQLite v3 增量缓存与长列表、服务器搜索和已保存消息、现有频道发现/加入/退订/静音/置顶、最终真实 MAUI UI/包/干净 VM 验收。管理员级频道创建、改名、成员/权限管理和归档不在范围内。每个 Slice 独立本地提交；开发期只跑定向 Debug，Slice 收口跑 Fast，Stage 候选交付才跑 Full。
 
 截至 2026-08-14，前三个 Slice 已分别固定为本地提交 `037bcf8`、`8a9f07f`、`bba0cbb`。隔离 Stage 23 Live 通过 3/3，覆盖搜索、收藏、按锚点打开、个人静音/置顶恢复、私有退订恢复，以及专用可发现频道的退订/发现/重加。由于 Zulip 私有频道在普通用户退订后不可发现，加入探针使用非业务的公开非归档频道，但其订阅者严格限制为 DAL/zhang 两人；这不改变产品“不创建/管理频道”的范围。最终候选 Full 通过：Debug/Release 各 255/255、Web 86/86、Playwright 6+1、Windows 包 SHA-256 `75B176F07531DAD9D1DEF1412B37778B1B876840ACA4862F663BE8FC586A0994`。最终原生窗口人工密码登录、长列表真实窗口、安装包实装和干净 VM 仍是门禁。
+
+### Stage 24：MAUI 产品化交互与状态一致性
+
+Stage 24 在 `codex/stage-24-native-product-polish` 上以正式 Web 的已修行为和 Zulip 权威状态为准，不修改 Web、认证架构、服务端或直连模式。本批统一本人消息已读、重复激活会话刷新最新页、成功历史后的自动标读、SQLite 会话摘要、稳定头像/导航投影、Composer 原生指针拖动、真实 96 DIP 底部阈值、频道/话题选择与空频道新话题，以及连续字号/会话栏宽度偏好。实时删除/移动对窗口外消息只定向回查受影响摘要和话题，不扫描全库。
+
+开发期按用户明确要求只运行 App Debug 编译和 Fake 定向测试；不运行 Fast、Full、自动 Live，也不进行真实 Realm 写入。当前代码通过 App Debug 0 warning/error，以及 Core 107/107、Zulip.Client 45/45、Data 23/23、App 98/98。独立 App/UI 与协议/会话/Data 复核的确认 P0/P1 已处理；正式 Windows Machine 人工验证、截图、100%/200%、长列表真实窗口、Full、安装包和 clean VM 仍未执行，因此 Stage 24 尚不是交付提交。
 
 ### Stage 21 历史实施切片
 

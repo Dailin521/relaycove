@@ -325,6 +325,31 @@ public sealed class SqliteAccountStoreCacheTests
     }
 
     [Fact]
+    public async Task QueryTopicSummariesAsync_AfterMoveAndDelete_ReturnsOnlyAuthoritativeAffectedTopics()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var source = new ChannelTopic(7, "old");
+        var destination = new ChannelTopic(7, "new");
+        await context.Store.InitializeAsync(account);
+        await context.Store.ApplyBatchAsync(account.AccountId,
+        [
+            new SubscriptionChangedEvent(new Subscription(7, "Build"), false),
+            new MessageUpsertEvent(StoreTestData.Message(50, source)),
+            new MessageUpsertEvent(StoreTestData.Message(100, source))
+        ]);
+
+        await context.Store.ApplyBatchAsync(account.AccountId, [new MessageMovedEvent([100], destination)]);
+        var moved = await context.Store.QueryTopicSummariesAsync(account.AccountId, [source, destination]);
+
+        Assert.Equal(50, Assert.Single(moved, topic => topic.Topic == source.Topic).MaxMessageId);
+        Assert.Equal(100, Assert.Single(moved, topic => topic.Topic == destination.Topic).MaxMessageId);
+
+        await context.Store.ApplyBatchAsync(account.AccountId, [new MessageDeletedEvent([50])]);
+        Assert.Empty(await context.Store.QueryTopicSummariesAsync(account.AccountId, [source]));
+    }
+
+    [Fact]
     public async Task ApplyBatchAsync_WhenCoreUpsertsAndOutboxEventsArrive_PersistsDomainRowsButNotEphemeralState()
     {
         await using var context = StoreTestContext.Create();

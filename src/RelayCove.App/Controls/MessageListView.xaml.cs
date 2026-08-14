@@ -1,6 +1,7 @@
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Windows.Input;
+using Microsoft.UI.Xaml.Input;
 using RelayCove.App.ViewModels;
 using WinPoint = Windows.Foundation.Point;
 using WinUiDependencyObject = Microsoft.UI.Xaml.DependencyObject;
@@ -18,11 +19,30 @@ public partial class MessageListView : ContentView
     private long? _firstVisibleMessageId;
     private double _firstVisibleViewportOffset;
     private long? _pendingPrependAnchorId;
-    private int _lastScrollToLatestRequest;
+    private string? _pendingPrependAnchorConversationKey;
+    private long _pendingPrependAnchorGeneration;
+    private double _pendingPrependAnchorOffset;
+    private long? _stabilizedAnchorId;
+    private string? _stabilizedAnchorConversationKey;
+    private long _stabilizedAnchorGeneration;
+    private double _stabilizedAnchorOffset;
+    private bool _anchorRestoreScheduled;
+    private double? _lastReportedBottomDistance;
+    private MessageScrollRequest? _activeScrollRequest;
+    private bool _scrollAttemptScheduled;
+    private bool _finalScrollIssued;
+    private WinUiFrameworkElement? _platformLayoutRoot;
+    private readonly PointerEventHandler _viewportPointerInputHandler;
+    private readonly KeyEventHandler _viewportKeyInputHandler;
 
     public MessageListView()
     {
+        _viewportPointerInputHandler = OnViewportPointerInput;
+        _viewportKeyInputHandler = OnViewportKeyInput;
         InitializeComponent();
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
+        MessageCollection.HandlerChanged += OnMessageCollectionHandlerChanged;
     }
 
     public ShellViewModel? ViewModel => BindingContext as ShellViewModel;
@@ -41,19 +61,16 @@ public partial class MessageListView : ContentView
         {
             _viewModel.PropertyChanged += OnViewModelPropertyChanged;
             _viewModel.Messages.CollectionChanged += OnMessagesCollectionChanged;
-            _lastScrollToLatestRequest = _viewModel.ScrollToLatestRequest;
-            if (_viewModel.Messages.Count > 0) Dispatcher.Dispatch(ScrollToLatest);
         }
+        BeginScrollRequest(_viewModel?.PendingMessageScrollRequest);
+        EnsurePlatformLayoutHook();
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs eventArgs)
     {
-        if (eventArgs.PropertyName == nameof(ShellViewModel.ScrollToLatestRequest) &&
-            _viewModel is not null &&
-            _lastScrollToLatestRequest != _viewModel.ScrollToLatestRequest)
+        if (eventArgs.PropertyName == nameof(ShellViewModel.PendingMessageScrollRequest))
         {
-            _lastScrollToLatestRequest = _viewModel.ScrollToLatestRequest;
-            Dispatcher.Dispatch(ScrollToLatest);
+            BeginScrollRequest(_viewModel?.PendingMessageScrollRequest);
             return;
         }
 
@@ -71,60 +88,113 @@ public partial class MessageListView : ContentView
     private async void OnMessageCollectionScrolled(object? sender, ItemsViewScrolledEventArgs eventArgs)
     {
         if (_viewModel is null) return;
+        long? visibleMessageId = null;
+        var hasVisibleOffset = false;
+        var visibleOffset = 0d;
         if (eventArgs.FirstVisibleItemIndex >= 0 && eventArgs.FirstVisibleItemIndex < _viewModel.Messages.Count)
         {
-            _firstVisibleMessageId = _viewModel.Messages[eventArgs.FirstVisibleItemIndex].MessageId;
-            _firstVisibleViewportOffset = TryGetItemViewportOffset(eventArgs.FirstVisibleItemIndex, out var offset)
-                ? offset
-                : 0d;
+            visibleMessageId = _viewModel.Messages[eventArgs.FirstVisibleItemIndex].MessageId;
+            hasVisibleOffset = TryGetItemViewportOffset(eventArgs.FirstVisibleItemIndex, out visibleOffset);
         }
 
         if (_pendingPrependAnchorId is { } anchorId)
         {
-            var visibleMessageId = eventArgs.FirstVisibleItemIndex >= 0 &&
-                eventArgs.FirstVisibleItemIndex < _viewModel.Messages.Count
-                    ? _viewModel.Messages[eventArgs.FirstVisibleItemIndex].MessageId
-                    : null;
-            if (visibleMessageId == anchorId)
+            if (!IsPendingPrependAnchorCurrent())
             {
-                _pendingPrependAnchorId = null;
+                ClearPendingPrependAnchor();
+            }
+            else if (visibleMessageId == anchorId &&
+                     hasVisibleOffset &&
+                     Math.Abs(visibleOffset - _pendingPrependAnchorOffset) <= 2d)
+            {
+                PromotePendingPrependAnchor();
             }
             else
             {
                 RestorePrependAnchor(anchorId);
             }
         }
+        else
+        {
+            _firstVisibleMessageId = visibleMessageId;
+            _firstVisibleViewportOffset = hasVisibleOffset ? visibleOffset : 0d;
+        }
 
+        var bottomDistance = GetBottomDistanceDip();
+        _lastReportedBottomDistance = bottomDistance;
         await _viewModel.ReportMessageViewportAsync(
             eventArgs.FirstVisibleItemIndex,
             eventArgs.LastVisibleItemIndex,
-            eventArgs.VerticalOffset);
+            eventArgs.VerticalOffset,
+            bottomDistanceDip: bottomDistance);
+    }
+
+    private double? GetBottomDistanceDip()
+    {
+        if (MessageCollection.Handler?.PlatformView is not WinUiDependencyObject platformRoot ||
+            FindDescendant<WinUiScrollViewer>(platformRoot) is not { } scrollViewer)
+        {
+            return null;
+        }
+
+        return Math.Max(0d, scrollViewer.ScrollableHeight - scrollViewer.VerticalOffset);
     }
 
     private void OnMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs eventArgs)
     {
-        if (_firstVisibleMessageId is null ||
-            eventArgs.Action != NotifyCollectionChangedAction.Add ||
-            eventArgs.NewStartingIndex < 0)
+        if (_activeScrollRequest is not null)
+        {
+            ScheduleMessageScroll();
+            return;
+        }
+
+        if (_firstVisibleMessageId is null || _pendingPrependAnchorId is not null)
         {
             return;
         }
 
         var currentFirstIndex = FindMessageIndex(_firstVisibleMessageId.Value);
-        if (currentFirstIndex > eventArgs.NewStartingIndex)
+        if (currentFirstIndex < 0) return;
+        var affectsAnchor = eventArgs.Action switch
+        {
+            NotifyCollectionChangedAction.Add => eventArgs.NewStartingIndex >= 0 && currentFirstIndex > eventArgs.NewStartingIndex,
+            NotifyCollectionChangedAction.Replace => eventArgs.OldStartingIndex >= 0 && eventArgs.OldStartingIndex <= currentFirstIndex,
+            NotifyCollectionChangedAction.Move =>
+                eventArgs.OldStartingIndex >= 0 &&
+                Math.Min(eventArgs.OldStartingIndex, eventArgs.NewStartingIndex) <= currentFirstIndex,
+            NotifyCollectionChangedAction.Remove => eventArgs.OldStartingIndex >= 0 && eventArgs.OldStartingIndex <= currentFirstIndex,
+            _ => false
+        };
+        if (affectsAnchor)
         {
             _pendingPrependAnchorId = _firstVisibleMessageId;
+            _pendingPrependAnchorConversationKey = _viewModel?.CurrentConversationKey;
+            _pendingPrependAnchorGeneration = _viewModel?.CurrentHistoryGeneration ?? 0;
+            _pendingPrependAnchorOffset = _firstVisibleViewportOffset;
+            ClearStabilizedAnchor();
         }
     }
 
     private void RestorePrependAnchor(long messageId)
     {
         var index = FindMessageIndex(messageId);
-        if (index < 0) return;
-        var desiredOffset = _firstVisibleViewportOffset;
-        _pendingPrependAnchorId = null;
+        if (index < 0 ||
+            !IsPendingPrependAnchorCurrent() ||
+            _activeScrollRequest is not null ||
+            _anchorRestoreScheduled)
+        {
+            return;
+        }
+        _anchorRestoreScheduled = true;
+        var desiredOffset = _pendingPrependAnchorOffset;
+        var conversationKey = _pendingPrependAnchorConversationKey;
+        var generation = _pendingPrependAnchorGeneration;
         MessageCollection.ScrollTo(index, position: ScrollToPosition.Start, animate: false);
-        Dispatcher.Dispatch(() => RestoreNativeViewportOffset(index, desiredOffset));
+        Dispatcher.Dispatch(() =>
+        {
+            RestoreNativeViewportOffset(index, desiredOffset, conversationKey, generation);
+            _anchorRestoreScheduled = false;
+        });
     }
 
     private int FindMessageIndex(long messageId)
@@ -155,8 +225,19 @@ public partial class MessageListView : ContentView
         }
     }
 
-    private void RestoreNativeViewportOffset(int index, double desiredOffset)
+    private void RestoreNativeViewportOffset(
+        int index,
+        double desiredOffset,
+        string? conversationKey,
+        long generation)
     {
+        if (_activeScrollRequest is not null ||
+            _viewModel is null ||
+            !string.Equals(_viewModel.CurrentConversationKey, conversationKey, StringComparison.Ordinal) ||
+            _viewModel.CurrentHistoryGeneration != generation)
+        {
+            return;
+        }
         if (!TryGetItemViewportOffset(index, out var currentOffset) ||
             MessageCollection.Handler?.PlatformView is not WinUiDependencyObject platformRoot ||
             FindDescendant<WinUiScrollViewer>(platformRoot) is not { } scrollViewer)
@@ -173,6 +254,50 @@ public partial class MessageListView : ContentView
             disableAnimation: true);
     }
 
+    private bool IsPendingPrependAnchorCurrent() =>
+        _viewModel is not null &&
+        string.Equals(
+            _viewModel.CurrentConversationKey,
+            _pendingPrependAnchorConversationKey,
+            StringComparison.Ordinal) &&
+        _viewModel.CurrentHistoryGeneration == _pendingPrependAnchorGeneration;
+
+    private void PromotePendingPrependAnchor()
+    {
+        _stabilizedAnchorId = _pendingPrependAnchorId;
+        _stabilizedAnchorConversationKey = _pendingPrependAnchorConversationKey;
+        _stabilizedAnchorGeneration = _pendingPrependAnchorGeneration;
+        _stabilizedAnchorOffset = _pendingPrependAnchorOffset;
+        _firstVisibleMessageId = _pendingPrependAnchorId;
+        _firstVisibleViewportOffset = _pendingPrependAnchorOffset;
+        ClearPendingPrependAnchor();
+    }
+
+    private void ClearPendingPrependAnchor()
+    {
+        _pendingPrependAnchorId = null;
+        _pendingPrependAnchorConversationKey = null;
+        _pendingPrependAnchorGeneration = 0;
+        _pendingPrependAnchorOffset = 0d;
+        _anchorRestoreScheduled = false;
+    }
+
+    private bool IsStabilizedAnchorCurrent() =>
+        _viewModel is not null &&
+        string.Equals(
+            _viewModel.CurrentConversationKey,
+            _stabilizedAnchorConversationKey,
+            StringComparison.Ordinal) &&
+        _viewModel.CurrentHistoryGeneration == _stabilizedAnchorGeneration;
+
+    private void ClearStabilizedAnchor()
+    {
+        _stabilizedAnchorId = null;
+        _stabilizedAnchorConversationKey = null;
+        _stabilizedAnchorGeneration = 0;
+        _stabilizedAnchorOffset = 0d;
+    }
+
     private static T? FindDescendant<T>(WinUiDependencyObject root) where T : WinUiDependencyObject
     {
         var count = WinUiVisualTreeHelper.GetChildrenCount(root);
@@ -185,10 +310,262 @@ public partial class MessageListView : ContentView
         return null;
     }
 
-    private void ScrollToLatest()
+    private void OnLoaded(object? sender, EventArgs eventArgs)
     {
-        if (_viewModel is null || _viewModel.Messages.Count == 0) return;
-        MessageCollection.ScrollTo(_viewModel.Messages.Count - 1, position: ScrollToPosition.End, animate: false);
+        EnsurePlatformLayoutHook();
+        BeginScrollRequest(_viewModel?.PendingMessageScrollRequest);
+    }
+
+    private void OnUnloaded(object? sender, EventArgs eventArgs)
+    {
+        RemovePlatformLayoutHook();
+        ClearActiveScrollRequest();
+        ClearPendingPrependAnchor();
+        ClearStabilizedAnchor();
+    }
+
+    private void OnMessageCollectionHandlerChanged(object? sender, EventArgs eventArgs)
+    {
+        EnsurePlatformLayoutHook();
+        ScheduleMessageScroll();
+    }
+
+    private void EnsurePlatformLayoutHook()
+    {
+        var root = MessageCollection.Handler?.PlatformView as WinUiFrameworkElement;
+        if (ReferenceEquals(root, _platformLayoutRoot)) return;
+        RemovePlatformLayoutHook();
+        _platformLayoutRoot = root;
+        if (_platformLayoutRoot is not null)
+        {
+            _platformLayoutRoot.LayoutUpdated += OnPlatformLayoutUpdated;
+            _platformLayoutRoot.AddHandler(
+                Microsoft.UI.Xaml.UIElement.PointerPressedEvent,
+                _viewportPointerInputHandler,
+                true);
+            _platformLayoutRoot.AddHandler(
+                Microsoft.UI.Xaml.UIElement.PointerWheelChangedEvent,
+                _viewportPointerInputHandler,
+                true);
+            _platformLayoutRoot.AddHandler(
+                Microsoft.UI.Xaml.UIElement.KeyDownEvent,
+                _viewportKeyInputHandler,
+                true);
+        }
+    }
+
+    private void RemovePlatformLayoutHook()
+    {
+        if (_platformLayoutRoot is not null)
+        {
+            _platformLayoutRoot.RemoveHandler(
+                Microsoft.UI.Xaml.UIElement.KeyDownEvent,
+                _viewportKeyInputHandler);
+            _platformLayoutRoot.RemoveHandler(
+                Microsoft.UI.Xaml.UIElement.PointerWheelChangedEvent,
+                _viewportPointerInputHandler);
+            _platformLayoutRoot.RemoveHandler(
+                Microsoft.UI.Xaml.UIElement.PointerPressedEvent,
+                _viewportPointerInputHandler);
+            _platformLayoutRoot.LayoutUpdated -= OnPlatformLayoutUpdated;
+        }
+        _platformLayoutRoot = null;
+    }
+
+    private void OnViewportPointerInput(object sender, PointerRoutedEventArgs eventArgs) => ClearViewportAnchorsForUserInput();
+
+    private void OnViewportKeyInput(object sender, KeyRoutedEventArgs eventArgs)
+    {
+        if (eventArgs.Key is Windows.System.VirtualKey.Up or
+            Windows.System.VirtualKey.Down or
+            Windows.System.VirtualKey.Left or
+            Windows.System.VirtualKey.Right or
+            Windows.System.VirtualKey.PageUp or
+            Windows.System.VirtualKey.PageDown or
+            Windows.System.VirtualKey.Home or
+            Windows.System.VirtualKey.End or
+            Windows.System.VirtualKey.Space)
+        {
+            ClearViewportAnchorsForUserInput();
+        }
+    }
+
+    private void ClearViewportAnchorsForUserInput()
+    {
+        ClearPendingPrependAnchor();
+        ClearStabilizedAnchor();
+    }
+
+    private void OnPlatformLayoutUpdated(object? sender, object eventArgs)
+    {
+        if (_activeScrollRequest is not null)
+        {
+            ScheduleMessageScroll();
+            return;
+        }
+
+        ReportLayoutBottomDistance();
+        MaintainViewportAnchorAfterLayout();
+    }
+
+    private void ReportLayoutBottomDistance()
+    {
+        if (_viewModel is null || GetBottomDistanceDip() is not { } distance) return;
+        if (_lastReportedBottomDistance is { } previous && Math.Abs(previous - distance) <= 0.5d) return;
+        _lastReportedBottomDistance = distance;
+        _viewModel.ReportMessageBottomDistance(distance);
+    }
+
+    private void MaintainViewportAnchorAfterLayout()
+    {
+        if (_pendingPrependAnchorId is { } pendingId)
+        {
+            if (!IsPendingPrependAnchorCurrent())
+            {
+                ClearPendingPrependAnchor();
+                return;
+            }
+            var pendingIndex = FindMessageIndex(pendingId);
+            if (pendingIndex >= 0 &&
+                TryGetItemViewportOffset(pendingIndex, out var pendingOffset) &&
+                Math.Abs(pendingOffset - _pendingPrependAnchorOffset) <= 2d)
+            {
+                PromotePendingPrependAnchor();
+                return;
+            }
+            RestorePrependAnchor(pendingId);
+            return;
+        }
+
+        if (_stabilizedAnchorId is not { } stabilizedId) return;
+        if (!IsStabilizedAnchorCurrent())
+        {
+            ClearStabilizedAnchor();
+            return;
+        }
+        if (_firstVisibleMessageId != stabilizedId || _anchorRestoreScheduled) return;
+        var index = FindMessageIndex(stabilizedId);
+        if (index < 0 ||
+            !TryGetItemViewportOffset(index, out var currentOffset) ||
+            Math.Abs(currentOffset - _stabilizedAnchorOffset) <= 2d)
+        {
+            return;
+        }
+
+        _anchorRestoreScheduled = true;
+        Dispatcher.Dispatch(() =>
+        {
+            RestoreNativeViewportOffset(
+                index,
+                _stabilizedAnchorOffset,
+                _stabilizedAnchorConversationKey,
+                _stabilizedAnchorGeneration);
+            _anchorRestoreScheduled = false;
+        });
+    }
+
+    private void BeginScrollRequest(MessageScrollRequest? request)
+    {
+        if (request is not null && _activeScrollRequest?.Sequence == request.Sequence)
+        {
+            ScheduleMessageScroll();
+            return;
+        }
+
+        ClearActiveScrollRequest();
+        if (request is null) return;
+        ClearPendingPrependAnchor();
+        ClearStabilizedAnchor();
+        _activeScrollRequest = request;
+        ScheduleMessageScroll();
+    }
+
+    private void ClearActiveScrollRequest()
+    {
+        _activeScrollRequest = null;
+        _scrollAttemptScheduled = false;
+        _finalScrollIssued = false;
+    }
+
+    private void ScheduleMessageScroll()
+    {
+        if (_activeScrollRequest is null || _scrollAttemptScheduled || !IsLoaded) return;
+        _scrollAttemptScheduled = true;
+        Dispatcher.Dispatch(TryProcessMessageScroll);
+    }
+
+    private void TryProcessMessageScroll()
+    {
+        _scrollAttemptScheduled = false;
+        var request = _activeScrollRequest;
+        if (request is null || _viewModel is null) return;
+        if (!_viewModel.IsMessageScrollRequestCurrent(request))
+        {
+            BeginScrollRequest(_viewModel.PendingMessageScrollRequest);
+            return;
+        }
+
+        var index = FindMessageIndex(request.TargetMessageId);
+        if (index < 0) return;
+        if (MessageCollection.Handler?.PlatformView is not WinUiDependencyObject platformRoot ||
+            (platformRoot as WinUiFrameworkElement)?.IsLoaded != true)
+        {
+            return;
+        }
+
+        var list = platformRoot as WinUiListViewBase ?? FindDescendant<WinUiListViewBase>(platformRoot);
+        var scrollViewer = FindDescendant<WinUiScrollViewer>(platformRoot);
+        if (list is null ||
+            scrollViewer is null ||
+            scrollViewer.ExtentHeight <= 0d ||
+            scrollViewer.ViewportHeight <= 0d)
+        {
+            return;
+        }
+
+        if (list.ContainerFromIndex(index) is not WinUiFrameworkElement { IsLoaded: true, ActualHeight: > 0d } container)
+        {
+            _finalScrollIssued = false;
+            MessageCollection.ScrollTo(index, position: ScrollToPosition.Center, animate: false);
+            return;
+        }
+
+        if (!_finalScrollIssued)
+        {
+            _finalScrollIssued = true;
+            MessageCollection.ScrollTo(index, position: ScrollToPosition.End, animate: false);
+            Dispatcher.Dispatch(ScheduleMessageScroll);
+            return;
+        }
+
+        if (!IsScrollRequestSatisfied(container, scrollViewer))
+        {
+            _finalScrollIssued = false;
+            MessageCollection.ScrollTo(index, position: ScrollToPosition.End, animate: false);
+            return;
+        }
+
+        _viewModel.AcknowledgeMessageScrollRequest(request);
+        ClearActiveScrollRequest();
+    }
+
+    private static bool IsScrollRequestSatisfied(
+        WinUiFrameworkElement container,
+        WinUiScrollViewer scrollViewer)
+    {
+        try
+        {
+            var targetTop = container.TransformToVisual(scrollViewer).TransformPoint(new WinPoint(0, 0)).Y;
+            var targetBottom = targetTop + container.ActualHeight;
+            var bottomDistance = Math.Max(0d, scrollViewer.ScrollableHeight - scrollViewer.VerticalOffset);
+            return bottomDistance <= 2d &&
+                targetBottom >= -2d &&
+                targetBottom <= scrollViewer.ViewportHeight + 2d;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     private void OnOpenMessageMenuClicked(object? sender, EventArgs eventArgs)

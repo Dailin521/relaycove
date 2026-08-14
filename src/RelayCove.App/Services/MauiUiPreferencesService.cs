@@ -8,6 +8,8 @@ public sealed class MauiUiPreferencesService : IUiPreferencesService
     private const string DetailsDefaultKey = "relaycove.ui.details-default";
     private const string ChannelsExpandedKey = "relaycove.ui.channels-expanded";
     private const string DirectMessagesExpandedKey = "relaycove.ui.direct-messages-expanded";
+    private const string FontSizeKey = "relaycove.ui.font-size";
+    private const string ConversationPaneWidthKey = "relaycove.ui.conversation-pane-width";
 
     public MauiUiPreferencesService()
     {
@@ -17,7 +19,9 @@ public sealed class MauiUiPreferencesService : IUiPreferencesService
             Parse(Preferences.Default.Get(ConversationWidthKey, nameof(UiConversationWidthMode.Standard)), UiConversationWidthMode.Standard),
             Preferences.Default.Get(DetailsDefaultKey, false),
             Preferences.Default.Get(ChannelsExpandedKey, true),
-            Preferences.Default.Get(DirectMessagesExpandedKey, true));
+            Preferences.Default.Get(DirectMessagesExpandedKey, true),
+            ReadRange(FontSizeKey, 11d, 18d),
+            ReadRange(ConversationPaneWidthKey, 240d, 380d));
         Apply(Current);
     }
 
@@ -40,6 +44,10 @@ public sealed class MauiUiPreferencesService : IUiPreferencesService
         Preferences.Default.Set(DetailsDefaultKey, preferences.OpenDetailsByDefault);
         Preferences.Default.Set(ChannelsExpandedKey, preferences.ChannelsExpanded);
         Preferences.Default.Set(DirectMessagesExpandedKey, preferences.DirectMessagesExpanded);
+        if (preferences.FontSize is { } fontSize) Preferences.Default.Set(FontSizeKey, fontSize);
+        else Preferences.Default.Remove(FontSizeKey);
+        if (preferences.ConversationPaneWidth is { } paneWidth) Preferences.Default.Set(ConversationPaneWidthKey, paneWidth);
+        else Preferences.Default.Remove(ConversationPaneWidthKey);
         Apply(preferences);
     }
 
@@ -55,16 +63,23 @@ public sealed class MauiUiPreferencesService : IUiPreferencesService
             ? parsed
             : fallback;
 
+    private static double? ReadRange(string key, double minimum, double maximum)
+    {
+        var value = Preferences.Default.Get(key, double.NaN);
+        return double.IsFinite(value) && value >= minimum && value <= maximum ? value : null;
+    }
+
     private static void Apply(UiPreferences preferences)
     {
         if (Application.Current?.Resources is not { } resources) return;
-        var fontScale = preferences.FontScale switch
+        var baseFontSize = preferences.FontSize ?? (preferences.FontScale switch
         {
-            UiFontScaleMode.Small => 0.9d,
-            UiFontScaleMode.Large => 1.15d,
-            _ => 1d
-        };
-        resources["BaseFontSize"] = 14d * fontScale;
+            UiFontScaleMode.Small => 12d,
+            UiFontScaleMode.Large => 16d,
+            _ => 14d
+        });
+        var fontScale = baseFontSize / 14d;
+        resources["BaseFontSize"] = baseFontSize;
         resources["MutedFontSize"] = 12d * fontScale;
         resources["SmallFontSize"] = 11d * fontScale;
         resources["ButtonFontSize"] = 13d * fontScale;

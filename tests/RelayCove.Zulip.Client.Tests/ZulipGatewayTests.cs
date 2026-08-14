@@ -228,9 +228,11 @@ public sealed class ZulipGatewayTests
 
         var batch = await gateway.GetEventsAsync(new GetEventsRequest(Credentials, "queue-1", 11, TimeSpan.FromSeconds(30)));
 
-        var message = Assert.IsType<MessageUpsertEvent>(Assert.Single(batch.Events));
+        var message = Assert.IsType<MessageUpsertEvent>(batch.Events[0]);
         Assert.Equal("77", message.LocalId);
         Assert.True(message.Message.IsRead);
+        var topic = Assert.IsType<TopicUpsertEvent>(batch.Events[1]);
+        Assert.Equal(new TopicSummary(42, "topic", 123), topic.Topic);
         Assert.Equal(12, batch.LastEventId);
         Assert.DoesNotContain("timeout", ParseQuery(Assert.Single(handler.Requests).Uri!).Keys);
     }
@@ -348,6 +350,12 @@ public sealed class ZulipGatewayTests
                 Assert.Equal([99L, 100L], moved.MessageIds);
                 Assert.Equal(new ChannelTopic(43, "new"), moved.Destination);
                 Assert.Equal(20, moved.EventId);
+            },
+            item =>
+            {
+                var topic = Assert.IsType<TopicUpsertEvent>(item);
+                Assert.Equal(new TopicSummary(43, "new", 100), topic.Topic);
+                Assert.Equal(20, topic.EventId);
             });
     }
 

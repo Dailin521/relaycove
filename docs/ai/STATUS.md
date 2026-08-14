@@ -1,9 +1,27 @@
-# RelayCove Status — Stage 21 / 22W / 22M
+# RelayCove Status — Stage 21 / 22W / 22M / 23 / 24
 
 Updated: 2026-08-14
-Branch: `codex/stage-23-native-functions` (isolated worktree `E:\WorkSpace\RelayCove-Stage22MParity`)
+Branch: `codex/stage-24-native-product-polish` (isolated worktree `E:\WorkSpace\RelayCove-Stage22MParity`)
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W and Stage 22M are fixed locally at baseline commit `8d1a6e5`. Stage 23 is active on `codex/stage-23-native-functions`; Slice 1 is fixed at `037bcf8`, Slice 2 at `8a9f07f`, and Slice 3 at `bba0cbb`. Stage 23 has not been pushed, merged or deployed; its isolated three-scenario Live gate passed on 2026-08-14.
+Current delivery: Stage 22W/22M and Stage 23 local slices remain preserved in history. Stage 24 is active and uncommitted on `codex/stage-24-native-product-polish`; it has not been pushed, merged, deployed or exercised against the Realm. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun for Stage 24.
+
+## Stage 24 native product polish — current local evidence, 2026-08-14
+
+- Stage 24.1 replaces the Composer Button drag surface with a neutral 16-DIP native handle, stable-root pointer capture and handled routed events; removes the channel/topic/DM `SelectedItem` + Tap double path; and gates old chat/Composer while authoritative topic or conversation activation is pending, empty or failed.
+- Conversation activation publishes a structured conversation/generation/target/reason scroll request only after the latest generation settles. The native view waits for item, handler, extent and target layout, verifies the bottom before acknowledgement, and lets current-generation explicit bottom requests supersede prepend anchors.
+- Message layout now follows Web 18/20/16 content insets, reserves a separate 16-DIP scrollbar safety column, removes the unused opposite avatar slot and uses the Web 76%/690 or narrow 90% cap. Native layout changes also refresh the real 96-DIP distance and maintain pagination anchors by message ID plus DIP unless pointer/wheel/keyboard input takes control.
+- Draft sends carry their captured conversation into the Core command gate. If navigation changes the selected conversation during attachment upload, the send fails closed before outbox creation or POST and retains the original draft/attachments.
+
+- Own history/register/realtime messages are normalized read before reducer/cache projection. Activating a different or already-selected conversation always starts a latest-page generation without publishing an empty message window; only the still-current successful generation attempts server mark-read.
+- Automatic mark-read is isolated from history success. Network/429/protocol failure keeps the loaded page and unread state; 401 retains fail-closed reauthentication; a confirmed server read followed by cache failure keeps the page and reports `mark_read_cache_failed` rather than `history_failed`.
+- `ConversationSummary` is restored from the existing indexed SQLite messages table, not a second summary table. Navigation uses summaries instead of the selected 250-message window. Realtime message/edit/delete/move/read updates are incremental; affected window-external topics and summaries are re-read only by exact conversation/topic keys.
+- DM/channel navigation keeps stable keys and summaries. Avatar media keys include `AccountId`, unchanged sources do not restart loading, and account changes cannot reuse another account's avatar bytes.
+- Native Composer resizing uses WinUI pointer capture/cancel/lost-focus cleanup and stays within 72–300 DIP. The message viewport uses actual `ScrollableHeight - VerticalOffset`; <=96 DIP follows new messages and >96 DIP preserves position and exposes the new-message action.
+- Channel clicks restore the run-local last topic or most recent server topic; empty channels expose a channel-bound new-topic path. The new-conversation surface supports DM and subscribed-channel topic modes. Realtime topic creation/move and current-channel archive/removal update selection and Composer availability.
+- Conversation filtering, repeated row activation, an 820-DIP intermediate rail, and continuous persisted font/conversation-width values are implemented natively. The Web runtime and frozen `chat-ui-v1` files are unchanged.
+- The prior Stage 24 narrow build and fake-test counts predate Stage 24.1. Per the user's expedited instruction, Stage 24.1 ran no tests, Fast, Full, Live, preview or PrintWindow. The exact App Debug Rebuild passed with 0 warnings and 0 errors: `dotnet build src/RelayCove.App/RelayCove.App.csproj -c Debug --no-restore --nologo -t:Rebuild`.
+- Independent App/UI and protocol/session/Data reviews found two P1 classes (automatic mark-read failure contaminating history state; window-external topic move/delete not returning SQLite authority). Both were fixed with regressions; the final reviews found no remaining confirmed P0/P1.
+- Not run for Stage 24: Fast, Full, Live, real credentials/Realm traffic, formal Windows Machine manual interaction, screenshot matrix, 100%/200%, high contrast, package installation or clean Windows 11 VM. These remain explicit gates; no current screenshot or package hash is claimed.
 
 ## Stage 23 real-Realm acceptance — 2026-08-14
 
@@ -151,7 +169,7 @@ These captures prove deterministic native composition and responsive/theme behav
 - Restore, manual password login, selection, topic/older-history loading, server-confirmed mark-read, logout and per-account cache clearing remain intact. Shared contracts now also cover reaction, edit with `prev_content_sha256`, permanent delete, star/unstar, attachment upload and controlled same-Realm media reads.
 - Each message has one mutation lane. Submitting or uncertain operations block later mutations for that message; ambiguous network/protocol outcomes become `Uncertain`, switch offline where appropriate and are never automatically retried. Upload and message send remain two separate non-idempotent stages; a confirmed upload reference can be reused only by an explicit user retry.
 - At the Stage 22M baseline, the native shell implemented right-click/`Shift+F10`/touch message menus, quote/copy/permalink/ID actions, 24-emoji Composer/reaction pickers, edit/delete confirmation, local loaded-workspace search, new 1:1/group/self-DM selection, image preview/download and per-conversation attachment drafts. Stage 23 Slice 2 now adds server search and saved messages; all server writes still flow only through `IClientSession`.
-- Contacts and new-DM candidates remain the active users currently known to the session, not a complete member directory. Member counts/relationships, presence, common channels, mentions and channel self-service remain separate gates; users are never reinterpreted as channel membership.
+- Contacts and new-DM candidates remain the active users currently known to the session, not a complete member directory. Stage 23 provides ordinary-user channel discovery/join/leave/mute/pin; member counts/relationships, presence, common channels, mentions and administrator channel management remain separate gates. Users are never reinterpreted as channel membership.
 - A `#if DEBUG` `NativeShellPreviewSession` is selected only when `RELAYCOVE_NATIVE_UI_PREVIEW=1`. It has deterministic in-memory `IClientSession` state, no gateway/HTTP dependency, and applies send/reaction/edit/delete/star/upload interactions only to local memory for visual testing. It cannot write to a Realm. Release and ordinary Debug startup continue to use the production session.
 
 ### Current validation evidence

@@ -334,29 +334,21 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         {
             lock (_stateGate)
             {
-                if (_selectedConversation == conversation)
-                {
-                    loadTask = _latestHistoryTask ?? Task.CompletedTask;
-                }
-                else
-                {
-                    var accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
-                    priorHistoryCancellation = _historyCancellation;
-                    var runToken = _runCancellation?.Token ?? _disposeCancellation.Token;
-                    _historyCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-                        _disposeCancellation.Token,
-                        runToken);
-                    _selectedConversation = conversation;
-                    var generation = ++_historyGeneration;
-                    _state = _state with { Messages = new Dictionary<long, ChatMessage>() };
-                    _historyState = new ConversationHistoryState(conversation, generation, true, false, false, null, null);
-                    _retainOldestWindow = false;
-                    _loadOlderTask = null;
-                    var credentials = _state.Connection.Status == ConnectionStatus.Connected ? _credentials : null;
-                    loadTask = LoadLatestAsync(accountId, credentials, conversation, generation, _historyCancellation.Token);
-                    _latestHistoryTask = loadTask;
-                    publish = true;
-                }
+                var accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+                priorHistoryCancellation = _historyCancellation;
+                var runToken = _runCancellation?.Token ?? _disposeCancellation.Token;
+                _historyCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                    _disposeCancellation.Token,
+                    runToken);
+                _selectedConversation = conversation;
+                var generation = ++_historyGeneration;
+                _historyState = new ConversationHistoryState(conversation, generation, true, false, false, null, null);
+                _retainOldestWindow = false;
+                _loadOlderTask = null;
+                var credentials = _state.Connection.Status == ConnectionStatus.Connected ? _credentials : null;
+                loadTask = LoadLatestAsync(accountId, credentials, conversation, generation, _historyCancellation.Token);
+                _latestHistoryTask = loadTask;
+                publish = true;
             }
         }
         finally
@@ -601,8 +593,22 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         }
     }
 
-    public async Task SendAsync(string content, CancellationToken cancellationToken = default)
+    public Task SendAsync(string content, CancellationToken cancellationToken = default)
     {
+        ConversationKey conversation;
+        lock (_stateGate)
+        {
+            conversation = _selectedConversation ?? throw new InvalidOperationException("No conversation is selected.");
+        }
+        return SendAsync(conversation, content, cancellationToken);
+    }
+
+    public async Task SendAsync(
+        ConversationKey expectedConversation,
+        string content,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedConversation);
         ArgumentException.ThrowIfNullOrWhiteSpace(content);
         ThrowIfDisposed();
         await _commands.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -619,6 +625,10 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 if (_state.Connection.Status != ConnectionStatus.Connected) throw new InvalidOperationException("Sending requires a connected session.");
                 credentials = _credentials ?? throw new InvalidOperationException("No credentials are available.");
                 conversation = _selectedConversation ?? throw new InvalidOperationException("No conversation is selected.");
+                if (!string.Equals(conversation.CanonicalKey, expectedConversation.CanonicalKey, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException("The selected conversation changed before send.");
+                }
                 queueId = _queueId ?? throw new InvalidOperationException("No event queue is registered.");
                 ValidateSend(conversation, content);
                 runToken = _runCancellation?.Token ?? throw new InvalidOperationException("The session is stopped.");
@@ -1110,8 +1120,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             try { await _gateway.SetSubscriptionPreferenceAsync(new SetSubscriptionPreferenceRequest(credentials, channelId, preference, value), linked.Token).ConfigureAwait(false); }
             catch (GatewayException exception) when (IsUnauthorized(exception)) { if (IsChannelOperationCurrent(accountId, generation, runCancellation)) await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
             if (!IsChannelOperationCurrent(accountId, generation, runCancellation)) return;
-            var updated = preference == SubscriptionPreference.Muted ? subscription with { IsMuted = value } : subscription with { IsPinned = value };
-            await StoreThenApplyAsync([new SubscriptionChangedEvent(updated, false, Source: DomainEventSource.Local)], linked.Token).ConfigureAwait(false);
+            await StoreThenApplyAsync([new SubscriptionPreferenceChangedEvent(channelId, preference, value, Source: DomainEventSource.Local)], linked.Token).ConfigureAwait(false);
         }
         finally { lane.Release(); }
     }
@@ -1295,10 +1304,10 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 {
                     var batch = await _gateway.GetEventsAsync(
                         new GetEventsRequest(credentials, queue, cursor, timeout), cancellationToken).ConfigureAwait(false);
-                    var acceptedEvents = FilterRealtimeEvents(batch.Events, cursor);
-                    if (acceptedEvents.Count > 0)
+                    var acceptedEvents = NormalizeOwnMessages(FilterRealtimeEvents(batch.Events, cursor));
+                    if (acceptedEvents.Length > 0)
                     {
-                        await _store.ApplyBatchAsync(AccountId!.Value, acceptedEvents, cancellationToken).ConfigureAwait(false);
+                        await StoreThenApplyAsync(acceptedEvents, cancellationToken).ConfigureAwait(false);
                     }
                     var serverRestarted = acceptedEvents.Any(domainEvent => domainEvent is ServerRestartedEvent);
                     var nextCursor = acceptedEvents
@@ -1306,7 +1315,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                         .Append(batch.LastEventId)
                         .Append(cursor)
                         .Max();
-                    Mutate(state => DomainReducer.Apply(state, acceptedEvents) with
+                    Mutate(state => state with
                     {
                         LastEventId = nextCursor,
                         Connection = serverRestarted
@@ -1434,15 +1443,16 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
     private async Task ApplyRegisterAsync(RegisterResult register, CancellationToken cancellationToken)
     {
         var accountId = AccountId ?? throw new InvalidOperationException("No account is active.");
-        await _store.ReplaceRegisterSnapshotAsync(accountId, register, cancellationToken).ConfigureAwait(false);
+        var normalizedRegister = register with { Events = NormalizeOwnMessages(register.Events) };
+        await _store.ReplaceRegisterSnapshotAsync(accountId, normalizedRegister, cancellationToken).ConfigureAwait(false);
         var loaded = await _store.LoadAsync(accountId, cancellationToken).ConfigureAwait(false);
         IReadOnlyDictionary<string, OutboxEntry> outbox;
         lock (_stateGate) outbox = _state.Outbox;
         var snapshot = loaded?.State ?? new ClientState(
-            subscriptions: register.Subscriptions.ToDictionary(item => item.ChannelId),
-            users: register.Users.ToDictionary(item => item.UserId),
-            unread: register.Unread);
-        snapshot = DomainReducer.Apply(snapshot, register.Events) with
+            subscriptions: normalizedRegister.Subscriptions.ToDictionary(item => item.ChannelId),
+            users: normalizedRegister.Users.ToDictionary(item => item.UserId),
+            unread: normalizedRegister.Unread);
+        snapshot = DomainReducer.Apply(snapshot, normalizedRegister.Events) with
         {
             Outbox = new Dictionary<string, OutboxEntry>(outbox, StringComparer.Ordinal),
             Connection = new ConnectionState(ConnectionStatus.Connected),
@@ -1450,16 +1460,16 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         };
         lock (_stateGate)
         {
-            _queueId = register.QueueId;
-            _longPollTimeout = register.EventQueueLongPollTimeout;
-            _maxMessageLength = register.MaxMessageLength;
-            _maxTopicLength = register.MaxTopicLength;
-            _maxFileUploadBytes = checked((long)(register.MaxFileUploadSizeMiB ?? 10) * 1024 * 1024);
+            _queueId = normalizedRegister.QueueId;
+            _longPollTimeout = normalizedRegister.EventQueueLongPollTimeout;
+            _maxMessageLength = normalizedRegister.MaxMessageLength;
+            _maxTopicLength = normalizedRegister.MaxTopicLength;
+            _maxFileUploadBytes = checked((long)(normalizedRegister.MaxFileUploadSizeMiB ?? 10) * 1024 * 1024);
             _recentDirectMessages = MergeRecentDirectMessages(
-                register.RecentDirectMessages,
+                normalizedRegister.RecentDirectMessages,
                 DeriveRecentDirectMessages(snapshot));
             if (_selectedConversation is ChannelTopic selected &&
-                !snapshot.Subscriptions.ContainsKey(selected.ChannelId))
+                (!snapshot.Subscriptions.TryGetValue(selected.ChannelId, out var selectedSubscription) || !selectedSubscription.IsActive))
             {
                 _selectedConversation = null;
                 InvalidateHistoryLocked(clearConversation: true);
@@ -1473,9 +1483,31 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
     {
         if (events.Count == 0) return;
         var accountId = AccountId ?? throw new InvalidOperationException("No account is active.");
-        await _store.ApplyBatchAsync(accountId, events, cancellationToken).ConfigureAwait(false);
-        Mutate(state => DomainReducer.Apply(state, events));
-        foreach (var flags in events.OfType<MessageFlagsChangedEvent>()
+        var normalizedEvents = NormalizeOwnMessages(events);
+        var summariesToRefresh = GetSummaryRefreshConversations(State, normalizedEvents);
+        var topicsToRefresh = summariesToRefresh.OfType<ChannelTopic>().ToArray();
+        await _store.ApplyBatchAsync(accountId, normalizedEvents, cancellationToken).ConfigureAwait(false);
+        var refreshedSummaries = summariesToRefresh.Count == 0
+            ? []
+            : await _store.QueryConversationSummariesAsync(accountId, summariesToRefresh, cancellationToken).ConfigureAwait(false);
+        var refreshedTopics = topicsToRefresh.Length == 0
+            ? []
+            : await _store.QueryTopicSummariesAsync(accountId, topicsToRefresh, cancellationToken).ConfigureAwait(false);
+        Mutate(state =>
+        {
+            var next = DomainReducer.Apply(state, normalizedEvents);
+            var summaries = new Dictionary<string, ConversationSummary>(next.ConversationSummaries);
+            foreach (var conversation in summariesToRefresh) summaries.Remove(conversation.CanonicalKey);
+            foreach (var summary in refreshedSummaries) summaries[summary.Conversation.CanonicalKey] = summary;
+            var topics = new Dictionary<string, TopicSummary>(next.Topics, StringComparer.Ordinal);
+            foreach (var topic in topicsToRefresh) topics.Remove(topic.CanonicalKey);
+            foreach (var topic in refreshedTopics)
+            {
+                topics[new ChannelTopic(topic.ChannelId, topic.Topic).CanonicalKey] = topic;
+            }
+            return next with { ConversationSummaries = summaries, Topics = topics };
+        });
+        foreach (var flags in normalizedEvents.OfType<MessageFlagsChangedEvent>()
                      .Where(static item => string.Equals(item.Flag, "starred", StringComparison.OrdinalIgnoreCase)))
         {
             MessageMutationObserved?.Invoke(this, new MessageMutationObservedEventArgs(
@@ -1483,7 +1515,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 deleted: false,
                 isStarred: flags.Operation == MessageFlagOperation.Add));
         }
-        foreach (var deleted in events.OfType<MessageDeletedEvent>())
+        foreach (var deleted in normalizedEvents.OfType<MessageDeletedEvent>())
         {
             MessageMutationObserved?.Invoke(this, new MessageMutationObservedEventArgs(
                 deleted.MessageIds,
@@ -1631,8 +1663,9 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
 
             var history = await _gateway.GetHistoryAsync(
                 new HistoryRequest(credentials, conversation, limit: HistoryPageSize), cancellationToken).ConfigureAwait(false);
-            await _store.StoreMessagePageAsync(accountId, history.Messages, cancellationToken).ConfigureAwait(false);
-            ApplyHistoryPageIfCurrent(conversation, generation, history.Messages, retainOldest: false);
+            var normalizedHistory = NormalizeOwnMessages(history.Messages);
+            await _store.StoreMessagePageAsync(accountId, normalizedHistory, cancellationToken).ConfigureAwait(false);
+            ApplyHistoryPageIfCurrent(conversation, generation, normalizedHistory, retainOldest: false);
             var hasOlderInCache = history.FoundOldest
                 ? false
                 : await HasOlderInCacheAsync(accountId, conversation, generation, cancellationToken).ConfigureAwait(false);
@@ -1643,6 +1676,40 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 HasOlderInCache = hasOlderInCache,
                 Error = null
             });
+            if (normalizedHistory.Count > 0)
+            {
+                try
+                {
+                    await MarkDisplayedReadForGenerationAsync(accountId, credentials, conversation, generation, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (GatewayException exception) when (IsUnauthorized(exception))
+                {
+                    if (IsHistoryCurrent(conversation, generation))
+                    {
+                        await HandleUnauthorizedAsync().ConfigureAwait(false);
+                    }
+                }
+                catch (GatewayException)
+                {
+                    // The latest page is already authoritative and visible. A separate
+                    // mark-read failure must leave it loaded and unread for a later
+                    // explicit activation instead of turning history into a failure.
+                }
+                catch
+                {
+                    if (IsHistoryCurrentForAccount(accountId, conversation, generation))
+                    {
+                        Mutate(state => state with
+                        {
+                            Connection = new ConnectionState(ConnectionStatus.Faulted, "mark_read_cache_failed")
+                        });
+                    }
+                }
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1706,8 +1773,9 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             var history = await _gateway.GetHistoryAsync(
                 new HistoryRequest(credentials, conversation, beforeMessageId, includeAnchor: false, limit: HistoryPageSize),
                 cancellationToken).ConfigureAwait(false);
-            await _store.StoreMessagePageAsync(accountId, history.Messages, cancellationToken).ConfigureAwait(false);
-            ApplyHistoryPageIfCurrent(conversation, generation, history.Messages, retainOldest: true);
+            var normalizedHistory = NormalizeOwnMessages(history.Messages);
+            await _store.StoreMessagePageAsync(accountId, normalizedHistory, cancellationToken).ConfigureAwait(false);
+            ApplyHistoryPageIfCurrent(conversation, generation, normalizedHistory, retainOldest: true);
             var hasOlderInCache = history.FoundOldest
                 ? false
                 : await HasOlderInCacheAsync(accountId, conversation, generation, cancellationToken).ConfigureAwait(false);
@@ -1780,9 +1848,10 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 return;
             }
             if (!IsHistoryCurrentForAccount(accountId, conversation, generation)) return;
-            await _store.StoreMessagePageAsync(accountId, page.Messages, cancellationToken).ConfigureAwait(false);
+            var normalizedPage = NormalizeOwnMessages(page.Messages);
+            await _store.StoreMessagePageAsync(accountId, normalizedPage, cancellationToken).ConfigureAwait(false);
             if (!IsHistoryCurrentForAccount(accountId, conversation, generation)) return;
-            ApplyHistoryPageIfCurrent(conversation, generation, page.Messages, retainOldest: false);
+            ApplyHistoryPageIfCurrent(conversation, generation, normalizedPage, retainOldest: false);
             SetHistoryStateIfCurrent(conversation, generation, state => state with
             {
                 IsLoading = false,
@@ -1915,8 +1984,99 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         Mutate(state => DomainReducer.Apply(state, events));
     }
 
-    private static DomainEvent[] ToHistoryEvents(IEnumerable<ChatMessage> messages) =>
-        messages.Select(message => (DomainEvent)new MessageUpsertEvent(message, Source: DomainEventSource.History)).ToArray();
+    private DomainEvent[] ToHistoryEvents(IEnumerable<ChatMessage> messages) =>
+        NormalizeOwnMessages(messages.Select(message => (DomainEvent)new MessageUpsertEvent(message, Source: DomainEventSource.History)));
+
+    private async Task MarkDisplayedReadForGenerationAsync(
+        AccountId accountId,
+        CredentialEnvelope credentials,
+        ConversationKey conversation,
+        long generation,
+        CancellationToken cancellationToken)
+    {
+        ChatMessage[] unread;
+        lock (_stateGate)
+        {
+            if (_accountId != accountId || !IsHistoryCurrentLocked(conversation, generation)) return;
+            unread = _state.Messages.Values
+                .Where(message => message.Conversation == conversation && !message.IsRead)
+                .OrderByDescending(message => message.Id)
+                .Take(HistoryPageSize)
+                .ToArray();
+        }
+        if (unread.Length == 0) return;
+        await _gateway.MarkReadAsync(
+            new MarkReadRequest(credentials, conversation, unread.Max(message => message.Id), unread.Length),
+            cancellationToken).ConfigureAwait(false);
+        if (!IsHistoryCurrentForAccount(accountId, conversation, generation)) return;
+        var flags = new MessageFlagsChangedEvent(
+            unread.Select(message => message.Id).ToArray(), false, MessageFlagOperation.Add, "read", Source: DomainEventSource.Local);
+        await StoreThenApplyAsync([flags], cancellationToken).ConfigureAwait(false);
+    }
+
+    private DomainEvent[] NormalizeOwnMessages(IEnumerable<DomainEvent> events)
+    {
+        long? currentUserId;
+        lock (_stateGate) currentUserId = _credentials?.UserId;
+        if (currentUserId is null) return events.ToArray();
+        return events.Select(domainEvent => domainEvent switch
+        {
+            MessageUpsertEvent upsert => upsert with { Message = MarkOwnMessageRead(upsert.Message, currentUserId.Value) },
+            MessagesUpdatedEvent updated => updated with
+            {
+                Messages = updated.Messages.Select(message => MarkOwnMessageRead(message, currentUserId.Value)).ToArray()
+            },
+            SendConfirmedEvent sent => sent with { Message = MarkOwnMessageRead(sent.Message, currentUserId.Value) },
+            _ => domainEvent
+        }).ToArray();
+    }
+
+    private IReadOnlyList<ChatMessage> NormalizeOwnMessages(IEnumerable<ChatMessage> messages)
+    {
+        long? currentUserId;
+        lock (_stateGate) currentUserId = _credentials?.UserId;
+        return currentUserId is null
+            ? messages.ToArray()
+            : messages.Select(message => MarkOwnMessageRead(message, currentUserId.Value)).ToArray();
+    }
+
+    private static ChatMessage MarkOwnMessageRead(ChatMessage message, long currentUserId) =>
+        message.SenderId == currentUserId && !message.IsRead ? message with { IsRead = true } : message;
+
+    private static IReadOnlyCollection<ConversationKey> GetSummaryRefreshConversations(
+        ClientState state,
+        IEnumerable<DomainEvent> events)
+    {
+        var conversations = new Dictionary<string, ConversationKey>(StringComparer.Ordinal);
+        foreach (var domainEvent in events)
+        {
+            IEnumerable<long> ids = domainEvent switch
+            {
+                MessageDeletedEvent deleted => deleted.MessageIds,
+                MessageMovedEvent moved => moved.MessageIds,
+                MessageContentChangedEvent changed => [changed.MessageId],
+                MessageFlagsChangedEvent flags when !flags.AllMessages => flags.MessageIds,
+                _ => []
+            };
+            foreach (var summary in state.ConversationSummaries.Values.Where(summary => ids.Contains(summary.LatestMessage.Id)))
+            {
+                conversations[summary.Conversation.CanonicalKey] = summary.Conversation;
+            }
+            if (domainEvent is MessageMovedEvent movedEvent)
+            {
+                conversations[movedEvent.Destination.CanonicalKey] = movedEvent.Destination;
+            }
+            else if (domainEvent is MessageFlagsChangedEvent { AllMessages: true })
+            {
+                foreach (var summary in state.ConversationSummaries.Values)
+                {
+                    conversations[summary.Conversation.CanonicalKey] = summary.Conversation;
+                }
+            }
+        }
+        return conversations.Values.ToArray();
+    }
+
 
     private static IReadOnlyCollection<DomainEvent> FilterRealtimeEvents(
         IReadOnlyCollection<DomainEvent> events,
@@ -2299,7 +2459,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 _recentDirectMessages,
                 DeriveRecentDirectMessages(next));
             if (_selectedConversation is ChannelTopic selected &&
-                !next.Subscriptions.ContainsKey(selected.ChannelId))
+                (!next.Subscriptions.TryGetValue(selected.ChannelId, out var selectedSubscription) || !selectedSubscription.IsActive))
             {
                 _selectedConversation = null;
                 InvalidateHistoryLocked(clearConversation: true);

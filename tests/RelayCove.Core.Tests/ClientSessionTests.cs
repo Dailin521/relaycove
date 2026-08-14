@@ -666,6 +666,67 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task SelectConversationAsync_WhenAutomaticMarkReadFails_KeepsLoadedHistoryAndUnreadState()
+    {
+        var conversation = new DirectMessage([20]);
+        var unread = new ChatMessage(
+            100,
+            conversation,
+            20,
+            "unread",
+            DateTimeOffset.UnixEpoch.AddSeconds(100));
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register()),
+            HistoryHandler = (_, _) => Task.FromResult(new HistoryResult([unread], true, true)),
+            MarkReadHandler = (_, _) => Task.FromException(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.SelectConversationAsync(conversation);
+
+        Assert.Null(session.HistoryState.Error);
+        Assert.False(session.HistoryState.IsLoading);
+        Assert.Equal(ConnectionStatus.Connected, session.State.Connection.Status);
+        Assert.False(Assert.Single(session.State.Messages.Values).IsRead);
+        Assert.Single(gateway.MarkReadRequests);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task SelectConversationAsync_WhenAutomaticMarkReadCacheWriteFails_KeepsLoadedHistoryAndReportsCacheFault()
+    {
+        var conversation = new DirectMessage([20]);
+        var unread = new ChatMessage(
+            100,
+            conversation,
+            20,
+            "unread",
+            DateTimeOffset.UnixEpoch.AddSeconds(100));
+        var store = new FakeAccountStore();
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register()),
+            HistoryHandler = (_, _) => Task.FromResult(new HistoryResult([unread], true, true))
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        store.ApplyFailure = new InvalidOperationException("database unavailable");
+
+        await session.SelectConversationAsync(conversation);
+
+        Assert.Null(session.HistoryState.Error);
+        Assert.False(session.HistoryState.IsLoading);
+        Assert.Equal(ConnectionStatus.Faulted, session.State.Connection.Status);
+        Assert.Equal("mark_read_cache_failed", session.State.Connection.Detail);
+        Assert.False(Assert.Single(session.State.Messages.Values).IsRead);
+        Assert.Single(gateway.MarkReadRequests);
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task LoadOlderAsync_WhenSixPagesAreLoaded_KeepsFiftyPageSizeAndTwoHundredFiftyMessageWindow()
     {
         var conversation = new ChannelTopic(1, "general");
@@ -1086,7 +1147,8 @@ public sealed class ClientSessionTests
         var conversation = new ChannelTopic(1, "general");
         var markSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var messages = Enumerable.Range(1, 60)
-            .Select(id => (DomainEvent)new MessageUpsertEvent(Message(id, conversation), Source: DomainEventSource.Register))
+            .Select(id => (DomainEvent)new MessageUpsertEvent(
+                Message(id, conversation) with { SenderId = 8 }, Source: DomainEventSource.Register))
             .ToArray();
         var gateway = new FakeGateway
         {
@@ -1147,7 +1209,7 @@ public sealed class ClientSessionTests
         var conversation = new ChannelTopic(1, "general");
         var messages = Enumerable.Range(1, 100)
             .Select(id => (DomainEvent)new MessageUpsertEvent(
-                Message(id, conversation) with { IsRead = id > 50 && id % 2 == 0 },
+                Message(id, conversation) with { SenderId = 8, IsRead = id > 50 && id % 2 == 0 },
                 Source: DomainEventSource.Register))
             .ToArray();
         var gateway = new FakeGateway
@@ -1609,6 +1671,45 @@ public sealed class ClientSessionTests
         await session.StopAsync();
     }
 
+    [Fact]
+    public async Task EventLoop_WhenMessageOutsideWindowMoves_RefreshesAffectedTopicsFromCache()
+    {
+        var source = new ChannelTopic(1, "old");
+        var destination = new ChannelTopic(2, "new");
+        var message = new ChatMessage(100, source, 20, "moved", DateTimeOffset.UnixEpoch.AddSeconds(100), isRead: true);
+        var move = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var eventCalls = 0;
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                subscriptions: [new Subscription(1, "Source"), new Subscription(2, "Destination")],
+                events: [new MessageUpsertEvent(message, Source: DomainEventSource.Register)])),
+            GetEventsHandler = (_, cancellationToken) => Interlocked.Increment(ref eventCalls) == 1
+                ? move.Task
+                : Never<EventBatch>(cancellationToken),
+            HistoryHandler = (_, _) => Task.FromResult(new HistoryResult([], true, true))
+        };
+        var store = new FakeAccountStore
+        {
+            QueryTopicsHandler = (_, topics, _) => Task.FromResult<IReadOnlyList<TopicSummary>>(
+                topics.Any(topic => topic == destination)
+                    ? [new TopicSummary(destination.ChannelId, destination.Topic, message.Id)]
+                    : [])
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        Assert.Contains(source.CanonicalKey, session.State.ConversationSummaries.Keys);
+        await session.SelectConversationAsync(new DirectMessage([20]));
+        Assert.DoesNotContain(message.Id, session.State.Messages.Keys);
+
+        move.SetResult(new EventBatch([new MessageMovedEvent([message.Id], destination, 2)], 2));
+        await WaitUntilAsync(() => store.QueryTopicCalls > 0);
+
+        Assert.DoesNotContain(source.CanonicalKey, session.State.Topics.Keys);
+        Assert.Equal(message.Id, session.State.Topics[destination.CanonicalKey].MaxMessageId);
+        await session.StopAsync();
+    }
+
     private static CredentialEnvelope Credential() =>
         new(RealmEndpoint.Parse("https://zulip.example/"), "me@example.test", 10, "api-key");
 
@@ -1703,6 +1804,7 @@ public sealed class ClientSessionTests
         public bool IsUnlocked { get; set; } = true;
         public int ClearCalls { get; private set; }
         public int InitializeCalls { get; private set; }
+        public int QueryTopicCalls { get; private set; }
         public int LockAttempts { get; private set; }
         public Exception? InitializeFailure { get; set; }
         public Exception? MigrateFailure { get; set; }
@@ -1713,6 +1815,7 @@ public sealed class ClientSessionTests
         public List<IReadOnlyCollection<ChatMessage>> StoredPages { get; } = [];
         public List<long> PurgedChannels { get; } = [];
         public Func<AccountId, ConversationKey, long?, int, CancellationToken, Task<IReadOnlyList<ChatMessage>>>? QueryHandler { get; set; }
+        public Func<AccountId, IReadOnlyCollection<ChannelTopic>, CancellationToken, Task<IReadOnlyList<TopicSummary>>>? QueryTopicsHandler { get; set; }
 
         public Task<IReadOnlyList<StoredAccount>> ListAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<StoredAccount>>(Account is null ? [] : [Account]);
@@ -1770,6 +1873,19 @@ public sealed class ClientSessionTests
                 SnapshotState,
                 messages.Select(message => new MessageUpsertEvent(message, Source: DomainEventSource.History)));
             return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<TopicSummary>> QueryTopicSummariesAsync(
+            AccountId accountId,
+            IReadOnlyCollection<ChannelTopic> topics,
+            CancellationToken cancellationToken = default)
+        {
+            QueryTopicCalls++;
+            return QueryTopicsHandler?.Invoke(accountId, topics, cancellationToken) ??
+                Task.FromResult<IReadOnlyList<TopicSummary>>(
+                    SnapshotState.Topics.Values
+                        .Where(topic => topics.Contains(new ChannelTopic(topic.ChannelId, topic.Topic)))
+                        .ToArray());
         }
 
         public Task ReplaceRegisterSnapshotAsync(AccountId accountId, RegisterResult snapshot, CancellationToken cancellationToken = default)

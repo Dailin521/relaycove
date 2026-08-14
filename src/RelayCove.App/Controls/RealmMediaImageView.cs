@@ -10,6 +10,7 @@ public sealed class RealmMediaImageView : ContentView
     private readonly ActivityIndicator _loading;
     private readonly Label _fallback;
     private CancellationTokenSource? _loadCancellation;
+    private string? _loadedSourceKey;
 
     public RealmMediaImageView()
     {
@@ -82,11 +83,30 @@ public sealed class RealmMediaImageView : ContentView
         _ = ReloadAsync();
     }
 
+    protected override void OnBindingContextChanged()
+    {
+        base.OnBindingContextChanged();
+        _ = ReloadAsync();
+    }
+
     private static void OnSourceChanged(BindableObject bindable, object oldValue, object newValue) =>
         _ = ((RealmMediaImageView)bindable).ReloadAsync();
 
     private async Task ReloadAsync()
     {
+        var services = Handler?.MauiContext?.Services;
+        var service = services?.GetService<IRealmMediaService>();
+        var accountId = services?.GetService<IClientSession>()?.AccountId;
+        var sourceKey = $"{accountId?.Value ?? "signed-out"}:{MediaKind}:{SourceUrl}";
+        // CollectionView may reapply an unchanged binding while it reconciles a
+        // navigation row.  Keeping the decoded image avoids the visible blank /
+        // spinner flash caused by clearing and downloading the same avatar again.
+        if (string.Equals(_loadedSourceKey, sourceKey, StringComparison.Ordinal) &&
+            _image.Source is not null)
+        {
+            return;
+        }
+
         var cancellation = Interlocked.Exchange(ref _loadCancellation, null);
         if (cancellation is not null)
         {
@@ -96,7 +116,7 @@ public sealed class RealmMediaImageView : ContentView
         _image.Source = null;
         _image.IsVisible = false;
         _fallback.IsVisible = false;
-        if (Handler?.MauiContext?.Services.GetService<IRealmMediaService>() is not { } service ||
+        if (service is null ||
             string.IsNullOrWhiteSpace(SourceUrl))
         {
             _loading.IsRunning = false;
@@ -112,6 +132,7 @@ public sealed class RealmMediaImageView : ContentView
             var source = await service.GetImageAsync(SourceUrl, MediaKind, current.Token);
             if (current.IsCancellationRequested) return;
             _image.Source = source;
+            _loadedSourceKey = sourceKey;
             _image.IsVisible = true;
         }
         catch (OperationCanceledException) when (current.IsCancellationRequested)
@@ -119,6 +140,7 @@ public sealed class RealmMediaImageView : ContentView
         }
         catch
         {
+            _loadedSourceKey = null;
             if (!current.IsCancellationRequested && ShowFailureText) _fallback.IsVisible = true;
         }
         finally

@@ -4,7 +4,8 @@ public sealed record TopicItem(
     long ChannelId,
     string Topic,
     long? MaxMessageId,
-    int UnreadCount = 0)
+    int UnreadCount = 0,
+    bool IsSelected = false)
 {
     public string CanonicalKey => new RelayCove.Core.ChannelTopic(ChannelId, Topic).CanonicalKey;
     public string DisplayName => string.IsNullOrEmpty(Topic) ? "（无主题）" : Topic;

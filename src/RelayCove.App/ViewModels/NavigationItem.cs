@@ -9,7 +9,8 @@ public sealed record NavigationItem(
     int UnreadCount = 0,
     string? AvatarUrl = null,
     bool IsBot = false,
-    string? Timestamp = null)
+    string? Timestamp = null,
+    bool IsSelected = false)
 {
     public bool HasUnread => UnreadCount > 0;
     public string UnreadLabel => UnreadCount > 99 ? "99+" : UnreadCount.ToString();

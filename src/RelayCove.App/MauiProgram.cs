@@ -15,7 +15,10 @@ public static class MauiProgram
     public static MauiApp CreateMauiApp()
     {
         var builder = MauiApp.CreateBuilder();
-        builder.UseMauiApp<App>();
+        builder
+            .UseMauiApp<App>()
+            .ConfigureMauiHandlers(handlers =>
+                handlers.AddHandler<ComposerResizeHandle, ComposerResizeHandleHandler>());
 
 #if DEBUG
         builder.Logging.AddDebug();

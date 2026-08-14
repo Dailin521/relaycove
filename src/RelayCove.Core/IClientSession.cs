@@ -24,6 +24,10 @@ public interface IClientSession
         Task.FromException(new NotSupportedException("Opening a message is not available."));
     Task<IReadOnlyList<TopicSummary>> LoadTopicsAsync(long channelId, CancellationToken cancellationToken = default);
     Task SendAsync(string content, CancellationToken cancellationToken = default);
+    Task SendAsync(ConversationKey expectedConversation, string content, CancellationToken cancellationToken = default) =>
+        string.Equals(SelectedConversation?.CanonicalKey, expectedConversation.CanonicalKey, StringComparison.Ordinal)
+            ? SendAsync(content, cancellationToken)
+            : Task.FromException(new InvalidOperationException("The selected conversation changed before send."));
     Task SetReactionAsync(long messageId, EmojiReactionIdentity reaction, bool add, CancellationToken cancellationToken = default);
     Task EditMessageAsync(long messageId, string content, CancellationToken cancellationToken = default);
     Task DeleteMessageAsync(long messageId, CancellationToken cancellationToken = default);

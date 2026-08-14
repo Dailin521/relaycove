@@ -69,9 +69,11 @@
             </Border>
         </Grid>
 
-        <Grid
-              IsVisible="{Binding MainVisible}"
-              ColumnDefinitions="60,*">
+        <Grid IsVisible="{Binding MainVisible}">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="{Binding NavigationRailWidth}" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
             <controls:NavigationRailView x:Name="NavigationRail"
                                          Grid.Column="0"
                                          IsEnabled="{Binding IsPrimaryShellEnabled}" />
@@ -286,25 +288,46 @@
                         <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="10">
                             <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
                                 <VerticalStackLayout>
-                                    <Label Text="新建私信" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                                    <Label Text="新建私信" IsVisible="{Binding IsNewDirectConversationMode}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                                    <Label Text="新建频道话题" IsVisible="{Binding IsNewChannelConversationMode}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
                                     <Label Text="仅列出 IClientSession 当前可靠获知的活跃用户；不代表完整成员目录或 presence。"
+                                           IsVisible="{Binding IsNewDirectConversationMode}"
                                            Style="{StaticResource MutedLabelStyle}"
                                            LineBreakMode="WordWrap" />
+                                    <Label Text="选择已订阅频道并输入话题。不会创建或修改频道。"
+                                           IsVisible="{Binding IsNewChannelConversationMode}"
+                                           Style="{StaticResource MutedLabelStyle}" />
+                                    <HorizontalStackLayout Spacing="7" Margin="0,7,0,0">
+                                        <Button Text="私信" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowNewDirectConversationCommand}" />
+                                        <Button Text="频道话题" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowNewChannelConversationCommand}" />
+                                    </HorizontalStackLayout>
                                 </VerticalStackLayout>
                                 <Button Grid.Column="1"
                                         Text="×"
                                         Style="{StaticResource IconButtonStyle}"
                                         Command="{Binding CloseNewConversationCommand}" />
                             </Grid>
-                            <Entry x:Name="NewConversationSearchEntry"
-                                   Grid.Row="1"
-                                   Text="{Binding NewConversationQuery, Mode=TwoWay}"
-                                   Placeholder="筛选已知联系人"
-                                   Style="{StaticResource BaseEntryStyle}" />
+                            <Grid Grid.Row="1">
+                                <Entry x:Name="NewConversationSearchEntry"
+                                       Text="{Binding NewConversationQuery, Mode=TwoWay}"
+                                       IsVisible="{Binding IsNewDirectConversationMode}"
+                                       Placeholder="筛选已知联系人"
+                                       Style="{StaticResource BaseEntryStyle}" />
+                                <Grid IsVisible="{Binding IsNewChannelConversationMode}" ColumnDefinitions="*,*" ColumnSpacing="8">
+                                    <Picker ItemsSource="{Binding Channels}"
+                                            ItemDisplayBinding="{Binding DisplayTitle}"
+                                            SelectedItem="{Binding NewConversationChannel, Mode=TwoWay}"
+                                            Title="选择频道" />
+                                    <Entry Grid.Column="1"
+                                           Text="{Binding NewConversationTopic, Mode=TwoWay}"
+                                           Placeholder="输入新话题"
+                                           Style="{StaticResource BaseEntryStyle}" />
+                                </Grid>
+                            </Grid>
                             <Grid Grid.Row="2" MinimumHeightRequest="180" MaximumHeightRequest="330">
                                 <CollectionView ItemsSource="{Binding NewConversationChoices}"
                                                 SelectionMode="None"
-                                                IsVisible="{Binding HasNewConversationChoices}">
+                                                IsVisible="{Binding IsNewConversationChoicesVisible}">
                                     <CollectionView.ItemTemplate>
                                         <DataTemplate x:DataType="viewModels:ConversationContactChoice">
                                             <Border Margin="0,0,0,6" Padding="9,6" StrokeThickness="0">
@@ -341,13 +364,19 @@
                                     </CollectionView.ItemTemplate>
                                 </CollectionView>
                                 <Label Text="没有匹配的已知联系人。"
-                                       IsVisible="{Binding IsNewConversationChoiceEmpty}"
+                                       IsVisible="{Binding IsNewConversationChoiceEmptyVisible}"
+                                       Style="{StaticResource MutedLabelStyle}"
+                                       HorizontalOptions="Center"
+                                       VerticalOptions="Center" />
+                                <Label Text="频道话题会在输入后打开；空频道也可直接创建第一个话题。"
+                                       IsVisible="{Binding IsNewChannelConversationMode}"
                                        Style="{StaticResource MutedLabelStyle}"
                                        HorizontalOptions="Center"
                                        VerticalOptions="Center" />
                             </Grid>
                             <Grid Grid.Row="3" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
                                 <Button Text="给自己发私信"
+                                        IsVisible="{Binding IsNewDirectConversationMode}"
                                         Style="{StaticResource BaseButtonStyle}"
                                         Command="{Binding StartSelfConversationCommand}" />
                                 <Button Grid.Column="2"
@@ -356,9 +385,16 @@
                                         Command="{Binding CloseNewConversationCommand}" />
                                 <Button Grid.Column="3"
                                         Text="打开私信"
+                                        IsVisible="{Binding IsNewDirectConversationMode}"
                                         Style="{StaticResource PrimaryButtonStyle}"
                                         IsEnabled="{Binding CanStartNewConversation}"
                                         Command="{Binding StartNewConversationCommand}" />
+                                <Button Grid.Column="3"
+                                        Text="打开频道话题"
+                                        IsVisible="{Binding IsNewChannelConversationMode}"
+                                        Style="{StaticResource PrimaryButtonStyle}"
+                                        IsEnabled="{Binding CanStartNewChannelConversation}"
+                                        Command="{Binding StartNewChannelConversationCommand}" />
                             </Grid>
                         </Grid>
                     </Border>

@@ -1073,14 +1073,19 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             return [new UnknownDomainEvent("message", eventId, source)];
         }
 
-        return
-        [
+        var events = new List<DomainEvent>
+        {
             new MessageUpsertEvent(
                 chat,
                 eventId,
                 source,
                 GetString(value, "local_message_id", "local_id"))
-        ];
+        };
+        if (chat.Conversation is ChannelTopic channel)
+        {
+            events.Add(new TopicUpsertEvent(new TopicSummary(channel.ChannelId, channel.Topic, chat.Id), eventId, source));
+        }
+        return events;
     }
 
     private static IReadOnlyList<DomainEvent> ToDeleteMessageEvents(
@@ -1143,6 +1148,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             if (ids.Length > 0 && channelId is > 0 && topic is not null)
             {
                 events.Add(new MessageMovedEvent(ids, new ChannelTopic(channelId.Value, topic), eventId, source));
+                events.Add(new TopicUpsertEvent(new TopicSummary(channelId.Value, topic, ids.Max()), eventId, source));
             }
         }
 

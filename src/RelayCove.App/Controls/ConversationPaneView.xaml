@@ -4,17 +4,18 @@
              xmlns:controls="clr-namespace:RelayCove.App.Controls"
              xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
              x:Class="RelayCove.App.Controls.ConversationPaneView"
+             x:Name="Root"
              x:DataType="viewModels:ShellViewModel"
              Background="{StaticResource GroundBrush}">
     <Grid RowDefinitions="76,29,Auto,Auto,Auto,29,*" Padding="0,0,0,8">
         <Grid Grid.Row="0" RowDefinitions="47,18" Padding="11,7,11,4">
             <Grid Grid.Row="0" ColumnDefinitions="*,36" ColumnSpacing="8">
                 <Grid Grid.Column="0">
-                <Entry Style="{StaticResource BaseEntryStyle}"
-                       Placeholder="搜索会话、成员和消息"
-                       IsReadOnly="True"
-                       Focused="OnSearchFocused"
-                       SemanticProperties.Description="打开本地工作区搜索" />
+                <Entry x:Name="ConversationFilterEntry"
+                       Style="{StaticResource BaseEntryStyle}"
+                       Text="{Binding ConversationFilterQuery, Mode=TwoWay}"
+                       Placeholder="筛选会话"
+                       SemanticProperties.Description="筛选当前频道和私信；向下键打开首项，Escape 清除" />
                     <Image Source="icon_search.png"
                        WidthRequest="17"
                        HeightRequest="17"
@@ -57,22 +58,21 @@
         <CollectionView Grid.Row="2"
                         HeightRequest="{Binding ChannelListHeight}"
                         IsVisible="{Binding AreChannelsExpanded}"
-                        ItemsSource="{Binding Channels}"
-                        SelectedItem="{Binding SelectedChannel, Mode=TwoWay}"
-                        SelectionMode="Single"
+                        ItemsSource="{Binding FilteredChannels}"
+                        SelectionMode="None"
                         ItemsUpdatingScrollMode="KeepItemsInView">
             <CollectionView.ItemTemplate>
                 <DataTemplate x:DataType="viewModels:ChannelItem">
                     <Border HeightRequest="67" Margin="8,0,8,1" Padding="8" StrokeThickness="0" Opacity="{Binding ItemOpacity}">
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Tapped="OnChannelTapped" CommandParameter="{Binding .}" />
+                        </Border.GestureRecognizers>
                         <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
-                        <VisualStateManager.VisualStateGroups>
-                            <VisualStateGroup Name="CommonStates">
-                                <VisualState Name="Normal" />
-                                <VisualState Name="Selected">
-                                    <VisualState.Setters><Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" /></VisualState.Setters>
-                                </VisualState>
-                            </VisualStateGroup>
-                        </VisualStateManager.VisualStateGroups>
+                        <Border.Triggers>
+                            <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
+                                <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
+                            </DataTrigger>
+                        </Border.Triggers>
                         <Grid ColumnDefinitions="40,*,38" RowDefinitions="Auto,Auto" ColumnSpacing="11">
                             <Border Grid.RowSpan="2" WidthRequest="40" HeightRequest="40" Padding="0"
                                     VerticalOptions="Center" Background="{Binding ToneBrush}" StrokeThickness="0">
@@ -106,19 +106,20 @@
                 <CollectionView Grid.Row="1"
                                 HeightRequest="{Binding TopicListHeight}"
                                 ItemsSource="{Binding Topics}"
-                                SelectedItem="{Binding SelectedTopic, Mode=TwoWay}"
-                                SelectionMode="Single"
+                                SelectionMode="None"
                                 ItemsUpdatingScrollMode="KeepItemsInView">
                     <CollectionView.ItemTemplate>
                         <DataTemplate x:DataType="viewModels:TopicItem">
                             <Border HeightRequest="36" Margin="18,0,8,0" Padding="10,0" StrokeThickness="0">
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Tapped="OnTopicTapped" CommandParameter="{Binding .}" />
+                                </Border.GestureRecognizers>
                                 <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
-                                <VisualStateManager.VisualStateGroups>
-                                    <VisualStateGroup Name="CommonStates">
-                                        <VisualState Name="Normal" />
-                                        <VisualState Name="Selected"><VisualState.Setters><Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" /></VisualState.Setters></VisualState>
-                                    </VisualStateGroup>
-                                </VisualStateManager.VisualStateGroups>
+                                <Border.Triggers>
+                                    <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
+                                        <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
+                                    </DataTrigger>
+                                </Border.Triggers>
                                 <Grid ColumnDefinitions="*,Auto">
                                     <Label Text="{Binding DisplayName}" Style="{StaticResource BaseLabelStyle}" FontSize="13" VerticalTextAlignment="Center" />
                                     <Label Grid.Column="1" Text="{Binding UnreadLabel}" IsVisible="{Binding HasUnread}"
@@ -146,21 +147,22 @@
 
         <CollectionView Grid.Row="6"
                         IsVisible="{Binding AreDirectMessagesExpanded}"
-                        ItemsSource="{Binding DirectMessages}"
-                        SelectedItem="{Binding SelectedDirectMessage, Mode=TwoWay}"
-                        SelectionMode="Single"
+                        ItemsSource="{Binding FilteredDirectMessages}"
+                        SelectionMode="None"
                         ItemsUpdatingScrollMode="KeepItemsInView">
             <CollectionView.EmptyView><Label Text="暂无最近私信" Style="{StaticResource MutedLabelStyle}" Padding="18,12" /></CollectionView.EmptyView>
             <CollectionView.ItemTemplate>
                 <DataTemplate x:DataType="viewModels:NavigationItem">
                     <Border HeightRequest="67" Margin="8,0,8,1" Padding="8" StrokeThickness="0">
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Tapped="OnDirectMessageTapped" CommandParameter="{Binding .}" />
+                        </Border.GestureRecognizers>
                         <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
-                        <VisualStateManager.VisualStateGroups>
-                            <VisualStateGroup Name="CommonStates">
-                                <VisualState Name="Normal" />
-                                <VisualState Name="Selected"><VisualState.Setters><Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" /></VisualState.Setters></VisualState>
-                            </VisualStateGroup>
-                        </VisualStateManager.VisualStateGroups>
+                        <Border.Triggers>
+                            <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
+                                <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
+                            </DataTrigger>
+                        </Border.Triggers>
                         <Grid ColumnDefinitions="40,*,38" RowDefinitions="Auto,Auto" ColumnSpacing="11">
                             <Border Grid.RowSpan="2" WidthRequest="40" HeightRequest="40" Padding="0" VerticalOptions="Center"
                                     Background="{Binding ToneBrush}" StrokeThickness="0">

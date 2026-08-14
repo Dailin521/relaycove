@@ -4,5 +4,6 @@ public enum ShellLayoutMode
 {
     Wide,
     Compact,
+    Intermediate,
     Narrow
 }

@@ -84,6 +84,21 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         return EnqueueAsync(token => StoreMessagePageCoreAsync(accountId, messages, token), cancellationToken);
     }
 
+    public Task<IReadOnlyList<ConversationSummary>> QueryConversationSummariesAsync(
+        AccountId accountId,
+        IReadOnlyCollection<ConversationKey>? conversations = null,
+        CancellationToken cancellationToken = default) =>
+        EnqueueAsync(token => QueryConversationSummariesCoreAsync(accountId, conversations, token), cancellationToken);
+
+    public Task<IReadOnlyList<TopicSummary>> QueryTopicSummariesAsync(
+        AccountId accountId,
+        IReadOnlyCollection<ChannelTopic> topics,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(topics);
+        return EnqueueAsync(token => QueryTopicSummariesCoreAsync(accountId, topics, token), cancellationToken);
+    }
+
     public Task ReplaceRegisterSnapshotAsync(
         AccountId accountId,
         RegisterResult snapshot,
@@ -278,6 +293,83 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         return new MessagePage(messages, hasOlderInCache);
     }
 
+    private async Task<IReadOnlyList<ConversationSummary>> QueryConversationSummariesCoreAsync(
+        AccountId accountId,
+        IReadOnlyCollection<ConversationKey>? conversations,
+        CancellationToken cancellationToken)
+    {
+        var databasePath = RequireDatabasePath(accountId);
+        await using var connection = await OpenAsync(databasePath, create: false, cancellationToken).ConfigureAwait(false);
+        await EnsureUnlockedAsync(connection, cancellationToken).ConfigureAwait(false);
+        return await ReadConversationSummariesAsync(connection, null, conversations, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<IReadOnlyList<TopicSummary>> QueryTopicSummariesCoreAsync(
+        AccountId accountId,
+        IReadOnlyCollection<ChannelTopic> topics,
+        CancellationToken cancellationToken)
+    {
+        if (topics.Count == 0) return [];
+        var databasePath = RequireDatabasePath(accountId);
+        await using var connection = await OpenAsync(databasePath, create: false, cancellationToken).ConfigureAwait(false);
+        await EnsureUnlockedAsync(connection, cancellationToken).ConfigureAwait(false);
+        var distinct = topics
+            .GroupBy(topic => topic.CanonicalKey, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+        await using var command = connection.CreateCommand();
+        var predicates = new string[distinct.Length];
+        for (var index = 0; index < distinct.Length; index++)
+        {
+            predicates[index] = $"(channel_id = $channel{index} AND topic = $topic{index})";
+            command.Parameters.AddWithValue($"$channel{index}", distinct[index].ChannelId);
+            command.Parameters.AddWithValue($"$topic{index}", distinct[index].Topic);
+        }
+        command.CommandText = $"SELECT channel_id, topic, max_message_id FROM topics WHERE {string.Join(" OR ", predicates)};";
+        var result = new List<TopicSummary>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            result.Add(new TopicSummary(
+                reader.GetInt64(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetInt64(2)));
+        }
+        return result;
+    }
+
+    private static async Task<IReadOnlyList<ConversationSummary>> ReadConversationSummariesAsync(
+        SqliteConnection connection,
+        SqliteTransaction? transaction,
+        IReadOnlyCollection<ConversationKey>? conversations,
+        CancellationToken cancellationToken)
+    {
+        var keys = conversations?.Select(conversation => conversation.CanonicalKey).Distinct(StringComparer.Ordinal).ToArray();
+        if (keys is { Length: 0 }) return [];
+        await using var command = CreateCommand(connection, transaction, $"""
+            SELECT m.id, m.conversation_kind, m.channel_id, m.topic, m.dm_user_ids, m.sender_id,
+                   m.content, m.timestamp_utc, m.is_read, m.sender_display_name, m.sender_avatar_url, m.is_starred
+            FROM messages AS m
+            INNER JOIN (
+                SELECT conversation_key, MAX(id) AS latest_id
+                FROM messages
+                {(keys is null ? string.Empty : $"WHERE conversation_key IN ({string.Join(',', keys.Select((_, index) => "$key" + index))})")}
+                GROUP BY conversation_key
+            ) AS latest ON latest.conversation_key = m.conversation_key AND latest.latest_id = m.id
+            ORDER BY m.id DESC;
+            """);
+        if (keys is not null)
+        {
+            for (var index = 0; index < keys.Length; index++) command.Parameters.AddWithValue("$key" + index, keys[index]);
+        }
+        var messages = new List<ChatMessage>();
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false)) messages.Add(ReadMessage(reader));
+        }
+        return messages.Select(message => new ConversationSummary(message.Conversation, message)).ToArray();
+    }
+
     private async Task StoreMessagePageCoreAsync(
         AccountId accountId,
         IReadOnlyCollection<ChatMessage> messages,
@@ -292,6 +384,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         {
             if (!await CanStoreMessageAsync(connection, transaction, message, cancellationToken).ConfigureAwait(false)) continue;
             await UpsertMessageAsync(connection, transaction, message, cancellationToken).ConfigureAwait(false);
+            await UpsertTopicFromMessageAsync(connection, transaction, message, cancellationToken).ConfigureAwait(false);
             await ReplaceMessageReactionsAsync(connection, transaction, message, cancellationToken).ConfigureAwait(false);
         }
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -565,7 +658,8 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                         ("$user", changed.Reaction.UserId)).ConfigureAwait(false);
                     break;
                 case MessageDeletedEvent deleted:
-                    foreach (var message in await ReadMessagesByIdsAsync(connection, transaction, deleted.MessageIds, cancellationToken).ConfigureAwait(false))
+                    var deletedMessages = await ReadMessagesByIdsAsync(connection, transaction, deleted.MessageIds, cancellationToken).ConfigureAwait(false);
+                    foreach (var message in deletedMessages)
                     {
                         if (updateUnread && !message.IsRead)
                         {
@@ -574,9 +668,21 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                         }
                     }
                     await DeleteMessagesAsync(connection, transaction, deleted.MessageIds, cancellationToken).ConfigureAwait(false);
+                    foreach (var topic in deletedMessages.Select(message => message.Conversation).OfType<ChannelTopic>()
+                                 .DistinctBy(topic => topic.CanonicalKey))
+                    {
+                        await RecomputeTopicSummaryAsync(connection, transaction, topic, cancellationToken).ConfigureAwait(false);
+                    }
                     break;
                 case MessageMovedEvent moved:
-                    foreach (var message in await ReadMessagesByIdsAsync(connection, transaction, moved.MessageIds, cancellationToken).ConfigureAwait(false))
+                    var movedMessages = await ReadMessagesByIdsAsync(connection, transaction, moved.MessageIds, cancellationToken).ConfigureAwait(false);
+                    var affectedTopics = movedMessages.Select(message => message.Conversation).OfType<ChannelTopic>()
+                        .Append(moved.Destination as ChannelTopic)
+                        .Where(static topic => topic is not null)
+                        .Cast<ChannelTopic>()
+                        .DistinctBy(topic => topic.CanonicalKey)
+                        .ToArray();
+                    foreach (var message in movedMessages)
                     {
                         if (updateUnread && !message.IsRead && message.Conversation != moved.Destination)
                         {
@@ -593,6 +699,10 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                         {
                             await DeleteMessagesAsync(connection, transaction, [message.Id], cancellationToken).ConfigureAwait(false);
                         }
+                    }
+                    foreach (var topic in affectedTopics)
+                    {
+                        await RecomputeTopicSummaryAsync(connection, transaction, topic, cancellationToken).ConfigureAwait(false);
                     }
                     break;
                 case MessageFlagsChangedEvent flags when string.Equals(flags.Flag, "read", StringComparison.OrdinalIgnoreCase):
@@ -736,6 +846,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
             }
         }
         await UpsertMessageAsync(connection, transaction, message, cancellationToken).ConfigureAwait(false);
+        await UpsertTopicFromMessageAsync(connection, transaction, message, cancellationToken).ConfigureAwait(false);
         await ReplaceMessageReactionsAsync(connection, transaction, message, cancellationToken).ConfigureAwait(false);
         return (unread, unreadChanged);
     }
@@ -804,7 +915,9 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                 truncated = reader.GetInt64(1) != 0;
             }
         }
-        return new ClientState(messages, subscriptions, users, topics, unread: new UnreadState(counts, reportedTotal, truncated));
+        var summaries = (await ReadConversationSummariesAsync(connection, transaction, null, cancellationToken).ConfigureAwait(false))
+            .ToDictionary(summary => summary.Conversation.CanonicalKey, StringComparer.Ordinal);
+        return new ClientState(messages, subscriptions, users, topics, summaries, unread: new UnreadState(counts, reportedTotal, truncated));
     }
 
     private static async Task ReplaceSubscriptionsAsync(
@@ -1101,6 +1214,56 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
             ("$sender_name", message.SenderDisplayName), ("$sender_avatar", message.SenderAvatarUrl), ("$content", message.Content),
             ("$timestamp", message.Timestamp.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture)),
             ("$read", message.IsRead ? 1 : 0), ("$starred", message.IsStarred ? 1 : 0)).ConfigureAwait(false);
+    }
+
+    private static Task UpsertTopicFromMessageAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        ChatMessage message,
+        CancellationToken cancellationToken)
+    {
+        if (message.Conversation is not ChannelTopic channel) return Task.CompletedTask;
+        return ExecuteAsync(connection, transaction, """
+            INSERT INTO topics(channel_id, topic, max_message_id)
+            SELECT $channel, $topic, $message
+            WHERE EXISTS(SELECT 1 FROM subscriptions WHERE channel_id = $channel)
+            ON CONFLICT(channel_id, topic) DO UPDATE SET
+                max_message_id = CASE
+                    WHEN topics.max_message_id IS NULL OR excluded.max_message_id > topics.max_message_id
+                    THEN excluded.max_message_id
+                    ELSE topics.max_message_id
+                END;
+            """, cancellationToken,
+            ("$channel", channel.ChannelId), ("$topic", channel.Topic), ("$message", message.Id));
+    }
+
+    private static async Task RecomputeTopicSummaryAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        ChannelTopic topic,
+        CancellationToken cancellationToken)
+    {
+        await using var maximumCommand = CreateCommand(connection, transaction, """
+            SELECT COALESCE(MAX(id), 0) FROM messages WHERE conversation_key = $conversation;
+            """);
+        maximumCommand.Parameters.AddWithValue("$conversation", topic.CanonicalKey);
+        var maximumId = Convert.ToInt64(
+            await maximumCommand.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false),
+            CultureInfo.InvariantCulture);
+        if (maximumId == 0)
+        {
+            await ExecuteAsync(connection, transaction,
+                "DELETE FROM topics WHERE channel_id = $channel AND topic = $topic;",
+                cancellationToken, ("$channel", topic.ChannelId), ("$topic", topic.Topic)).ConfigureAwait(false);
+            return;
+        }
+        await ExecuteAsync(connection, transaction, """
+            INSERT INTO topics(channel_id, topic, max_message_id)
+            SELECT $channel, $topic, $maximum
+            WHERE EXISTS(SELECT 1 FROM subscriptions WHERE channel_id = $channel)
+            ON CONFLICT(channel_id, topic) DO UPDATE SET max_message_id = excluded.max_message_id;
+            """, cancellationToken,
+            ("$channel", topic.ChannelId), ("$topic", topic.Topic), ("$maximum", maximumId)).ConfigureAwait(false);
     }
 
     private static ChatMessage ReadMessage(SqliteDataReader reader)

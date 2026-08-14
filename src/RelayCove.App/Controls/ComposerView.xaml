@@ -7,7 +7,7 @@
              x:Class="RelayCove.App.Controls.ComposerView"
              x:Name="Root"
              x:DataType="viewModels:ShellViewModel"
-             IsVisible="{Binding HasSelectedConversation}">
+             IsVisible="{Binding IsConversationContentVisible}">
     <Border Margin="15,0,15,14"
             HeightRequest="{Binding ComposerHeight}"
             Background="{StaticResource SurfaceSoftBrush}"
@@ -21,20 +21,15 @@
         </Border.Behaviors>
 
         <Grid RowDefinitions="16,Auto,*,40">
-            <Button Grid.Row="0"
-                    Text=""
-                    Padding="0"
-                    Margin="0"
+            <controls:ComposerResizeHandle Grid.Row="0"
                     HeightRequest="16"
                     MinimumHeightRequest="16"
-                    BackgroundColor="Transparent"
-                    BorderWidth="0"
                     SemanticProperties.Description="调整输入区高度；上下键每次 16，Home 最小，End 最大">
-                <Button.Behaviors>
+                <controls:ComposerResizeHandle.Behaviors>
                     <windowsBehaviors:ComposerResizeBehavior
                         Height="{Binding ViewModel.ComposerHeight, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}" />
-                </Button.Behaviors>
-            </Button>
+                </controls:ComposerResizeHandle.Behaviors>
+            </controls:ComposerResizeHandle>
             <BoxView Grid.Row="0"
                      WidthRequest="40"
                      HeightRequest="3"
