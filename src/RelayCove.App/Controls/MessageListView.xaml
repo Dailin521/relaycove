@@ -346,9 +346,14 @@
                              HorizontalOptions="Center"
                              VerticalOptions="Center"
                              IsVisible="{Binding ShowMessageEmptyState}">
-            <Image Source="icon_messages.png" WidthRequest="34" HeightRequest="34" HorizontalOptions="Center" />
+            <Border WidthRequest="42" HeightRequest="42" Padding="0"
+                    HorizontalOptions="Center" Background="{StaticResource AccentBrush}" StrokeThickness="0">
+                <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                <Label Text="R" TextColor="White" FontSize="18" FontAttributes="Bold"
+                       HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
+            </Border>
             <Label Text="{Binding MessageEmptyTitle}" Style="{StaticResource BaseLabelStyle}" FontSize="15" HorizontalTextAlignment="Center" />
-            <Label Text="消息正文使用原生文本与结构化引用呈现；不会使用 WebView。"
+            <Label Text="频道话题与私信会从当前 Zulip Realm 加载。"
                    Style="{StaticResource MutedLabelStyle}" HorizontalTextAlignment="Center" />
         </VerticalStackLayout>
 
@@ -370,8 +375,8 @@
         </VerticalStackLayout>
 
         <ActivityIndicator Grid.Row="2"
-                           IsVisible="{Binding IsConversationLoading}"
-                           IsRunning="{Binding IsConversationLoading}"
+                           IsVisible="{Binding ShowConversationLoadingIndicator}"
+                           IsRunning="{Binding ShowConversationLoadingIndicator}"
                            HorizontalOptions="Center"
                            VerticalOptions="Center"
                            WidthRequest="40"
