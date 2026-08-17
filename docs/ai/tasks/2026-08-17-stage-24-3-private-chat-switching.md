@@ -1,6 +1,6 @@
 # Stage 24.3 — 私信缓存切换与消息视口稳定性
 
-- Status: Full-validated merge commit `55a94d3`; ready for user-authorized integration to `main`
+- Status: Full-validated merge commit `55a94d3` plus a Release-only native-preview compile follow-up; ready for user-authorized integration to `main`
 - Starting point: `main@efcebfe` plus local commit `a7a0059`
 - External effects: no Realm, Live or deployment; Git integration is user-authorized
 
@@ -13,8 +13,8 @@
 
 ## Verification
 
-- Full passed: Debug and Release each Core 109/109, Zulip.Client 45/45, Data 23/23 and App 105/105 (282/282); Web typecheck, 86/86 unit tests, production build and both fake-HTTP Playwright runs passed.
-- ZIP SHA-256: `75B176F07531DAD9D1DEF1412B37778B1B876840ACA4862F663BE8FC586A0994`.
+- Full passed: Debug and Release each Core 109/109, Zulip.Client 45/45, Data 23/23 and App 105/105 (282/282); Web typecheck, 86/86 unit tests, production build and both fake-HTTP Playwright runs (6 + 1) passed.
+- ZIP SHA-256: `60EC1985E938EDFA1329FE64D625A63853E5510619B9073C435FF79EDB9D684B` (2026-08-17 14:21 CST). Release emitted one non-fatal `XC0022` compiled-binding optimization warning at `MainPage.xaml:318`; no build errors.
 - Live and formal Windows Machine acceptance remain pending for this candidate.
 
 ## Gates

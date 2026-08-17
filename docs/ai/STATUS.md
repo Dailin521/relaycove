@@ -3,7 +3,7 @@
 Updated: 2026-08-17
 Integration basis: `main@efcebfe` plus merge commit `55a94d3` for Stage 24.3 private-chat switching
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W/22M, Stage 23 and Stage 24/24.1 are preserved in `origin/main@67fcab4`; Stage 24 entered through PR #1 and the cache-first follow-up through PR #2. Stage 24.2 is integrated into `main@4b8dd64`; Stage 24.3 is Full-validated on merge commit `55a94d3` based on `main@efcebfe`. It has not exercised the Realm. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+Current delivery: Stage 22W/22M, Stage 23 and Stage 24/24.1 are preserved in `origin/main@67fcab4`; Stage 24 entered through PR #1 and the cache-first follow-up through PR #2. Stage 24.2 is integrated into `main@4b8dd64`; Stage 24.3 is Full-validated on merge commit `55a94d3` plus its Release compile follow-up, based on `main@efcebfe`. It has not exercised the Realm. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
 
 ## Stage 24.2 current-visible unread and Composer keyboard — 2026-08-17
 
@@ -19,7 +19,7 @@ Current delivery: Stage 22W/22M, Stage 23 and Stage 24/24.1 are preserved in `or
 - Direct-message activation immediately projects a bounded cached message window; a repeated click on the same still-pending DM is coalesced, while a different conversation still cancels the superseded request.
 - Equivalent cache/network history pages do not republish the message window. Navigation and message rows are keyed observable instances updated in place; the App keeps an account-scoped 12-conversation message-item LRU, and cached avatar reads reuse an `ImageSource`.
 - Programmatic realization and native bottom scrolling cannot start older-page loading or prepend-anchor sampling. A layout reflow follows bottom only if the user was already within the real near-bottom threshold.
-- Full passed with 0 build warnings/errors: Debug and Release each passed Core 109/109, Zulip.Client 45/45, Data 23/23 and App 105/105 (282/282); Web deployment-template/typecheck, 86/86 unit tests, production build and both fake-HTTP Playwright runs passed. Generated ZIP SHA-256: `75B176F07531DAD9D1DEF1412B37778B1B876840ACA4862F663BE8FC586A0994`. Live, formal Windows Machine acceptance and Realm access have not run for this candidate.
+- Full passed: Debug and Release each passed Core 109/109, Zulip.Client 45/45, Data 23/23 and App 105/105 (282/282); Web deployment-template/typecheck, 86/86 unit tests, production build and both fake-HTTP Playwright runs (6 + 1) passed. Stage 24.3 package SHA-256: `60EC1985E938EDFA1329FE64D625A63853E5510619B9073C435FF79EDB9D684B` (2026-08-17 14:21 CST). Release has one non-fatal `XC0022` compiled-binding optimization warning at `MainPage.xaml:318`; no build errors. Live, formal Windows Machine acceptance and Realm access have not run for this candidate.
 
 ## Stage 24 native product polish — current local evidence, 2026-08-14
 

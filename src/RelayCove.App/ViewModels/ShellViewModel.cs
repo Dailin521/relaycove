@@ -89,9 +89,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private bool _suppressDraftTracking;
     private bool _suppressUiPreferenceSave = true;
     private bool _preserveContinuousPreference;
-#if DEBUG
     private bool _nativePreviewCacheSwitchStarted;
-#endif
     private double _fontSize = 14d;
     private double _conversationPaneWidth = 310d;
     private bool _disposed;
