@@ -2,15 +2,14 @@ using Microsoft.Maui.Controls;
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
-using RelayCove.App.Controls;
 using Windows.System;
-using Windows.UI.Core;
+using ReflectionPropertyInfo = System.Reflection.PropertyInfo;
 
 namespace RelayCove.App.Platforms.Windows.Behaviors;
 
-public sealed class ComposerResizeBehavior : PlatformBehavior<ComposerResizeHandle, FrameworkElement>
+public sealed class ComposerResizeBehavior : PlatformBehavior<Button, FrameworkElement>
 {
-    private const double MinimumHeight = 72d;
+    private const double MinimumHeight = 128d;
     private const double MaximumHeight = 300d;
     private const double KeyboardStep = 16d;
     private readonly PointerEventHandler _pointerPressedHandler;
@@ -19,12 +18,14 @@ public sealed class ComposerResizeBehavior : PlatformBehavior<ComposerResizeHand
     private readonly PointerEventHandler _pointerCanceledHandler;
     private readonly PointerEventHandler _pointerCaptureLostHandler;
     private readonly KeyEventHandler _keyDownHandler;
+    private static readonly ReflectionPropertyInfo? ProtectedCursorProperty = typeof(UIElement).GetProperty(
+        "ProtectedCursor",
+        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
     private FrameworkElement? _platformView;
     private Microsoft.UI.Xaml.Window? _platformWindow;
     private Pointer? _activePointer;
     private double _pointerStartY;
     private double _panStartHeight;
-    private CoreCursor? _previousCursor;
 
     public ComposerResizeBehavior()
     {
@@ -40,7 +41,7 @@ public sealed class ComposerResizeBehavior : PlatformBehavior<ComposerResizeHand
         nameof(Height),
         typeof(double),
         typeof(ComposerResizeBehavior),
-        112d,
+        128d,
         BindingMode.TwoWay,
         coerceValue: static (_, value) => ClampHeight((double)value));
 
@@ -50,7 +51,7 @@ public sealed class ComposerResizeBehavior : PlatformBehavior<ComposerResizeHand
         set => SetValue(HeightProperty, value);
     }
 
-    protected override void OnAttachedTo(ComposerResizeHandle bindable, FrameworkElement platformView)
+    protected override void OnAttachedTo(Button bindable, FrameworkElement platformView)
     {
         base.OnAttachedTo(bindable, platformView);
         _platformView = platformView;
@@ -72,7 +73,7 @@ public sealed class ComposerResizeBehavior : PlatformBehavior<ComposerResizeHand
         if (_platformWindow is not null) _platformWindow.Activated += OnWindowActivated;
     }
 
-    protected override void OnDetachedFrom(ComposerResizeHandle bindable, FrameworkElement platformView)
+    protected override void OnDetachedFrom(Button bindable, FrameworkElement platformView)
     {
         EndDrag(releaseCapture: true);
         if (_platformWindow is not null) _platformWindow.Activated -= OnWindowActivated;
@@ -87,7 +88,7 @@ public sealed class ComposerResizeBehavior : PlatformBehavior<ComposerResizeHand
         platformView.RemoveHandler(UIElement.PointerReleasedEvent, _pointerReleasedHandler);
         platformView.RemoveHandler(UIElement.PointerMovedEvent, _pointerMovedHandler);
         platformView.RemoveHandler(UIElement.PointerPressedEvent, _pointerPressedHandler);
-        RestoreCursor();
+        SetCursor(InputSystemCursorShape.Arrow);
         _platformView = null;
         base.OnDetachedFrom(bindable, platformView);
     }
@@ -103,7 +104,11 @@ public sealed class ComposerResizeBehavior : PlatformBehavior<ComposerResizeHand
             return;
         }
 
-        if (!_platformView.CapturePointer(eventArgs.Pointer)) return;
+        // A native Button may already capture its own pointer before this
+        // handled routed event reaches the behavior. That capture is enough
+        // for the drag; do not mistake a second CapturePointer false result
+        // for a rejected gesture.
+        _ = _platformView.CapturePointer(eventArgs.Pointer);
         _activePointer = eventArgs.Pointer;
         _pointerStartY = point.Position.Y;
         _panStartHeight = Height;
@@ -113,6 +118,13 @@ public sealed class ComposerResizeBehavior : PlatformBehavior<ComposerResizeHand
 
     private void OnPointerMoved(object sender, PointerRoutedEventArgs eventArgs)
     {
+        if (eventArgs.Pointer.PointerDeviceType == PointerDeviceType.Mouse)
+        {
+            // WinUI can restore the Button's default arrow after PointerEntered.
+            // Reapply on every hover move so the resize affordance stays visible.
+            SetCursor(InputSystemCursorShape.SizeNorthSouth);
+        }
+
         if (_platformView is null || _activePointer?.PointerId != eventArgs.Pointer.PointerId) return;
         var point = eventArgs.GetCurrentPoint(GetCoordinateRoot());
         Height = CalculateHeight(_panStartHeight, _pointerStartY, point.Position.Y);
@@ -158,29 +170,26 @@ public sealed class ComposerResizeBehavior : PlatformBehavior<ComposerResizeHand
         {
             _platformView.ReleasePointerCapture(pointer);
         }
-        RestoreCursor();
+        SetCursor(InputSystemCursorShape.Arrow);
     }
 
     private void OnPointerEntered(object sender, PointerRoutedEventArgs eventArgs)
     {
-        if (eventArgs.Pointer.PointerDeviceType != Microsoft.UI.Input.PointerDeviceType.Mouse) return;
-        var coreWindow = CoreWindow.GetForCurrentThread();
-        if (coreWindow is null) return;
-        _previousCursor ??= coreWindow.PointerCursor;
-        coreWindow.PointerCursor = new CoreCursor(CoreCursorType.SizeNorthSouth, 0);
+        if (eventArgs.Pointer.PointerDeviceType == PointerDeviceType.Mouse)
+        {
+            SetCursor(InputSystemCursorShape.SizeNorthSouth);
+        }
     }
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs eventArgs)
     {
-        if (_activePointer is null) RestoreCursor();
+        if (_activePointer is null) SetCursor(InputSystemCursorShape.Arrow);
     }
 
-    private void RestoreCursor()
+    private void SetCursor(InputSystemCursorShape cursorShape)
     {
-        if (_previousCursor is null) return;
-        var coreWindow = CoreWindow.GetForCurrentThread();
-        if (coreWindow is not null) coreWindow.PointerCursor = _previousCursor;
-        _previousCursor = null;
+        if (_platformView is null || ProtectedCursorProperty is null) return;
+        ProtectedCursorProperty.SetValue(_platformView, InputSystemCursor.Create(cursorShape));
     }
 
     private void OnKeyDown(object sender, KeyRoutedEventArgs eventArgs)

@@ -18,4 +18,13 @@ public sealed class ComposerEnterBehaviorTests
     {
         Assert.Equal(expected, ComposerEnterBehavior.ShouldSend(key, isControlPressed, isTextCompositionActive));
     }
+
+    [Fact]
+    public void InsertNewLine_WhenSelectionExists_ReplacesSelectionAndPlacesCursorAfterNewline()
+    {
+        var (content, cursorPosition) = ComposerEnterBehavior.InsertNewLine("before xx after", 7, 2);
+
+        Assert.Equal($"before {Environment.NewLine} after", content);
+        Assert.Equal(7 + Environment.NewLine.Length, cursorPosition);
+    }
 }

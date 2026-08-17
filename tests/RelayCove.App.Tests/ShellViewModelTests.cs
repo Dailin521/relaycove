@@ -231,6 +231,11 @@ public sealed class ShellViewModelTests
         Assert.True(viewModel.Messages.Single(message => message.MessageId == 11).IsUnread);
         Assert.True(Assert.Single(viewModel.DirectMessages).HasUnread);
 
+        // The same state can arrive again through a local-send/event-loop
+        // hand-off. It must not schedule another latest-scroll cycle.
+        session.Publish();
+        Assert.Null(viewModel.PendingMessageScrollRequest);
+
         markGate.SetResult();
         session.StateValue = session.StateValue with
         {
@@ -242,6 +247,35 @@ public sealed class ShellViewModelTests
 
         Assert.False(Assert.Single(viewModel.DirectMessages).HasUnread);
         Assert.False(viewModel.HasNavigationUnread);
+    }
+
+    [Fact]
+    public void OwnMessage_WhenCurrentConversationWasAtBottom_DoesNotQueueRealtimeFollow()
+    {
+        var conversation = new DirectMessage([8]);
+        var initial = new ChatMessage(10, conversation, 8, "read", DateTimeOffset.UnixEpoch, isRead: true);
+        var own = new ChatMessage(11, conversation, 1, "sent", DateTimeOffset.UnixEpoch.AddSeconds(1), isRead: true);
+        var session = new FakeSession
+        {
+            CurrentUserId = 1,
+            Selected = conversation,
+            Recent = [conversation],
+            HistoryState = new ConversationHistoryState(conversation, 1, false, true, false, 10, null),
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage> { [10] = initial },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.AcknowledgeMessageScrollRequest(Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest));
+
+        session.StateValue = session.StateValue with
+        {
+            Messages = new Dictionary<long, ChatMessage> { [10] = initial, [11] = own }
+        };
+        session.Publish();
+
+        Assert.Null(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(0, viewModel.NewMessageCount);
     }
 
     [Fact]
@@ -476,6 +510,16 @@ public sealed class ShellViewModelTests
 
         viewModel.UpdateViewport(1121);
         Assert.Equal(ShellLayoutMode.Wide, viewModel.LayoutMode);
+    }
+
+    [Fact]
+    public void ComposerHeight_WhenDraggedBelowVisibleEditorFloor_ClampsToOneHundredTwentyEightDip()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        viewModel.ComposerHeight = 0d;
+
+        Assert.Equal(128d, viewModel.ComposerHeight);
     }
 
     [Fact]
@@ -818,6 +862,31 @@ public sealed class ShellViewModelTests
 
         Assert.Equal(string.Empty, viewModel.ComposerText);
         Assert.Equal(["confirmed"], session.SentContents);
+    }
+
+    [Fact]
+    public async Task SendCommand_WhenSessionPublishesDuringSuccessfulSend_ClearsUnchangedDraft()
+    {
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            Recent = [conversation],
+            StateValue = new ClientState(connection: new ConnectionState(RelayCove.Core.ConnectionStatus.Connected))
+        };
+        session.SendAction = (_, _) =>
+        {
+            session.Publish();
+            return Task.CompletedTask;
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
+        viewModel.ComposerText = "confirmed while state updates";
+
+        await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
+
+        Assert.Equal(string.Empty, viewModel.ComposerText);
+        Assert.Equal(["confirmed while state updates"], session.SentContents);
     }
 
     [Fact]

@@ -566,8 +566,6 @@ public partial class MessageListView : ContentView
             return;
         }
 
-        var index = FindMessageIndex(request.TargetMessageId);
-        if (index < 0) return;
         if (MessageCollection.Handler?.PlatformView is not WinUiDependencyObject platformRoot ||
             (platformRoot as WinUiFrameworkElement)?.IsLoaded != true)
         {
@@ -581,6 +579,27 @@ public partial class MessageListView : ContentView
             scrollViewer.ExtentHeight <= 0d ||
             scrollViewer.ViewportHeight <= 0d)
         {
+            return;
+        }
+
+        var index = FindMessageIndex(request.TargetMessageId);
+        if (index < 0) return;
+
+        if (request.Reason == MessageScrollReason.RealtimeFollow)
+        {
+            // A newly sent or realtime message only needs a single latest
+            // follow. Waiting for container realization and retrying through
+            // every LayoutUpdated event causes the visible list to jump.
+            scrollViewer.ChangeView(
+                null,
+                scrollViewer.ScrollableHeight,
+                null,
+                disableAnimation: true);
+            _lastObservedExtentHeight = scrollViewer.ExtentHeight;
+            _lastObservedViewportWidth = scrollViewer.ViewportWidth;
+            _lastObservedViewportHeight = scrollViewer.ViewportHeight;
+            _viewModel.AcknowledgeMessageScrollRequest(request);
+            ClearActiveScrollRequest();
             return;
         }
 

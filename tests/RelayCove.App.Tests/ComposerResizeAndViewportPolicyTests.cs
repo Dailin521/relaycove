@@ -6,8 +6,8 @@ namespace RelayCove.App.Tests;
 public sealed class ComposerResizeAndViewportPolicyTests
 {
     [Theory]
-    [InlineData(112d, 200d, 120d, 192d)]
-    [InlineData(72d, 100d, 400d, 72d)]
+    [InlineData(128d, 200d, 120d, 208d)]
+    [InlineData(128d, 100d, 400d, 128d)]
     [InlineData(300d, 400d, 0d, 300d)]
     public void CalculateHeight_WhenPointerMoves_ClampsToComposerBounds(
         double startHeight,

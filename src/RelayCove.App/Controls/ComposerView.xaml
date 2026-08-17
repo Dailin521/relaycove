@@ -9,6 +9,7 @@
              x:DataType="viewModels:ShellViewModel">
     <Border Margin="15,0,15,14"
             HeightRequest="{Binding ComposerHeight}"
+            MinimumHeightRequest="128"
             Background="{StaticResource SurfaceSoftBrush}"
             Stroke="{StaticResource BorderBrush}"
             StrokeThickness="1">
@@ -19,28 +20,27 @@
                 IsDragActive="{Binding ViewModel.IsFileDragActive, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}" />
         </Border.Behaviors>
 
-        <Grid RowDefinitions="16,Auto,*,40">
-            <controls:ComposerResizeHandle Grid.Row="0"
+        <Grid RowDefinitions="8,Auto,*,40">
+            <Button Grid.Row="0"
                     HeightRequest="16"
                     MinimumHeightRequest="16"
-                    SemanticProperties.Description="调整输入区高度；上下键每次 16，Home 最小，End 最大">
-                <controls:ComposerResizeHandle.Behaviors>
+                    Margin="0,-4"
+                    HorizontalOptions="Fill"
+                    WidthRequest="{Binding Width, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
+                    Text=""
+                    Padding="0"
+                    BackgroundColor="Transparent"
+                    BorderColor="Transparent"
+                    SemanticProperties.Description="拖动输入区顶部调整高度；获得焦点后，上下键每次 16，Home 最小，End 最大">
+                <Button.Behaviors>
                     <windowsBehaviors:ComposerResizeBehavior
                         Height="{Binding ViewModel.ComposerHeight, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}" />
-                </controls:ComposerResizeHandle.Behaviors>
-            </controls:ComposerResizeHandle>
-            <BoxView Grid.Row="0"
-                     WidthRequest="40"
-                     HeightRequest="3"
-                     CornerRadius="2"
-                     HorizontalOptions="Center"
-                     VerticalOptions="Center"
-                     Background="{StaticResource StrongBorderBrush}"
-                     InputTransparent="True" />
-
+                </Button.Behaviors>
+            </Button>
             <Editor x:Name="ComposerEditor"
                     Grid.Row="2"
                     Margin="0"
+                    MinimumHeightRequest="64"
                     Style="{StaticResource ComposerEditorStyle}"
                     Text="{Binding ComposerText, Mode=TwoWay}"
                     Placeholder="{Binding ComposerPlaceholder}"

@@ -15,16 +15,14 @@ public sealed class ComposerSelectionBehavior : PlatformBehavior<Editor, Microso
         typeof(int),
         typeof(ComposerSelectionBehavior),
         0,
-        BindingMode.TwoWay,
-        propertyChanged: OnSelectionPropertyChanged);
+        BindingMode.TwoWay);
 
     public static readonly BindableProperty SelectionLengthProperty = BindableProperty.Create(
         nameof(SelectionLength),
         typeof(int),
         typeof(ComposerSelectionBehavior),
         0,
-        BindingMode.TwoWay,
-        propertyChanged: OnSelectionPropertyChanged);
+        BindingMode.TwoWay);
 
     public static readonly BindableProperty FocusRequestProperty = BindableProperty.Create(
         nameof(FocusRequest),
@@ -82,9 +80,6 @@ public sealed class ComposerSelectionBehavior : PlatformBehavior<Editor, Microso
             _updating = false;
         }
     }
-
-    private static void OnSelectionPropertyChanged(BindableObject bindable, object oldValue, object newValue) =>
-        ((ComposerSelectionBehavior)bindable).ApplySelection();
 
     private static void OnFocusRequestChanged(BindableObject bindable, object oldValue, object newValue) =>
         ((ComposerSelectionBehavior)bindable).FocusEditor();

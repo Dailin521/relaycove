@@ -13,8 +13,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private const double WideLayoutMinimum = 1121d;
     private const double IntermediateLayoutMaximum = 820d;
     private const double NarrowLayoutMaximum = 720d;
-    private const double DefaultComposerHeight = 112d;
-    private const double MinimumComposerHeight = 72d;
+    // The native resize handle and toolbar together consume 64 DIP. Keep a
+    // full 64 DIP editor row at the minimum so text never overflows the
+    // composer surface when the user drags it down or presses Home.
+    private const double DefaultComposerHeight = 128d;
+    private const double MinimumComposerHeight = 128d;
     private const double MaximumComposerHeight = 300d;
     private const int MessageItemConversationCacheLimit = 12;
 
@@ -2773,9 +2776,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                  !IsNavigationPending &&
                  !_session.HistoryState.IsLoading)
         {
-            var appendedCount = projectedMessages.Count(message =>
-                message.MessageId is { } messageId && messageId > previousNewest);
-            if (appendedCount > 0)
+            var appendedMessages = projectedMessages
+                .Where(message => message.MessageId is { } messageId && messageId > previousNewest)
+                .ToArray();
+            var incomingCount = appendedMessages.Count(message => !message.IsOwn);
+            if (incomingCount > 0)
             {
                 if (_isMessageViewportNearBottom)
                 {
@@ -2783,7 +2788,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 }
                 else
                 {
-                    NewMessageCount += appendedCount;
+                    NewMessageCount += incomingCount;
                 }
             }
         }
