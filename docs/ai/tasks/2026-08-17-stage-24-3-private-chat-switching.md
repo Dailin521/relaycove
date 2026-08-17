@@ -1,8 +1,8 @@
 # Stage 24.3 — 私信缓存切换与消息视口稳定性
 
-- Status: Main merge candidate; narrow regression tests passed, Full pending
+- Status: Full-validated merge commit `55a94d3`; ready for user-authorized integration to `main`
 - Starting point: `main@efcebfe` plus local commit `a7a0059`
-- External effects: no Realm, Live, deployment or push from this candidate
+- External effects: no Realm, Live or deployment; Git integration is user-authorized
 
 ## Scope
 
@@ -13,9 +13,9 @@
 
 ## Verification
 
-- App: 105/105 passed.
-- Core: 109/109 passed.
-- Fast/Full/Live and formal Windows Machine acceptance remain pending for this candidate.
+- Full passed: Debug and Release each Core 109/109, Zulip.Client 45/45, Data 23/23 and App 105/105 (282/282); Web typecheck, 86/86 unit tests, production build and both fake-HTTP Playwright runs passed.
+- ZIP SHA-256: `75B176F07531DAD9D1DEF1412B37778B1B876840ACA4862F663BE8FC586A0994`.
+- Live and formal Windows Machine acceptance remain pending for this candidate.
 
 ## Gates
 
