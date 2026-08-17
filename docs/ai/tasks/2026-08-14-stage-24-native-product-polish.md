@@ -1,9 +1,9 @@
 # Stage 24 — MAUI 产品化交互与状态一致性收口
 
-- Status: Stage 24.1 implemented locally; App Debug Rebuild passed with 0 warnings and 0 errors; no tests requested for this follow-up; awaiting user manual review
+- Status: Stage 24.1 cache-first/manual-incident follow-up implemented; App Debug Rebuild passed with 0 warnings and 0 errors; awaiting a fresh manual retest
 - Branch/worktree: `codex/stage-24-native-product-polish` under `E:\WorkSpace\RelayCove-Stage22MParity`
 - Baseline: `c694683`
-- External effects: no Realm access/write, commit, push, merge, deployment, tag or release
+- External effects: no Realm access/write; the initial Stage 24 delivery was merged through PR #1, while this follow-up remains unmerged and undeployed
 
 ## Scope
 
@@ -23,6 +23,9 @@ Excluded: Web changes, WebView, BFF/proxy/server work, authentication redesign, 
 - App scrolling now uses a conversation/generation/target/reason request with acknowledgement. The native view waits for ItemsSource, loaded handler, valid extent and a laid-out target container, retries on layout, verifies the bottom before acknowledgement, and arbitrates explicit bottom requests over generation-bound prepend anchors.
 - Message content uses Web-equivalent 18/20/16 insets, a separate 16-DIP scrollbar safety column, the Web 76%/690 and narrow 90% row caps, and no empty opposite-avatar slot. Layout updates refresh the actual 96-DIP bottom distance and preserve pagination anchors by message ID plus DIP offset unless real pointer/wheel/keyboard input takes control.
 - Sending now carries the conversation captured with the draft into `IClientSession`; `ClientSession` validates it inside the command gate before creating an outbox entry, so an attachment upload followed by navigation fails closed instead of sending the old draft to the new conversation.
+- The formal Web startup policy is now mirrored: restore selects the most recent DM first, otherwise the most active known topic. With no selectable conversation, the native chat retains the full header/message-empty/disabled-Composer skeleton instead of a blank white panel.
+- Core keeps an account/session-scoped LRU of at most 12 bounded conversation windows. Returning to an already visited DM swaps its in-memory window immediately while SQLite and newest-history reads revalidate in the background; cache clearing, logout and account reset also clear these memory windows.
+- Cross-conversation message projection now raises one collection Reset instead of exposing every Insert/Remove intermediate frame. Same-conversation refreshes reuse presentation-equivalent `MessageItem` rows, preventing avatar/media controls and message containers from being recreated when the authoritative page is unchanged.
 
 - Core normalizes own messages as read before any reducer/cache path. Latest activation owns a generation and cancellation source, keeps current content visible, requests 50 newest messages even for the same conversation, and marks only the still-current displayed unread range.
 - Automatic mark-read failure no longer turns a successful latest page into `offline/history_failed`. Unauthorized remains fail-closed; ordinary gateway failure keeps unread state; local read-flag cache failure reports a separate fault.
@@ -47,9 +50,19 @@ Excluded: Web changes, WebView, BFF/proxy/server work, authentication redesign, 
 - App/UI review covered pointer capture, 96-DIP threshold, paging anchor behavior, repeated activation, filtering, summary/avatar stability, empty-channel topic flow, 820 layout and continuous preferences; no remaining confirmed P0/P1.
 - Protocol/session/Data review found and closed two P1 classes: mark-read errors contaminating a successful history load, and window-external message moves/deletes leaving topic projection stale. Both have deterministic regressions; final review found no remaining confirmed P0/P1.
 
+## Manual incident follow-up — 2026-08-14
+
+- Manual Windows testing found three release-blocking behaviors: the restored shell initially showed a blank chat surface instead of Web's automatic initial conversation/empty skeleton; DM activation visibly refreshed, scrolled and flashed; repeated A/B DM activation reloaded cache/network work instead of returning from an in-memory window.
+- A rapid DM-switch run entered a confirmed UI busy loop in `RelayCove.App` PID 54392. Windows reported `Responding=False`; a two-second sample consumed 1.46875 CPU seconds, thread count was 154–155, and working set grew from about 638 MiB to 741 MiB and later 1,254,408,192 bytes.
+- The direct infinite-loop trigger was scroll acknowledgement requiring the whole target container to fit inside the viewport. A tall final message can never satisfy that condition, so `ScrollTo(End)` and `LayoutUpdated` continuously retriggered each other. Verification now requires target/viewport intersection plus <=2 DIP bottom distance, with 12-attempt bursts that suspend until extent/viewport/offset actually changes.
+- State-change projection amplified the incident: every cache/history snapshot was queued independently on the UI dispatcher, canceled navigation still performed a synchronous full projection, and selection history was not linked to the navigation token. Projection is now latest-only/coalesced, canceled paths do not synchronously repaint, and superseded history is canceled at the Core request.
+- The first rebuild attempt during the incident failed only because the still-running PID 54392 and its Visual Studio debugging session locked the output DLLs (`MSB3061`, `MSB3026`, `MSB3027`, `MSB3021`; 89 warnings/6 errors). After explicit user confirmation the app process was terminated, without closing Visual Studio. Subsequent exact App Debug Rebuilds passed with 0 warnings and 0 errors; the final cache-first build completed in 7.34 seconds.
+- No automated tests, Fast, Full, Live, Realm access, preview or PrintWindow run was performed for this manual follow-up. The final cache-first behavior has not yet received a fresh user manual pass.
+
 ## Still unverified
 
 - Formal `Windows Machine` manual checks for DM red dots, same-row newest refresh, avatar stability, Composer drag and multi-topic/empty-channel behavior.
+- Fresh startup automatic selection/empty skeleton, rapid A/B DM switching without blank frames, single-snap bottom placement, unchanged-row stability and instant return from the 12-window in-memory cache.
 - Real viewport anchor error <=2 DIP under image resizing/edit/reaction and the 200-page long-list scenario.
 - Fast, Full, Live, screenshot matrix, Release/XamlC, package hash/install, 100%/200%, high contrast and clean Windows 11 VM.
 - Final MAUI UI password login. Stage 21 must remain open until that and the clean-VM gate pass.

@@ -6,8 +6,7 @@
              xmlns:windowsBehaviors="clr-namespace:RelayCove.App.Platforms.Windows.Behaviors"
              x:Class="RelayCove.App.Controls.ComposerView"
              x:Name="Root"
-             x:DataType="viewModels:ShellViewModel"
-             IsVisible="{Binding IsConversationContentVisible}">
+             x:DataType="viewModels:ShellViewModel">
     <Border Margin="15,0,15,14"
             HeightRequest="{Binding ComposerHeight}"
             Background="{StaticResource SurfaceSoftBrush}"

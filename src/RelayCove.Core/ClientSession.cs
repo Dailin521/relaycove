@@ -11,6 +11,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
     private static readonly TimeSpan ServerRestartRecoveryWindow = TimeSpan.FromMinutes(5);
     private const int HistoryPageSize = 50;
     private const int MessageWindowLimit = 250;
+    private const int HistoryMemoryCacheLimit = 12;
 
     private readonly IZulipGateway _gateway;
     private readonly IAccountStore _store;
@@ -27,6 +28,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
     private readonly ConcurrentDictionary<long, SemaphoreSlim> _channelUnsubscribeLanes = new();
     private readonly ConcurrentDictionary<long, SemaphoreSlim> _channelPreferenceLanes = new();
     private readonly ConcurrentDictionary<long, SemaphoreSlim> _channelSubscribeLanes = new();
+    private readonly Dictionary<string, ChatMessage[]> _historyMemoryCache = new(StringComparer.Ordinal);
+    private readonly LinkedList<string> _historyMemoryLru = [];
     private IReadOnlyDictionary<long, ChannelSummary> _availableChannels = new Dictionary<long, ChannelSummary>();
     private CancellationTokenSource? _channelCatalogCancellation;
     private long _channelCatalogGeneration;
@@ -168,6 +171,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 _recentDirectMessages = MergeRecentDirectMessages(
                     cached?.RecentDirectMessages ?? [],
                     DeriveRecentDirectMessages(_state));
+                SeedHistoryMemoryCacheLocked(_state.Messages.Values);
             }
             RaiseStateChanged();
 
@@ -335,12 +339,20 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             lock (_stateGate)
             {
                 var accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+                CacheSelectedHistoryLocked();
                 priorHistoryCancellation = _historyCancellation;
                 var runToken = _runCancellation?.Token ?? _disposeCancellation.Token;
                 _historyCancellation = CancellationTokenSource.CreateLinkedTokenSource(
                     _disposeCancellation.Token,
-                    runToken);
+                    runToken,
+                    cancellationToken);
                 _selectedConversation = conversation;
+                _state = _state with
+                {
+                    Messages = TryGetHistoryMemoryWindowLocked(conversation, out var memoryWindow)
+                        ? memoryWindow.ToDictionary(message => message.Id)
+                        : new Dictionary<long, ChatMessage>()
+                };
                 var generation = ++_historyGeneration;
                 _historyState = new ConversationHistoryState(conversation, generation, true, false, false, null, null);
                 _retainOldestWindow = false;
@@ -1202,6 +1214,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 var connection = _state.Connection;
                 _state = ClientState.Empty with { Connection = connection };
                 _recentDirectMessages = [];
+                _historyMemoryCache.Clear();
+                _historyMemoryLru.Clear();
             }
             RaiseStateChanged();
             if (credentials is null) return;
@@ -1920,6 +1934,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             var next = DomainReducer.Apply(_state, ToHistoryEvents(messages));
             _recentDirectMessages = MergeRecentDirectMessages(_recentDirectMessages, DeriveRecentDirectMessages(next));
             _state = TrimMessageWindow(next, conversation, retainOldest);
+            CacheHistoryWindowLocked(conversation, _state.Messages.Values);
             _retainOldestWindow = retainOldest;
             changed = true;
         }
@@ -2347,6 +2362,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             _selectedConversation = null;
             InvalidateHistoryLocked(clearConversation: true);
             _recentDirectMessages = [];
+            _historyMemoryCache.Clear();
+            _historyMemoryLru.Clear();
             if (clearAccount) _accountId = null;
             _state = ClientState.Empty with { Connection = connection };
         }
@@ -2465,6 +2482,10 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 InvalidateHistoryLocked(clearConversation: true);
             }
             _state = TrimMessageWindow(next, _selectedConversation, _retainOldestWindow);
+            if (_selectedConversation is { } current)
+            {
+                CacheHistoryWindowLocked(current, _state.Messages.Values);
+            }
         }
         if (changed || publishWhenUnchanged) RaiseStateChanged();
     }
@@ -2525,6 +2546,61 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             return state;
         }
         return state with { Messages = selected.ToDictionary(message => message.Id) };
+    }
+
+    private void CacheSelectedHistoryLocked()
+    {
+        if (_selectedConversation is not { } selected) return;
+        CacheHistoryWindowLocked(selected, _state.Messages.Values);
+    }
+
+    private void SeedHistoryMemoryCacheLocked(IEnumerable<ChatMessage> messages)
+    {
+        _historyMemoryCache.Clear();
+        _historyMemoryLru.Clear();
+        foreach (var group in messages.GroupBy(message => message.Conversation.CanonicalKey, StringComparer.Ordinal))
+        {
+            CacheHistoryWindowLocked(group.First().Conversation, group);
+        }
+    }
+
+    private void CacheHistoryWindowLocked(ConversationKey conversation, IEnumerable<ChatMessage> messages)
+    {
+        var window = messages
+            .Where(message => message.Conversation == conversation)
+            .OrderBy(message => message.Id)
+            .TakeLast(MessageWindowLimit)
+            .ToArray();
+        if (window.Length == 0) return;
+
+        var key = conversation.CanonicalKey;
+        _historyMemoryCache[key] = window;
+        TouchHistoryMemoryWindowLocked(key);
+        while (_historyMemoryCache.Count > HistoryMemoryCacheLimit && _historyMemoryLru.First is { } oldest)
+        {
+            _historyMemoryLru.RemoveFirst();
+            _historyMemoryCache.Remove(oldest.Value);
+        }
+    }
+
+    private bool TryGetHistoryMemoryWindowLocked(ConversationKey conversation, out ChatMessage[] messages)
+    {
+        var key = conversation.CanonicalKey;
+        if (!_historyMemoryCache.TryGetValue(key, out var cached))
+        {
+            messages = [];
+            return false;
+        }
+        messages = cached;
+        TouchHistoryMemoryWindowLocked(key);
+        return true;
+    }
+
+    private void TouchHistoryMemoryWindowLocked(string key)
+    {
+        var existing = _historyMemoryLru.Find(key);
+        if (existing is not null) _historyMemoryLru.Remove(existing);
+        _historyMemoryLru.AddLast(key);
     }
 
     private static StoredAccount ToStoredAccount(CredentialEnvelope credentials)
