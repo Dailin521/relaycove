@@ -39,6 +39,7 @@ public interface IClientSession
     Task SubscribeToChannelAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException());
     Task SetSubscriptionPreferenceAsync(long channelId, SubscriptionPreference preference, bool value, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException());
     Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default);
+    Task MarkDisplayedReadAsync(ConversationKey expectedConversation, CancellationToken cancellationToken = default);
     Task ClearLocalCacheAsync(CancellationToken cancellationToken = default);
     Task StopAsync(CancellationToken cancellationToken = default);
 }

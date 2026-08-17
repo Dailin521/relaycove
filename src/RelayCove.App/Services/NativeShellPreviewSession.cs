@@ -298,6 +298,17 @@ internal sealed class NativeShellPreviewSession : IClientSession
     public Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default) =>
         Task.FromException(new InvalidOperationException("The native UI preview cannot change read state."));
 
+    public Task MarkDisplayedReadAsync(
+        ConversationKey expectedConversation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedConversation);
+        cancellationToken.ThrowIfCancellationRequested();
+        return expectedConversation == SelectedConversation
+            ? MarkDisplayedReadAsync(cancellationToken)
+            : Task.CompletedTask;
+    }
+
     public Task ClearLocalCacheAsync(CancellationToken cancellationToken = default) =>
         Task.FromException(new InvalidOperationException("The native UI preview has no cache to clear."));
 

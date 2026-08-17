@@ -4,10 +4,11 @@
 
 Before editing, read:
 
-1. `RelayCove_Zulip_MAUI_重建开发计划.md` — product, architecture, security and acceptance source of truth.
-2. `docs/ai/STATUS.md` — verified current state and open gates.
-3. `docs/ai/WORKFLOW.md` — execution and evidence rules.
-4. The active record under `docs/ai/tasks/`.
+1. `docs/ai/README.md` — current documentation map and active/historical task boundary.
+2. `RelayCove_Zulip_MAUI_重建开发计划.md` — product, architecture, security and acceptance source of truth.
+3. `docs/ai/STATUS.md` — verified current state and open gates.
+4. `docs/ai/WORKFLOW.md` — execution and evidence rules.
+5. Only the task explicitly marked active under `docs/ai/tasks/`; dated historical records are evidence, not current instructions.
 
 Repository evidence outranks official documentation; official Zulip 12.1/OpenAPI evidence outranks assumptions. Mark results as verified only after running the named command against the current tree.
 
@@ -45,6 +46,8 @@ pwsh ./scripts/verify.ps1 -Mode Full
 ```
 
 `Live` requires explicit isolated test credentials and write confirmation; missing configuration must fail closed. Never substitute a personal account or production channel.
+
+All five .NET test projects are xUnit projects discoverable by Visual Studio Test Explorer. Fast/Full run the four ordinary Core/Zulip.Client/Data/App projects; `RelayCove.Zulip.LiveTests` runs only in explicitly authorized Live mode.
 
 Inspect `git status` before and after work. Preserve unrelated user changes. Do not use destructive Git commands, force-push, push, tag, publish, alter the Zulip host, delete legacy local data or run external writes without explicit authorization.
 

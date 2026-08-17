@@ -2,7 +2,7 @@
 
 RelayCove 是一套直接连接既有 Zulip Realm 的双前端客户端：`RelayCove.Web` 是可独立部署的正式 Web 客户端，`RelayCove.App` 是 Windows-first 的原生 .NET MAUI 客户端。现有 Zulip 官方 Web 保留不动；RelayCove 不包含自研聊天服务端、代理、BFF 或第二套消息后端。
 
-当前 MAUI 版本为 `2.0.0-alpha.1`。Stage 22 拆分为先行的 `22W`（正式 Web）与后续 `22M`（MAUI 原生视觉/交互对齐）；两端共享视觉 Token、交互规格、功能矩阵和验收场景，但不共享 UI 运行时代码。
+当前 MAUI 版本为 `2.0.0-alpha.1`，仓库锁定 .NET SDK `10.0.400`、MAUI `10.0.20` 和 Windows `win-x64`。Stage 22/23/24 的已合并实现构成当前原生基线；两端共享视觉 Token、交互规格、功能矩阵和验收场景，但不共享 UI 运行时代码。
 
 ## 冻结范围
 
@@ -10,7 +10,8 @@ RelayCove 是一套直接连接既有 Zulip Realm 的双前端客户端：`Relay
 - 默认 Realm：`https://hklight.2000521.xyz`，登录页可编辑。
 - 兼容门禁：HTTPS、`zulip_feature_level >= 500`、`is_incompatible=false`、邮箱密码认证可用。
 - MVP：单账号、邮箱密码登录、频道/话题、单人/群组/自发私信、50 条历史分页、文本消息、已读/未读、实时事件、SQLite 缓存、断线恢复与队列重建。
-- 暂不包含：频道管理、附件、反应、主动编辑/删除、搜索、输入状态、在线状态、通知、推送、SSO、多账号、AI、自动更新、安装器和最终 UI。
+- 当前 MAUI 已包含附件、reaction、本人编辑/删除、收藏、服务器搜索/saved、已知用户新会话和普通用户频道自助能力。
+- 暂不包含：完整成员关系、`@` 候选、presence、管理员频道管理、通知、推送、SSO、多账号、AI、自动更新、安装器和最终 clean-VM 验收。
 
 来自其他 Zulip 客户端的消息编辑、移动和删除事件仍会被动处理，以保持本地缓存正确。
 
@@ -31,6 +32,8 @@ tests/
   RelayCove.Zulip.LiveTests/  显式启用、默认 fail-closed
 ```
 
+这五个目录都是 Visual Studio Test Explorer 可发现的 xUnit 测试工程。普通 Fast/Full 只运行前四个；`RelayCove.Zulip.LiveTests` 只能由显式授权的 `-Mode Live` 启动。
+
 MAUI 依赖方向固定为：`App -> Core/Data/Zulip.Client`，`Data -> Core`，`Zulip.Client -> Core`。Core 不引用 MAUI、SQLite 或 Zulip JSON DTO。Web 是独立浏览器工程，不引用 MAUI UI runtime 或把 fixture 混入正式 Zulip 数据层。
 
 ## 本地开发
@@ -47,7 +50,7 @@ cd ../..
 pwsh ./scripts/verify.ps1 -Mode Fast
 ```
 
-日常 Web UI 可直接双击仓库根目录的 `start-web-dev.cmd`，工具会启动本地 Vite 并打开 fixture。需要把大版本同步到服务器供人工验收时，双击 `deploy-web.cmd`；固定入口为 `https://hklight.2000521.xyz/relaycove-web/`。详细发布、回滚和一次性 Nginx provision 见 [`docs/deployment.md`](docs/deployment.md)。日常编辑不会自动上线。
+日常 Web UI 可直接双击仓库根目录的 `start-web-dev.cmd`，工具会启动本地 Vite 并打开正式登录入口；fixture 只用于显式自动化模式。需要把大版本同步到服务器供人工验收时，双击 `deploy-web.cmd`；固定入口为 `https://hklight.2000521.xyz/relaycove-web/`。详细发布、回滚和一次性 Nginx provision 见 [`docs/deployment.md`](docs/deployment.md)。日常编辑不会自动上线。
 
 完整本地验证与 Windows ZIP：
 
@@ -70,6 +73,7 @@ pwsh ./scripts/verify.ps1 -Mode Full
 
 ## 文档
 
+- [AI 文档索引与当前 active task](docs/ai/README.md)
 - [完整重建开发计划](RelayCove_Zulip_MAUI_重建开发计划.md)
 - [UI 文档与冻结基线](docs/ui/README.md)
 - [Chat UI 交互规格](docs/ui/INTERACTION_SPEC.md)

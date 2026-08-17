@@ -1,6 +1,6 @@
 # Stage 22 — RelayCove 双前端（22W Web / 22M Native MAUI）
 
-- Status: Stage 22W and earlier Stage 22M slices are integrated; the native parity-polish plus real-function baseline candidate is complete and uncommitted. Its exact tree passed Fast/Full and the isolated DAL/zhang Live suite passed 2/2; no push, merge or deployment has occurred.
+- Status: Historical — Stage 22W/22M and later parity work are integrated in current main; this file retains dated design, validation and Live evidence only.
 - Source branch/worktree: `codex/stage-22m-parity-polish` under `E:\WorkSpace\RelayCove-Stage22MParity`; the primary worktree remains untouched
 - Starting point: current parity-polish work starts from integrated `main@d67ff6f`
 - Design source: immutable `docs/ui/baselines/chat-ui-v1/`

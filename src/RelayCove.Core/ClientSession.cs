@@ -1137,14 +1137,32 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         finally { lane.Release(); }
     }
 
-    public async Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default)
+    public Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default) =>
+        MarkDisplayedReadCoreAsync(null, cancellationToken);
+
+    public Task MarkDisplayedReadAsync(
+        ConversationKey expectedConversation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedConversation);
+        return MarkDisplayedReadCoreAsync(expectedConversation, cancellationToken);
+    }
+
+    private async Task MarkDisplayedReadCoreAsync(
+        ConversationKey? expectedConversation,
+        CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
         await _commands.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            ConversationKey conversation;
+            lock (_stateGate)
+            {
+                conversation = _selectedConversation ?? throw new InvalidOperationException("No conversation is selected.");
+                if (expectedConversation is not null && conversation != expectedConversation) return;
+            }
             var credentials = GetConnectedCredentials();
-            var conversation = SelectedConversation ?? throw new InvalidOperationException("No conversation is selected.");
             var displayed = State.Messages.Values
                 .Where(message => message.Conversation == conversation)
                 .OrderByDescending(message => message.Id)

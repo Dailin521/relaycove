@@ -1,6 +1,6 @@
 # Stage 23 — MAUI 普通用户全功能收口
 
-- Status: candidate ready for user review; Slice 1 is fixed at `037bcf8`, Slice 2 at `8a9f07f`, and Slice 3 at `bba0cbb`; final Live and Full passed
+- Status: Historical — Slice commits and their final Live/Full evidence are integrated in current main; this file is not the active work order.
 - Branch/worktree: `codex/stage-23-native-functions` under `E:\WorkSpace\RelayCove-Stage22MParity`
 - Baseline: local commit `8d1a6e5` (`feat(maui): complete native parity and real Zulip flows`)
 - External writes: explicitly authorized isolated Stage 23 Live passed 3/3; no push, merge or deployment

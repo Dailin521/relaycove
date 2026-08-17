@@ -546,6 +546,38 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task SelectConversationAsync_WhenNewestHistoryMatchesCache_DoesNotPublishDuplicateMessageWindow()
+    {
+        var conversation = new ChannelTopic(1, "general");
+        var cachedMessages = Enumerable.Range(51, 50).Select(id => Message(id, conversation)).ToArray();
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(1, "General")])),
+            HistoryHandler = (_, _) => Task.FromResult(new HistoryResult(cachedMessages, false, true))
+        };
+        var store = new FakeAccountStore
+        {
+            QueryHandler = (_, _, _, _, _) => Task.FromResult<IReadOnlyList<ChatMessage>>(cachedMessages)
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var messageWindowStates = new HashSet<ClientState>(ReferenceEqualityComparer.Instance);
+        session.StateChanged += (_, eventArgs) =>
+        {
+            if (eventArgs.State.Messages.Count == cachedMessages.Length)
+            {
+                messageWindowStates.Add(eventArgs.State);
+            }
+        };
+
+        await session.SelectConversationAsync(conversation);
+
+        Assert.Single(messageWindowStates);
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task LoadOlderAsync_WhenCalledConcurrently_SharesOneRequestAndDeduplicatesOverlap()
     {
         var conversation = new ChannelTopic(1, "general");
@@ -1229,6 +1261,56 @@ public sealed class ClientSessionTests
         Assert.Equal(25, request.Limit);
         Assert.All(session.State.Messages.Values.Where(message => message.Id > 50), message => Assert.True(message.IsRead));
         Assert.All(session.State.Messages.Values.Where(message => message.Id <= 50), message => Assert.False(message.IsRead));
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task MarkDisplayedReadAsync_WhenExpectedConversationChanged_DoesNotMarkNewSelection()
+    {
+        var first = new DirectMessage([20]);
+        var second = new DirectMessage([30]);
+        var secondReload = new TaskCompletionSource<HistoryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondLoads = 0;
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register()),
+            HistoryHandler = (request, _) =>
+            {
+                if (request.Conversation == first)
+                {
+                    return Task.FromResult(new HistoryResult(
+                        [new ChatMessage(100, first, 20, "read", DateTimeOffset.UnixEpoch, isRead: true)],
+                        true,
+                        true));
+                }
+
+                secondLoads++;
+                return secondLoads == 1
+                    ? Task.FromResult(new HistoryResult(
+                        [new ChatMessage(200, second, 30, "unread", DateTimeOffset.UnixEpoch)],
+                        true,
+                        true))
+                    : secondReload.Task;
+            },
+            MarkReadHandler = (_, _) => Task.FromException(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(second);
+        await session.SelectConversationAsync(first);
+        gateway.MarkReadRequests.Clear();
+
+        var selectingSecond = session.SelectConversationAsync(second);
+        await WaitUntilAsync(() => gateway.HistoryRequests.Count == 3);
+        await session.MarkDisplayedReadAsync(first);
+
+        Assert.Empty(gateway.MarkReadRequests);
+        secondReload.SetResult(new HistoryResult(
+            [new ChatMessage(200, second, 30, "read", DateTimeOffset.UnixEpoch, isRead: true)],
+            true,
+            true));
+        await selectingSecond;
         await session.StopAsync();
     }
 

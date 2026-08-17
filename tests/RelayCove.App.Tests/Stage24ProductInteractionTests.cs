@@ -63,6 +63,30 @@ public sealed class Stage24ProductInteractionTests
     }
 
     [Fact]
+    public async Task ActivateDirectMessage_WhenSameConversationIsPending_CoalescesRepeatedClick()
+    {
+        var conversation = new DirectMessage([2]);
+        var selectionGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new TestSession
+        {
+            Recent = [conversation],
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile> { [2] = new UserProfile(2, "Dal", isActive: true) }),
+            SelectConversationGate = selectionGate.Task
+        };
+        using var viewModel = Create(session);
+        var item = Assert.Single(viewModel.DirectMessages);
+
+        viewModel.ActivateDirectMessage(item);
+        await WaitUntilAsync(() => session.SelectConversationCalls == 1);
+        viewModel.ActivateDirectMessage(item);
+
+        Assert.Equal(1, session.SelectConversationCalls);
+        selectionGate.SetResult();
+        await WaitUntilAsync(() => !viewModel.IsNavigationPending);
+    }
+
+    [Fact]
     public void RealmMediaService_WhenAccountChanges_UsesDifferentAvatarCacheScopes()
     {
         var first = AccountId.Create(RealmEndpoint.Parse("https://first.example.test"), 1);
@@ -74,6 +98,16 @@ public sealed class Stage24ProductInteractionTests
             RealmMediaService.CreateCacheKey(second, RealmMediaKind.Avatar, avatar));
     }
 
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!condition())
+        {
+            if (DateTime.UtcNow >= deadline) throw new TimeoutException("Condition was not reached.");
+            await Task.Delay(10);
+        }
+    }
+
     private static ShellViewModel Create(TestSession session, TestPreferences? preferences = null) => new(
         session, new TestLastRealmStore(), new TestDispatcher(), new TestAppearance(), preferences ?? new TestPreferences(),
         new TestInteractions(), new TestFiles(), new TestMedia(), new TestSave());
@@ -82,6 +116,7 @@ public sealed class Stage24ProductInteractionTests
     {
         public AccountId? Account { get; set; }
         public int SelectConversationCalls { get; private set; }
+        public Task? SelectConversationGate { get; set; }
         public int MediaCalls { get; private set; }
         public ClientState StateValue { get; set; } = ClientState.Empty;
         public ConversationKey? Selected { get; set; }
@@ -98,7 +133,13 @@ public sealed class Stage24ProductInteractionTests
         public Task<bool> RestoreAsync(CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task LoginAsync(string realm, string email, string password, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task LogoutAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task SelectConversationAsync(ConversationKey conversation, CancellationToken cancellationToken = default) { SelectConversationCalls++; Selected = conversation; StateChanged?.Invoke(this, new(StateValue)); return Task.CompletedTask; }
+        public Task SelectConversationAsync(ConversationKey conversation, CancellationToken cancellationToken = default)
+        {
+            SelectConversationCalls++;
+            Selected = conversation;
+            StateChanged?.Invoke(this, new(StateValue));
+            return SelectConversationGate ?? Task.CompletedTask;
+        }
         public Task LoadOlderAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<IReadOnlyList<TopicSummary>> LoadTopicsAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<TopicSummary>>([]);
         public Task SendAsync(string content, CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -110,6 +151,7 @@ public sealed class Stage24ProductInteractionTests
         public Task<RealmMediaResult> GetRealmMediaAsync(RealmMediaRequest request, CancellationToken cancellationToken = default) { MediaCalls++; return Task.FromResult(new RealmMediaResult([1], "image/png")); }
         public Task UnsubscribeChannelAsync(long channelId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task MarkDisplayedReadAsync(ConversationKey expectedConversation, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task ClearLocalCacheAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }

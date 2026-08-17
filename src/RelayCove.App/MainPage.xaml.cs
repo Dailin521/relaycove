@@ -11,6 +11,7 @@ public partial class MainPage : ContentPage
 {
     private readonly ShellViewModel _viewModel;
     private FrameworkElement? _platformRoot;
+    private Microsoft.Maui.Controls.Window? _activationWindow;
 
     public MainPage(ShellViewModel viewModel)
     {
@@ -39,6 +40,8 @@ public partial class MainPage : ContentPage
     protected override async void OnAppearing()
     {
         base.OnAppearing();
+        AttachWindowActivation();
+        _viewModel.SetWindowActive(true);
         UpdateViewport();
         await _viewModel.InitializeAsync();
 #if DEBUG
@@ -53,6 +56,36 @@ public partial class MainPage : ContentPage
         }
 #endif
     }
+
+    protected override void OnDisappearing()
+    {
+        _viewModel.SetWindowActive(false);
+        DetachWindowActivation();
+        base.OnDisappearing();
+    }
+
+    private void AttachWindowActivation()
+    {
+        var window = Window;
+        if (ReferenceEquals(_activationWindow, window)) return;
+        DetachWindowActivation();
+        _activationWindow = window;
+        if (_activationWindow is null) return;
+        _activationWindow.Activated += OnWindowActivated;
+        _activationWindow.Deactivated += OnWindowDeactivated;
+    }
+
+    private void DetachWindowActivation()
+    {
+        if (_activationWindow is null) return;
+        _activationWindow.Activated -= OnWindowActivated;
+        _activationWindow.Deactivated -= OnWindowDeactivated;
+        _activationWindow = null;
+    }
+
+    private void OnWindowActivated(object? sender, EventArgs eventArgs) => _viewModel.SetWindowActive(true);
+
+    private void OnWindowDeactivated(object? sender, EventArgs eventArgs) => _viewModel.SetWindowActive(false);
 
     protected override void OnHandlerChanged()
     {

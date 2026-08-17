@@ -1,7 +1,7 @@
 # RelayCove UI 开发工作流
 
 状态：Active
-最后更新：2026-08-12
+最后更新：2026-08-17
 
 后续 UI 工作固定采用：**先实现并验收正式 RelayCove.Web，再冻结版本化交互合同，最后由 RelayCove.App 原生复刻**。现有 Zulip 官方 Web 保留不动。这个顺序不会绕过产品范围、协议、安全、浏览器部署条件或真实 Windows 验收。
 
@@ -137,6 +137,8 @@
 
 - 使用 `ConversationKey`、message ID 和 user ID 做 keyed reconcile，避免每次 `Clear + Add` 导致选择、滚动和焦点丢失。
 - 未读数只从 Core `UnreadState` 投影；服务器确认成功前不乐观清零。
+- 当前会话的实时新消息只有在 Windows 窗口激活、聊天面板可见、无模态遮罩、history generation 仍匹配且原生列表确认到达底部后才自动标读；请求携带 expected conversation，切换会话后必须 fail closed。
+- Composer 的当前 Windows 产品规则是 Enter 发送、Ctrl+Enter 换行；Behavior 必须保护 IME 组合输入，并与可见提示和无障碍说明保持一致。
 - 草稿、输入区高度和详情开关属于 App/设备状态，不进入 Core 或 SQLite 业务表。
 - 频道管理按 capability 控制可见性和命令，提交时仍处理 403。
 - Web fixture 占位数据不自动映射成生产数据；成员关系、共同频道、presence、saved flags 或 capability 缺少契约时两端均隐藏/标为不可用。

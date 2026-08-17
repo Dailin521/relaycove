@@ -36,10 +36,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private readonly Dictionary<string, Dictionary<string, MessageItem>> _messageItemsByConversation = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _messageItemConversationLru = [];
     private readonly object _projectionGate = new();
+    private readonly object _autoMarkReadSync = new();
+    private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private readonly Dictionary<string, long> _autoMarkReadAttemptedThrough = new(StringComparer.Ordinal);
     private ClientState? _pendingProjectionState;
     private bool _projectionDispatchScheduled;
     private IReadOnlyList<SearchResultItem> _serverSearchResults = [];
     private CancellationTokenSource? _navigationCancellation;
+    private CancellationTokenSource? _autoMarkReadCancellation;
+    private string? _autoMarkReadAttemptKey;
+    private long _autoMarkReadMessageId;
     private long _navigationGeneration;
     private string? _navigationConversationKey;
     private bool _hasAuthoritativeTopics;
@@ -75,6 +81,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private long _lastAutomaticLoadOlderMilliseconds = long.MinValue;
     private int _automaticLoadOlderInFlight;
     private bool _isMessageViewportNearBottom = true;
+    private bool _isWindowActive;
+    private bool _autoMarkReadInFlight;
+    private bool _autoMarkReadPending;
     private int _initialized;
     private int _loginInFlight;
     private bool _suppressDraftTracking;
@@ -834,6 +843,19 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 #endif
     }
 
+    internal void SetWindowActive(bool isActive)
+    {
+        if (_disposed || _isWindowActive == isActive) return;
+        _isWindowActive = isActive;
+        if (!isActive)
+        {
+            CancelAutoMarkReadOperation(allowRetry: true);
+            return;
+        }
+
+        RequestAutoMarkDisplayedRead(_projectedState);
+    }
+
     [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
     private async Task LoginAsync(CancellationToken cancellationToken)
     {
@@ -971,11 +993,26 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         var isNearBottom = MessageViewportPolicy.IsNearBottom(bottomDistanceDip, lastVisibleItemIndex, Messages.Count);
         _isMessageViewportNearBottom = isNearBottom;
+        if (!isNearBottom)
+        {
+            CancelAutoMarkReadOperation(allowRetry: true);
+        }
         if (isNearBottom &&
             NewMessageCount > 0 &&
             PendingMessageScrollRequest?.Reason != MessageScrollReason.ManualJumpToLatest)
         {
             NewMessageCount = 0;
+        }
+        // A realtime-follow request is intentionally non-blocking for marking
+        // the active conversation as read. The viewport was already at the
+        // bottom when the event arrived, and WinUI's later programmatic-scroll
+        // acknowledgement is not a reliable prerequisite for server confirmation.
+        // Other pending requests still require acknowledgement.
+        if (isNearBottom &&
+            (PendingMessageScrollRequest is null ||
+             PendingMessageScrollRequest.Reason == MessageScrollReason.RealtimeFollow))
+        {
+            RequestAutoMarkDisplayedRead(_projectedState);
         }
     }
 
@@ -2140,6 +2177,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsSavedSection));
         OnPropertyChanged(nameof(IsSettingsSection));
         NotifyLayoutProperties();
+        RequestAutoMarkDisplayedRead(_projectedState);
     }
 
     partial void OnSelectedSettingsCategoryChanged(SettingsCategory value)
@@ -2161,9 +2199,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(InlineDetailsWidth));
         OnPropertyChanged(nameof(MessageRowMaximumWidth));
         OnPropertyChanged(nameof(DetailsButtonDescription));
+        RequestAutoMarkDisplayedRead(_projectedState);
     }
 
-    partial void OnIsConversationListVisibleOnNarrowChanged(bool value) => NotifyLayoutProperties();
+    partial void OnIsConversationListVisibleOnNarrowChanged(bool value)
+    {
+        NotifyLayoutProperties();
+        RequestAutoMarkDisplayedRead(_projectedState);
+    }
 
     partial void OnAppearanceModeChanged(AppAppearanceMode value)
     {
@@ -2460,6 +2503,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     private (long Generation, CancellationTokenSource Cancellation) BeginNavigation(string? conversationKey = null)
     {
+        CancelAutoMarkReadOperation(allowRetry: true);
         CancelNavigation();
         var cancellation = new CancellationTokenSource();
         _navigationCancellation = cancellation;
@@ -2758,6 +2802,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ProjectUnread(state.Unread);
         ProjectSearch();
         NotifyProjectionProperties();
+        RequestAutoMarkDisplayedRead(state);
     }
 
     private List<MessageItem> BuildMessageItems(ClientState state, ConversationKey? selected)
@@ -3426,6 +3471,155 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 : unread.Total > 0 ? unread.Total.ToString() : string.Empty;
     }
 
+    private void RequestAutoMarkDisplayedRead(ClientState state)
+    {
+        var selected = _session.SelectedConversation;
+        var history = _session.HistoryState;
+        if (_disposed || !_isWindowActive || IsNativePreview || selected is null ||
+            !IsMessagesSection || !IsChatPaneVisible || !IsConversationContentVisible ||
+            !IsMessageCollectionVisible || IsModalOverlayVisible || IsNavigationPending ||
+            !_isMessageViewportNearBottom ||
+            (PendingMessageScrollRequest is { Reason: not MessageScrollReason.RealtimeFollow }) ||
+            state.Connection.Status != RelayCove.Core.ConnectionStatus.Connected ||
+            history.IsLoading || history.Error is not null ||
+            !string.Equals(history.Conversation?.CanonicalKey, selected.CanonicalKey, StringComparison.Ordinal))
+        {
+            CancelAutoMarkReadOperation(allowRetry: true);
+            return;
+        }
+
+        if (!TryGetDisplayedUnreadMessage(state, selected, out var maxUnreadMessageId))
+        {
+            lock (_autoMarkReadSync)
+            {
+                _autoMarkReadPending = false;
+            }
+            return;
+        }
+
+        var accountKey = _session.AccountId?.Value ?? "anonymous";
+        var attemptKey = $"{accountKey}|{selected.CanonicalKey}";
+        CancellationTokenSource operation;
+        lock (_autoMarkReadSync)
+        {
+            if (_autoMarkReadInFlight)
+            {
+                _autoMarkReadPending = true;
+                if (!string.Equals(_autoMarkReadAttemptKey, attemptKey, StringComparison.Ordinal))
+                {
+                    RemoveCurrentAutoMarkAttemptForRetry();
+                    _autoMarkReadCancellation?.Cancel();
+                }
+                return;
+            }
+
+            if (_autoMarkReadAttemptedThrough.GetValueOrDefault(attemptKey) >= maxUnreadMessageId)
+            {
+                _autoMarkReadPending = false;
+                return;
+            }
+
+            operation = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token);
+            _autoMarkReadAttemptedThrough[attemptKey] = maxUnreadMessageId;
+            _autoMarkReadCancellation = operation;
+            _autoMarkReadAttemptKey = attemptKey;
+            _autoMarkReadMessageId = maxUnreadMessageId;
+            _autoMarkReadInFlight = true;
+            _autoMarkReadPending = false;
+        }
+
+        _ = AutoMarkDisplayedReadAsync(selected, attemptKey, maxUnreadMessageId, operation);
+    }
+
+    private bool TryGetDisplayedUnreadMessage(
+        ClientState state,
+        ConversationKey selected,
+        out long maxUnreadMessageId)
+    {
+        maxUnreadMessageId = state.Messages.Values
+            .Where(message => message.Conversation == selected)
+            .OrderByDescending(message => message.Id)
+            .Take(50)
+            .Where(message => !message.IsRead && message.SenderId != _session.CurrentUserId)
+            .Select(message => message.Id)
+            .DefaultIfEmpty()
+            .Max();
+        return maxUnreadMessageId > 0;
+    }
+
+    private async Task AutoMarkDisplayedReadAsync(
+        ConversationKey expectedConversation,
+        string attemptKey,
+        long maxUnreadMessageId,
+        CancellationTokenSource operation)
+    {
+        var allowRetry = false;
+        try
+        {
+            await _session.MarkDisplayedReadAsync(expectedConversation, operation.Token);
+            allowRetry = _session.SelectedConversation != expectedConversation;
+        }
+        catch (OperationCanceledException) when (operation.IsCancellationRequested)
+        {
+            allowRetry = true;
+        }
+        catch (Exception exception) when (exception is CredentialVaultException or GatewayException or InvalidOperationException)
+        {
+            // The authoritative unread state remains unchanged. Automatic reads
+            // are not retried for the same message without a new visibility event.
+        }
+        catch
+        {
+            // Keep unread state authoritative and leave explicit "mark read" available.
+        }
+        finally
+        {
+            bool shouldRecheck;
+            lock (_autoMarkReadSync)
+            {
+                if (allowRetry &&
+                    _autoMarkReadAttemptedThrough.GetValueOrDefault(attemptKey) == maxUnreadMessageId)
+                {
+                    _autoMarkReadAttemptedThrough.Remove(attemptKey);
+                }
+                if (ReferenceEquals(_autoMarkReadCancellation, operation))
+                {
+                    _autoMarkReadCancellation = null;
+                    _autoMarkReadAttemptKey = null;
+                    _autoMarkReadMessageId = 0;
+                }
+                _autoMarkReadInFlight = false;
+                shouldRecheck = _autoMarkReadPending;
+                _autoMarkReadPending = false;
+            }
+            operation.Dispose();
+
+            if (shouldRecheck && !_disposed)
+            {
+                _dispatcher.Dispatch(() => RequestAutoMarkDisplayedRead(_projectedState));
+            }
+        }
+    }
+
+    private void CancelAutoMarkReadOperation(bool allowRetry)
+    {
+        lock (_autoMarkReadSync)
+        {
+            _autoMarkReadPending = false;
+            if (allowRetry) RemoveCurrentAutoMarkAttemptForRetry();
+            _autoMarkReadCancellation?.Cancel();
+        }
+    }
+
+    private void RemoveCurrentAutoMarkAttemptForRetry()
+    {
+        if (_autoMarkReadAttemptKey is not { } attemptKey || _autoMarkReadMessageId <= 0) return;
+        if (_autoMarkReadAttemptedThrough.GetValueOrDefault(attemptKey) == _autoMarkReadMessageId)
+        {
+            _autoMarkReadAttemptedThrough.Remove(attemptKey);
+        }
+    }
+
     private void NotifyProjectionProperties()
     {
         OnPropertyChanged(nameof(HasSelectedConversation));
@@ -3588,6 +3782,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             NewMessageCount = 0;
         }
+        RequestAutoMarkDisplayedRead(_projectedState);
     }
 
     internal string? CurrentConversationKey => _session.SelectedConversation?.CanonicalKey;
@@ -3638,6 +3833,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(IsModalOverlayVisible));
         OnPropertyChanged(nameof(IsPrimaryShellEnabled));
+        RequestAutoMarkDisplayedRead(_projectedState);
     }
 
     private void ApplyUiPreferences(UiPreferences preferences)
@@ -4095,10 +4291,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             _pendingProjectionState = null;
             _projectionDispatchScheduled = false;
         }
+        CancelAutoMarkReadOperation(allowRetry: false);
+        _lifetimeCancellation.Cancel();
         CancelNavigation();
         CancelSearchInput();
         ClearNewConversationChoices();
         _session.StateChanged -= OnStateChanged;
         if (_session is IMessageMutationObserver observer) observer.MessageMutationObserved -= OnMessageMutationObserved;
+        _lifetimeCancellation.Dispose();
     }
 }
