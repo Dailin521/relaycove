@@ -33,4 +33,19 @@ public sealed class ComposerResizeAndViewportPolicyTests
         Assert.True(MessageViewportPolicy.IsNearBottom(null, lastVisibleItemIndex: 97, itemCount: 100));
         Assert.False(MessageViewportPolicy.IsNearBottom(null, lastVisibleItemIndex: 96, itemCount: 100));
     }
+
+    [Theory]
+    [InlineData(true, 1000d, 900d, true)]
+    [InlineData(true, 1000d, 998d, false)]
+    [InlineData(false, 1000d, 900d, false)]
+    public void ShouldMaintainLatest_WhenLayoutMovesPinnedViewport_OnlyCorrectsMeaningfulBottomGap(
+        bool isBottomPinned,
+        double scrollableHeight,
+        double verticalOffset,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            MessageViewportPolicy.ShouldMaintainLatest(isBottomPinned, scrollableHeight, verticalOffset));
+    }
 }
