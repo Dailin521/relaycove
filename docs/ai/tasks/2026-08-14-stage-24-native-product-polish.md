@@ -1,9 +1,9 @@
 # Stage 24 — MAUI 产品化交互与状态一致性收口
 
-- Status: Stage 24.1 cache-first/manual-incident follow-up implemented; App Debug Rebuild passed with 0 warnings and 0 errors; awaiting a fresh manual retest
+- Status: Historical — merged to `origin/main@67fcab4` through PR #2; retained as Stage 24/24.1 evidence, not an active instruction set
 - Branch/worktree: `codex/stage-24-native-product-polish` under `E:\WorkSpace\RelayCove-Stage22MParity`
 - Baseline: `c694683`
-- External effects: no Realm access/write; the initial Stage 24 delivery was merged through PR #1, while this follow-up remains unmerged and undeployed
+- External effects: no Realm access/write in this task; the initial delivery merged through PR #1 and this follow-up through PR #2
 
 ## Scope
 

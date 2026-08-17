@@ -1233,6 +1233,56 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task MarkDisplayedReadAsync_WhenExpectedConversationChanged_DoesNotMarkNewSelection()
+    {
+        var first = new DirectMessage([20]);
+        var second = new DirectMessage([30]);
+        var secondReload = new TaskCompletionSource<HistoryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondLoads = 0;
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register()),
+            HistoryHandler = (request, _) =>
+            {
+                if (request.Conversation == first)
+                {
+                    return Task.FromResult(new HistoryResult(
+                        [new ChatMessage(100, first, 20, "read", DateTimeOffset.UnixEpoch, isRead: true)],
+                        true,
+                        true));
+                }
+
+                secondLoads++;
+                return secondLoads == 1
+                    ? Task.FromResult(new HistoryResult(
+                        [new ChatMessage(200, second, 30, "unread", DateTimeOffset.UnixEpoch)],
+                        true,
+                        true))
+                    : secondReload.Task;
+            },
+            MarkReadHandler = (_, _) => Task.FromException(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(second);
+        await session.SelectConversationAsync(first);
+        gateway.MarkReadRequests.Clear();
+
+        var selectingSecond = session.SelectConversationAsync(second);
+        await WaitUntilAsync(() => gateway.HistoryRequests.Count == 3);
+        await session.MarkDisplayedReadAsync(first);
+
+        Assert.Empty(gateway.MarkReadRequests);
+        secondReload.SetResult(new HistoryResult(
+            [new ChatMessage(200, second, 30, "read", DateTimeOffset.UnixEpoch, isRead: true)],
+            true,
+            true));
+        await selectingSecond;
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task StopAsync_WhenCalledRepeatedly_CancelsLongPollAndSecondLoginIsRejected()
     {
         var gateway = new FakeGateway();

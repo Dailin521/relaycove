@@ -1,9 +1,18 @@
 # RelayCove Status — Stage 21 / 22W / 22M / 23 / 24
 
-Updated: 2026-08-14
-Branch: `codex/stage-24-native-product-polish` (isolated worktree `E:\WorkSpace\RelayCove-Stage22MParity`)
+Updated: 2026-08-17
+Branch: `codex/fix-native-unread-enter` (isolated worktree `E:\WorkSpace\RelayCove-UnreadEnter`)
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W/22M and Stage 23 remain preserved in history. The initial Stage 24 delivery was merged to `origin/main` through PR #1 (`537b1cd`); the cache-first/manual-incident follow-up is prepared on `codex/stage-24-native-product-polish` and remains unmerged and undeployed. It has not exercised the Realm. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun for Stage 24.
+Current delivery: Stage 22W/22M, Stage 23 and Stage 24/24.1 are preserved in `origin/main@67fcab4`; Stage 24 entered through PR #1 and the cache-first follow-up through PR #2. Stage 24.2 is a local, uncommitted follow-up from that exact main. It has not exercised the Realm. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+
+## Stage 24.2 current-visible unread and Composer keyboard — 2026-08-17
+
+- Current-visible realtime messages no longer clear unread optimistically. When the active, visible current conversation was already at the message-list bottom and its history generation succeeded, a realtime follow-scroll does not wait for a later WinUI acknowledgement before calling the existing `IClientSession` mark-read path. Manual jump and activation scroll requests still require acknowledgement.
+- Automatic mark-read captures the expected `ConversationKey`. `ClientSession` validates it after entering the command gate, so a queued request for conversation A cannot mark newly selected conversation B. Server failure/cancellation keeps authoritative unread state; Core publishes local read flags only after the server accepts the request.
+- Composer now sends on plain Enter and keeps Ctrl+Enter as a native multiline newline. Windows IME composition suppresses send; the XAML semantic description and visible hint match the new rule.
+- Toolchain is current: SDK `10.0.400`, MAUI `10.0.20`, `win-x64`. All .NET test projects remain Visual Studio/xUnit projects; Fast/Full run the four ordinary projects, never LiveTests.
+- Narrow verification passed: Core 108/108 and App 104/104. Final `pwsh ./scripts/verify.ps1 -Mode Fast` and `pwsh ./scripts/verify.ps1 -Mode Full` passed with 0 build warnings/errors: Debug and Release each passed Core 108/108, Zulip.Client 45/45, Data 23/23 and App 104/104 (280/280); Web deployment-template checks, typecheck, 86/86 unit tests, production build and both fake-HTTP Playwright runs passed. Full generated `RelayCove-2.0.0-alpha.1-win-x64.zip` with SHA-256 `5154D7749C624C90BAC0FAEBF1D8F64530FA532C32D7F872F246AB34D4B25FC5`. LiveTests was compiled with the solution but not executed.
+- Independent read-only reviews of auto-read concurrency/session authority and Composer keyboard/IME behavior found no confirmed P0/P1. No real credentials, Realm, Live, formal Windows Machine interaction, deployment, push or merge were used.
 
 ## Stage 24 native product polish — current local evidence, 2026-08-14
 
@@ -164,7 +173,7 @@ These captures prove deterministic native composition and responsive/theme behav
 - Native ResourceDictionaries define shared color, brush, spacing, radius, typography and shell-size tokens for light/dark themes. The window uses the MAUI native `TitleBar`, a 1440×900 default, a 720×560 minimum and the Windows adapter for always-on-top state.
 - Component boundaries now cover the product bar, primary navigation, channel/topic/DM pane, chat header, virtualized `CollectionView` messages, multiline Composer, collapsible details, contacts and settings. Message presentation includes own/other alignment, date/unread dividers, quotes, avatars, reactions, image/file cards and outbox/mutation state.
 - Responsive projection has wide (`>=1200`), compact (`820–1199`) and narrow (`<=819`) modes. At 1024 DIP, details default closed and reopen as an overlay; narrow mode switches between the conversation list and chat.
-- Composer input is 72–300 DIP, preserves a draft per canonical conversation, uses `Ctrl+Enter` for send and normal Enter for newline, and preserves newer input or another conversation's draft while an earlier send is pending. Details `Escape` closes the overlay, Tab is contained in the modal scope and focus returns to the trigger.
+- The historical Stage 22M baseline used `Ctrl+Enter` for send and normal Enter for newline. Stage 24.2 supersedes that keyboard rule with Enter to send and Ctrl+Enter for newline; the 72–300 DIP range and per-conversation draft guarantees remain unchanged. Details `Escape` closes the overlay, Tab is contained in the modal scope and focus returns to the trigger.
 
 ### `IClientSession` wiring and interaction boundary
 

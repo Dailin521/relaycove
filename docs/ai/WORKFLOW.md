@@ -2,7 +2,7 @@
 
 ## 1. Orient
 
-Read the root plan, STATUS and active task. Run `git status --short`, confirm the expected branch, and identify unrelated user changes before editing. Stage 21 was authorized directly on local `main` as a one-time reset path; Stage 22W uses a `codex/` branch. Follow the current user authorization for each commit/push and external write.
+Read `docs/ai/README.md`, then the root plan, STATUS, WORKFLOW and only the task marked active. Dated Stage 22/23/24 task records are historical evidence after their merge and must not override current repository truth. Run `git status --short`, confirm the expected branch, and identify unrelated user changes before editing. Follow the current user authorization for each commit/push and external write.
 
 For UI work, also read `docs/ui/README.md`, the frozen baseline manifest, `docs/ui/INTERACTION_SPEC.md` and `docs/ui/DEVELOPMENT_WORKFLOW.md`.
 
@@ -56,7 +56,7 @@ The local DAL/zhang bootstrap is deliberately kept under ignored `artifacts/live
 
 For rapid native work, use App-only Debug build and the narrow affected tests. Do not run Fast for every XAML or small capability edit; run Fast at a coherent batch checkpoint and Full only before a delivery commit. Live is independent from Fast/Full and is rerun only when explicit real-write authorization remains in scope.
 
-For Stage 24 product-polish work, preserve the latest visible message page while refreshing and treat history, mark-read, avatar media and navigation summaries as separate state transitions. Repeated activation must reach the session refresh path; own messages never create unread UI; SQLite remains the only cache and Zulip remains authoritative. The current user instruction narrows development verification to App Debug plus affected fake tests; Fast/Full/Live resume only when explicitly requested for a delivery checkpoint.
+For Stage 24 product-polish work, preserve the latest visible message page while refreshing and treat history, mark-read, avatar media and navigation summaries as separate state transitions. Repeated activation must reach the session refresh path; own messages never create unread UI; current-visible realtime auto-read requires active-window/list visibility, a current successful history generation and a pre-event bottom position, but must not be blocked by a follow-scroll acknowledgement; SQLite remains the only cache and Zulip remains authoritative. Use narrow fake tests first, then run Fast at the requested coherent checkpoint. Live remains separate and needs explicit real-write authorization.
 
 Visual Studio exposes two distinct native launch profiles. `Windows Machine` is the formal real-login client and must not set `RELAYCOVE_NATIVE_UI_PREVIEW`; `RelayCove Native Preview` is the Debug-only in-memory/no-network scene profile. Use the latter for Hot Reload and visual work, and the former for final Realm acceptance.
 

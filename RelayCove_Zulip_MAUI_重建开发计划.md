@@ -1,10 +1,10 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M 已形成原生回滚基线；Stage 23 的普通用户能力与隔离 Live 已完成；Stage 24 正在本地收口 MAUI 未读、会话刷新、稳定导航、Composer 和频道/话题产品行为。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
+文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M、Stage 23、Stage 24/24.1 已合并为原生基线；Stage 24.2 正在修正实时可见消息标读与 Composer 键盘语义。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
-最后更新：2026-08-14
+最后更新：2026-08-17
 
 ## 1. 决策摘要
 
@@ -37,8 +37,8 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 |---|---|
 | 旧版回滚点 | `main` 原始 HEAD 为 `46c9f0e74068a29f4fb14180f426f1fbf30cef36`，标签 `v1.0.0-rc.25` 存在 |
 | 旧版 Fast 基线 | Shared 70、Server 353、Client 1272、Updater 38，共 1733/1733 测试通过 |
-| 本机 SDK | .NET SDK `10.0.101` |
-| MAUI workload | `maui-windows 10.0.1/10.0.100` 已安装 |
+| 历史初始 SDK | .NET SDK `10.0.101`（仅 Stage 21 初始 spike 记录） |
+| 当前锁定工具链 | `global.json` SDK `10.0.400`；workload set `10.0.400.1`；`maui-windows 10.0.20/10.0.100`；MAUI `10.0.20`；Windows `win-x64` |
 | 发布 spike | 仓库外最小 MAUI 应用可 unpackaged、自包含发布为 `win-x64` |
 | Windows SecureStorage | 当前开发机完成写入、跨启动读取和删除；文件内容未发现明文 sentinel |
 | SQLite native | WAL、事务和 `e_sqlite3.dll` 在 spike 发布目录中工作 |
@@ -371,9 +371,9 @@ Stage 23 从本地回滚基线 `8d1a6e5` 开始，不修改 Web、认证架构�
 
 ### Stage 24：MAUI 产品化交互与状态一致性
 
-Stage 24 在 `codex/stage-24-native-product-polish` 上以正式 Web 的已修行为和 Zulip 权威状态为准，不修改 Web、认证架构、服务端或直连模式。本批统一本人消息已读、重复激活会话刷新最新页、成功历史后的自动标读、SQLite 会话摘要、稳定头像/导航投影、Composer 原生指针拖动、真实 96 DIP 底部阈值、频道/话题选择与空频道新话题，以及连续字号/会话栏宽度偏好。实时删除/移动对窗口外消息只定向回查受影响摘要和话题，不扫描全库。
+Stage 24 已通过 PR #1/#2 合并到 `origin/main@67fcab4`，以正式 Web 的已修行为和 Zulip 权威状态为准，不修改 Web、认证架构、服务端或直连模式。本批统一本人消息已读、重复激活会话刷新最新页、成功历史后的自动标读、SQLite 会话摘要、稳定头像/导航投影、Composer 原生指针拖动、真实 96 DIP 底部阈值、频道/话题选择与空频道新话题，以及连续字号/会话栏宽度偏好。实时删除/移动对窗口外消息只定向回查受影响摘要和话题，不扫描全库。
 
-开发期按用户明确要求只运行 App Debug 编译和 Fake 定向测试；不运行 Fast、Full、自动 Live，也不进行真实 Realm 写入。当前代码通过 App Debug 0 warning/error，以及 Core 107/107、Zulip.Client 45/45、Data 23/23、App 98/98。独立 App/UI 与协议/会话/Data 复核的确认 P0/P1 已处理；正式 Windows Machine 人工验证、截图、100%/200%、长列表真实窗口、Full、安装包和 clean VM 仍未执行，因此 Stage 24 尚不是交付提交。
+Stage 24.1 的历史定向验证与复核记录保留在 dated task。Stage 24.2 在最新 main 上补齐：当前激活窗口、当前可见会话且消息列表在事件到达前已位于底部时，对实时他人新消息调用带 expected conversation 的标读；realtime follow-scroll 的后续 WinUI 确认不得阻塞该请求。只有服务器成功并由 Core 发布 flags 后才清未读。Composer 使用 Enter 发送、Ctrl+Enter 换行，IME 组合输入不发送。当前验证结果只写入 STATUS/active task，不复用历史计数。
 
 ### Stage 21 历史实施切片
 
@@ -418,7 +418,7 @@ Stage 24 在 `codex/stage-24-native-product-polish` 上以正式 Web 的已修�
 pwsh ./scripts/verify.ps1 -Mode Fast
 ```
 
-执行 .NET 格式/静态检查、Debug build、Core/Zulip/Data/App 单元测试，以及 Web typecheck、unit 和 production build。NuGet assets、npm 依赖和 Chromium 必须在单独 bootstrap 中显式预置；Fast 只走 `--no-restore` .NET 命令。Web 构建检查无运行时 CDN且不含开发 fixture。Fast 不得恢复/安装依赖、下载浏览器、连接外部网络、使用真实凭据或运行 LiveTests。
+执行 .NET 格式/静态检查、Debug build、四个普通 xUnit 工程（Core、Zulip.Client、Data、App），以及 Web typecheck、unit 和 production build。NuGet assets、npm 依赖和 Chromium 必须在单独 bootstrap 中显式预置；Fast 只走 `--no-restore` .NET 命令。Web 构建检查无运行时 CDN且不含开发 fixture。Fast 不得恢复/安装依赖、下载浏览器、连接外部网络、使用真实凭据或运行 `RelayCove.Zulip.LiveTests`。
 
 ### 11.2 Full
 
@@ -426,7 +426,7 @@ pwsh ./scripts/verify.ps1 -Mode Fast
 pwsh ./scripts/verify.ps1 -Mode Full
 ```
 
-执行 Fast、Release build、本地全部 .NET 测试、仅 MAUI app 项目 publish、ZIP 内容检查、icon/native runtime 检查和秘密扫描，并在 E2E 专用本地构建上运行 Web Playwright。Playwright 只访问 `127.0.0.1` 和被拦截的 fake HTTP；禁止对 solution 执行 `dotnet publish`。
+执行 Fast、Release build、同四个普通 xUnit 工程的 Release 测试、仅 MAUI app 项目 publish、ZIP 内容检查、icon/native runtime 检查和秘密扫描，并在 E2E 专用本地构建上运行 Web Playwright。`RelayCove.Zulip.LiveTests` 不属于 Full。Playwright 只访问 `127.0.0.1` 和被拦截的 fake HTTP；禁止对 solution 执行 `dotnet publish`。
 
 每个交付快照另执行 `dotnet list RelayCove.sln package --vulnerable --include-transitive` 并保存结果；任何已知漏洞都阻断交付。该检查依赖 NuGet 在线公告，不伪装成离线 Fast 门禁。
 

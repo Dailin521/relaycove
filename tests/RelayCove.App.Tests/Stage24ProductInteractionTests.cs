@@ -110,6 +110,7 @@ public sealed class Stage24ProductInteractionTests
         public Task<RealmMediaResult> GetRealmMediaAsync(RealmMediaRequest request, CancellationToken cancellationToken = default) { MediaCalls++; return Task.FromResult(new RealmMediaResult([1], "image/png")); }
         public Task UnsubscribeChannelAsync(long channelId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task MarkDisplayedReadAsync(ConversationKey expectedConversation, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task ClearLocalCacheAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }

@@ -188,6 +188,108 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task RealtimeMessage_WhenCurrentConversationWasAtBottom_MarksWithoutWaitingForScrollAcknowledgement()
+    {
+        var conversation = new DirectMessage([8]);
+        var initial = new ChatMessage(10, conversation, 8, "read", DateTimeOffset.UnixEpoch, isRead: true);
+        var markGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 1),
+            CurrentUserId = 1,
+            Selected = conversation,
+            Recent = [conversation],
+            HistoryState = new ConversationHistoryState(conversation, 1, false, true, false, 10, null),
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage> { [10] = initial },
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            MarkDisplayedReadAction = async (_, cancellationToken) => await markGate.Task.WaitAsync(cancellationToken)
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.AcknowledgeMessageScrollRequest(Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest));
+        viewModel.SetWindowActive(true);
+
+        var unread = new ChatMessage(11, conversation, 8, "new", DateTimeOffset.UnixEpoch.AddSeconds(1));
+        session.StateValue = session.StateValue with
+        {
+            Messages = new Dictionary<long, ChatMessage> { [10] = initial, [11] = unread },
+            Unread = new UnreadState(new Dictionary<string, int> { [conversation.CanonicalKey] = 1 }, 1)
+        };
+        session.Publish();
+
+        var followRequest = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(MessageScrollReason.RealtimeFollow, followRequest.Reason);
+        await WaitUntilAsync(() => session.ExpectedMarkReadConversations.Count == 1);
+
+        Assert.Equal(conversation, Assert.Single(session.ExpectedMarkReadConversations));
+        Assert.True(viewModel.Messages.Single(message => message.MessageId == 11).IsUnread);
+        Assert.True(Assert.Single(viewModel.DirectMessages).HasUnread);
+
+        viewModel.AcknowledgeMessageScrollRequest(followRequest);
+        Assert.Single(session.ExpectedMarkReadConversations);
+        Assert.True(viewModel.Messages.Single(message => message.MessageId == 11).IsUnread);
+        Assert.True(Assert.Single(viewModel.DirectMessages).HasUnread);
+
+        markGate.SetResult();
+        session.StateValue = session.StateValue with
+        {
+            Messages = new Dictionary<long, ChatMessage> { [10] = initial, [11] = unread with { IsRead = true } },
+            Unread = new UnreadState()
+        };
+        session.Publish();
+        await WaitUntilAsync(() => !viewModel.Messages.Single(message => message.MessageId == 11).IsUnread);
+
+        Assert.False(Assert.Single(viewModel.DirectMessages).HasUnread);
+        Assert.False(viewModel.HasNavigationUnread);
+    }
+
+    [Fact]
+    public async Task RealtimeMessage_WhenViewportIsAwayFromBottom_WaitsForManualJumpAcknowledgement()
+    {
+        var conversation = new DirectMessage([8]);
+        var initial = new ChatMessage(10, conversation, 8, "read", DateTimeOffset.UnixEpoch, isRead: true);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 1),
+            CurrentUserId = 1,
+            Selected = conversation,
+            Recent = [conversation],
+            HistoryState = new ConversationHistoryState(conversation, 1, false, true, false, 10, null),
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage> { [10] = initial },
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.AcknowledgeMessageScrollRequest(Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest));
+        viewModel.SetWindowActive(true);
+        viewModel.ReportMessageBottomDistance(200d);
+
+        session.StateValue = session.StateValue with
+        {
+            Messages = new Dictionary<long, ChatMessage>
+            {
+                [10] = initial,
+                [11] = new ChatMessage(11, conversation, 8, "new", DateTimeOffset.UnixEpoch.AddSeconds(1))
+            },
+            Unread = new UnreadState(new Dictionary<string, int> { [conversation.CanonicalKey] = 1 }, 1)
+        };
+        session.Publish();
+
+        Assert.Equal(1, viewModel.NewMessageCount);
+        Assert.Empty(session.ExpectedMarkReadConversations);
+
+        viewModel.ScrollToLatestCommand.Execute(null);
+        var jumpRequest = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(MessageScrollReason.ManualJumpToLatest, jumpRequest.Reason);
+        viewModel.AcknowledgeMessageScrollRequest(jumpRequest);
+        await WaitUntilAsync(() => session.ExpectedMarkReadConversations.Count == 1);
+
+        Assert.Equal(conversation, Assert.Single(session.ExpectedMarkReadConversations));
+    }
+
+    [Fact]
     public async Task ChannelUnsubscribe_WhenConfirmed_UsesSelectedChannelAndClosesDetails()
     {
         var channel = new ChannelTopic(4, "release");
@@ -250,7 +352,7 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public void SelectedChannel_WhenTopicLoadPublishesOldConversation_KeepsBrowsedChannelAndSelectsOnlyTopic()
+    public async Task ActivateChannel_WhenTopicLoadPublishesOldConversation_KeepsBrowsedChannelAndSelectsOnlyTopic()
     {
         var channelA = new ChannelTopic(4, "release");
         var topicB = new TopicSummary(5, "native-ui", 12);
@@ -277,7 +379,8 @@ public sealed class ShellViewModelTests
         };
         using var viewModel = CreateViewModel(session);
 
-        viewModel.SelectedChannel = viewModel.Channels.Single(item => item.ChannelId == 5);
+        viewModel.ActivateChannel(viewModel.Channels.Single(item => item.ChannelId == 5));
+        await WaitUntilAsync(() => session.Selected is ChannelTopic { ChannelId: 5 });
 
         Assert.Equal(5, Assert.IsType<ChannelItem>(viewModel.SelectedChannel).ChannelId);
         Assert.Equal("native-ui", Assert.Single(viewModel.Topics).Topic);
@@ -381,13 +484,13 @@ public sealed class ShellViewModelTests
         using var viewModel = CreateViewModel(new FakeSession());
 
         viewModel.UpdateViewport(1440);
-        Assert.Equal(740d, viewModel.MessageRowMaximumWidth, 3);
+        Assert.Equal(690d, viewModel.MessageRowMaximumWidth, 3);
 
         viewModel.UpdateViewport(1024);
-        Assert.Equal(516.64d, viewModel.MessageRowMaximumWidth, 2);
+        Assert.Equal(466.64d, viewModel.MessageRowMaximumWidth, 2);
 
         viewModel.UpdateViewport(640);
-        Assert.Equal(536d, viewModel.MessageRowMaximumWidth, 3);
+        Assert.Equal(486d, viewModel.MessageRowMaximumWidth, 3);
     }
 
     [Fact]
@@ -398,7 +501,7 @@ public sealed class ShellViewModelTests
 
         viewModel.IsDetailsOpen = true;
 
-        Assert.Equal(616.96d, viewModel.MessageRowMaximumWidth, 2);
+        Assert.Equal(566.96d, viewModel.MessageRowMaximumWidth, 2);
     }
 
     [Fact]
@@ -777,7 +880,7 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public async Task LoadOlder_WhenAutomaticLoadIsSuppressedByError_RemainsAvailableManually()
+    public async Task LoadOlder_WhenActivationHasError_ManualCommandStillWorksWhileInlineButtonIsHidden()
     {
         var conversation = new DirectMessage([8]);
         var session = new FakeSession
@@ -792,7 +895,7 @@ public sealed class ShellViewModelTests
         await ((IAsyncRelayCommand)viewModel.LoadOlderCommand).ExecuteAsync(null);
 
         Assert.Equal(1, session.LoadOlderCalls);
-        Assert.True(viewModel.ShowLoadOlderButton);
+        Assert.False(viewModel.ShowLoadOlderButton);
     }
 
     [Fact]
@@ -809,7 +912,7 @@ public sealed class ShellViewModelTests
             StateValue = new ClientState(messages: messages, connection: new ConnectionState(ConnectionStatus.Connected))
         };
         using var viewModel = CreateViewModel(session);
-        var initialScrollRequest = viewModel.ScrollToLatestRequest;
+        var initialScrollRequest = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
         await viewModel.ReportMessageViewportAsync(1, 1, 120, 1_000);
 
         session.StateValue = session.StateValue with
@@ -821,13 +924,19 @@ public sealed class ShellViewModelTests
         };
         session.Publish();
 
-        Assert.Equal(initialScrollRequest, viewModel.ScrollToLatestRequest);
+        Assert.Equal(initialScrollRequest, viewModel.PendingMessageScrollRequest);
         Assert.Equal(1, viewModel.NewMessageCount);
         Assert.True(viewModel.ShowNewMessagesButton);
 
         viewModel.ScrollToLatestCommand.Execute(null);
 
-        Assert.Equal(initialScrollRequest + 1, viewModel.ScrollToLatestRequest);
+        var manualJump = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.True(manualJump.Sequence > initialScrollRequest.Sequence);
+        Assert.Equal(MessageScrollReason.ManualJumpToLatest, manualJump.Reason);
+        Assert.Equal(1, viewModel.NewMessageCount);
+
+        viewModel.AcknowledgeMessageScrollRequest(manualJump);
+
         Assert.Equal(0, viewModel.NewMessageCount);
     }
 
@@ -1389,6 +1498,16 @@ public sealed class ShellViewModelTests
         Assert.Equal("取消置顶", viewModel.SelectedChannelPinLabel);
     }
 
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!condition())
+        {
+            if (DateTime.UtcNow >= deadline) throw new TimeoutException("Condition was not reached.");
+            await Task.Delay(10);
+        }
+    }
+
     private sealed class FakeSession : IClientSession
     {
         public ClientState StateValue { get; set; } = ClientState.Empty;
@@ -1405,10 +1524,12 @@ public sealed class ShellViewModelTests
         public Func<long?, int, CancellationToken, Task<MessageQueryPage>>? SavedMessagesAction { get; set; }
         public Func<string, long?, int, CancellationToken, Task<MessageQueryPage>>? SearchMessagesAction { get; set; }
         public Func<CancellationToken, Task<IReadOnlyList<ChannelSummary>>>? AvailableChannelsAction { get; set; }
+        public Func<ConversationKey, CancellationToken, Task>? MarkDisplayedReadAction { get; set; }
         public int LoginCalls { get; private set; }
         public List<string> SentContents { get; } = [];
         public int UploadCalls { get; private set; }
         public int LoadOlderCalls { get; private set; }
+        public List<ConversationKey> ExpectedMarkReadConversations { get; } = [];
 
         public AccountId? AccountId => Account;
         public RealmEndpoint? ActiveRealm { get; set; }
@@ -1433,6 +1554,18 @@ public sealed class ShellViewModelTests
         public Task SelectConversationAsync(ConversationKey conversation, CancellationToken cancellationToken = default)
         {
             Selected = conversation;
+            HistoryState = new ConversationHistoryState(
+                conversation,
+                HistoryState.Generation + 1,
+                false,
+                true,
+                false,
+                StateValue.Messages.Values
+                    .Where(message => message.Conversation == conversation)
+                    .Select(message => (long?)message.Id)
+                    .DefaultIfEmpty()
+                    .Min(),
+                null);
             return Task.CompletedTask;
         }
 
@@ -1470,6 +1603,11 @@ public sealed class ShellViewModelTests
         public Task UnsubscribeChannelAsync(long channelId, CancellationToken cancellationToken = default) =>
             UnsubscribeChannelAction?.Invoke(channelId, cancellationToken) ?? Task.CompletedTask;
         public Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task MarkDisplayedReadAsync(ConversationKey expectedConversation, CancellationToken cancellationToken = default)
+        {
+            ExpectedMarkReadConversations.Add(expectedConversation);
+            return MarkDisplayedReadAction?.Invoke(expectedConversation, cancellationToken) ?? Task.CompletedTask;
+        }
         public Task ClearLocalCacheAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
