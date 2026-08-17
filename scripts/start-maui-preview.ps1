@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('shell', 'details', 'composer-emoji', 'message-menu', 'reaction-picker', 'account-menu', 'settings', 'narrow-list', 'narrow-chat')]
+    [ValidateSet('shell', 'details', 'composer-emoji', 'message-menu', 'reaction-picker', 'account-menu', 'settings', 'narrow-list', 'narrow-chat', 'dm-cache-switch')]
     [string] $Scene = 'shell',
     [ValidateSet('light', 'dark', 'system')]
     [string] $Theme = 'light',

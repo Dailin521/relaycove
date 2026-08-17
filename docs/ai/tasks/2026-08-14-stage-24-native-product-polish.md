@@ -1,9 +1,9 @@
 # Stage 24 — MAUI 产品化交互与状态一致性收口
 
-- Status: Stage 24.1 cache-first/manual-incident follow-up implemented; App Debug Rebuild passed with 0 warnings and 0 errors; awaiting a fresh manual retest
-- Branch/worktree: `codex/stage-24-native-product-polish` under `E:\WorkSpace\RelayCove-Stage22MParity`
-- Baseline: `c694683`
-- External effects: no Realm access/write; the initial Stage 24 delivery was merged through PR #1, while this follow-up remains unmerged and undeployed
+- Status: Stage 24.2 private-chat switching, stable-row cache and native-bottom arbitration follow-up implemented locally; App Debug Rebuild passed with 0 warnings and 0 errors; awaiting a fresh manual retest
+- Branch/worktree: `codex/stage-24-2-private-chat-switching` under `E:\WorkSpace\RelayCove-Stage22MParity`
+- Baseline: `67fcab4`
+- External effects: no Realm access/write; Stage 24.1 was merged through PR #2, while this follow-up remains uncommitted, unpushed and undeployed
 
 ## Scope
 
@@ -17,6 +17,11 @@
 Excluded: Web changes, WebView, BFF/proxy/server work, authentication redesign, new Zulip APIs, administrator channel operations, presence, notifications, automatic Live writes, commit/push/deploy.
 
 ## Implemented
+
+- Stage 24.2 synchronously projects a hit from Core's bounded in-memory conversation window from the explicit DM click path, rather than waiting for the queued state projection. Equivalent SQLite/network pages no longer publish another message-state repaint; a second click on the same still-pending DM is coalesced, while A/B switching continues to cancel the superseded generation.
+- Activation scrolling now uses a cached target as soon as the selected generation exposes one. The activation intent remains alive during authoritative refresh, but a replacement bottom request is published only when the merge contributes a genuinely newer message ID.
+- Programmatic realization and native scrolling no longer feed automatic older-page loading or prepend-anchor sampling. Once the requested latest item is materialized, the Windows view moves the native ScrollViewer to its real bottom without animation and verifies the target/bottom relationship on later layout frames.
+- Direct-message rows are stable observable instances: selection, unread, preview and timestamp changes update in place instead of replacing the row and its avatar control. Message presentation rows use the same keyed in-place model and an App-side 12-conversation LRU, while avatar cache hits reuse the same in-memory `ImageSource`.
 
 - Stage 24.1 replaces the Composer Button resizer with a neutral 16-DIP native `ContentControl` handle. Windows routed pointer/key events use `AddHandler(..., handledEventsToo: true)`, stable `XamlRoot` coordinates and one capture-release path for release, cancel, capture loss, focus loss, window deactivation and unload.
 - Channel/topic/direct rows now have one explicit tap path and stable-key `IsSelected` projection. Channel activation waits for authoritative topics, selects the run-local remembered topic or most active topic, and exposes a real empty-channel state without opening a modal. Pending/error/empty navigation hides old content and gates Composer.
@@ -37,6 +42,13 @@ Excluded: Web changes, WebView, BFF/proxy/server work, authentication redesign, 
 - Local conversation filtering covers channel/topic/direct rows. Same-row taps explicitly reactivate the conversation. Font size and conversation width persist continuous clamped values with legacy enum fallback; 820 DIP uses the intermediate native rail.
 
 ## Narrow verification
+
+- Stage 24.2 ran no automated tests, Fast, Full, Live, previews or PrintWindow. The exact App Debug Rebuild passed with 0 warnings and 0 errors in 13.07 seconds: `dotnet build src/RelayCove.App/RelayCove.App.csproj -c Debug --no-restore --nologo -t:Rebuild`.
+- The subsequent native-bottom arbitration Rebuild attempt did not complete: the still-running `RelayCove.App` PID 34276 and Visual Studio PID 13928 locked the App output, producing 89 warnings and 6 `MSB3027`/`MSB3021` copy errors after retry exhaustion. No process was terminated; rerun the exact command after stopping the app.
+- After the app was closed, the final stable-row/cache-first exact App Debug Rebuild passed with 0 warnings and 0 errors in 7.56 seconds.
+- A Debug-only, network-disabled `dm-cache-switch` preview now seeds 120 messages for Maya and 120 for Alex, then executes A -> B -> A through the production activation path. PrintWindow captured the tracked HWND on `DISPLAY2` with `InputAutomation: None`; 1440, 1024 and 640 DIP final states all showed message 120 at the bottom, including a tall multiline final row.
+- The first 1024-DIP capture exposed that a later viewport/extent reflow could invalidate an already-acknowledged bottom position. `MessageListView` now compares native layout metrics and follows the new bottom only when the prior real distance was <=96 DIP. Fixed 1024 and 640 captures keep the complete final row above Composer; two delayed 640 captures are pixel-identical. The tracked process remained responsive.
+- No automated tests, Fast, Full, Live, Realm access or input automation ran. After the visual fix, the exact App Debug Rebuild passed with 0 warnings and 0 errors in 7.07 seconds.
 
 - The previously recorded Stage 24 App/Core/Zulip.Client/Data fake results predate Stage 24.1 and were not rerun.
 - Per the user's expedited follow-up instruction, Stage 24.1 adds/runs no tests and does not run Fast, Full, Live, previews or PrintWindow.
@@ -62,7 +74,7 @@ Excluded: Web changes, WebView, BFF/proxy/server work, authentication redesign, 
 ## Still unverified
 
 - Formal `Windows Machine` manual checks for DM red dots, same-row newest refresh, avatar stability, Composer drag and multi-topic/empty-channel behavior.
-- Fresh startup automatic selection/empty skeleton, rapid A/B DM switching without blank frames, single-snap bottom placement, unchanged-row stability and instant return from the 12-window in-memory cache.
+- Fresh real-session startup automatic selection/empty skeleton, rapid user-driven A/B DM switching without blank frames, single-snap bottom placement, unchanged-row stability and real cache-hit latency from the 12-window in-memory cache. The deterministic Debug preview proves only its settled final state, not frame-by-frame transition smoothness.
 - Real viewport anchor error <=2 DIP under image resizing/edit/reaction and the 200-page long-list scenario.
 - Fast, Full, Live, screenshot matrix, Release/XamlC, package hash/install, 100%/200%, high contrast and clean Windows 11 VM.
 - Final MAUI UI password login. Stage 21 must remain open until that and the clean-VM gate pass.

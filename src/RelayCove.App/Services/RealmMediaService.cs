@@ -26,16 +26,15 @@ public sealed class RealmMediaService : IRealmMediaService, IDisposable
         if (kind == RealmMediaKind.File) throw new ArgumentOutOfRangeException(nameof(kind));
         var accountId = _session.AccountId ?? throw new InvalidOperationException("No account is active.");
         var key = CreateCacheKey(accountId, kind, sourceUrl);
-        if (TryGet(key, out var cached)) return ToImageSource(cached);
+        if (TryGet(key, out var cached)) return cached;
         await _reads.WaitAsync(cancellationToken);
         try
         {
-            if (TryGet(key, out cached)) return ToImageSource(cached);
+            if (TryGet(key, out cached)) return cached;
             var result = await _session.GetRealmMediaAsync(
                 new RealmMediaRequest(sourceUrl, kind, ImageLimitBytes),
                 cancellationToken);
-            Add(key, result.Content);
-            return ToImageSource(result.Content);
+            return Add(key, result.Content);
         }
         finally
         {
@@ -51,31 +50,32 @@ public sealed class RealmMediaService : IRealmMediaService, IDisposable
                 Math.Min(100L * 1024 * 1024, _session.MaxFileUploadBytes)),
             cancellationToken);
 
-    private bool TryGet(string key, out byte[] content)
+    private bool TryGet(string key, out ImageSource source)
     {
         lock (_gate)
         {
             if (_cache.TryGetValue(key, out var entry))
             {
                 entry.LastUsed = DateTimeOffset.UtcNow;
-                content = entry.Content;
+                source = entry.Source;
                 return true;
             }
         }
-        content = [];
+        source = null!;
         return false;
     }
 
-    private void Add(string key, byte[] content)
+    private ImageSource Add(string key, byte[] content)
     {
-        if (content.LongLength > CacheBudgetBytes) return;
+        var source = ToImageSource(content);
+        if (content.LongLength > CacheBudgetBytes) return source;
         lock (_gate)
         {
             if (_cache.TryGetValue(key, out var existing))
             {
                 _cacheBytes -= existing.Content.LongLength;
             }
-            _cache[key] = new CacheEntry(content, DateTimeOffset.UtcNow);
+            _cache[key] = new CacheEntry(content, source, DateTimeOffset.UtcNow);
             _cacheBytes += content.LongLength;
             while (_cacheBytes > CacheBudgetBytes && _cache.Count > 0)
             {
@@ -84,6 +84,7 @@ public sealed class RealmMediaService : IRealmMediaService, IDisposable
                 _cacheBytes -= oldest.Value.Content.LongLength;
             }
         }
+        return source;
     }
 
     private static ImageSource ToImageSource(byte[] content) =>
@@ -104,9 +105,10 @@ public sealed class RealmMediaService : IRealmMediaService, IDisposable
         _reads.Dispose();
     }
 
-    private sealed class CacheEntry(byte[] content, DateTimeOffset lastUsed)
+    private sealed class CacheEntry(byte[] content, ImageSource source, DateTimeOffset lastUsed)
     {
         public byte[] Content { get; } = content;
+        public ImageSource Source { get; } = source;
         public DateTimeOffset LastUsed { get; set; } = lastUsed;
     }
 }

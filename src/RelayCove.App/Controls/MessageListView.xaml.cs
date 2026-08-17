@@ -29,6 +29,9 @@ public partial class MessageListView : ContentView
     private double _stabilizedAnchorOffset;
     private bool _anchorRestoreScheduled;
     private double? _lastReportedBottomDistance;
+    private double _lastObservedExtentHeight;
+    private double _lastObservedViewportWidth;
+    private double _lastObservedViewportHeight;
     private MessageScrollRequest? _activeScrollRequest;
     private bool _scrollAttemptScheduled;
     private bool _finalScrollIssued;
@@ -94,6 +97,18 @@ public partial class MessageListView : ContentView
     private async void OnMessageCollectionScrolled(object? sender, ItemsViewScrolledEventArgs eventArgs)
     {
         if (_viewModel is null) return;
+
+        // CollectionView raises Scrolled while ScrollTo/ChangeView is realizing and
+        // positioning the requested item. Treating those intermediate positions as
+        // user viewport changes can start older-page loading and install a prepend
+        // anchor, which then fights the pending jump-to-latest request.
+        if (_activeScrollRequest is not null)
+        {
+            _lastReportedBottomDistance = GetBottomDistanceDip();
+            ScheduleMessageScroll();
+            return;
+        }
+
         long? visibleMessageId = null;
         var hasVisibleOffset = false;
         var visibleOffset = 0d;
@@ -413,8 +428,41 @@ public partial class MessageListView : ContentView
             return;
         }
 
+        MaintainBottomAfterLayoutMetricsChange();
         ReportLayoutBottomDistance();
         MaintainViewportAnchorAfterLayout();
+    }
+
+    private void MaintainBottomAfterLayoutMetricsChange()
+    {
+        if (_viewModel is null ||
+            MessageCollection.Handler?.PlatformView is not WinUiDependencyObject platformRoot ||
+            FindDescendant<WinUiScrollViewer>(platformRoot) is not { } scrollViewer)
+        {
+            return;
+        }
+
+        var hadMetrics = _lastObservedExtentHeight > 0d &&
+            _lastObservedViewportWidth > 0d &&
+            _lastObservedViewportHeight > 0d;
+        var metricsChanged = hadMetrics &&
+            (Math.Abs(scrollViewer.ExtentHeight - _lastObservedExtentHeight) > 0.5d ||
+             Math.Abs(scrollViewer.ViewportWidth - _lastObservedViewportWidth) > 0.5d ||
+             Math.Abs(scrollViewer.ViewportHeight - _lastObservedViewportHeight) > 0.5d);
+        var wasNearBottom = _lastReportedBottomDistance is <= MessageViewportPolicy.NearBottomDistanceDip;
+
+        _lastObservedExtentHeight = scrollViewer.ExtentHeight;
+        _lastObservedViewportWidth = scrollViewer.ViewportWidth;
+        _lastObservedViewportHeight = scrollViewer.ViewportHeight;
+        if (!metricsChanged || !wasNearBottom) return;
+
+        var bottomDistance = Math.Max(0d, scrollViewer.ScrollableHeight - scrollViewer.VerticalOffset);
+        if (bottomDistance <= 2d) return;
+        scrollViewer.ChangeView(
+            null,
+            scrollViewer.ScrollableHeight,
+            null,
+            disableAnimation: true);
     }
 
     private void ReportLayoutBottomDistance()
@@ -485,6 +533,8 @@ public partial class MessageListView : ContentView
         if (request is null) return;
         ClearPendingPrependAnchor();
         ClearStabilizedAnchor();
+        _firstVisibleMessageId = null;
+        _firstVisibleViewportOffset = 0d;
         _activeScrollRequest = request;
         ResetScrollRetryBudget();
         ScheduleMessageScroll();
@@ -547,28 +597,42 @@ public partial class MessageListView : ContentView
             return;
         }
 
+        if (IsScrollRequestSatisfied(container, scrollViewer))
+        {
+            _lastObservedExtentHeight = scrollViewer.ExtentHeight;
+            _lastObservedViewportWidth = scrollViewer.ViewportWidth;
+            _lastObservedViewportHeight = scrollViewer.ViewportHeight;
+            _viewModel.AcknowledgeMessageScrollRequest(request);
+            ClearActiveScrollRequest();
+            return;
+        }
+
         if (!_finalScrollIssued)
         {
             _finalScrollIssued = true;
             _scrollAttemptCount = 1;
-            MessageCollection.ScrollTo(index, position: ScrollToPosition.End, animate: false);
+            scrollViewer.ChangeView(
+                null,
+                scrollViewer.ScrollableHeight,
+                null,
+                disableAnimation: true);
+            ScheduleMessageScroll();
             return;
         }
 
-        if (!IsScrollRequestSatisfied(container, scrollViewer))
+        if (_scrollAttemptCount >= MaximumScrollAttemptsPerLayout)
         {
-            if (_scrollAttemptCount >= MaximumScrollAttemptsPerLayout)
-            {
-                SuspendScrollRetries(scrollViewer);
-                return;
-            }
-            _scrollAttemptCount++;
-            MessageCollection.ScrollTo(index, position: ScrollToPosition.End, animate: false);
+            SuspendScrollRetries(scrollViewer);
             return;
         }
 
-        _viewModel.AcknowledgeMessageScrollRequest(request);
-        ClearActiveScrollRequest();
+        _scrollAttemptCount++;
+        scrollViewer.ChangeView(
+            null,
+            scrollViewer.ScrollableHeight,
+            null,
+            disableAnimation: true);
+        ScheduleMessageScroll();
     }
 
     private void ResetScrollRetryBudget()

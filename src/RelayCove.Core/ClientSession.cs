@@ -1931,6 +1931,12 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         lock (_stateGate)
         {
             if (!IsHistoryCurrentLocked(conversation, generation)) return;
+            if (messages.All(message =>
+                    _state.Messages.TryGetValue(message.Id, out var existing) &&
+                    AreEquivalentHistoryMessages(existing, message)))
+            {
+                return;
+            }
             var next = DomainReducer.Apply(_state, ToHistoryEvents(messages));
             _recentDirectMessages = MergeRecentDirectMessages(_recentDirectMessages, DeriveRecentDirectMessages(next));
             _state = TrimMessageWindow(next, conversation, retainOldest);
@@ -1940,6 +1946,18 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         }
         if (changed) RaiseStateChanged();
     }
+
+    private static bool AreEquivalentHistoryMessages(ChatMessage left, ChatMessage right) =>
+        left.Id == right.Id &&
+        left.Conversation == right.Conversation &&
+        left.SenderId == right.SenderId &&
+        string.Equals(left.Content, right.Content, StringComparison.Ordinal) &&
+        left.Timestamp == right.Timestamp &&
+        left.IsRead == right.IsRead &&
+        string.Equals(left.SenderDisplayName, right.SenderDisplayName, StringComparison.Ordinal) &&
+        string.Equals(left.SenderAvatarUrl, right.SenderAvatarUrl, StringComparison.Ordinal) &&
+        left.IsStarred == right.IsStarred &&
+        left.Reactions.SequenceEqual(right.Reactions);
 
     private void SetHistoryStateIfCurrent(
         ConversationKey conversation,

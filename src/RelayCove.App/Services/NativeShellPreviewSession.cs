@@ -113,6 +113,11 @@ internal sealed class NativeShellPreviewSession : IClientSession
             connection: new ConnectionState(ConnectionStatus.Connected, "native_ui_preview"));
         _selectedConversation = uiDesign;
         _recentDirectMessages = [mayaDirect, alexDirect, danielDirect, sarahDirect, self];
+        if (string.Equals(RequestedScene, "dm-cache-switch", StringComparison.Ordinal))
+        {
+            SeedCacheSwitchConversation(mayaDirect, 9, "Maya Chen", 6000, today, "缓存会话 A");
+            SeedCacheSwitchConversation(alexDirect, 8, "Alex Wu", 7000, today, "缓存会话 B");
+        }
     }
 
     public static bool IsRequested =>
@@ -307,6 +312,36 @@ internal sealed class NativeShellPreviewSession : IClientSession
     }
 
     private void Publish() => StateChanged?.Invoke(this, new ClientStateChangedEventArgs(_state));
+
+    private void SeedCacheSwitchConversation(
+        ConversationKey conversation,
+        long otherUserId,
+        string otherUserName,
+        long idBase,
+        DateTime today,
+        string label)
+    {
+        var messages = new Dictionary<long, ChatMessage>(_state.Messages);
+        for (var index = 1; index <= 120; index++)
+        {
+            var isOwn = index % 2 == 0;
+            var senderId = isOwn ? CurrentUser : otherUserId;
+            var senderName = isOwn ? "林远" : otherUserName;
+            var messageId = idBase + index;
+            var content = index % 12 == 0
+                ? $"{label} · 第 {index} 条多行消息。\n切换回来必须直接复用本地窗口，不显示加载空白。\n最终一行用于确认高消息容器仍能稳定滚到底部。"
+                : $"{label} · 第 {index} 条消息，切换回来应直接复用本地窗口并保持最新消息可见。";
+            messages[messageId] = new ChatMessage(
+                messageId,
+                conversation,
+                senderId,
+                content,
+                AtLocalTime(today, 11, 0).AddMinutes(index),
+                isRead: true,
+                senderDisplayName: senderName);
+        }
+        _state = _state with { Messages = messages };
+    }
 
     private static DateTimeOffset AtLocalTime(DateTime date, int hour, int minute)
     {
