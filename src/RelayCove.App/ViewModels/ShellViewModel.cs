@@ -53,6 +53,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private string? _navigationConversationKey;
     private bool _hasAuthoritativeTopics;
     private string? _displayedConversationKey;
+    private string? _deferredInitialMessageProjectionConversationKey;
     private string? _pendingActivationScrollConversationKey;
     private long _pendingActivationScrollGeneration;
     private MessageScrollReason? _pendingActivationScrollReason;
@@ -1025,6 +1026,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         var content = ComposerText;
         var attachmentSnapshot = Attachments.ToArray();
         if (string.IsNullOrWhiteSpace(content) && attachmentSnapshot.Length == 0) return;
+        CancelActivationScrollForUserInteraction(conversation);
 
         var key = conversation.CanonicalKey;
         var version = _draftVersions.GetValueOrDefault(key);
@@ -1091,6 +1093,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 "\n",
                 new[] { content.TrimEnd() }.Where(value => value.Length > 0).Concat(uploadedMarkdown));
             await _session.SendAsync(conversation, sendContent, cancellationToken);
+            QueueScrollToLatest(MessageScrollReason.RealtimeFollow);
             if (_draftVersions.GetValueOrDefault(key) != version) return;
             var current = _drafts.GetValueOrDefault(key, string.Empty);
             if (!string.Equals(current, content, StringComparison.Ordinal)) return;
@@ -2506,6 +2509,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         CancelAutoMarkReadOperation(allowRetry: true);
         CancelNavigation();
+        // A completed activation belongs to the previous visit. Re-entering the
+        // same conversation must still position the newly realized native list
+        // at its latest message, even when the history generation and target ID
+        // are unchanged because the page came from memory/SQLite.
+        _lastActivationScrollConversationKey = null;
+        _lastActivationScrollGeneration = 0;
+        _lastActivationScrollTargetMessageId = 0;
         var cancellation = new CancellationTokenSource();
         _navigationCancellation = cancellation;
         var generation = ++_navigationGeneration;
@@ -2547,6 +2557,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IsNavigationPending = false;
         IsConversationLoading = false;
         NotifyConversationAvailability();
+        ProjectLatestStateImmediately();
     }
 
     private async Task<bool> ExecuteSessionActionAsync(Func<Task> action, string? failureMessage = null)
@@ -2744,13 +2755,45 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         var conversationChanged = !string.Equals(_projectedConversationKey, selectedKey, StringComparison.Ordinal);
         var previousNewestMessageId = conversationChanged ? null : _newestProjectedMessageId;
         var projectedMessages = BuildMessageItems(state, selected);
+        var deferInitialMessageProjection = conversationChanged &&
+            IsNavigationPending &&
+            selectedKey is not null;
+        if (deferInitialMessageProjection)
+        {
+            _deferredInitialMessageProjectionConversationKey = selectedKey;
+        }
+        else if (conversationChanged)
+        {
+            _deferredInitialMessageProjectionConversationKey = null;
+        }
+
+        var isDeferringInitialMessageProjection = IsNavigationPending &&
+            selectedKey is not null &&
+            string.Equals(
+                _deferredInitialMessageProjectionConversationKey,
+                selectedKey,
+                StringComparison.Ordinal);
+        var publishDeferredInitialMessageProjection = !isDeferringInitialMessageProjection &&
+            selectedKey is not null &&
+            string.Equals(
+                _deferredInitialMessageProjectionConversationKey,
+                selectedKey,
+                StringComparison.Ordinal);
         if (conversationChanged)
         {
-            _messages.ReplaceAll(projectedMessages);
+            _messages.ReplaceAll(isDeferringInitialMessageProjection ? [] : projectedMessages);
         }
-        else
+        else if (!isDeferringInitialMessageProjection)
         {
-            Reconcile(Messages, projectedMessages, item => item.Id);
+            if (publishDeferredInitialMessageProjection)
+            {
+                _messages.ReplaceAll(projectedMessages);
+                _deferredInitialMessageProjectionConversationKey = null;
+            }
+            else
+            {
+                Reconcile(Messages, projectedMessages, item => item.Id);
+            }
         }
 
         var newestMessageId = projectedMessages
@@ -3678,7 +3721,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         var selected = _session.SelectedConversation;
         var history = _session.HistoryState;
         if (selected is null ||
-            history.IsLoading ||
+            (history.IsLoading && reason != MessageScrollReason.RealtimeFollow) ||
             history.Error is not null ||
             !string.Equals(history.Conversation?.CanonicalKey, selected.CanonicalKey, StringComparison.Ordinal))
         {
@@ -3697,6 +3740,25 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             history.Generation,
             targetMessageId,
             reason);
+    }
+
+    private void CancelActivationScrollForUserInteraction(ConversationKey conversation)
+    {
+        if (string.Equals(_pendingActivationScrollConversationKey, conversation.CanonicalKey, StringComparison.Ordinal))
+        {
+            _pendingActivationScrollConversationKey = null;
+            _pendingActivationScrollReason = null;
+        }
+
+        if (PendingMessageScrollRequest is
+            {
+                ConversationKey: var requestConversationKey,
+                Reason: MessageScrollReason.ConversationActivated or MessageScrollReason.ConversationReactivated
+            } &&
+            string.Equals(requestConversationKey, conversation.CanonicalKey, StringComparison.Ordinal))
+        {
+            PendingMessageScrollRequest = null;
+        }
     }
 
     private void TryPublishPendingActivationScroll()
@@ -3747,7 +3809,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         // A memory/SQLite hit is already useful UI. Keep the activation intent
         // alive while the authoritative page revalidates, but only publish a
         // replacement request if that merge contributes a genuinely newer ID.
-        if (history.IsLoading) return;
+        if (history.IsLoading ||
+            targetMessageId <= 0 &&
+            string.Equals(
+                _deferredInitialMessageProjectionConversationKey,
+                conversationKey,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
         _pendingActivationScrollConversationKey = null;
         _pendingActivationScrollReason = null;
     }

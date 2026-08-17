@@ -1,9 +1,19 @@
 # RelayCove Status — Stage 21 / 22W / 22M / 23 / 24
 
 Updated: 2026-08-17
-Integration basis: `main@efcebfe` plus merge commit `55a94d3` for Stage 24.3 private-chat switching
+Integration basis: the `main` commit containing this file; parent `1712d36`
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W/22M, Stage 23 and Stage 24/24.1 are preserved in `origin/main@67fcab4`; Stage 24 entered through PR #1 and the cache-first follow-up through PR #2. Stage 24.2 is integrated into `main@4b8dd64`; Stage 24.3 is Full-validated on merge commit `55a94d3` plus its Release compile follow-up, based on `main@efcebfe`. It has not exercised the Realm. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+Current delivery: Stage 22W/22M, Stage 23 and Stage 24 through Stage 24.4 are preserved in `main`; Stage 24.5 adds real-window-verified activation-bottom stabilization on top of `1712d36`. Stage 24.5 used the formal non-preview client and the existing Realm session for navigation acceptance; it did not send or mutate a message, run LiveTests, deploy or close the remaining Stage 21 gates. Normal history/event reads ran, and the existing automatic mark-read path could submit viewed-message flags. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+
+## Stage 24.5 message activation and viewport stability — 2026-08-17
+
+- The real defect was reproduced in the formal non-preview Windows client on `DISPLAY2`. `fan` opened at the latest row, while repeated `zhang` activations stopped at 79.39%, 69.90% and 70.37% of the native scroll range. Manually reaching 100% did not help: leaving and re-entering the same cached conversation returned to the middle.
+- Two causes were separated. The ViewModel deduplicated activation scrolls only by conversation/history-generation/target, so a later visit to the same cached page could be mistaken for an already completed visit. Separately, WinUI virtualization could report the target at the current bottom before all row heights and the final extent had stabilized.
+- Every navigation visit now invalidates the previous activation-scroll identity. The native list positions activation requests with paced retries, requires two stable bottom measurements, and keeps the message collection transparent and non-interactive until positioning completes. `RealtimeFollow` remains a separate visible path so sending or realtime append does not re-enter the activation stabilization loop.
+- Formal-client acceptance after the fix: startup restored `fan` at 100%; four consecutive `fan → zhang → fan → zhang` switches all settled at 100% with each conversation's 17:44 message visible. After scrolling `zhang` to the top, allowing older-page loading, returning to the latest row and repeating the switches, both conversations again settled at 100%.
+- Deterministic verification: the three focused activation tests passed 3/3; the complete App xUnit project passed 113/113. The focused test run rebuilt the App successfully with no reported build warning/error. The user then confirmed the real result and authorized delivery.
+- Known boundary: if the viewport is forced to 100% while an older-page prepend is still changing the extent, the anchor-preservation pass may temporarily leave it at 97.54%. After the older load settles, one normal return to latest reaches 100%; subsequent cached switching is stable. This is pagination-anchor behavior, not an activation-scroll failure.
+- No `RelayCove.Web`, server, protocol, authentication, deployment or frozen baseline file changed. No Full, Live, package, clean-VM, 100%/200%, high-contrast or manual password-login gate was run or claimed for Stage 24.5.
 
 ## Stage 24.2 current-visible unread and Composer keyboard — 2026-08-17
 

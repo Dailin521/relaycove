@@ -60,7 +60,7 @@
                         ItemsSource="{Binding Messages}"
                         IsVisible="{Binding IsMessageCollectionVisible}"
                         SelectionMode="None"
-                        ItemsUpdatingScrollMode="KeepItemsInView"
+                        ItemsUpdatingScrollMode="KeepScrollOffset"
                         Scrolled="OnMessageCollectionScrolled">
             <CollectionView.Header>
                 <BoxView HeightRequest="18" Background="Transparent" InputTransparent="True" />

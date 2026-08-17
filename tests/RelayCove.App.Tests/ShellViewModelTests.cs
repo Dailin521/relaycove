@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using CommunityToolkit.Mvvm.Input;
 using RelayCove.App.Services;
 using RelayCove.App.ViewModels;
@@ -276,6 +277,231 @@ public sealed class ShellViewModelTests
 
         Assert.Null(viewModel.PendingMessageScrollRequest);
         Assert.Equal(0, viewModel.NewMessageCount);
+    }
+
+    [Fact]
+    public async Task SendCommand_WhenSameConversationConfirms_ScrollsToLatestWithoutResettingMessages()
+    {
+        var conversation = new DirectMessage([8]);
+        var existing = new ChatMessage(10, conversation, 8, "already here", DateTimeOffset.UnixEpoch, isRead: true);
+        var sent = new ChatMessage(11, conversation, 1, "sent", DateTimeOffset.UnixEpoch.AddSeconds(1), isRead: true);
+        var session = new FakeSession
+        {
+            CurrentUserId = 1,
+            Selected = conversation,
+            Recent = [conversation],
+            HistoryState = new ConversationHistoryState(conversation, 1, true, true, false, 10, null),
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage> { [10] = existing },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        session.SendAction = (_, _) =>
+        {
+            session.StateValue = session.StateValue with
+            {
+                Messages = new Dictionary<long, ChatMessage> { [10] = existing, [11] = sent }
+            };
+            session.Publish();
+            return Task.CompletedTask;
+        };
+        using var viewModel = CreateViewModel(session);
+        var firstRow = Assert.Single(viewModel.Messages);
+        var changes = new List<NotifyCollectionChangedAction>();
+        viewModel.Messages.CollectionChanged += (_, eventArgs) => changes.Add(eventArgs.Action);
+        Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        viewModel.ComposerText = "sent";
+
+        await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
+
+        var followRequest = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(MessageScrollReason.RealtimeFollow, followRequest.Reason);
+        Assert.Equal(11, followRequest.TargetMessageId);
+        Assert.DoesNotContain(NotifyCollectionChangedAction.Reset, changes);
+        Assert.Same(firstRow, viewModel.Messages[0]);
+        Assert.Collection(
+            viewModel.Messages,
+            message => Assert.Equal(10, message.MessageId),
+            message => Assert.Equal(11, message.MessageId));
+    }
+
+    [Fact]
+    public async Task ActivateDirectMessage_WhenNoMemoryWindow_DefersPartialPagesUntilLatestHistoryCompletes()
+    {
+        var first = new DirectMessage([8]);
+        var second = new DirectMessage([9]);
+        var firstMessage = new ChatMessage(10, first, 8, "first", DateTimeOffset.UnixEpoch, isRead: true);
+        var cachedSecondMessage = new ChatMessage(20, second, 9, "cached", DateTimeOffset.UnixEpoch.AddMinutes(1), isRead: true);
+        var latestSecondMessage = new ChatMessage(21, second, 9, "latest", DateTimeOffset.UnixEpoch.AddMinutes(2), isRead: true);
+        var selectionCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeSession
+        {
+            Selected = first,
+            Recent = [first, second],
+            HistoryState = new ConversationHistoryState(first, 1, false, true, false, 10, null),
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage> { [10] = firstMessage },
+                users: new Dictionary<long, UserProfile>
+                {
+                    [8] = new UserProfile(8, "Bea"),
+                    [9] = new UserProfile(9, "Chen")
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        session.SelectAction = (conversation, _) =>
+        {
+            session.Selected = conversation;
+            session.HistoryState = new ConversationHistoryState(conversation, 2, true, false, false, null, null);
+            session.StateValue = session.StateValue with { Messages = new Dictionary<long, ChatMessage>() };
+            session.Publish();
+            return selectionCompleted.Task;
+        };
+        using var viewModel = CreateViewModel(session);
+        var secondNavigation = Assert.Single(viewModel.DirectMessages, item => item.Conversation == second);
+
+        viewModel.ActivateDirectMessage(secondNavigation);
+        await WaitUntilAsync(() => viewModel.IsNavigationPending);
+        session.StateValue = session.StateValue with
+        {
+            Messages = new Dictionary<long, ChatMessage> { [20] = cachedSecondMessage }
+        };
+        session.Publish();
+
+        Assert.Empty(viewModel.Messages);
+
+        session.HistoryState = new ConversationHistoryState(second, 2, false, true, false, 20, null);
+        session.StateValue = session.StateValue with
+        {
+            Messages = new Dictionary<long, ChatMessage>
+            {
+                [20] = cachedSecondMessage,
+                [21] = latestSecondMessage
+            }
+        };
+        session.Publish();
+        selectionCompleted.SetResult();
+        await WaitUntilAsync(() => !viewModel.IsNavigationPending);
+
+        Assert.Collection(
+            viewModel.Messages,
+            message => Assert.Equal(20, message.MessageId),
+            message => Assert.Equal(21, message.MessageId));
+        var scrollRequest = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(MessageScrollReason.ConversationActivated, scrollRequest.Reason);
+        Assert.Equal(21, scrollRequest.TargetMessageId);
+    }
+
+    [Fact]
+    public async Task ActivateDirectMessage_WhenMemoryWindowIsAvailable_DefersItUntilLatestHistoryCompletes()
+    {
+        var first = new DirectMessage([8]);
+        var second = new DirectMessage([9]);
+        var firstMessage = new ChatMessage(10, first, 8, "first", DateTimeOffset.UnixEpoch, isRead: true);
+        var cachedSecondMessage = new ChatMessage(20, second, 9, "cached", DateTimeOffset.UnixEpoch.AddMinutes(1), isRead: true);
+        var selectionCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeSession
+        {
+            Selected = first,
+            Recent = [first, second],
+            HistoryState = new ConversationHistoryState(first, 1, false, true, false, 10, null),
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage> { [10] = firstMessage },
+                users: new Dictionary<long, UserProfile>
+                {
+                    [8] = new UserProfile(8, "Bea"),
+                    [9] = new UserProfile(9, "Chen")
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        session.SelectAction = (conversation, _) =>
+        {
+            session.Selected = conversation;
+            session.HistoryState = new ConversationHistoryState(conversation, 2, true, false, false, 20, null);
+            session.StateValue = session.StateValue with
+            {
+                Messages = new Dictionary<long, ChatMessage> { [20] = cachedSecondMessage }
+            };
+            session.Publish();
+            return selectionCompleted.Task;
+        };
+        using var viewModel = CreateViewModel(session);
+        var secondNavigation = Assert.Single(viewModel.DirectMessages, item => item.Conversation == second);
+
+        viewModel.ActivateDirectMessage(secondNavigation);
+        await WaitUntilAsync(() => viewModel.IsNavigationPending);
+
+        Assert.True(viewModel.IsNavigationPending);
+        Assert.Empty(viewModel.Messages);
+
+        session.HistoryState = new ConversationHistoryState(second, 2, false, true, false, 20, null);
+        selectionCompleted.SetResult();
+        await WaitUntilAsync(() => !viewModel.IsNavigationPending);
+
+        Assert.Equal(20, Assert.Single(viewModel.Messages).MessageId);
+        var scrollRequest = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(MessageScrollReason.ConversationActivated, scrollRequest.Reason);
+        Assert.Equal(20, scrollRequest.TargetMessageId);
+    }
+
+    [Fact]
+    public async Task ActivateDirectMessage_WhenReenteringSameCachedConversation_QueuesFreshLatestScroll()
+    {
+        var first = new DirectMessage([8]);
+        var second = new DirectMessage([9]);
+        var firstMessage = new ChatMessage(10, first, 8, "first", DateTimeOffset.UnixEpoch, isRead: true);
+        var secondMessage = new ChatMessage(20, second, 9, "latest", DateTimeOffset.UnixEpoch.AddMinutes(1), isRead: true);
+        var session = new FakeSession
+        {
+            Selected = first,
+            Recent = [first, second],
+            HistoryState = new ConversationHistoryState(first, 7, false, true, false, 10, null),
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage>
+                {
+                    [10] = firstMessage,
+                    [20] = secondMessage
+                },
+                users: new Dictionary<long, UserProfile>
+                {
+                    [8] = new UserProfile(8, "Bea"),
+                    [9] = new UserProfile(9, "Chen")
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        session.SelectAction = (conversation, _) =>
+        {
+            session.Selected = conversation;
+            session.HistoryState = new ConversationHistoryState(
+                conversation,
+                7,
+                false,
+                true,
+                false,
+                conversation == first ? 10 : 20,
+                null);
+            session.Publish();
+            return Task.CompletedTask;
+        };
+        using var viewModel = CreateViewModel(session);
+        var firstNavigation = Assert.Single(viewModel.DirectMessages, item => item.Conversation == first);
+        var secondNavigation = Assert.Single(viewModel.DirectMessages, item => item.Conversation == second);
+
+        viewModel.ActivateDirectMessage(secondNavigation);
+        await WaitUntilAsync(() => !viewModel.IsNavigationPending && viewModel.CurrentConversationKey == second.CanonicalKey);
+        var firstSecondRequest = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(20, firstSecondRequest.TargetMessageId);
+        viewModel.AcknowledgeMessageScrollRequest(firstSecondRequest);
+
+        viewModel.ActivateDirectMessage(firstNavigation);
+        await WaitUntilAsync(() => !viewModel.IsNavigationPending && viewModel.CurrentConversationKey == first.CanonicalKey);
+        viewModel.AcknowledgeMessageScrollRequest(Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest));
+
+        viewModel.ActivateDirectMessage(secondNavigation);
+        await WaitUntilAsync(() => !viewModel.IsNavigationPending && viewModel.CurrentConversationKey == second.CanonicalKey);
+
+        var reentryRequest = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.True(reentryRequest.Sequence > firstSecondRequest.Sequence);
+        Assert.Equal(MessageScrollReason.ConversationActivated, reentryRequest.Reason);
+        Assert.Equal(20, reentryRequest.TargetMessageId);
     }
 
     [Fact]
@@ -1585,6 +1811,7 @@ public sealed class ShellViewModelTests
         public AccountId? Account { get; set; }
         public Func<string, string, string, CancellationToken, Task>? LoginAction { get; set; }
         public Func<CancellationToken, Task>? LogoutAction { get; set; }
+        public Func<ConversationKey, CancellationToken, Task>? SelectAction { get; set; }
         public Func<string, CancellationToken, Task>? SendAction { get; set; }
         public Func<AttachmentUpload, CancellationToken, Task<UploadedAttachment>>? UploadAction { get; set; }
         public Func<long, CancellationToken, Task>? UnsubscribeChannelAction { get; set; }
@@ -1622,6 +1849,7 @@ public sealed class ShellViewModelTests
             LogoutAction?.Invoke(cancellationToken) ?? Task.CompletedTask;
         public Task SelectConversationAsync(ConversationKey conversation, CancellationToken cancellationToken = default)
         {
+            if (SelectAction is not null) return SelectAction(conversation, cancellationToken);
             Selected = conversation;
             HistoryState = new ConversationHistoryState(
                 conversation,

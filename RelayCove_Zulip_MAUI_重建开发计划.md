@@ -375,6 +375,8 @@ Stage 24 已通过 PR #1/#2 合并到 `origin/main@67fcab4`，以正式 Web 的�
 
 Stage 24.1 的历史定向验证与复核记录保留在 dated task。Stage 24.2 在最新 main 上补齐：当前激活窗口、当前可见会话且消息列表在事件到达前已位于底部时，对实时他人新消息调用带 expected conversation 的标读；realtime follow-scroll 的后续 WinUI 确认不得阻塞该请求。只有服务器成功并由 Core 发布 flags 后才清未读。Composer 使用 Enter 发送、Ctrl+Enter 换行，IME 组合输入不发送。当前验证结果只写入 STATUS/active task，不复用历史计数。
 
+Stage 24.5 继续收敛 MAUI 会话激活与虚拟列表：同一缓存会话每次进入都建立新的 latest-scroll 意图，不能用相同会话/generation/target 抑制后续访问；激活列表在目标容器实现且底部 extent 分时稳定后再显示。该路径与保持可见的 realtime/send follow-scroll、保护首个可见消息的 older-page prepend anchor 相互独立，禁止重新引入全局 `LayoutUpdated` 保底滚动。正式非预览客户端已在真实会话上完成首次加载、连续私信往返和分页后往返验证；结果与边界记录在 STATUS 和 `docs/ai/tasks/2026-08-17-stage-24-5-message-viewport-stability.md`。
+
 ### Stage 21 历史实施切片
 
 ### Slice A：删除与平台门禁

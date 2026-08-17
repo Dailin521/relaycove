@@ -145,6 +145,14 @@ dotnet test tests/RelayCove.App.Tests/RelayCove.App.Tests.csproj -c Debug --no-b
 - 不强求把 CSS 阴影逐值搬到 MAUI。WinUI 对 MAUI `Border.Shadow` 的扩散范围与 CSS 不等价，本项目实测会把局部 popover 阴影扩散成大面积灰层。出现这类平台失真时优先保留清晰描边、层级和安全边距，而不是继续堆半径/透明度。
 - 表情盘等浮层要同时检查内容测量和窗口边界：完整 6 列、右边框、底部最后一行均可见，且 `PopoverAnchorBehavior` 在根窗口保留边缘余量。不要依赖 WinUI `CollectionView` 的默认选择描边：它会在六列取整后的单元边界丢失右侧 1 个物理像素，而且仅给模板根增加 Padding 无法修复。当前实现关闭原生选择视觉，保留 ViewModel 键盘索引，并用 34×34 DIP、单元内居中且覆盖在按钮上层的 MAUI `Border` 绘制完整状态框；按钮本身为 30×30 DIP。在目标 150% DPI 下使用 2 DIP 描边会得到整数 3 物理像素，避免 1.5 DIP 描边的半像素抗锯齿看起来仍像裁边。验收图必须是无鼠标/键盘输入的固定场景，避免人为点击位置掩盖锚点问题。
 
+### 6.2 消息虚拟列表经验
+
+- Preview 的短文本和固定高度不能证明正式会话滚动正确。真实 raw Markdown、引用、reaction、附件和不同行高会改变 WinUI 虚拟列表 extent；首次加载和 A→B→A 必须在 formal non-preview 客户端复核。
+- `KeepScrollOffset` 只定义集合更新时的原生偏移策略，不代表切换会话后应该保留旧会话的绝对偏移。每次会话访问都需要新的 latest-scroll request。
+- 不要把“目标容器已实现”直接当作定位完成。至少分时确认目标可见、bottom distance 和 extent/viewport/offset 已稳定，再解除激活期间的视觉遮挡。
+- 不要恢复全局“只要之前靠近底部，任何 LayoutUpdated 都滚到底”的补丁。它会把发送、图片测量、Composer 布局变化和分页全部变成重复 `ChangeView`，表现为消息闪屏。
+- 自动化记录至少包含会话名、`VerticalScrollPercent`、首/末可见消息和最终截图。只看最终一帧无法发现 70%→100% 的中间跳动；只看百分比也不能证明最后一条消息确实可见。
+
 ## 7. 常见故障
 
 | 现象 | 主要原因 | 处理 |
@@ -158,6 +166,8 @@ dotnet test tests/RelayCove.App.Tests/RelayCove.App.Tests.csproj -c Debug --no-b
 | 编译失败后预览也消失 | 自动化先结束旧进程再 build | 顺序改为 build 成功后才替换旧预览 |
 | Debug build 成功但窗口在 HWND 创建前崩溃 | 从仓库根目录启动独立输出的 WinUI EXE | 用启动器固定 `WorkingDirectory` 为该 EXE 所在构建目录 |
 | 连续场景截图尺寸偶尔沿用主屏缩放 | HWND 尚未完成副屏 DPI 迁移或与启动定位计时器竞态 | 先无激活移动到副屏，等待启动计时器完成，再读取 DPI 和最终调整 DWM 边界 |
+| 缓存会话重新进入后随机停在中段 | 把上一次激活确认按会话/generation/target 永久去重，或在虚拟 extent 稳定前提前确认 | 每次访问重置激活身份；分时确认目标、底部和布局稳定后再显示列表 |
+| 发送后消息区反复闪动 | 用全局 LayoutUpdated 保底或让 RealtimeFollow 进入激活重试循环 | 分离激活、实时跟随和分页锚点；实时追加保持列表可见且不运行激活稳定循环 |
 
 ## 8. 交付记录
 
