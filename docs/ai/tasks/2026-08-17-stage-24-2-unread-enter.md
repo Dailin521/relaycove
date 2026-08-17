@@ -1,9 +1,9 @@
 # Stage 24.2 — 当前可见消息标读与 Composer Enter
 
-- Status: Active local implementation; narrow tests and Fast passed; independent reviews found no P0/P1
-- Branch/worktree: `codex/fix-native-unread-enter` under `E:\WorkSpace\RelayCove-UnreadEnter`
+- Status: Integrated into `main@4b8dd64`; narrow tests, Fast and Full passed; independent reviews found no P0/P1
+- Development branch/worktree: `codex/fix-native-unread-enter` under `E:\WorkSpace\RelayCove-UnreadEnter` (to be removed after integration cleanup)
 - Starting point: `origin/main@67fcab46cdd87d5a77eec98dc3970a7333d7c8a2`
-- External effects: none; no credentials, Realm, Live, push, merge or deployment
+- External effects: user-authorized Git commit/push/fast-forward merge to `main`; no credentials, Realm, Live or deployment
 
 ## Scope
 

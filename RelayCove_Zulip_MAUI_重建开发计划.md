@@ -1,6 +1,6 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M、Stage 23、Stage 24/24.1 已合并为原生基线；Stage 24.2 正在修正实时可见消息标读与 Composer 键盘语义。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
+文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M、Stage 23、Stage 24/24.1 已合并为原生基线；Stage 24.2 已修正实时可见消息标读与 Composer 键盘语义并整合到 `main@4b8dd64`。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`

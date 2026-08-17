@@ -1,9 +1,9 @@
 # RelayCove Status — Stage 21 / 22W / 22M / 23 / 24
 
 Updated: 2026-08-17
-Branch: `codex/fix-native-unread-enter` (isolated worktree `E:\WorkSpace\RelayCove-UnreadEnter`)
+Integration: `main@4b8dd64` (Stage 24.2 code integration)
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W/22M, Stage 23 and Stage 24/24.1 are preserved in `origin/main@67fcab4`; Stage 24 entered through PR #1 and the cache-first follow-up through PR #2. Stage 24.2 is a local, uncommitted follow-up from that exact main. It has not exercised the Realm. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+Current delivery: Stage 22W/22M, Stage 23 and Stage 24/24.1 are preserved in `origin/main@67fcab4`; Stage 24 entered through PR #1 and the cache-first follow-up through PR #2. Stage 24.2 is integrated into `main@4b8dd64` from that exact main. It has not exercised the Realm. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
 
 ## Stage 24.2 current-visible unread and Composer keyboard — 2026-08-17
 
@@ -12,7 +12,7 @@ Current delivery: Stage 22W/22M, Stage 23 and Stage 24/24.1 are preserved in `or
 - Composer now sends on plain Enter and keeps Ctrl+Enter as a native multiline newline. Windows IME composition suppresses send; the XAML semantic description and visible hint match the new rule.
 - Toolchain is current: SDK `10.0.400`, MAUI `10.0.20`, `win-x64`. All .NET test projects remain Visual Studio/xUnit projects; Fast/Full run the four ordinary projects, never LiveTests.
 - Narrow verification passed: Core 108/108 and App 104/104. Final `pwsh ./scripts/verify.ps1 -Mode Fast` and `pwsh ./scripts/verify.ps1 -Mode Full` passed with 0 build warnings/errors: Debug and Release each passed Core 108/108, Zulip.Client 45/45, Data 23/23 and App 104/104 (280/280); Web deployment-template checks, typecheck, 86/86 unit tests, production build and both fake-HTTP Playwright runs passed. Full generated `RelayCove-2.0.0-alpha.1-win-x64.zip` with SHA-256 `5154D7749C624C90BAC0FAEBF1D8F64530FA532C32D7F872F246AB34D4B25FC5`. LiveTests was compiled with the solution but not executed.
-- Independent read-only reviews of auto-read concurrency/session authority and Composer keyboard/IME behavior found no confirmed P0/P1. No real credentials, Realm, Live, formal Windows Machine interaction, deployment, push or merge were used.
+- Independent read-only reviews of auto-read concurrency/session authority and Composer keyboard/IME behavior found no confirmed P0/P1. The user-authorized Git commit/push/fast-forward merge completed; no real credentials, Realm, Live, formal Windows Machine interaction or deployment were used.
 
 ## Stage 24 native product polish — current local evidence, 2026-08-14
 
