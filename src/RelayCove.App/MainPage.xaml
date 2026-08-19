@@ -317,6 +317,7 @@
                                     <Picker ItemsSource="{Binding Channels}"
                                             ItemDisplayBinding="{Binding DisplayTitle}"
                                             SelectedItem="{Binding NewConversationChannel, Mode=TwoWay}"
+                                            IsEnabled="{Binding CanChooseNewConversationChannel}"
                                             Title="选择频道" />
                                     <Entry Grid.Column="1"
                                            Text="{Binding NewConversationTopic, Mode=TwoWay}"
@@ -658,6 +659,76 @@
                                 <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
                             </Button>
                             <Button x:Name="LastMessageMenuButton" Text="在 Zulip 中打开" ImageSource="icon_messages.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding OpenMessageInZulipCommand}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsChannelMenuOpen}">
+                    <BoxView BackgroundColor="Transparent">
+                        <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseChannelMenuCommand}" /></BoxView.GestureRecognizers>
+                    </BoxView>
+                    <Border Style="{StaticResource PopoverBorderStyle}"
+                            MinimumWidthRequest="0"
+                            WidthRequest="246"
+                            MaximumWidthRequest="246"
+                            HorizontalOptions="Start"
+                            VerticalOptions="Start"
+                            Margin="0">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="8" /></Border.StrokeShape>
+                        <Border.Behaviors>
+                            <windowsBehaviors:PopoverAnchorBehavior
+                                AnchorX="{Binding ViewModel.ChannelMenuAnchorX, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                AnchorY="{Binding ViewModel.ChannelMenuAnchorY, Source={x:Reference RootPage}, x:DataType=local:MainPage}" />
+                        </Border.Behaviors>
+                        <VerticalStackLayout Spacing="4">
+                            <Grid ColumnDefinitions="24,*" Margin="9,4,9,5">
+                                <Label Text="#" TextColor="{Binding ActiveChannelAction.ToneColor}" FontSize="21" FontAttributes="Bold"
+                                       VerticalTextAlignment="Center" HorizontalTextAlignment="Center" />
+                                <Label Grid.Column="1" Text="{Binding ActiveChannelAction.Name}"
+                                       Style="{StaticResource BaseLabelStyle}"
+                                       FontAttributes="Bold"
+                                       VerticalTextAlignment="Center"
+                                       LineBreakMode="TailTruncation" />
+                            </Grid>
+                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                            <Button x:Name="FirstChannelMenuButton" Text="{Binding ActiveChannelMarkReadLabel}" ImageSource="icon_bookmark.png" Style="{StaticResource PopoverMenuButtonStyle}"
+                                    Command="{Binding ExplainActiveChannelFeatureCommand}" CommandParameter="频道级标记已读/未读">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="前往频道订阅" ImageSource="icon_messages.png" Style="{StaticResource PopoverMenuButtonStyle}"
+                                    Command="{Binding ExplainActiveChannelFeatureCommand}" CommandParameter="频道订阅页面">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="前往话题列表" ImageSource="icon_messages.png" Style="{StaticResource PopoverMenuButtonStyle}"
+                                    Command="{Binding OpenActiveChannelTopicListCommand}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="将链接复制到频道" ImageSource="icon_copy.png" Style="{StaticResource PopoverMenuButtonStyle}"
+                                    Command="{Binding CopyActiveChannelLinkCommand}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                            <Button Text="频道设置" ImageSource="icon_settings.png" Style="{StaticResource PopoverMenuButtonStyle}"
+                                    Command="{Binding OpenActiveChannelSettingsCommand}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="{Binding ActiveChannelPinLabel}" ImageSource="icon_pin.png" Style="{StaticResource PopoverMenuButtonStyle}"
+                                    Command="{Binding ToggleActiveChannelPinnedCommand}" IsEnabled="{Binding CanManageActiveChannel}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="{Binding ActiveChannelMuteLabel}" ImageSource="icon_moon.png" Style="{StaticResource PopoverMenuButtonStyle}"
+                                    Command="{Binding ToggleActiveChannelMutedCommand}" IsEnabled="{Binding CanManageActiveChannel}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="退出频道" ImageSource="icon_close.png" Style="{StaticResource PopoverMenuButtonStyle}"
+                                    Command="{Binding RequestActiveChannelUnsubscribeCommand}" IsEnabled="{Binding CanManageActiveChannel}" TextColor="{StaticResource DangerColor}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                            <Button x:Name="LastChannelMenuButton" Text="修改颜色" ImageSource="icon_star.png" Style="{StaticResource PopoverMenuButtonStyle}"
+                                    Command="{Binding ExplainActiveChannelFeatureCommand}" CommandParameter="频道颜色修改">
                                 <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
                             </Button>
                         </VerticalStackLayout>

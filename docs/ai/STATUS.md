@@ -1,9 +1,18 @@
-# RelayCove Status — Stage 21 / 22W / 22M / 23 / 24.6
+# RelayCove Status — Stage 21 / 22W / 22M / 23 / 24.7
 
 Updated: 2026-08-19
-Integration basis: `main@2fc29a2`; Stage 24.6 changes are validated locally but not yet committed
+Integration basis: `main@2c85700`; Stage 24.7 is a local candidate awaiting user Visual Studio UI/interaction confirmation
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W/22M, Stage 23 and Stage 24 through Stage 24.5 are preserved in `main`. Stage 24.6 is a validated but uncommitted local `main@2fc29a2` candidate that replaces the Windows Composer caret implementation; its real-window evidence used only the Debug no-network preview on `DISPLAY2`. It did not contact a Realm, run LiveTests, deploy or close the remaining Stage 21 gates. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+Current delivery: Stage 22W/22M, Stage 23 and Stage 24 through Stage 24.6 are preserved in `main`; Stage 24.6 is `main@2c85700`. Stage 24.7 is a local `main` candidate that replaces the channel summary-card navigation with compact channel/topic rows. It has App-only deterministic evidence and awaits user Visual Studio confirmation; it did not contact a Realm, run LiveTests, deploy or close the remaining Stage 21 gates. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+
+## Stage 24.7 channel and topic tree navigation — 2026-08-19
+
+- The App channel rail now renders compact channel rows with a colored `#`, channel name, unread count and direct nested topics. It intentionally removes card-level recent summary and time from the displayed rail.
+- At most one channel is expanded per running App instance. First activation expands the channel and opens its remembered topic, otherwise its latest topic; another activation collapses only its topic rows and retains the active chat. Activating a DM collapses the expanded channel and cancels superseded navigation through the existing generation/cancellation path.
+- Channel row instances reconcile by channel ID so selection, expansion, hover and action-menu target survive ordinary state projection. Single-topic channels are shown in the expansion; the selected topic shows an explicit check/selected state.
+- Hovered, selected or menu-targeted rows show `+` and more controls. The row `+` opens the existing new-channel-topic dialog locked to that row's channel; it only opens a local draft conversation after the user supplies a topic and does not itself write to a Realm.
+- More opens an anchored, keyboard-operable channel menu for the row that supplied the button, not whichever chat happens to be active. The visual hierarchy now follows Zulip's official stream-actions template: title; read/unread, channel subscriptions, topic list and copy link; settings, pin/unpin, mute/unmute and exit; color. Topic list activates the target channel and copy link uses the local clipboard. Because channel-wide read-state mutation, the subscription-management page and subscription color are not implemented below App, their menu entries close with an explicit no-write unavailability message; no Realm request is made. Outside click or Escape closes the menu and returns focus to the trigger; exit retains the existing confirmation path.
+- Deterministic evidence: `dotnet build src/RelayCove.App/RelayCove.App.csproj -c Debug --no-restore --nologo` passed with 0 warnings/errors; complete `RelayCove.App.Tests` passed 140/140 with `-p:OutputPath=artifacts/local-test/stage24-7-channel-tree/`. User-authorized Debug-only offline preview ran on `DISPLAY2` at 1024×768 DIP / 150%: the final `13-topic-list-visible.png` confirms an expanded selected topic and `14-official-channel-menu-final.png` confirms the official menu hierarchy. It used only `NativeShellPreviewSession`, UI Automation InvokePattern (no mouse/keyboard injection), no Realm connection and no write. Fast, Full, Live, production-app/Visual-Studio manual operation, package and Realm writes were not run. User confirmation is still required before this candidate can be accepted or committed.
 
 ## Stage 24.6 Windows Composer sustained caret — 2026-08-19
 
@@ -11,7 +20,7 @@ Current delivery: Stage 22W/22M, Stage 23 and Stage 24 through Stage 24.5 are pr
 - The Composer uses a purpose-built MAUI `ComposerEditor` with a Windows `RichEditBox` handler, but keeps the document's `CaretType.Normal`. Windows owns caret position, geometry and blinking; the App does not draw a second caret, run a caret timer, or change global Windows caret/registry settings.
 - CRLF and selection offsets remain explicitly mapped between the MAUI string and RichEdit paragraph model. The native `RichEditBox` keeps existing IME, plain-Enter send, Ctrl+Enter newline, selection and focus behavior.
 - `DISPLAY2` validation at 150%, 1024×768 DIP / 1536×1152 pixels covered real mouse focus in an empty draft, Chinese text boundaries, selection replacement, multiline input, conversation switching, send-and-clear/refocus and three samples after five seconds. The native caret appeared with normal Windows geometry and samples were hidden→visible→hidden after the old timeout window. App xUnit passed 129/129.
-- Evidence is under `artifacts/maui/screenshots/stage24-6-composer-caret/`; the exact hashes and test procedure are recorded in the Stage 24.6 work log. Fast, Full, Live, real Realm access, package and clean-VM gates were not run. The candidate remains uncommitted and unpushed.
+- Evidence is under `artifacts/maui/screenshots/stage24-6-composer-caret/`; the exact hashes and test procedure are recorded in the Stage 24.6 work log. Fast, Full, Live, real Realm access, package and clean-VM gates were not run. The user confirmed the result, and the finalized implementation is committed and pushed as `main@2c85700`.
 
 ## Stage 24.5 message activation and viewport stability — 2026-08-17
 

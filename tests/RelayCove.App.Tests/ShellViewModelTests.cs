@@ -584,6 +584,297 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task ActivateChannel_WhenSingleTopicExists_ExpandsAndOpensThatTopic()
+    {
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [5] = new Subscription(5, "product-design") },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            LoadTopicsAction = (_, _) => Task.FromResult<IReadOnlyList<TopicSummary>>([new TopicSummary(5, "native-ui", 12)])
+        };
+        using var viewModel = CreateViewModel(session);
+        var channel = Assert.Single(viewModel.Channels);
+
+        viewModel.ActivateChannel(channel);
+        await WaitUntilAsync(() => session.SelectedConversation is ChannelTopic { ChannelId: 5, Topic: "native-ui" });
+
+        Assert.True(channel.IsExpanded);
+        Assert.True(viewModel.ShowTopicPicker);
+        Assert.Equal("native-ui", Assert.Single(viewModel.Topics).Topic);
+        Assert.Equal(72d, channel.TreeRowHeight);
+        Assert.Same(viewModel.Topics, channel.TreeTopics);
+    }
+
+    [Fact]
+    public async Task ActivateChannel_WhenNoTopicsExist_KeepsChannelExpandedWithoutChangingConversation()
+    {
+        var selected = new DirectMessage([8]);
+        var loaded = false;
+        var session = new FakeSession
+        {
+            Selected = selected,
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [5] = new Subscription(5, "product-design") },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            LoadTopicsAction = (_, _) =>
+            {
+                loaded = true;
+                return Task.FromResult<IReadOnlyList<TopicSummary>>([]);
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+        var channel = Assert.Single(viewModel.Channels);
+
+        viewModel.ActivateChannel(channel);
+        await WaitUntilAsync(() => loaded);
+
+        Assert.True(channel.IsExpanded);
+        Assert.Empty(viewModel.Topics);
+        Assert.Equal(selected, session.SelectedConversation);
+    }
+
+    [Fact]
+    public async Task ActivateTopic_WhenChannelHasMultipleTopics_KeepsItsChannelExpanded()
+    {
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [5] = new Subscription(5, "product-design") },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            LoadTopicsAction = (_, _) => Task.FromResult<IReadOnlyList<TopicSummary>>(
+            [
+                new TopicSummary(5, "design", 10),
+                new TopicSummary(5, "implementation", 12)
+            ])
+        };
+        using var viewModel = CreateViewModel(session);
+        var channel = Assert.Single(viewModel.Channels);
+        viewModel.ActivateChannel(channel);
+        await WaitUntilAsync(() => viewModel.Topics.Count == 2);
+        var topic = viewModel.Topics.Single(item => item.Topic == "design");
+
+        viewModel.ActivateTopic(topic);
+        await WaitUntilAsync(() => session.SelectedConversation is ChannelTopic { ChannelId: 5, Topic: "design" });
+
+        Assert.True(channel.IsExpanded);
+        Assert.Same(topic, viewModel.SelectedTopic);
+    }
+
+    [Fact]
+    public async Task ActivateChannel_WhenPreviousTopicLoadCompletesLate_DoesNotOverwriteNewChannel()
+    {
+        var firstLoad = new TaskCompletionSource<IReadOnlyList<TopicSummary>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription>
+                {
+                    [4] = new Subscription(4, "engineering"),
+                    [5] = new Subscription(5, "product-design")
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            LoadTopicsAction = (channelId, _) => channelId == 4
+                ? firstLoad.Task
+                : Task.FromResult<IReadOnlyList<TopicSummary>>([new TopicSummary(5, "native-ui", 12)])
+        };
+        using var viewModel = CreateViewModel(session);
+        var first = viewModel.Channels.Single(channel => channel.ChannelId == 4);
+        var second = viewModel.Channels.Single(channel => channel.ChannelId == 5);
+
+        viewModel.ActivateChannel(first);
+        viewModel.ActivateChannel(second);
+        await WaitUntilAsync(() => session.SelectedConversation is ChannelTopic { ChannelId: 5, Topic: "native-ui" });
+        firstLoad.SetResult([new TopicSummary(4, "late", 99)]);
+        await Task.Delay(30);
+
+        Assert.False(first.IsExpanded);
+        Assert.True(second.IsExpanded);
+        Assert.Equal(new ChannelTopic(5, "native-ui"), session.SelectedConversation);
+        Assert.Equal(5, Assert.Single(viewModel.Topics).ChannelId);
+    }
+
+    [Fact]
+    public async Task ActivateChannel_WhenExpandedAgain_CollapsesWithoutChangingCurrentConversation()
+    {
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [5] = new Subscription(5, "product-design") },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            LoadTopicsAction = (_, _) => Task.FromResult<IReadOnlyList<TopicSummary>>([new TopicSummary(5, "native-ui", 12)])
+        };
+        using var viewModel = CreateViewModel(session);
+        var channel = Assert.Single(viewModel.Channels);
+        viewModel.ActivateChannel(channel);
+        await WaitUntilAsync(() => session.SelectedConversation is ChannelTopic { ChannelId: 5, Topic: "native-ui" });
+        var selected = session.SelectedConversation;
+
+        viewModel.ActivateChannel(channel);
+
+        Assert.False(channel.IsExpanded);
+        Assert.False(viewModel.ShowTopicPicker);
+        Assert.Equal(38d, channel.TreeRowHeight);
+        Assert.Equal(selected, session.SelectedConversation);
+    }
+
+    [Fact]
+    public async Task ActivateDirectMessage_WhenChannelIsExpanded_CollapsesTopics()
+    {
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [5] = new Subscription(5, "product-design") },
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            LoadTopicsAction = (_, _) => Task.FromResult<IReadOnlyList<TopicSummary>>([new TopicSummary(5, "native-ui", 12)])
+        };
+        using var viewModel = CreateViewModel(session);
+        var channel = Assert.Single(viewModel.Channels);
+        viewModel.ActivateChannel(channel);
+        await WaitUntilAsync(() => channel.IsExpanded);
+
+        viewModel.ActivateDirectMessage(new NavigationItem(new DirectMessage([8]), "Bea"));
+        await WaitUntilAsync(() => session.SelectedConversation is DirectMessage);
+
+        Assert.All(viewModel.Channels, item => Assert.False(item.IsExpanded));
+    }
+
+    [Fact]
+    public void OpenNewChannelTopicForChannel_WhenInvokedFromRow_LocksThatChannelWithoutSelectingConversation()
+    {
+        var selected = new ChannelTopic(4, "current");
+        var session = new FakeSession
+        {
+            Selected = selected,
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription>
+                {
+                    [4] = new Subscription(4, "engineering"),
+                    [5] = new Subscription(5, "product-design")
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        var target = viewModel.Channels.Single(channel => channel.ChannelId == 5);
+
+        viewModel.OpenNewChannelTopicForChannelCommand.Execute(target);
+
+        Assert.True(viewModel.IsNewConversationOpen);
+        Assert.True(viewModel.IsNewChannelConversationMode);
+        Assert.True(viewModel.IsNewConversationChannelLocked);
+        Assert.Same(target, viewModel.NewConversationChannel);
+        Assert.Equal(selected, session.SelectedConversation);
+    }
+
+    [Fact]
+    public async Task ChannelMenu_WhenOpenedForAnotherChannel_TargetsThatChannelForLabelsAndExit()
+    {
+        var requested = new List<long>();
+        var session = new FakeSession
+        {
+            Selected = new ChannelTopic(4, "current"),
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription>
+                {
+                    [4] = new Subscription(4, "engineering"),
+                    [5] = new Subscription(5, "product-design", isMuted: true, isPinned: true)
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            UnsubscribeChannelAction = (channelId, _) =>
+            {
+                requested.Add(channelId);
+                return Task.CompletedTask;
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+        var target = viewModel.Channels.Single(channel => channel.ChannelId == 5);
+
+        viewModel.OpenChannelMenuAtCommand.Execute(new ChannelMenuRequest(target, 42d, 56d));
+
+        Assert.True(viewModel.IsChannelMenuOpen);
+        Assert.Same(target, viewModel.ActiveChannelAction);
+        Assert.Equal("取消置顶", viewModel.ActiveChannelPinLabel);
+        Assert.Equal("取消静音", viewModel.ActiveChannelMuteLabel);
+        Assert.Equal(new ChannelTopic(4, "current"), session.SelectedConversation);
+
+        viewModel.RequestActiveChannelUnsubscribeCommand.Execute(null);
+        Assert.True(viewModel.IsChannelUnsubscribeConfirmationOpen);
+        Assert.Equal("product-design", viewModel.ChannelUnsubscribeTargetName);
+        await ((IAsyncRelayCommand)viewModel.ConfirmChannelUnsubscribeCommand).ExecuteAsync(null);
+
+        Assert.Equal([5], requested);
+    }
+
+    [Fact]
+    public async Task CopyActiveChannelLink_WhenMenuTargetsChannel_CopiesCanonicalRealmChannelLink()
+    {
+        var interactions = new FakePlatformInteractionService();
+        var session = new FakeSession
+        {
+            ActiveRealm = RealmEndpoint.Parse("https://zulip.example"),
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [5] = new Subscription(5, "产品 设计") },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session, platformInteractions: interactions);
+        var channel = Assert.Single(viewModel.Channels);
+        viewModel.OpenChannelMenuAtCommand.Execute(new ChannelMenuRequest(channel, 42d, 56d));
+
+        await ((IAsyncRelayCommand)viewModel.CopyActiveChannelLinkCommand).ExecuteAsync(null);
+
+        Assert.Equal("https://zulip.example/#narrow/channel/5-%E4%BA%A7%E5%93%81%20%E8%AE%BE%E8%AE%A1", Assert.Single(interactions.Copied));
+        Assert.False(viewModel.IsChannelMenuOpen);
+        Assert.Equal("已复制频道链接。", viewModel.UnavailableFeatureMessage);
+    }
+
+    [Fact]
+    public async Task OpenActiveChannelTopicList_WhenMenuTargetsOtherChannel_ExpandsAndOpensItsTopic()
+    {
+        var session = new FakeSession
+        {
+            Selected = new ChannelTopic(4, "current"),
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription>
+                {
+                    [4] = new Subscription(4, "engineering"),
+                    [5] = new Subscription(5, "product-design")
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            LoadTopicsAction = (channelId, _) => Task.FromResult<IReadOnlyList<TopicSummary>>(
+                channelId == 5 ? [new TopicSummary(5, "native-ui", 12)] : [])
+        };
+        using var viewModel = CreateViewModel(session);
+        var target = viewModel.Channels.Single(channel => channel.ChannelId == 5);
+        viewModel.OpenChannelMenuAtCommand.Execute(new ChannelMenuRequest(target, 42d, 56d));
+
+        viewModel.OpenActiveChannelTopicListCommand.Execute(null);
+        await WaitUntilAsync(() => session.SelectedConversation is ChannelTopic { ChannelId: 5, Topic: "native-ui" });
+
+        Assert.True(target.IsExpanded);
+        Assert.False(viewModel.IsChannelMenuOpen);
+    }
+
+    [Fact]
+    public void ExplainActiveChannelFeature_WhenProtocolIsNotConnected_ClosesMenuWithoutWriting()
+    {
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [5] = new Subscription(5, "product-design") },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        var channel = Assert.Single(viewModel.Channels);
+        viewModel.OpenChannelMenuAtCommand.Execute(new ChannelMenuRequest(channel, 42d, 56d));
+
+        viewModel.ExplainActiveChannelFeatureCommand.Execute("频道颜色修改");
+
+        Assert.False(viewModel.IsChannelMenuOpen);
+        Assert.Equal("频道颜色修改尚未接通频道级协议；未执行任何 Realm 操作。", viewModel.UnavailableFeatureMessage);
+    }
+
+    [Fact]
     public void UpdateViewport_WhenMovingFromWideTo1024_CollapsesDetailsAndUsesOverlayWhenReopened()
     {
         var conversation = new DirectMessage([8]);
@@ -645,7 +936,7 @@ public sealed class ShellViewModelTests
         Assert.Equal(5, Assert.IsType<ChannelItem>(viewModel.SelectedChannel).ChannelId);
         Assert.Equal("native-ui", Assert.Single(viewModel.Topics).Topic);
         Assert.Equal(new ChannelTopic(5, "native-ui"), session.SelectedConversation);
-        Assert.False(viewModel.ShowTopicPicker);
+        Assert.True(viewModel.ShowTopicPicker);
     }
 
     [Fact]

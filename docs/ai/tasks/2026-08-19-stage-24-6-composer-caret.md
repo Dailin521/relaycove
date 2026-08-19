@@ -1,7 +1,7 @@
 # Stage 24.6 — Windows Composer 原生光标（工作日志）
 
-- Status: local candidate validated; awaiting user confirmation and commit/push authorization
-- Starting point: `main@2fc29a2`
+- Status: completed; user-confirmed and pushed in `main@2c85700`
+- Starting point: `main@2fc29a2`; finalized commit: `main@2c85700`
 - Date: 2026-08-19 CST
 - Scope: `RelayCove.App` Windows Composer 与确定性 App 测试；不修改 Web、Core、Data、协议、服务端或部署
 
@@ -57,7 +57,7 @@ dotnet test tests/RelayCove.App.Tests/RelayCove.App.Tests.csproj `
 
 - 本轮窗口证据来自 Debug-only 离线预览，不替代正式 Realm、人工密码登录、Live、打包或干净 VM 门禁。
 - 未运行 Fast/Full/Live，未执行真实消息、已读、附件或其他 Realm 写入。
-- 当前代码、测试与文档仍是 `main` 工作树未提交候选；未提交、未推送。
+- 用户已确认本轮 Windows 结果；最终代码、测试与文档已提交并非强制推送至 `main@2c85700`。
 
 ## 可复用经验
 

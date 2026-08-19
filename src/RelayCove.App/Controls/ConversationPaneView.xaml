@@ -7,7 +7,7 @@
              x:Name="Root"
              x:DataType="viewModels:ShellViewModel"
              Background="{StaticResource GroundBrush}">
-    <Grid RowDefinitions="76,29,Auto,Auto,Auto,29,*" Padding="0,0,0,8">
+    <Grid RowDefinitions="76,29,Auto,29,*" Padding="0,0,0,8">
         <Grid Grid.Row="0" RowDefinitions="47,18" Padding="11,7,11,4">
             <Grid Grid.Row="0" ColumnDefinitions="*,36" ColumnSpacing="8">
                 <Grid Grid.Column="0">
@@ -55,86 +55,79 @@
                     SemanticProperties.Description="浏览并加入可用频道" />
         </Grid>
 
-        <CollectionView Grid.Row="2"
-                        HeightRequest="{Binding ChannelListHeight}"
-                        IsVisible="{Binding AreChannelsExpanded}"
-                        ItemsSource="{Binding FilteredChannels}"
-                        SelectionMode="None"
-                        ItemsUpdatingScrollMode="KeepItemsInView">
-            <CollectionView.ItemTemplate>
+        <ScrollView Grid.Row="2"
+                    HeightRequest="{Binding ChannelListHeight}"
+                    IsVisible="{Binding AreChannelsExpanded}">
+            <VerticalStackLayout Spacing="0" BindableLayout.ItemsSource="{Binding FilteredChannels}">
+                <BindableLayout.ItemTemplate>
                 <DataTemplate x:DataType="viewModels:ChannelItem">
-                    <Border HeightRequest="67" Margin="8,0,8,1" Padding="8" StrokeThickness="0" Opacity="{Binding ItemOpacity}">
+                    <VerticalStackLayout Spacing="0" HeightRequest="{Binding TreeRowHeight}">
+                    <Border HeightRequest="38" Margin="8,0,8,0" Padding="4,0" StrokeThickness="0" Opacity="{Binding ItemOpacity}">
                         <Border.GestureRecognizers>
                             <TapGestureRecognizer Tapped="OnChannelTapped" CommandParameter="{Binding .}" />
+                            <PointerGestureRecognizer PointerEntered="OnChannelPointerEntered" PointerExited="OnChannelPointerExited" />
                         </Border.GestureRecognizers>
-                        <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                        <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
                         <Border.Triggers>
                             <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
                                 <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
                             </DataTrigger>
+                            <DataTrigger TargetType="Border" Binding="{Binding IsPointerOver}" Value="True">
+                                <Setter Property="Background" Value="{AppThemeBinding Light={StaticResource LightSurfaceHoverColor}, Dark={StaticResource DarkSurfaceHoverColor}}" />
+                            </DataTrigger>
                         </Border.Triggers>
-                        <Grid ColumnDefinitions="40,*,38" RowDefinitions="Auto,Auto" ColumnSpacing="11">
-                            <Border Grid.RowSpan="2" WidthRequest="40" HeightRequest="40" Padding="0"
-                                    VerticalOptions="Center" Background="{Binding ToneBrush}" StrokeThickness="0">
-                                <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
-                                <Label Text="#" TextColor="White" FontSize="16" FontAttributes="Bold"
-                                       HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
+                        <Grid ColumnDefinitions="22,*,Auto,26,26" ColumnSpacing="3">
+                            <Label Text="#" TextColor="{Binding ToneColor}" FontSize="20" FontAttributes="Bold"
+                                   HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
+                            <Label Grid.Column="1" Text="{Binding Name}" Style="{StaticResource BaseLabelStyle}"
+                                   FontSize="15" VerticalTextAlignment="Center" LineBreakMode="TailTruncation" />
+                            <Border Grid.Column="2" Padding="5,1" VerticalOptions="Center"
+                                     HorizontalOptions="End" IsVisible="{Binding HasUnread}"
+                                     Background="{StaticResource DangerBrush}" StrokeThickness="0">
+                                 <Border.StrokeShape><RoundRectangle CornerRadius="9" /></Border.StrokeShape>
+                                 <Label Text="{Binding UnreadLabel}" FontSize="9" TextColor="White" />
                             </Border>
-                            <Grid Grid.Column="1" ColumnDefinitions="*,Auto" ColumnSpacing="5">
-                                <Label Text="{Binding DisplayTitle}" Style="{StaticResource BaseLabelStyle}"
-                                       FontSize="14" FontAttributes="Bold" VerticalTextAlignment="End" />
-                                <Label Grid.Column="1" Text="{Binding Timestamp}" IsVisible="{Binding HasTimestamp}"
-                                       Style="{StaticResource MutedLabelStyle}" FontSize="10" VerticalTextAlignment="End" />
-                            </Grid>
-                            <Label Grid.Row="1" Grid.Column="1" Text="{Binding Detail}" Style="{StaticResource MutedLabelStyle}"
-                                   FontSize="12" VerticalTextAlignment="Start" />
-                            <Border Grid.Column="2" Grid.RowSpan="2" Padding="5,1" VerticalOptions="Center"
-                                    HorizontalOptions="End" IsVisible="{Binding HasUnread}"
-                                    Background="{StaticResource DangerBrush}" StrokeThickness="0">
-                                <Border.StrokeShape><RoundRectangle CornerRadius="9" /></Border.StrokeShape>
-                                <Label Text="{Binding UnreadLabel}" FontSize="9" TextColor="White" />
-                            </Border>
+                            <ImageButton Grid.Column="3" Source="icon_plus.png" Style="{StaticResource MessageQuickImageButtonStyle}"
+                                         IsVisible="{Binding ShowActions}" Clicked="OnNewChannelTopicClicked"
+                                         SemanticProperties.Description="在此频道创建话题" />
+                            <ImageButton Grid.Column="4" Source="icon_more.png" Style="{StaticResource MessageQuickImageButtonStyle}"
+                                         IsVisible="{Binding ShowActions}" Clicked="OnChannelMenuClicked"
+                                         SemanticProperties.Description="打开频道操作菜单" />
                         </Grid>
                     </Border>
+                    <VerticalStackLayout IsVisible="{Binding IsExpanded}"
+                                         BindableLayout.ItemsSource="{Binding TreeTopics}">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="viewModels:TopicItem">
+                                <Border HeightRequest="34" Margin="31,0,8,0" Padding="5,0" StrokeThickness="0">
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Tapped="OnTopicTapped" CommandParameter="{Binding .}" />
+                                    </Border.GestureRecognizers>
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="6" /></Border.StrokeShape>
+                                    <Border.Triggers>
+                                        <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
+                                            <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
+                                        </DataTrigger>
+                                    </Border.Triggers>
+                                    <Grid ColumnDefinitions="18,*,Auto" ColumnSpacing="4">
+                                        <Label Text="✓" IsVisible="{Binding IsSelected}" Style="{StaticResource BaseLabelStyle}"
+                                               FontAttributes="Bold" VerticalTextAlignment="Center" />
+                                        <Label Grid.Column="1" Text="{Binding DisplayName}" Style="{StaticResource BaseLabelStyle}"
+                                               FontSize="14" VerticalTextAlignment="Center" LineBreakMode="TailTruncation" />
+                                        <Label Grid.Column="2" Text="{Binding UnreadLabel}" IsVisible="{Binding HasUnread}"
+                                               Style="{StaticResource MutedLabelStyle}" TextColor="{StaticResource DangerColor}" VerticalTextAlignment="Center" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                    </VerticalStackLayout>
                 </DataTemplate>
-            </CollectionView.ItemTemplate>
-        </CollectionView>
+                </BindableLayout.ItemTemplate>
+            </VerticalStackLayout>
+        </ScrollView>
 
-        <Grid Grid.Row="3" IsVisible="{Binding ShowTopicPicker}">
-            <Grid RowDefinitions="25,Auto">
-                <Label Grid.Row="0" Text="话题" Style="{StaticResource MutedLabelStyle}" Padding="28,0,0,0" VerticalTextAlignment="Center" />
-                <CollectionView Grid.Row="1"
-                                HeightRequest="{Binding TopicListHeight}"
-                                ItemsSource="{Binding Topics}"
-                                SelectionMode="None"
-                                ItemsUpdatingScrollMode="KeepItemsInView">
-                    <CollectionView.ItemTemplate>
-                        <DataTemplate x:DataType="viewModels:TopicItem">
-                            <Border HeightRequest="36" Margin="18,0,8,0" Padding="10,0" StrokeThickness="0">
-                                <Border.GestureRecognizers>
-                                    <TapGestureRecognizer Tapped="OnTopicTapped" CommandParameter="{Binding .}" />
-                                </Border.GestureRecognizers>
-                                <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
-                                <Border.Triggers>
-                                    <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
-                                        <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
-                                    </DataTrigger>
-                                </Border.Triggers>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <Label Text="{Binding DisplayName}" Style="{StaticResource BaseLabelStyle}" FontSize="13" VerticalTextAlignment="Center" />
-                                    <Label Grid.Column="1" Text="{Binding UnreadLabel}" IsVisible="{Binding HasUnread}"
-                                           Style="{StaticResource MutedLabelStyle}" TextColor="{StaticResource DangerColor}" VerticalTextAlignment="Center" />
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </CollectionView.ItemTemplate>
-                </CollectionView>
-            </Grid>
-        </Grid>
-
-        <BoxView Grid.Row="4" HeightRequest="1" Background="Transparent" />
-
-        <Grid Grid.Row="5" Padding="10,0,12,0" ColumnDefinitions="18,*,Auto" HeightRequest="29">
+        <Grid Grid.Row="3" Padding="10,0,12,0" ColumnDefinitions="18,*,Auto" HeightRequest="29">
             <Grid.GestureRecognizers><TapGestureRecognizer Command="{Binding ToggleDirectMessagesCommand}" /></Grid.GestureRecognizers>
             <Image Source="icon_chevron.png" WidthRequest="14" HeightRequest="14" Rotation="-90" VerticalOptions="Center">
                 <Image.Triggers>
@@ -145,7 +138,7 @@
             <Label Grid.Column="2" Text="{Binding DirectMessageGroupCountLabel}" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" />
         </Grid>
 
-        <CollectionView Grid.Row="6"
+        <CollectionView Grid.Row="4"
                         IsVisible="{Binding AreDirectMessagesExpanded}"
                         ItemsSource="{Binding FilteredDirectMessages}"
                         SelectionMode="None"

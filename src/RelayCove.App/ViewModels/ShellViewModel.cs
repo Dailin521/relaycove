@@ -52,6 +52,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private long _navigationGeneration;
     private string? _navigationConversationKey;
     private bool _hasAuthoritativeTopics;
+    private long? _expandedChannelId;
     private string? _displayedConversationKey;
     private string? _deferredInitialMessageProjectionConversationKey;
     private string? _pendingActivationScrollConversationKey;
@@ -198,6 +199,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial ChannelItem? NewConversationChannel { get; set; }
 
     [ObservableProperty]
+    public partial bool IsNewConversationChannelLocked { get; set; }
+
+    [ObservableProperty]
     public partial string NewConversationTopic { get; set; } = string.Empty;
 
     [ObservableProperty]
@@ -259,6 +263,21 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial double MessageMenuAnchorY { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsChannelMenuOpen { get; set; }
+
+    [ObservableProperty]
+    public partial ChannelItem? ActiveChannelAction { get; set; }
+
+    [ObservableProperty]
+    public partial double ChannelMenuAnchorX { get; set; }
+
+    [ObservableProperty]
+    public partial double ChannelMenuAnchorY { get; set; }
+
+    [ObservableProperty]
+    public partial int ChannelMenuFocusRequest { get; set; }
 
     [ObservableProperty]
     public partial bool IsEditDialogOpen { get; set; }
@@ -438,7 +457,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool ShowConversationLoadingIndicator => IsConversationLoading && !HasMessages;
     public bool HasTopics => Topics.Count > 0;
     public bool HasSelectedChannel => SelectedChannel is not null;
-    public bool ShowTopicPicker => AreChannelsExpanded && HasSelectedChannel && Topics.Count > 1;
+    public bool ShowTopicPicker => AreChannelsExpanded && _expandedChannelId is not null && Topics.Count > 0;
     public bool ShowEmptyChannelTopicState =>
         HasSelectedChannel &&
         _hasAuthoritativeTopics &&
@@ -461,11 +480,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IsMessagesSection && (!IsNarrowLayout || !IsConversationListVisibleOnNarrow);
     public bool IsInlineDetailsVisible => IsMessagesSection && IsWideLayout && IsDetailsOpen;
     public bool IsOverlayDetailsVisible => IsMessagesSection && !IsWideLayout && IsDetailsOpen;
-    public bool IsModalOverlayVisible => IsOverlayDetailsVisible || IsSearchOpen || IsMessageMenuOpen || IsAccountMenuOpen ||
+    public bool IsModalOverlayVisible => IsOverlayDetailsVisible || IsSearchOpen || IsMessageMenuOpen || IsChannelMenuOpen || IsAccountMenuOpen ||
         IsComposerEmojiPickerOpen || IsReactionPickerOpen || IsEditDialogOpen ||
         IsDeleteConfirmationOpen || IsChannelUnsubscribeConfirmationOpen || IsImageViewerOpen ||
         IsNewConversationOpen || IsChannelBrowserOpen || LogoutConfirmationVisible;
-    public bool IsPrimaryShellEnabled => !IsModalOverlayVisible || IsMessageMenuOpen || IsAccountMenuOpen ||
+    public bool IsPrimaryShellEnabled => !IsModalOverlayVisible || IsMessageMenuOpen || IsChannelMenuOpen || IsAccountMenuOpen ||
         IsComposerEmojiPickerOpen || IsReactionPickerOpen;
     public bool CanCompose =>
         IsConversationContentVisible &&
@@ -497,6 +516,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool IsNewDirectConversationMode => !IsNewChannelConversationMode;
     public bool CanStartNewChannelConversation => NewConversationChannel is not null &&
         !string.IsNullOrWhiteSpace(NewConversationTopic);
+    public bool CanChooseNewConversationChannel => !IsNewConversationChannelLocked;
     public bool HasActiveMessageAction => ActiveMessageAction is not null;
     public bool CanEditActiveMessage => ActiveMessageAction?.CanEditOrDelete == true;
     public bool CanDeleteActiveMessage => ActiveMessageAction?.CanEditOrDelete == true;
@@ -509,10 +529,20 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool CanCloseChannelUnsubscribe => !IsChannelUnsubscribeBusy;
     public bool HasChannelBrowserError => !string.IsNullOrWhiteSpace(ChannelBrowserError);
     public bool CanManageSelectedChannel => CanUnsubscribeSelectedChannel;
+    public bool CanManageActiveChannel => ActiveChannelAction is { } channel &&
+        _projectedState.Subscriptions.ContainsKey(channel.ChannelId) &&
+        _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
     public string SelectedChannelMuteLabel => _session.SelectedConversation is ChannelTopic selected &&
         _projectedState.Subscriptions.GetValueOrDefault(selected.ChannelId)?.IsMuted == true ? "取消静音" : "静音频道";
     public string SelectedChannelPinLabel => _session.SelectedConversation is ChannelTopic selected &&
         _projectedState.Subscriptions.GetValueOrDefault(selected.ChannelId)?.IsPinned == true ? "取消置顶" : "置顶频道";
+    public string ActiveChannelMuteLabel => ActiveChannelAction is { } channel &&
+        _projectedState.Subscriptions.GetValueOrDefault(channel.ChannelId)?.IsMuted == true ? "取消静音" : "静音频道";
+    public string ActiveChannelPinLabel => ActiveChannelAction is { } channel &&
+        _projectedState.Subscriptions.GetValueOrDefault(channel.ChannelId)?.IsPinned == true ? "取消置顶" : "置顶频道";
+    public string ActiveChannelMarkReadLabel => ActiveChannelAction?.HasUnread == true
+        ? "将所有消息标记为已读"
+        : "将所有消息标记为未读";
     public string ActiveMessageStarActionLabel => ActiveMessageAction?.IsStarred == true
         ? "取消收藏"
         : "收藏消息";
@@ -573,9 +603,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public string CurrentConversationWidthLabel => $"{ConversationWidthSliderValue:0} px";
     public string ChannelGroupCountLabel => Channels.Count.ToString();
     public string DirectMessageGroupCountLabel => $"{DirectMessages.Count} 个会话";
-    public double ChannelListHeight => AreChannelsExpanded ? Math.Min(FilteredChannels.Count * 67d, 268d) : 0d;
+    public double ChannelListHeight => AreChannelsExpanded
+        ? Math.Min(FilteredChannels.Count * 38d + (ShowTopicPicker ? Topics.Count * 34d : 0d), 268d)
+        : 0d;
     public double TopicListHeight => ShowTopicPicker
-        ? Math.Min(Topics.Count * 36d, 144d)
+        ? Math.Min(Topics.Count * 34d, 136d)
         : 0d;
     public string CurrentUserDisplayName => _session.CurrentUserId is { } currentUserId &&
         _projectedState.Users.TryGetValue(currentUserId, out var currentUser)
@@ -1363,6 +1395,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         CloseTransientOverlays();
         IsNewChannelConversationMode = false;
+        IsNewConversationChannelLocked = false;
         NewConversationChannel = Channels.FirstOrDefault();
         NewConversationTopic = string.Empty;
         ClearNewConversationChoices();
@@ -1384,6 +1417,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void CloseNewConversation()
     {
         IsNewConversationOpen = false;
+        IsNewConversationChannelLocked = false;
         NewConversationQuery = string.Empty;
         NewConversationTopic = string.Empty;
         ClearNewConversationChoices();
@@ -1397,6 +1431,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         if (!IsNewConversationOpen) OpenNewConversation();
         IsNewChannelConversationMode = true;
+        IsNewConversationChannelLocked = false;
         NewConversationChannel ??= Channels.FirstOrDefault();
     }
 
@@ -1405,7 +1440,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         OpenNewConversation();
         IsNewChannelConversationMode = true;
+        IsNewConversationChannelLocked = false;
         NewConversationChannel = SelectedChannel ?? Channels.FirstOrDefault();
+    }
+
+    [RelayCommand]
+    private void OpenNewChannelTopicForChannel(ChannelItem? channel)
+    {
+        if (channel is null || !Channels.Any(item => item.ChannelId == channel.ChannelId)) return;
+        OpenNewConversation();
+        IsNewChannelConversationMode = true;
+        NewConversationChannel = Channels.First(item => item.ChannelId == channel.ChannelId);
+        IsNewConversationChannelLocked = true;
     }
 
     [RelayCommand(AllowConcurrentExecutions = false)]
@@ -1621,6 +1667,61 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
+    private void OpenChannelMenuAt(ChannelMenuRequest? request)
+    {
+        if (request?.Channel is null ||
+            !double.IsFinite(request.AnchorX) || !double.IsFinite(request.AnchorY) ||
+            Channels.FirstOrDefault(item => item.ChannelId == request.Channel.ChannelId) is not { } channel)
+        {
+            return;
+        }
+
+        CloseTransientOverlays();
+        ActiveChannelAction = channel;
+        channel.IsActionMenuOpen = true;
+        ChannelMenuAnchorX = Math.Max(0d, request.AnchorX);
+        ChannelMenuAnchorY = Math.Max(0d, request.AnchorY);
+        IsChannelMenuOpen = true;
+    }
+
+    [RelayCommand]
+    private void CloseChannelMenu() => CloseChannelMenuCore(restoreFocus: true);
+
+    [RelayCommand]
+    private async Task CopyActiveChannelLinkAsync()
+    {
+        if (ActiveChannelAction is not { } channel || _session.ActiveRealm is not { } realm) return;
+        var link = new Uri(realm.Uri, $"#narrow/channel/{channel.ChannelId}-{Uri.EscapeDataString(channel.Name)}").AbsoluteUri;
+        try
+        {
+            await _platformInteractions.CopyTextAsync(link);
+            CloseChannelMenuCore(restoreFocus: false);
+            UnavailableFeatureMessage = "已复制频道链接。";
+        }
+        catch
+        {
+            LoginError = "无法复制频道链接。";
+        }
+    }
+
+    [RelayCommand]
+    private void OpenActiveChannelTopicList()
+    {
+        if (ActiveChannelAction is not { } channel) return;
+        CloseChannelMenuCore(restoreFocus: false);
+        SetExpandedChannel(channel.ChannelId);
+        _ = ActivateChannelAsync(channel);
+    }
+
+    [RelayCommand]
+    private void ExplainActiveChannelFeature(string? feature)
+    {
+        if (ActiveChannelAction is null || string.IsNullOrWhiteSpace(feature)) return;
+        CloseChannelMenuCore(restoreFocus: false);
+        UnavailableFeatureMessage = $"{feature}尚未接通频道级协议；未执行任何 Realm 操作。";
+    }
+
+    [RelayCommand]
     private void CloseMessageMenu()
     {
         IsMessageMenuOpen = false;
@@ -1788,11 +1889,21 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             return;
         }
-        CloseTransientOverlays();
-        _channelUnsubscribeTargetId = selected.ChannelId;
-        ChannelUnsubscribeTargetName = subscription.Name;
-        ChannelUnsubscribeError = null;
-        IsChannelUnsubscribeConfirmationOpen = true;
+        RequestChannelUnsubscribeCore(selected.ChannelId, subscription.Name);
+    }
+
+    [RelayCommand]
+    private void RequestActiveChannelUnsubscribe()
+    {
+        if (ActiveChannelAction is not { } channel ||
+            !_projectedState.Subscriptions.TryGetValue(channel.ChannelId, out var subscription) ||
+            !CanManageActiveChannel)
+        {
+            return;
+        }
+
+        CloseChannelMenuCore(restoreFocus: false);
+        RequestChannelUnsubscribeCore(channel.ChannelId, subscription.Name);
     }
 
     [RelayCommand]
@@ -1947,12 +2058,58 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         await SetSelectedChannelPreferenceAsync(SubscriptionPreference.Pinned);
     }
 
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ToggleActiveChannelMutedAsync()
+    {
+        if (ActiveChannelAction is not { } channel || !CanManageActiveChannel) return;
+        CloseChannelMenuCore(restoreFocus: false);
+        await SetChannelPreferenceAsync(channel.ChannelId, SubscriptionPreference.Muted);
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ToggleActiveChannelPinnedAsync()
+    {
+        if (ActiveChannelAction is not { } channel || !CanManageActiveChannel) return;
+        CloseChannelMenuCore(restoreFocus: false);
+        await SetChannelPreferenceAsync(channel.ChannelId, SubscriptionPreference.Pinned);
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task OpenActiveChannelSettingsAsync()
+    {
+        if (ActiveChannelAction is not { } channel) return;
+        CloseChannelMenuCore(restoreFocus: false);
+        if (SelectedChannel?.ChannelId == channel.ChannelId && _session.SelectedConversation is ChannelTopic)
+        {
+            IsDetailsOpen = true;
+            return;
+        }
+
+        SetExpandedChannel(channel.ChannelId);
+        await ActivateChannelAsync(channel, openDetailsWhenReady: true);
+    }
+
     private async Task SetSelectedChannelPreferenceAsync(SubscriptionPreference preference)
     {
         if (_session.SelectedConversation is not ChannelTopic selected ||
-            !_projectedState.Subscriptions.TryGetValue(selected.ChannelId, out var subscription)) return;
+            !_projectedState.Subscriptions.ContainsKey(selected.ChannelId)) return;
+        await SetChannelPreferenceAsync(selected.ChannelId, preference);
+    }
+
+    private async Task SetChannelPreferenceAsync(long channelId, SubscriptionPreference preference)
+    {
+        if (!_projectedState.Subscriptions.TryGetValue(channelId, out var subscription)) return;
         var value = preference == SubscriptionPreference.Muted ? !subscription.IsMuted : !subscription.IsPinned;
-        await ExecuteSessionActionAsync(() => _session.SetSubscriptionPreferenceAsync(selected.ChannelId, preference, value));
+        await ExecuteSessionActionAsync(() => _session.SetSubscriptionPreferenceAsync(channelId, preference, value));
+    }
+
+    private void RequestChannelUnsubscribeCore(long channelId, string channelName)
+    {
+        CloseTransientOverlays();
+        _channelUnsubscribeTargetId = channelId;
+        ChannelUnsubscribeTargetName = channelName;
+        ChannelUnsubscribeError = null;
+        IsChannelUnsubscribeConfirmationOpen = true;
     }
 
     [RelayCommand]
@@ -2040,6 +2197,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IsComposerEmojiPickerOpen = false;
         IsReactionPickerOpen = false;
         IsMessageMenuOpen = false;
+        CloseChannelMenuCore(restoreFocus: false);
         IsEditDialogOpen = false;
         IsDeleteConfirmationOpen = false;
         IsChannelUnsubscribeConfirmationOpen = false;
@@ -2052,6 +2210,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ActiveImageAttachment = null;
         MediaActionStatus = null;
         ActiveMessageAction = null;
+    }
+
+    private void CloseChannelMenuCore(bool restoreFocus)
+    {
+        if (ActiveChannelAction is { } channel) channel.IsActionMenuOpen = false;
+        var wasOpen = IsChannelMenuOpen;
+        IsChannelMenuOpen = false;
+        ActiveChannelAction = null;
+        if (restoreFocus && wasOpen) ChannelMenuFocusRequest++;
     }
 
     partial void OnIsLoggedInChanged(bool value)
@@ -2158,6 +2325,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     }
 
     partial void OnIsMessageMenuOpenChanged(bool value) => NotifyOverlayProperties();
+    partial void OnIsChannelMenuOpenChanged(bool value) => NotifyOverlayProperties();
+    partial void OnActiveChannelActionChanged(ChannelItem? value)
+    {
+        OnPropertyChanged(nameof(CanManageActiveChannel));
+        OnPropertyChanged(nameof(ActiveChannelMuteLabel));
+        OnPropertyChanged(nameof(ActiveChannelPinLabel));
+        OnPropertyChanged(nameof(ActiveChannelMarkReadLabel));
+    }
     partial void OnIsEditDialogOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsDeleteConfirmationOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnIsChannelUnsubscribeConfirmationOpenChanged(bool value) => NotifyOverlayProperties();
@@ -2277,6 +2452,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         OnPropertyChanged(nameof(HasSelectedChannel));
         OnPropertyChanged(nameof(TopicListHeight));
+        OnPropertyChanged(nameof(ChannelListHeight));
         OnPropertyChanged(nameof(ShowTopicPicker));
         OnPropertyChanged(nameof(ShowEmptyChannelTopicState));
         OnPropertyChanged(nameof(SelectedChannelMuteLabel));
@@ -2315,6 +2491,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         ArgumentNullException.ThrowIfNull(channel);
         ConversationFilterQuery = string.Empty;
+        if (_expandedChannelId == channel.ChannelId)
+        {
+            SetExpandedChannel(null);
+            return;
+        }
+
+        SetExpandedChannel(channel.ChannelId);
         _ = ActivateChannelAsync(channel);
     }
 
@@ -2322,6 +2505,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         ArgumentNullException.ThrowIfNull(topic);
         ConversationFilterQuery = string.Empty;
+        SetExpandedChannel(topic.ChannelId);
         _ = ActivateConversationFromNavigationAsync(
             new ChannelTopic(topic.ChannelId, topic.Topic),
             Channels.FirstOrDefault(channel => channel.ChannelId == topic.ChannelId),
@@ -2340,6 +2524,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             return;
         }
         ConversationFilterQuery = string.Empty;
+        SetExpandedChannel(null);
         _ = ActivateConversationFromNavigationAsync(directMessage.Conversation, null, null, directMessage);
     }
 
@@ -2348,6 +2533,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     partial void OnNewConversationChannelChanged(ChannelItem? value) =>
         OnPropertyChanged(nameof(CanStartNewChannelConversation));
+
+    partial void OnIsNewConversationChannelLockedChanged(bool value) =>
+        OnPropertyChanged(nameof(CanChooseNewConversationChannel));
 
     partial void OnNewConversationTopicChanged(string value) =>
         OnPropertyChanged(nameof(CanStartNewChannelConversation));
@@ -2359,7 +2547,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsNewConversationChoiceEmptyVisible));
     }
 
-    private async Task ActivateChannelAsync(ChannelItem channel)
+    private async Task ActivateChannelAsync(ChannelItem channel, bool openDetailsWhenReady = false)
     {
         var (generation, cancellation) = BeginNavigation();
         SelectedChannel = Channels.FirstOrDefault(item => item.ChannelId == channel.ChannelId) ?? channel;
@@ -2398,6 +2586,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 new ChannelTopic(topic.ChannelId, topic.Topic),
                 generation,
                 cancellation);
+            if (openDetailsWhenReady && IsNavigationCurrent(generation, cancellation)) IsDetailsOpen = true;
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -2720,7 +2909,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             state.Connection.Status == RelayCove.Core.ConnectionStatus.Faulted && _session.AccountId is not null;
         ConnectionStatus = DescribeConnection(state.Connection);
 
-        Reconcile(
+        ReconcileChannelItems(
             Channels,
             state.Subscriptions.Values
                 .Where(subscription => subscription.IsActive)
@@ -2729,6 +2918,20 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 .ThenBy(subscription => subscription.Name, StringComparer.Ordinal)
                 .Select(subscription => CreateChannelItem(state, subscription)),
             item => item.ChannelId);
+
+        if (_expandedChannelId is { } expandedChannelId && !Channels.Any(item => item.ChannelId == expandedChannelId))
+        {
+            _expandedChannelId = null;
+        }
+        if (ActiveChannelAction is { } activeChannel && !Channels.Any(item => item.ChannelId == activeChannel.ChannelId))
+        {
+            CloseChannelMenuCore(restoreFocus: false);
+        }
+        OnPropertyChanged(nameof(ChannelListHeight));
+        OnPropertyChanged(nameof(CanManageActiveChannel));
+        OnPropertyChanged(nameof(ActiveChannelMuteLabel));
+        OnPropertyChanged(nameof(ActiveChannelPinLabel));
+        OnPropertyChanged(nameof(ActiveChannelMarkReadLabel));
 
         ReconcileNavigationItems(
             DirectMessages,
@@ -3312,10 +3515,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         if (selectedChannelId is null)
         {
             Reconcile(Topics, [], item => item.CanonicalKey);
+            UpdateExpandedChannelTopicCount();
             OnPropertyChanged(nameof(HasTopics));
             OnPropertyChanged(nameof(ShowTopicPicker));
             OnPropertyChanged(nameof(ShowEmptyChannelTopicState));
             OnPropertyChanged(nameof(TopicListHeight));
+            OnPropertyChanged(nameof(ChannelListHeight));
             return;
         }
 
@@ -3352,10 +3557,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                     GetConversationUnread(state.Unread, new ChannelTopic(topic.ChannelId, topic.Topic)),
                     string.Equals(SelectedTopic?.CanonicalKey, new ChannelTopic(topic.ChannelId, topic.Topic).CanonicalKey, StringComparison.Ordinal))),
             item => item.CanonicalKey);
+        UpdateExpandedChannelTopicCount();
         OnPropertyChanged(nameof(HasTopics));
         OnPropertyChanged(nameof(ShowTopicPicker));
         OnPropertyChanged(nameof(ShowEmptyChannelTopicState));
         OnPropertyChanged(nameof(TopicListHeight));
+        OnPropertyChanged(nameof(ChannelListHeight));
     }
 
     private void SelectOnlyTopicWhenUnambiguous()
@@ -3404,7 +3611,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             latestMessage is null ? null : FormatConversationTimestamp(latestMessage.Timestamp.LocalDateTime),
             subscription.IsMuted,
             subscription.IsPinned,
-            SelectedChannel?.ChannelId == subscription.ChannelId);
+            SelectedChannel?.ChannelId == subscription.ChannelId,
+            _expandedChannelId == subscription.ChannelId,
+            subscription.Color);
     }
 
     private void SynchronizeSelection(ConversationKey? selected)
@@ -3761,6 +3970,28 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
     }
 
+    private void SetExpandedChannel(long? channelId)
+    {
+        _expandedChannelId = channelId;
+        foreach (var channel in Channels)
+        {
+            channel.IsExpanded = channel.ChannelId == channelId;
+        }
+        UpdateExpandedChannelTopicCount();
+        OnPropertyChanged(nameof(ShowTopicPicker));
+        OnPropertyChanged(nameof(ChannelListHeight));
+        OnPropertyChanged(nameof(TopicListHeight));
+    }
+
+    private void UpdateExpandedChannelTopicCount()
+    {
+        foreach (var channel in Channels)
+        {
+            channel.ExpandedTopicCount = channel.IsExpanded ? Topics.Count : 0;
+            channel.TreeTopics = channel.IsExpanded ? Topics : null;
+        }
+    }
+
     private void TryPublishPendingActivationScroll()
     {
         if (_pendingActivationScrollConversationKey is not { } conversationKey ||
@@ -4029,6 +4260,46 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
     }
 
+    private static void ReconcileChannelItems(
+        ObservableCollection<ChannelItem> target,
+        IEnumerable<ChannelItem> items,
+        Func<ChannelItem, long> keySelector)
+    {
+        var desired = items.ToArray();
+        for (var index = 0; index < desired.Length; index++)
+        {
+            var candidate = desired[index];
+            var key = keySelector(candidate);
+            var existingIndex = -1;
+            for (var searchIndex = index; searchIndex < target.Count; searchIndex++)
+            {
+                if (keySelector(target[searchIndex]) == key)
+                {
+                    existingIndex = searchIndex;
+                    break;
+                }
+            }
+
+            if (existingIndex < 0)
+            {
+                target.Insert(index, candidate);
+                continue;
+            }
+
+            if (existingIndex != index)
+            {
+                target.Move(existingIndex, index);
+            }
+
+            target[index].ApplyFrom(candidate);
+        }
+
+        while (target.Count > desired.Length)
+        {
+            target.RemoveAt(target.Count - 1);
+        }
+    }
+
     private static void ReconcileNavigationItems(
         ObservableCollection<NavigationItem> target,
         IEnumerable<NavigationItem> items,
@@ -4275,11 +4546,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     private void RefreshNavigationSelectionProjection()
     {
-        for (var index = 0; index < Channels.Count; index++)
+        foreach (var item in Channels)
         {
-            var item = Channels[index];
             var isSelected = SelectedChannel?.ChannelId == item.ChannelId;
-            if (item.IsSelected != isSelected) Channels[index] = item with { IsSelected = isSelected };
+            item.IsSelected = isSelected;
         }
 
         for (var index = 0; index < Topics.Count; index++)
