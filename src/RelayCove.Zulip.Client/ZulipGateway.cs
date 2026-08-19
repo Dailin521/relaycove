@@ -168,7 +168,13 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             ToRecentDirectMessages(root),
             ToUnread(root, request.Credentials.UserId),
             [],
-            maxFileUploadSizeMiB is > 0 ? maxFileUploadSizeMiB : null);
+            maxFileUploadSizeMiB is > 0 ? maxFileUploadSizeMiB : null,
+            PositiveOrNull(GetInt32(root, "max_stream_name_length", "max_channel_name_length")),
+            PositiveOrNull(GetInt32(root, "max_stream_description_length", "max_channel_description_length")),
+            PositiveOrNull(GetInt32(root, "max_channel_folder_name_length")),
+            PositiveOrNull(GetInt32(root, "max_channel_folder_description_length")),
+            ToUserTopicVisibilities(root),
+            IsOrganizationAdministrator(root, request.Credentials.UserId));
     }
 
     public async Task<EventBatch> GetEventsAsync(GetEventsRequest request, CancellationToken cancellationToken = default)
@@ -327,6 +333,79 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             .Select(item => new TopicSummary(request.ChannelId, RequireString(item, "name"), GetInt64(item, "max_id")))
             .ToArray();
         return new TopicsResult(topics);
+    }
+
+    public async Task SetTopicVisibilityPolicyAsync(SetTopicVisibilityPolicyRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["stream_id"] = request.Topic.ChannelId.ToString(CultureInfo.InvariantCulture),
+            ["topic"] = request.Topic.Topic,
+            ["visibility_policy"] = ((int)request.Policy).ToString(CultureInfo.InvariantCulture)
+        };
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Post, "user_topics", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        EnsureNoUnsupportedParameters(document.RootElement);
+    }
+
+    public async Task<TopicReadResult> MarkTopicReadAsync(MarkTopicReadRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["op"] = "add",
+            ["flag"] = "read",
+            ["narrow"] = SerializeUnreadNarrow(request.Topic, request.Credentials.UserId),
+            ["anchor"] = request.AnchorMessageId?.ToString(CultureInfo.InvariantCulture) ?? "oldest",
+            ["include_anchor"] = "false",
+            ["num_before"] = "0",
+            ["num_after"] = "1000"
+        };
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Post, "messages/flags/narrow", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        return new TopicReadResult(GetInt64(document.RootElement, "last_processed_id"), GetBoolean(document.RootElement, "found_newest") ?? false);
+    }
+
+    public async Task<TopicAnchorResult> ResolveTopicAnchorAsync(ResolveTopicAnchorRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var query = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["narrow"] = SerializeNarrow(request.Topic, request.Credentials.UserId),
+            ["anchor"] = "oldest",
+            ["include_anchor"] = "false",
+            ["num_before"] = "0",
+            ["num_after"] = "1"
+        };
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "messages", query, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        return new TopicAnchorResult(GetArray(document.RootElement, "messages").Select(item => GetInt64(item, "id")).FirstOrDefault(id => id is > 0));
+    }
+
+    public async Task MoveTopicAsync(MoveTopicRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["topic"] = request.Destination.Topic,
+            ["propagate_mode"] = "change_all"
+        };
+        if (request.Source.ChannelId != request.Destination.ChannelId)
+            fields["stream_id"] = request.Destination.ChannelId.ToString(CultureInfo.InvariantCulture);
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Patch, $"messages/{request.AnchorMessageId.ToString(CultureInfo.InvariantCulture)}", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        EnsureNoUnsupportedParameters(document.RootElement);
+    }
+
+    public async Task<TopicDeleteResult> DeleteTopicAsync(DeleteTopicRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal) { ["topic_name"] = request.Topic.Topic };
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Post, $"streams/{request.Topic.ChannelId.ToString(CultureInfo.InvariantCulture)}/delete_topic", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        EnsureNoUnsupportedParameters(document.RootElement);
+        return new TopicDeleteResult(GetBoolean(document.RootElement, "complete") ?? false);
     }
 
     public async Task<SendResult> SendAsync(SendRequest request, CancellationToken cancellationToken = default)
@@ -570,6 +649,111 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         var property = request.Preference == SubscriptionPreference.Muted ? "is_muted" : "pin_to_top";
         var fields = new Dictionary<string, string>(StringComparer.Ordinal) { ["property"] = property, ["value"] = request.Value ? "true" : "false" };
         using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Patch, $"users/me/subscriptions/{request.ChannelId.ToString(CultureInfo.InvariantCulture)}", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var ignored = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<ChannelSettingsSnapshot> GetChannelSettingsSnapshotAsync(ChannelSettingsSnapshotRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var streamsQuery = new Dictionary<string, string>(StringComparer.Ordinal) { ["include_all"] = "true", ["exclude_archived"] = "false" };
+        var groupsQuery = new Dictionary<string, string>(StringComparer.Ordinal) { ["include_deactivated_groups"] = "true" };
+        var foldersQuery = new Dictionary<string, string>(StringComparer.Ordinal) { ["include_archived"] = "true" };
+        using var meResponse = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "users/me", null, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var meDocument = await ReadDocumentAsync(meResponse, cancellationToken).ConfigureAwait(false);
+        var me = meDocument.RootElement;
+        var currentUserId = GetInt64(me, "user_id", "id");
+        var role = GetInt64(me, "role");
+        if (currentUserId is not > 0 || currentUserId != request.Credentials.UserId || role is not (100 or 200 or 300 or 400 or 600))
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        var isAdmin = role is 100 or 200;
+        var isGuest = role == 600;
+        if (GetBoolean(me, "is_admin") is { } declaredAdmin && declaredAdmin != isAdmin ||
+            GetBoolean(me, "is_guest") is { } declaredGuest && declaredGuest != isGuest)
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        using var streamsResponse = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "streams", streamsQuery, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var streamsDocument = await ReadDocumentAsync(streamsResponse, cancellationToken).ConfigureAwait(false);
+        using var foldersResponse = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "channel_folders", foldersQuery, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var foldersDocument = await ReadDocumentAsync(foldersResponse, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<ChannelUserGroup> groups = [];
+        if (!isGuest)
+        {
+            using var groupsResponse = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "user_groups", groupsQuery, request.Credentials, cancellationToken).ConfigureAwait(false);
+            using var groupsDocument = await ReadDocumentAsync(groupsResponse, cancellationToken).ConfigureAwait(false);
+            groups = GetArray(groupsDocument.RootElement, "user_groups")
+                .Select(ToChannelUserGroup)
+                .Where(static item => item is not null)
+                .Cast<ChannelUserGroup>()
+                .ToArray();
+        }
+        return new ChannelSettingsSnapshot(
+            GetArray(streamsDocument.RootElement, "streams").Select(ToChannelSummary).Where(static item => item is not null).Cast<ChannelSummary>().ToArray(),
+            GetArray(foldersDocument.RootElement, "channel_folders").Select(ToChannelFolder).Where(static item => item is not null).Cast<ChannelFolder>().OrderBy(static item => item.Order).ToArray(),
+            groups,
+            currentUserId.Value,
+            isAdmin,
+            isGuest,
+            request.Limits);
+    }
+
+    public async Task<ChannelDetails> GetChannelDetailsAsync(ChannelDetailsRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.ChannelId <= 0) throw new ArgumentOutOfRangeException(nameof(request));
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Get, $"streams/{request.ChannelId.ToString(CultureInfo.InvariantCulture)}", null, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        return ToChannelDetails(document.RootElement) ?? ToChannelDetails(GetObject(document.RootElement, "stream")) ?? throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+    }
+
+    public async Task UpdateChannelAsync(UpdateChannelRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.ChannelId <= 0) throw new ArgumentOutOfRangeException(nameof(request));
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (!string.IsNullOrWhiteSpace(request.Name)) fields["new_name"] = request.Name.Trim();
+        if (request.Description is not null) fields["description"] = request.Description;
+        if (request.ClearFolder) fields["folder_id"] = "null";
+        else if (request.FolderId is > 0) fields["folder_id"] = request.FolderId.Value.ToString(CultureInfo.InvariantCulture);
+        if (fields.Count == 0) return;
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Patch, $"streams/{request.ChannelId.ToString(CultureInfo.InvariantCulture)}", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        if (GetArray(document.RootElement, "ignored_parameters_unsupported").Length > 0)
+        {
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        }
+    }
+
+    public async Task<ChannelFolder> CreateChannelFolderAsync(CreateChannelFolderRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.Name);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["name"] = request.Name.Trim(),
+            ["description"] = request.Description ?? string.Empty
+        };
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Post, "channel_folders/create", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        return ToChannelFolder(document.RootElement) ??
+            ToChannelFolder(GetObject(document.RootElement, "channel_folder")) ??
+            (GetInt64(document.RootElement, "channel_folder_id") is { } folderId && folderId > 0
+                ? new ChannelFolder(folderId, request.Name.Trim(), request.Description)
+                : throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse));
+    }
+
+    public async Task<string> GetChannelEmailAddressAsync(ChannelEmailAddressRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.ChannelId <= 0) throw new ArgumentOutOfRangeException(nameof(request));
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Get, $"streams/{request.ChannelId.ToString(CultureInfo.InvariantCulture)}/email_address", null, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        return RequireString(document.RootElement, "email_address");
+    }
+
+    public async Task ArchiveChannelAsync(ArchiveChannelRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.ChannelId <= 0) throw new ArgumentOutOfRangeException(nameof(request));
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Delete, $"streams/{request.ChannelId.ToString(CultureInfo.InvariantCulture)}", null, request.Credentials, cancellationToken).ConfigureAwait(false);
         using var ignored = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
     }
 
@@ -861,10 +1045,17 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         "messages/flags/narrow" => "mark_read",
         "messages/flags" => "set_message_flag",
         "user_uploads" => "upload_attachment",
+        "streams" => "channels",
+        "user_groups" => "channel_permission_groups",
+        "channel_folders" => "channel_folders",
+        "channel_folders/create" => "create_channel_folder",
         _ when relativePath.StartsWith("user_uploads/", StringComparison.Ordinal) => "resolve_realm_media",
         _ when relativePath.StartsWith("messages/", StringComparison.Ordinal) &&
                relativePath.EndsWith("/reactions", StringComparison.Ordinal) => "set_reaction",
         _ when relativePath.StartsWith("messages/", StringComparison.Ordinal) => "mutate_message",
+        _ when relativePath.StartsWith("streams/", StringComparison.Ordinal) &&
+               relativePath.EndsWith("/email_address", StringComparison.Ordinal) => "get_channel_email_address",
+        _ when relativePath.StartsWith("streams/", StringComparison.Ordinal) => "channel_settings",
         _ when relativePath.StartsWith("users/me/", StringComparison.Ordinal) &&
                relativePath.EndsWith("/topics", StringComparison.Ordinal) => "topics",
         _ => "unknown"
@@ -1368,8 +1559,69 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         var id = GetInt64(value, "stream_id", "channel_id");
         var name = GetString(value, "name");
         return id is > 0 && !string.IsNullOrWhiteSpace(name)
-            ? new ChannelSummary(id.Value, name, GetString(value, "description"), GetBoolean(value, "is_archived") ?? false, GetInt32(value, "subscriber_count"), GetBoolean(value, "invite_only") ?? false)
+            ? new ChannelSummary(id.Value, name, GetString(value, "description"), GetBoolean(value, "is_archived") ?? false, GetInt32(value, "subscriber_count"), GetBoolean(value, "invite_only") ?? false, false, GetString(value, "color"), GetInt32(value, "stream_weekly_traffic"), GetInt64(value, "folder_id"))
             : null;
+    }
+
+    private static ChannelDetails? ToChannelDetails(JsonElement value)
+    {
+        var id = GetInt64(value, "stream_id", "channel_id");
+        var name = GetString(value, "name");
+        if (id is not > 0 || string.IsNullOrWhiteSpace(name)) return null;
+        var created = GetInt64(value, "date_created") is { } seconds && seconds > 0
+            ? DateTimeOffset.FromUnixTimeSeconds(seconds)
+            : (DateTimeOffset?)null;
+        return new ChannelDetails(
+            id.Value,
+            name,
+            GetString(value, "description"),
+            GetBoolean(value, "is_archived") ?? false,
+            GetBoolean(value, "invite_only") ?? false,
+            GetBoolean(value, "is_web_public") ?? false,
+            GetInt32(value, "subscriber_count"),
+            GetInt32(value, "stream_weekly_traffic"),
+            GetInt64(value, "folder_id"),
+            GetInt64(value, "creator_id"),
+            created,
+            ToChannelGroupSetting(value, "can_administer_channel_group"),
+            ToChannelGroupSetting(value, "can_add_subscribers_group"),
+            ToChannelGroupSetting(value, "can_send_message_group"),
+            ToChannelGroupSetting(value, "can_subscribe_group"),
+            ToChannelGroupSetting(value, "can_create_topic_group"));
+    }
+
+    private static ChannelFolder? ToChannelFolder(JsonElement value)
+    {
+        var id = GetInt64(value, "id", "folder_id");
+        var name = GetString(value, "name");
+        return id is > 0 && !string.IsNullOrWhiteSpace(name)
+            ? new ChannelFolder(
+                id.Value,
+                name,
+                GetString(value, "description"),
+                GetBoolean(value, "is_archived") ?? false,
+                GetInt32(value, "order") ?? 0)
+            : null;
+    }
+
+    private static ChannelUserGroup? ToChannelUserGroup(JsonElement value)
+    {
+        var id = GetInt64(value, "id");
+        var name = GetString(value, "name");
+        return id is > 0 && !string.IsNullOrWhiteSpace(name)
+            ? new ChannelUserGroup(id.Value, name, GetBoolean(value, "deactivated", "is_deactivated") ?? false, GetInt64Array(value, "members"), GetInt64Array(value, "direct_subgroup_ids"))
+            : null;
+    }
+
+    private static ChannelGroupSetting? ToChannelGroupSetting(JsonElement value, string property)
+    {
+        if (!TryGetProperty(value, property, out var setting)) return null;
+        if (setting.ValueKind == JsonValueKind.Number && setting.TryGetInt64(out var groupId) && groupId > 0)
+            return new NamedChannelGroupSetting(groupId);
+        if (setting.ValueKind != JsonValueKind.Object) return null;
+        var members = GetInt64Array(setting, "direct_members");
+        var subgroups = GetInt64Array(setting, "direct_subgroups", "direct_subgroup_ids");
+        return new AnonymousChannelGroupSetting(members, subgroups);
     }
 
     private static IReadOnlyList<string> GetSubscriptionResponseNames(JsonElement root, string property, CredentialEnvelope credentials)
@@ -1399,6 +1651,39 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
                 GetInt32(value, "avatar_version"),
                 GetBoolean(value, "is_bot") ?? false)
             : null;
+    }
+
+    private static IReadOnlyList<UserTopicVisibility> ToUserTopicVisibilities(JsonElement root)
+    {
+        return GetArray(root, "user_topics")
+            .Select(item =>
+            {
+                var channelId = GetInt64(item, "stream_id", "channel_id");
+                var topic = GetString(item, "topic_name", "topic");
+                var policy = GetInt32(item, "visibility_policy");
+                return channelId is > 0 && topic is not null && policy is >= 0 and <= 3
+                    ? new UserTopicVisibility(channelId.Value, topic, (TopicVisibilityPolicy)policy.Value)
+                    : null;
+            })
+            .Where(static item => item is not null)
+            .Cast<UserTopicVisibility>()
+            .ToArray();
+    }
+
+    private static bool IsOrganizationAdministrator(JsonElement root, long currentUserId)
+    {
+        var current = GetArray(root, "realm_users")
+            .FirstOrDefault(item => GetInt64(item, "user_id", "id") == currentUserId);
+        if (current.ValueKind != JsonValueKind.Object) return false;
+        var role = GetInt64(current, "role");
+        var declaredAdmin = GetBoolean(root, "is_admin");
+        return role is 100 or 200 && declaredAdmin is not false;
+    }
+
+    private static void EnsureNoUnsupportedParameters(JsonElement root)
+    {
+        if (GetStringArray(root, "ignored_parameters_unsupported").Length > 0)
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
     }
 
     private static EmojiReaction? ToReactionOrNull(JsonElement value)
@@ -1487,6 +1772,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         }
         return checked((int)result.Value);
     }
+    private static int? PositiveOrNull(int? value) => value is > 0 ? value : null;
     private static long RequireInt64(JsonElement value, string name) => GetInt64(value, name) ?? throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
     private static string RequireString(JsonElement value, string name) => GetString(value, name) ?? throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
     private static long? GetInt64(JsonElement value, params string[] names) => names.Select(name => TryGetProperty(value, name, out var item) && item.ValueKind == JsonValueKind.Number && item.TryGetInt64(out var number) ? (long?)number : null).FirstOrDefault(static item => item is not null);

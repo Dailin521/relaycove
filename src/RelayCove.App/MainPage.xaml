@@ -289,15 +289,19 @@
                             <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
                                 <VerticalStackLayout>
                                     <Label Text="新建私信" IsVisible="{Binding IsNewDirectConversationMode}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
-                                    <Label Text="新建频道话题" IsVisible="{Binding IsNewChannelConversationMode}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                                    <Label Text="新建频道话题" IsVisible="{Binding IsNewUnlockedChannelTopicComposer}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                                    <Label Text="新建话题" IsVisible="{Binding IsLockedChannelTopicComposer}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
                                     <Label Text="仅列出 IClientSession 当前可靠获知的活跃用户；不代表完整成员目录或 presence。"
                                            IsVisible="{Binding IsNewDirectConversationMode}"
                                            Style="{StaticResource MutedLabelStyle}"
                                            LineBreakMode="WordWrap" />
                                     <Label Text="选择已订阅频道并输入话题。不会创建或修改频道。"
-                                           IsVisible="{Binding IsNewChannelConversationMode}"
+                                           IsVisible="{Binding IsNewUnlockedChannelTopicComposer}"
                                            Style="{StaticResource MutedLabelStyle}" />
-                                    <HorizontalStackLayout Spacing="7" Margin="0,7,0,0">
+                                    <Label Text="{Binding NewConversationChannel.Name, StringFormat='#{0}'}"
+                                           IsVisible="{Binding IsLockedChannelTopicComposer}"
+                                           Style="{StaticResource MutedLabelStyle}" />
+                                    <HorizontalStackLayout Spacing="7" Margin="0,7,0,0" IsVisible="{Binding IsNewConversationModeSwitcherVisible}">
                                         <Button Text="私信" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowNewDirectConversationCommand}" />
                                         <Button Text="频道话题" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowNewChannelConversationCommand}" />
                                     </HorizontalStackLayout>
@@ -313,9 +317,9 @@
                                        IsVisible="{Binding IsNewDirectConversationMode}"
                                        Placeholder="筛选已知联系人"
                                        Style="{StaticResource BaseEntryStyle}" />
-                                <Grid IsVisible="{Binding IsNewChannelConversationMode}" ColumnDefinitions="*,*" ColumnSpacing="8">
+                                <Grid IsVisible="{Binding IsNewUnlockedChannelTopicComposer}" ColumnDefinitions="*,*" ColumnSpacing="8">
                                     <Picker ItemsSource="{Binding Channels}"
-                                            ItemDisplayBinding="{Binding DisplayTitle}"
+                                            ItemDisplayBinding="{Binding Name}"
                                             SelectedItem="{Binding NewConversationChannel, Mode=TwoWay}"
                                             IsEnabled="{Binding CanChooseNewConversationChannel}"
                                             Title="选择频道" />
@@ -324,8 +328,16 @@
                                            Placeholder="输入新话题"
                                            Style="{StaticResource BaseEntryStyle}" />
                                 </Grid>
+                                <Entry x:Name="LockedChannelTopicEntry"
+                                       IsVisible="{Binding IsLockedChannelTopicComposer}"
+                                       Text="{Binding NewConversationTopic, Mode=TwoWay}"
+                                       Placeholder="输入新话题"
+                                       Style="{StaticResource BaseEntryStyle}" />
                             </Grid>
-                            <Grid Grid.Row="2" MinimumHeightRequest="180" MaximumHeightRequest="330">
+                            <Grid Grid.Row="2"
+                                  IsVisible="{Binding IsNewConversationModeSwitcherVisible}"
+                                  MinimumHeightRequest="180"
+                                  MaximumHeightRequest="330">
                                 <CollectionView ItemsSource="{Binding NewConversationChoices}"
                                                 SelectionMode="None"
                                                 IsVisible="{Binding IsNewConversationChoicesVisible}">
@@ -370,7 +382,7 @@
                                        HorizontalOptions="Center"
                                        VerticalOptions="Center" />
                                 <Label Text="频道话题会在输入后打开；空频道也可直接创建第一个话题。"
-                                       IsVisible="{Binding IsNewChannelConversationMode}"
+                                       IsVisible="{Binding IsNewUnlockedChannelTopicComposer}"
                                        Style="{StaticResource MutedLabelStyle}"
                                        HorizontalOptions="Center"
                                        VerticalOptions="Center" />
@@ -400,6 +412,9 @@
                         </Grid>
                     </Border>
                 </Grid>
+
+                <controls:ChannelSettingsOverlayView x:Name="ChannelSettingsOverlay"
+                                                     BindingContext="{Binding ChannelSettings}" />
 
                 <Grid IsVisible="{Binding IsComposerEmojiPickerOpen}">
                     <BoxView BackgroundColor="Transparent">
@@ -735,6 +750,38 @@
                     </Border>
                 </Grid>
 
+                <Grid IsVisible="{Binding IsTopicMenuOpen}">
+                    <BoxView BackgroundColor="Transparent"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseTopicMenuCommand}" /></BoxView.GestureRecognizers></BoxView>
+                    <Border Style="{StaticResource PopoverBorderStyle}" WidthRequest="238" HorizontalOptions="Start" VerticalOptions="Start">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="8" /></Border.StrokeShape>
+                        <Border.Behaviors><windowsBehaviors:PopoverAnchorBehavior AnchorX="{Binding ViewModel.TopicMenuAnchorX, Source={x:Reference RootPage}, x:DataType=local:MainPage}" AnchorY="{Binding ViewModel.TopicMenuAnchorY, Source={x:Reference RootPage}, x:DataType=local:MainPage}" /></Border.Behaviors>
+                        <VerticalStackLayout Spacing="4">
+                            <Grid ColumnDefinitions="24,*" Margin="9,4,9,5"><Label Text="{Binding ActiveTopicAction.VisibilityGlyph}" FontSize="17" VerticalTextAlignment="Center" HorizontalTextAlignment="Center" /><Label Grid.Column="1" Text="{Binding ActiveTopicAction.DisplayName}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" VerticalTextAlignment="Center" LineBreakMode="TailTruncation" /></Grid>
+                            <VerticalStackLayout Spacing="4" IsVisible="{Binding CanSetActiveTopicVisibility}">
+                                <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                                <FlexLayout Margin="8,0" Direction="Row" AlignItems="Stretch" JustifyContent="SpaceBetween">
+                                    <Button x:Name="FirstTopicMenuButton" Text="🔕" FlexLayout.Grow="1" Margin="0,0,2,0" Style="{StaticResource BaseButtonStyle}" Command="{Binding SetActiveTopicVisibilityPolicyCommand}" CommandParameter="Muted" SemanticProperties.Description="静音话题"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsActiveTopicMutedPolicy}" Value="True"><Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" /></DataTrigger></Button.Triggers></Button>
+                                    <Button Text="○" FlexLayout.Grow="1" Margin="2,0" Style="{StaticResource BaseButtonStyle}" Command="{Binding SetActiveTopicVisibilityPolicyCommand}" CommandParameter="None" SemanticProperties.Description="继承频道设置"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsActiveTopicInheritPolicy}" Value="True"><Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" /></DataTrigger></Button.Triggers></Button>
+                                    <Button Text="🔔" IsVisible="{Binding ShowActiveTopicUnmutedPolicy}" FlexLayout.Grow="1" Margin="2,0" Style="{StaticResource BaseButtonStyle}" Command="{Binding SetActiveTopicVisibilityPolicyCommand}" CommandParameter="Unmuted" SemanticProperties.Description="取消静音话题"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsActiveTopicUnmutedPolicy}" Value="True"><Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" /></DataTrigger></Button.Triggers></Button>
+                                    <Button Text="★" FlexLayout.Grow="1" Margin="2,0,0,0" Style="{StaticResource BaseButtonStyle}" Command="{Binding SetActiveTopicVisibilityPolicyCommand}" CommandParameter="Followed" SemanticProperties.Description="关注话题"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsActiveTopicFollowedPolicy}" Value="True"><Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" /></DataTrigger></Button.Triggers></Button>
+                                </FlexLayout>
+                            </VerticalStackLayout>
+                            <VerticalStackLayout Spacing="4" IsVisible="{Binding ActiveTopicHasMessages}">
+                                <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                                <Button Text="标记整话题为已读" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding MarkActiveTopicReadCommand}" IsEnabled="{Binding CanMarkActiveTopicRead}" />
+                                <Button Text="复制话题链接" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding CopyActiveTopicLinkCommand}" />
+                            </VerticalStackLayout>
+                            <Label Text="此话题中还没有消息。" IsVisible="{Binding ActiveTopicIsEmpty}" Style="{StaticResource MutedLabelStyle}" FontAttributes="Italic" Margin="9,5" />
+                            <VerticalStackLayout Spacing="4" IsVisible="{Binding CanAdministerActiveTopicOperations}">
+                                <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                                <Button Text="移动话题" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding OpenTopicMoveDialogCommand}" IsEnabled="{Binding CanMoveActiveTopic}" />
+                                <Button Text="{Binding ActiveTopicAction.ResolutionLabel}" IsVisible="{Binding CanResolveActiveTopic}" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding RequestActiveTopicResolutionCommand}" />
+                                <Button Text="删除话题" Style="{StaticResource PopoverMenuButtonStyle}" TextColor="{StaticResource DangerColor}" Command="{Binding RequestTopicDeleteCommand}" IsEnabled="{Binding CanDeleteActiveTopic}" />
+                            </VerticalStackLayout>
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
                 <Grid IsVisible="{Binding IsEditDialogOpen}">
                     <BoxView Background="{StaticResource OverlayBrush}" />
                     <Border Style="{StaticResource DialogBorderStyle}">
@@ -763,6 +810,35 @@
                                 <Button Grid.Column="1" Text="永久删除" Style="{StaticResource PrimaryButtonStyle}" BackgroundColor="{StaticResource DangerColor}" Command="{Binding ConfirmDeleteMessageCommand}" />
                             </Grid>
                         </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsTopicMoveDialogOpen}">
+                    <BoxView Background="{StaticResource OverlayBrush}"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CancelTopicMoveDialogCommand}" /></BoxView.GestureRecognizers></BoxView>
+                    <Border Style="{StaticResource DialogBorderStyle}" MaximumWidthRequest="500">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                        <VerticalStackLayout Spacing="12">
+                            <Label Text="移动话题" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                            <Label Text="选择目标频道并输入目标话题名称。提交后由服务器检查首条消息和权限。" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                            <Picker ItemsSource="{Binding Channels}" ItemDisplayBinding="{Binding Name}" SelectedItem="{Binding TopicMoveDestinationChannel}" Title="目标频道" />
+                            <Entry Text="{Binding TopicMoveDestinationName}" Placeholder="目标话题" Style="{StaticResource BaseEntryStyle}" />
+                            <Label Text="{Binding TopicActionStatus}" IsVisible="{Binding HasTopicActionStatus}" Style="{StaticResource DangerLabelStyle}" />
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><Button Text="取消" Command="{Binding CancelTopicMoveDialogCommand}" Style="{StaticResource BaseButtonStyle}" /><Button Grid.Column="1" Text="移动" Command="{Binding ConfirmTopicMoveCommand}" IsEnabled="{Binding CanConfirmTopicMove}" Style="{StaticResource PrimaryButtonStyle}" /></Grid>
+                        </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsTopicResolutionConfirmationOpen}">
+                    <BoxView Background="{StaticResource OverlayBrush}"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CancelTopicResolutionCommand}" /></BoxView.GestureRecognizers></BoxView>
+                    <Border Style="{StaticResource DialogBorderStyle}" MaximumWidthRequest="460">
+                        <VerticalStackLayout Spacing="12"><Label Text="更改话题解决状态？" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" /><Label Text="此操作会重命名整话题；服务器会检查权限和时间限制。" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" /><Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><Button Text="取消" Command="{Binding CancelTopicResolutionCommand}" Style="{StaticResource BaseButtonStyle}" /><Button Grid.Column="1" Text="确认" Command="{Binding ConfirmTopicResolutionCommand}" Style="{StaticResource PrimaryButtonStyle}" /></Grid></VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsTopicDeleteConfirmationOpen}">
+                    <BoxView Background="{StaticResource OverlayBrush}"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CancelTopicDeleteCommand}" /></BoxView.GestureRecognizers></BoxView>
+                    <Border Style="{StaticResource DialogBorderStyle}" Stroke="{StaticResource DangerColor}">
+                        <VerticalStackLayout Spacing="12"><Label Text="永久删除话题？" Style="{StaticResource DangerLabelStyle}" FontSize="18" FontAttributes="Bold" /><Label Text="此操作不可撤销。若服务器只完成部分删除或网络结果未知，RelayCove 不会自动重试。" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" /><Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><Button Text="取消" Command="{Binding CancelTopicDeleteCommand}" Style="{StaticResource BaseButtonStyle}" /><Button Grid.Column="1" Text="永久删除" Command="{Binding ConfirmTopicDeleteCommand}" Style="{StaticResource PrimaryButtonStyle}" BackgroundColor="{StaticResource DangerColor}" /></Grid></VerticalStackLayout>
                     </Border>
                 </Grid>
 

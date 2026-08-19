@@ -1,6 +1,6 @@
 # Stage 24.7 — 频道与话题树形导航（工作日志）
 
-- Status: local candidate validated; awaiting user Visual Studio UI/interaction confirmation and explicit commit/push authorization
+- Status: delivered and pushed as `main@a750dcd`; no Visual Studio manual result was explicitly recorded
 - Starting point: `main@2c85700`
 - Date: 2026-08-19 CST
 - Scope: `RelayCove.App` 频道/话题导航、App 确定性测试与交互文档；不修改 Core、Data、Zulip 协议、Web、Realm 配置或服务端
@@ -56,4 +56,4 @@ dotnet test tests/RelayCove.App.Tests/RelayCove.App.Tests.csproj `
 4. 打开更多菜单，确认官方分段、锚定位置、Escape/外点关闭和焦点返回；确认话题列表、复制链接和频道设置均针对所点频道。频道级读/未读和修改颜色应只显示未接通提示。
 5. 本轮人工验收不要执行置顶、静音或退出，也不要发送首条消息，以避免真实 Realm 写入。
 
-用户确认后，补记实际人工结果；收到明确提交/推送指令后，才按最小 `main` Git 事务提交并非强制推送。
+本阶段已按用户明确指令提交并推送为 `main@a750dcd`。工作日志只保留已记录的确定性测试和离线副屏预览，不补写未经明确记录的 Visual Studio 人工结果。

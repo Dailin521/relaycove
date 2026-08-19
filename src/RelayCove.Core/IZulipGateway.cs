@@ -14,6 +14,11 @@ public interface IZulipGateway
     Task<MessageQueryPage> LoadSavedMessagesAsync(SavedMessagesRequest request, CancellationToken cancellationToken = default) =>
         Task.FromException<MessageQueryPage>(new NotSupportedException("Saved messages are not available."));
     Task<TopicsResult> GetTopicsAsync(TopicsRequest request, CancellationToken cancellationToken = default);
+    Task SetTopicVisibilityPolicyAsync(SetTopicVisibilityPolicyRequest request, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Topic visibility settings are not available."));
+    Task<TopicReadResult> MarkTopicReadAsync(MarkTopicReadRequest request, CancellationToken cancellationToken = default) => Task.FromException<TopicReadResult>(new NotSupportedException("Topic read state is not available."));
+    Task<TopicAnchorResult> ResolveTopicAnchorAsync(ResolveTopicAnchorRequest request, CancellationToken cancellationToken = default) => Task.FromException<TopicAnchorResult>(new NotSupportedException("Topic anchors are not available."));
+    Task MoveTopicAsync(MoveTopicRequest request, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Moving topics is not available."));
+    Task<TopicDeleteResult> DeleteTopicAsync(DeleteTopicRequest request, CancellationToken cancellationToken = default) => Task.FromException<TopicDeleteResult>(new NotSupportedException("Deleting topics is not available."));
     Task<SendResult> SendAsync(SendRequest request, CancellationToken cancellationToken = default);
     Task SetReactionAsync(SetReactionRequest request, CancellationToken cancellationToken = default);
     Task EditMessageAsync(EditMessageRequest request, CancellationToken cancellationToken = default);
@@ -25,6 +30,12 @@ public interface IZulipGateway
     Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(AvailableChannelsRequest request, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ChannelSummary>>([]);
     Task<SubscribeChannelResult> SubscribeToChannelAsync(SubscribeChannelRequest request, CancellationToken cancellationToken = default) => Task.FromException<SubscribeChannelResult>(new NotSupportedException());
     Task SetSubscriptionPreferenceAsync(SetSubscriptionPreferenceRequest request, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException());
+    Task<ChannelSettingsSnapshot> GetChannelSettingsSnapshotAsync(ChannelSettingsSnapshotRequest request, CancellationToken cancellationToken = default) => Task.FromException<ChannelSettingsSnapshot>(new NotSupportedException("Channel settings are not available."));
+    Task<ChannelDetails> GetChannelDetailsAsync(ChannelDetailsRequest request, CancellationToken cancellationToken = default) => Task.FromException<ChannelDetails>(new NotSupportedException("Channel settings are not available."));
+    Task UpdateChannelAsync(UpdateChannelRequest request, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel settings are not available."));
+    Task<ChannelFolder> CreateChannelFolderAsync(CreateChannelFolderRequest request, CancellationToken cancellationToken = default) => Task.FromException<ChannelFolder>(new NotSupportedException("Channel settings are not available."));
+    Task<string> GetChannelEmailAddressAsync(ChannelEmailAddressRequest request, CancellationToken cancellationToken = default) => Task.FromException<string>(new NotSupportedException("Channel settings are not available."));
+    Task ArchiveChannelAsync(ArchiveChannelRequest request, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel settings are not available."));
     Task MarkReadAsync(MarkReadRequest request, CancellationToken cancellationToken = default);
     Task DeleteQueueAsync(DeleteQueueRequest request, CancellationToken cancellationToken = default);
 }

@@ -6,6 +6,7 @@ public partial class ConversationPaneView : ContentView
 {
     private Microsoft.UI.Xaml.Controls.TextBox? _nativeFilterTextBox;
     private VisualElement? _channelMenuTrigger;
+    private VisualElement? _topicMenuTrigger;
 
     public ConversationPaneView()
     {
@@ -78,6 +79,24 @@ public partial class ConversationPaneView : ContentView
         }
     }
 
+    private static void OnTopicPointerEntered(object? sender, PointerEventArgs eventArgs)
+    {
+        if (sender is BindableObject { BindingContext: TopicItem topic }) topic.IsPointerOver = true;
+    }
+
+    private static void OnTopicPointerExited(object? sender, PointerEventArgs eventArgs)
+    {
+        if (sender is BindableObject { BindingContext: TopicItem topic }) topic.IsPointerOver = false;
+    }
+
+    private void OnTopicMenuClicked(object? sender, EventArgs eventArgs)
+    {
+        if (sender is not VisualElement { BindingContext: TopicItem topic } trigger || BindingContext is not ShellViewModel viewModel) return;
+        _topicMenuTrigger = trigger;
+        var request = CreateTopicMenuRequest(trigger, topic) ?? new TopicMenuRequest(topic, 12d, 112d);
+        viewModel.OpenTopicMenuAtCommand.Execute(request);
+    }
+
     private void OnDirectMessageTapped(object? sender, TappedEventArgs eventArgs)
     {
         if (BindingContext is ShellViewModel viewModel && eventArgs.Parameter is NavigationItem directMessage)
@@ -89,6 +108,8 @@ public partial class ConversationPaneView : ContentView
     public void FocusBrowseChannelsButton() => BrowseChannelsButton.Focus();
 
     public void FocusChannelMenuButton() => _channelMenuTrigger?.Focus();
+
+    public void FocusTopicMenuButton() => _topicMenuTrigger?.Focus();
 
     private static ChannelMenuRequest? CreateChannelMenuRequest(VisualElement trigger, ChannelItem channel)
     {
@@ -104,6 +125,30 @@ public partial class ConversationPaneView : ContentView
             var point = source.TransformToVisual(pageRoot)
                 .TransformPoint(new Windows.Foundation.Point(source.ActualWidth, 0d));
             return new ChannelMenuRequest(channel, point.X, point.Y);
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+#else
+        return null;
+#endif
+    }
+
+    private static TopicMenuRequest? CreateTopicMenuRequest(VisualElement trigger, TopicItem topic)
+    {
+#if WINDOWS
+        var source = trigger.Handler?.PlatformView as Microsoft.UI.Xaml.FrameworkElement;
+        var pageRoot = Application.Current?.Windows
+            .Select(window => window.Page?.Handler?.PlatformView)
+            .OfType<Microsoft.UI.Xaml.FrameworkElement>()
+            .FirstOrDefault();
+        if (source is null || pageRoot is null) return null;
+        try
+        {
+            var point = source.TransformToVisual(pageRoot)
+                .TransformPoint(new Windows.Foundation.Point(source.ActualWidth, 0d));
+            return new TopicMenuRequest(topic, point.X, point.Y);
         }
         catch (InvalidOperationException)
         {

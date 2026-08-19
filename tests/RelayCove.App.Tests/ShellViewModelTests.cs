@@ -763,8 +763,36 @@ public sealed class ShellViewModelTests
         Assert.True(viewModel.IsNewConversationOpen);
         Assert.True(viewModel.IsNewChannelConversationMode);
         Assert.True(viewModel.IsNewConversationChannelLocked);
+        Assert.True(viewModel.IsLockedChannelTopicComposer);
+        Assert.False(viewModel.IsNewConversationModeSwitcherVisible);
         Assert.Same(target, viewModel.NewConversationChannel);
         Assert.Equal(selected, session.SelectedConversation);
+
+        viewModel.CloseNewConversationCommand.Execute(null);
+
+        Assert.Equal(selected, session.SelectedConversation);
+        Assert.Empty(session.SentContents);
+    }
+
+    [Fact]
+    public async Task StartNewChannelConversation_WhenLockedToRow_OpensLocalTopicWithoutSending()
+    {
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [5] = new Subscription(5, "product-design") },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        var target = Assert.Single(viewModel.Channels);
+
+        viewModel.OpenNewChannelTopicForChannelCommand.Execute(target);
+        viewModel.NewConversationTopic = "new-topic";
+        await ((IAsyncRelayCommand)viewModel.StartNewChannelConversationCommand).ExecuteAsync(null);
+
+        Assert.Equal(new ChannelTopic(5, "new-topic"), session.SelectedConversation);
+        Assert.Empty(session.SentContents);
+        Assert.False(viewModel.IsNewConversationOpen);
     }
 
     [Fact]
@@ -2084,6 +2112,200 @@ public sealed class ShellViewModelTests
         Assert.Equal("取消置顶", viewModel.SelectedChannelPinLabel);
     }
 
+    [Fact]
+    public async Task TopicMenu_WhenTargeted_UsesCapturedTopicWithoutActivatingConversation()
+    {
+        ChannelTopic? readTarget = null;
+        var state = new ClientState(
+            subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering") },
+            connection: new ConnectionState(ConnectionStatus.Connected));
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            StateValue = state,
+            Selected = new ChannelTopic(4, "current"),
+            LoadTopicsAction = (_, _) => Task.FromResult<IReadOnlyList<TopicSummary>>([new TopicSummary(4, "review", 20, TopicVisibilityPolicy.Followed)]),
+            MarkTopicReadAction = (topic, _) => { readTarget = topic; return Task.CompletedTask; }
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
+        viewModel.ActivateChannel(viewModel.Channels.Single());
+        await WaitUntilAsync(() => viewModel.Topics.Count == 1);
+        var topic = viewModel.Topics.Single();
+        var selectedBeforeMenu = session.SelectedConversation;
+        viewModel.OpenTopicMenuAtCommand.Execute(new TopicMenuRequest(topic, 20, 20));
+
+        await ((IAsyncRelayCommand)viewModel.MarkActiveTopicReadCommand).ExecuteAsync(null);
+
+        Assert.Equal(new ChannelTopic(4, "review"), readTarget);
+        Assert.Equal(selectedBeforeMenu, session.SelectedConversation);
+        Assert.False(viewModel.IsTopicMenuOpen);
+    }
+
+    [Fact]
+    public async Task TopicDelete_WhenPartialResult_DoesNotRetryAndShowsStatus()
+    {
+        var calls = 0;
+        var state = new ClientState(
+            subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering") },
+            connection: new ConnectionState(ConnectionStatus.Connected));
+        var session = new FakeSession
+        {
+            IsOrganizationAdministrator = true,
+            StateValue = state,
+            LoadTopicsAction = (_, _) => Task.FromResult<IReadOnlyList<TopicSummary>>([new TopicSummary(4, "review", 20)]),
+            DeleteTopicAction = (_, _) => { calls++; return Task.FromResult(new TopicDeleteResult(false)); }
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
+        viewModel.ActivateChannel(viewModel.Channels.Single());
+        await WaitUntilAsync(() => viewModel.Topics.Count == 1);
+        viewModel.OpenTopicMenuAtCommand.Execute(new TopicMenuRequest(viewModel.Topics.Single(), 20, 20));
+        viewModel.RequestTopicDeleteCommand.Execute(null);
+
+        await ((IAsyncRelayCommand)viewModel.ConfirmTopicDeleteCommand).ExecuteAsync(null);
+
+        Assert.Equal(1, calls);
+        Assert.Contains("部分删除", viewModel.TopicActionStatus);
+    }
+
+    [Fact]
+    public async Task TopicMove_WhenSameSourceAndDestination_DisablesWriteThenUsesExplicitDestination()
+    {
+        (ChannelTopic Source, ChannelTopic Destination)? moved = null;
+        var state = new ClientState(
+            subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering"), [5] = new Subscription(5, "design") },
+            connection: new ConnectionState(ConnectionStatus.Connected));
+        var session = new FakeSession
+        {
+            IsOrganizationAdministrator = true,
+            StateValue = state,
+            LoadTopicsAction = (_, _) => Task.FromResult<IReadOnlyList<TopicSummary>>([new TopicSummary(4, "review", 20)]),
+            MoveTopicAction = (source, destination, _) => { moved = (source, destination); return Task.CompletedTask; }
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
+        viewModel.ActivateChannel(viewModel.Channels.Single(channel => channel.ChannelId == 4));
+        await WaitUntilAsync(() => viewModel.Topics.Count == 1);
+        viewModel.OpenTopicMenuAtCommand.Execute(new TopicMenuRequest(viewModel.Topics.Single(), 20, 20));
+        viewModel.OpenTopicMoveDialogCommand.Execute(null);
+
+        Assert.False(viewModel.CanConfirmTopicMove);
+        viewModel.TopicMoveDestinationChannel = viewModel.Channels.Single(channel => channel.ChannelId == 5);
+        viewModel.TopicMoveDestinationName = "implementation";
+        await ((IAsyncRelayCommand)viewModel.ConfirmTopicMoveCommand).ExecuteAsync(null);
+
+        Assert.Equal((new ChannelTopic(4, "review"), new ChannelTopic(5, "implementation")), moved);
+    }
+
+    [Fact]
+    public async Task TopicPolicyAndResolution_WhenMenuTargeted_UseCapturedTarget()
+    {
+        (ChannelTopic Topic, TopicVisibilityPolicy Policy)? policy = null;
+        (ChannelTopic Topic, bool Resolved)? resolution = null;
+        var state = new ClientState(
+            subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering") },
+            connection: new ConnectionState(ConnectionStatus.Connected));
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            IsOrganizationAdministrator = true,
+            StateValue = state,
+            LoadTopicsAction = (_, _) => Task.FromResult<IReadOnlyList<TopicSummary>>([new TopicSummary(4, "review", 20)]),
+            SetTopicVisibilityAction = (topic, visibility, _) => { policy = (topic, visibility); return Task.CompletedTask; },
+            ResolveTopicAction = (topic, resolved, _) => { resolution = (topic, resolved); return Task.CompletedTask; }
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
+        viewModel.ActivateChannel(viewModel.Channels.Single());
+        await WaitUntilAsync(() => viewModel.Topics.Count == 1);
+        var topic = viewModel.Topics.Single();
+        var changed = new List<string?>();
+        topic.PropertyChanged += (_, eventArgs) => changed.Add(eventArgs.PropertyName);
+        viewModel.OpenTopicMenuAtCommand.Execute(new TopicMenuRequest(topic, 20, 20));
+        await ((IAsyncRelayCommand)viewModel.SetActiveTopicVisibilityPolicyCommand).ExecuteAsync("Followed");
+        Assert.Equal((new ChannelTopic(4, "review"), TopicVisibilityPolicy.Followed), policy);
+        Assert.Equal("★", topic.VisibilityGlyph);
+        Assert.Contains(nameof(TopicItem.VisibilityGlyph), changed);
+
+        viewModel.OpenTopicMenuAtCommand.Execute(new TopicMenuRequest(topic, 20, 20));
+        viewModel.RequestActiveTopicResolutionCommand.Execute(null);
+        await ((IAsyncRelayCommand)viewModel.ConfirmTopicResolutionCommand).ExecuteAsync(null);
+        Assert.Equal((new ChannelTopic(4, "review"), true), resolution);
+    }
+
+    [Theory]
+    [InlineData(null, true, true, false, false)]
+    [InlineData(20, false, true, true, false)]
+    [InlineData(20, true, true, true, true)]
+    [InlineData(20, true, false, true, false)]
+    public async Task TopicMenu_WhenMessagesOrAuthorityAreUnavailable_FailsClosed(
+        int? maxMessageId,
+        bool isAdministrator,
+        bool isSubscriptionActive,
+        bool expectedHasMessages,
+        bool expectedCanAdminister)
+    {
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            IsOrganizationAdministrator = isAdministrator,
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering") },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            LoadTopicsAction = (_, _) => Task.FromResult<IReadOnlyList<TopicSummary>>([
+                new TopicSummary(4, "review", maxMessageId is null ? null : (long?)maxMessageId.Value)
+            ])
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
+        viewModel.ActivateChannel(viewModel.Channels.Single());
+        await WaitUntilAsync(() => viewModel.Topics.Count == 1);
+        viewModel.OpenTopicMenuAtCommand.Execute(new TopicMenuRequest(viewModel.Topics.Single(), 20, 20));
+        if (!isSubscriptionActive)
+        {
+            session.StateValue = session.StateValue with
+            {
+                Subscriptions = new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering", isActive: false) }
+            };
+            session.Publish();
+        }
+
+        Assert.Equal(expectedHasMessages, viewModel.ActiveTopicHasMessages);
+        Assert.Equal(!expectedHasMessages, viewModel.ActiveTopicIsEmpty);
+        Assert.Equal(expectedCanAdminister, viewModel.CanAdministerActiveTopicOperations);
+        Assert.Equal(expectedCanAdminister, viewModel.CanMoveActiveTopic);
+        Assert.Equal(expectedCanAdminister, viewModel.CanDeleteActiveTopic);
+        Assert.Equal(expectedHasMessages && isSubscriptionActive, viewModel.CanMarkActiveTopicRead);
+        Assert.Equal(isSubscriptionActive, viewModel.CanSetActiveTopicVisibility);
+    }
+
+    [Fact]
+    public async Task TopicProjection_WhenRefreshed_PreservesStableRowAndTransientMenuState()
+    {
+        IReadOnlyList<TopicSummary> loaded = [new TopicSummary(4, "review", 20, TopicVisibilityPolicy.Muted)];
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering") }, connection: new ConnectionState(ConnectionStatus.Connected)),
+            LoadTopicsAction = (_, _) => Task.FromResult(loaded)
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
+        var channel = viewModel.Channels.Single();
+        viewModel.ActivateChannel(channel);
+        await WaitUntilAsync(() => viewModel.Topics.Count == 1);
+        var original = viewModel.Topics.Single();
+        original.IsPointerOver = true;
+        loaded = [new TopicSummary(4, "review", 21, TopicVisibilityPolicy.Followed)];
+        viewModel.ActivateChannel(channel);
+        viewModel.ActivateChannel(channel);
+        await WaitUntilAsync(() => viewModel.Topics.Single().MaxMessageId == 21);
+
+        Assert.Same(original, viewModel.Topics.Single());
+        Assert.True(original.IsPointerOver);
+        Assert.Equal(TopicVisibilityPolicy.Followed, original.VisibilityPolicy);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -2112,6 +2334,11 @@ public sealed class ShellViewModelTests
         public Func<string, long?, int, CancellationToken, Task<MessageQueryPage>>? SearchMessagesAction { get; set; }
         public Func<CancellationToken, Task<IReadOnlyList<ChannelSummary>>>? AvailableChannelsAction { get; set; }
         public Func<ConversationKey, CancellationToken, Task>? MarkDisplayedReadAction { get; set; }
+        public Func<ChannelTopic, TopicVisibilityPolicy, CancellationToken, Task>? SetTopicVisibilityAction { get; set; }
+        public Func<ChannelTopic, CancellationToken, Task>? MarkTopicReadAction { get; set; }
+        public Func<ChannelTopic, ChannelTopic, CancellationToken, Task>? MoveTopicAction { get; set; }
+        public Func<ChannelTopic, bool, CancellationToken, Task>? ResolveTopicAction { get; set; }
+        public Func<ChannelTopic, CancellationToken, Task<TopicDeleteResult>>? DeleteTopicAction { get; set; }
         public int LoginCalls { get; private set; }
         public List<string> SentContents { get; } = [];
         public int UploadCalls { get; private set; }
@@ -2121,6 +2348,7 @@ public sealed class ShellViewModelTests
         public AccountId? AccountId => Account;
         public RealmEndpoint? ActiveRealm { get; set; }
         public long? CurrentUserId { get; set; }
+        public bool IsOrganizationAdministrator { get; set; }
         public long MaxFileUploadBytes { get; set; } = 10L * 1024 * 1024;
         public ClientState State => StateValue;
         public ConversationKey? SelectedConversation => Selected;
@@ -2164,6 +2392,11 @@ public sealed class ShellViewModelTests
         }
         public Task<IReadOnlyList<TopicSummary>> LoadTopicsAsync(long channelId, CancellationToken cancellationToken = default) =>
             LoadTopicsAction?.Invoke(channelId, cancellationToken) ?? Task.FromResult<IReadOnlyList<TopicSummary>>([]);
+        public Task SetTopicVisibilityPolicyAsync(ChannelTopic topic, TopicVisibilityPolicy policy, CancellationToken cancellationToken = default) => SetTopicVisibilityAction?.Invoke(topic, policy, cancellationToken) ?? Task.CompletedTask;
+        public Task MarkTopicReadAsync(ChannelTopic topic, CancellationToken cancellationToken = default) => MarkTopicReadAction?.Invoke(topic, cancellationToken) ?? Task.CompletedTask;
+        public Task MoveTopicAsync(ChannelTopic source, ChannelTopic destination, CancellationToken cancellationToken = default) => MoveTopicAction?.Invoke(source, destination, cancellationToken) ?? Task.CompletedTask;
+        public Task SetTopicResolvedAsync(ChannelTopic topic, bool isResolved, CancellationToken cancellationToken = default) => ResolveTopicAction?.Invoke(topic, isResolved, cancellationToken) ?? Task.CompletedTask;
+        public Task<TopicDeleteResult> DeleteTopicAsync(ChannelTopic topic, CancellationToken cancellationToken = default) => DeleteTopicAction?.Invoke(topic, cancellationToken) ?? Task.FromResult(new TopicDeleteResult(true));
         public Task<MessageQueryPage> LoadSavedMessagesAsync(long? beforeMessageId, int limit, CancellationToken cancellationToken = default) =>
             SavedMessagesAction?.Invoke(beforeMessageId, limit, cancellationToken) ?? Task.FromResult(new MessageQueryPage([], false, true, true));
         public Task<MessageQueryPage> SearchMessagesAsync(string query, long? beforeMessageId, int limit, CancellationToken cancellationToken = default) =>

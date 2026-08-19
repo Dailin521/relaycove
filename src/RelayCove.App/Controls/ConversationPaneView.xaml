@@ -102,6 +102,7 @@
                                 <Border HeightRequest="34" Margin="31,0,8,0" Padding="5,0" StrokeThickness="0">
                                     <Border.GestureRecognizers>
                                         <TapGestureRecognizer Tapped="OnTopicTapped" CommandParameter="{Binding .}" />
+                                        <PointerGestureRecognizer PointerEntered="OnTopicPointerEntered" PointerExited="OnTopicPointerExited" />
                                     </Border.GestureRecognizers>
                                     <Border.StrokeShape><RoundRectangle CornerRadius="6" /></Border.StrokeShape>
                                     <Border.Triggers>
@@ -109,13 +110,17 @@
                                             <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
                                         </DataTrigger>
                                     </Border.Triggers>
-                                    <Grid ColumnDefinitions="18,*,Auto" ColumnSpacing="4">
+                                    <Grid ColumnDefinitions="18,*,Auto,24,24" ColumnSpacing="4">
                                         <Label Text="✓" IsVisible="{Binding IsSelected}" Style="{StaticResource BaseLabelStyle}"
                                                FontAttributes="Bold" VerticalTextAlignment="Center" />
                                         <Label Grid.Column="1" Text="{Binding DisplayName}" Style="{StaticResource BaseLabelStyle}"
                                                FontSize="14" VerticalTextAlignment="Center" LineBreakMode="TailTruncation" />
                                         <Label Grid.Column="2" Text="{Binding UnreadLabel}" IsVisible="{Binding HasUnread}"
                                                Style="{StaticResource MutedLabelStyle}" TextColor="{StaticResource DangerColor}" VerticalTextAlignment="Center" />
+                                        <Label Grid.Column="3" Text="{Binding VisibilityGlyph}" FontSize="11" TextColor="{AppThemeBinding Light={StaticResource LightMutedColor}, Dark={StaticResource DarkMutedColor}}" IsVisible="{Binding ShowActions}" VerticalTextAlignment="Center" HorizontalTextAlignment="Center" SemanticProperties.Description="{Binding VisibilityLabel}" />
+                                        <ImageButton Grid.Column="4" Source="icon_more.png" Style="{StaticResource MessageQuickImageButtonStyle}"
+                                                     IsVisible="{Binding ShowActions}" Clicked="OnTopicMenuClicked"
+                                                     SemanticProperties.Description="打开话题操作菜单" />
                                     </Grid>
                                 </Border>
                             </DataTemplate>

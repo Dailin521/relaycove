@@ -101,6 +101,7 @@ public partial class MainPage : ContentPage
     {
         var width = Width > 0 ? Width : 1440d;
         _viewModel.UpdateViewport(width);
+        _viewModel.ChannelSettings.UpdateViewport(width);
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs eventArgs)
@@ -132,13 +133,20 @@ public partial class MainPage : ContentPage
                 Dispatcher.Dispatch(() => FirstAccountMenuButton.Focus());
                 break;
             case nameof(ShellViewModel.IsNewConversationOpen) when _viewModel.IsNewConversationOpen:
-                Dispatcher.Dispatch(() => NewConversationSearchEntry.Focus());
+                Dispatcher.Dispatch(() =>
+                {
+                    if (_viewModel.IsLockedChannelTopicComposer) LockedChannelTopicEntry.Focus();
+                    else NewConversationSearchEntry.Focus();
+                });
                 break;
             case nameof(ShellViewModel.IsChannelBrowserOpen) when _viewModel.IsChannelBrowserOpen:
                 Dispatcher.Dispatch(() => ChannelBrowserCloseButton.Focus());
                 break;
             case nameof(ShellViewModel.IsChannelBrowserOpen):
                 Dispatcher.Dispatch(ConversationPane.FocusBrowseChannelsButton);
+                break;
+            case nameof(ShellViewModel.ChannelSettings) when _viewModel.ChannelSettings.IsOpen:
+                Dispatcher.Dispatch(ChannelSettingsOverlay.FocusCloseButton);
                 break;
             case nameof(ShellViewModel.IsComposerEmojiPickerOpen) when _viewModel.IsComposerEmojiPickerOpen:
                 Dispatcher.Dispatch(() => ComposerEmojiCollection.Focus());
@@ -155,8 +163,14 @@ public partial class MainPage : ContentPage
             case nameof(ShellViewModel.IsChannelMenuOpen) when _viewModel.IsChannelMenuOpen:
                 Dispatcher.Dispatch(() => FirstChannelMenuButton.Focus());
                 break;
+            case nameof(ShellViewModel.IsTopicMenuOpen) when _viewModel.IsTopicMenuOpen:
+                Dispatcher.Dispatch(() => FirstTopicMenuButton.Focus());
+                break;
             case nameof(ShellViewModel.ChannelMenuFocusRequest):
                 Dispatcher.Dispatch(ConversationPane.FocusChannelMenuButton);
+                break;
+            case nameof(ShellViewModel.TopicMenuFocusRequest):
+                Dispatcher.Dispatch(ConversationPane.FocusTopicMenuButton);
                 break;
             case nameof(ShellViewModel.IsEditDialogOpen) when _viewModel.IsEditDialogOpen:
                 Dispatcher.Dispatch(() => EditMessageEditor.Focus());
@@ -205,7 +219,11 @@ public partial class MainPage : ContentPage
 
     private bool CloseTopOverlay()
     {
-        if (_viewModel.IsChannelBrowserOpen) _viewModel.CloseChannelBrowserCommand.Execute(null);
+        if (_viewModel.ChannelSettings.IsOpen) _viewModel.ChannelSettings.CloseTopLayerCommand.Execute(null);
+        else if (_viewModel.IsTopicMoveDialogOpen) _viewModel.CancelTopicMoveDialogCommand.Execute(null);
+        else if (_viewModel.IsTopicResolutionConfirmationOpen) _viewModel.CancelTopicResolutionCommand.Execute(null);
+        else if (_viewModel.IsTopicDeleteConfirmationOpen) _viewModel.CancelTopicDeleteCommand.Execute(null);
+        else if (_viewModel.IsChannelBrowserOpen) _viewModel.CloseChannelBrowserCommand.Execute(null);
         else if (_viewModel.IsNewConversationOpen) _viewModel.CloseNewConversationCommand.Execute(null);
         else if (_viewModel.IsImageViewerOpen) _viewModel.CloseImageViewerCommand.Execute(null);
         else if (_viewModel.IsChannelUnsubscribeConfirmationOpen) _viewModel.CancelChannelUnsubscribeCommand.Execute(null);
@@ -213,6 +231,7 @@ public partial class MainPage : ContentPage
         else if (_viewModel.IsEditDialogOpen) _viewModel.CancelEditDialogCommand.Execute(null);
         else if (_viewModel.IsReactionPickerOpen) _viewModel.CloseReactionPickerCommand.Execute(null);
         else if (_viewModel.IsMessageMenuOpen) _viewModel.CloseMessageMenuCommand.Execute(null);
+        else if (_viewModel.IsTopicMenuOpen) _viewModel.CloseTopicMenuCommand.Execute(null);
         else if (_viewModel.IsChannelMenuOpen) _viewModel.CloseChannelMenuCommand.Execute(null);
         else if (_viewModel.IsAccountMenuOpen)
         {

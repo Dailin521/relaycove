@@ -5,6 +5,7 @@ public interface IClientSession
     AccountId? AccountId { get; }
     RealmEndpoint? ActiveRealm { get; }
     long? CurrentUserId { get; }
+    bool IsOrganizationAdministrator => false;
     long MaxFileUploadBytes { get; }
     ClientState State { get; }
     ConversationKey? SelectedConversation { get; }
@@ -23,6 +24,11 @@ public interface IClientSession
     Task OpenMessageAsync(ConversationKey conversation, long messageId, CancellationToken cancellationToken = default) =>
         Task.FromException(new NotSupportedException("Opening a message is not available."));
     Task<IReadOnlyList<TopicSummary>> LoadTopicsAsync(long channelId, CancellationToken cancellationToken = default);
+    Task SetTopicVisibilityPolicyAsync(ChannelTopic topic, TopicVisibilityPolicy policy, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Topic visibility settings are not available."));
+    Task MarkTopicReadAsync(ChannelTopic topic, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Topic read state is not available."));
+    Task MoveTopicAsync(ChannelTopic source, ChannelTopic destination, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Moving topics is not available."));
+    Task SetTopicResolvedAsync(ChannelTopic topic, bool isResolved, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Topic resolution is not available."));
+    Task<TopicDeleteResult> DeleteTopicAsync(ChannelTopic topic, CancellationToken cancellationToken = default) => Task.FromException<TopicDeleteResult>(new NotSupportedException("Deleting topics is not available."));
     Task SendAsync(string content, CancellationToken cancellationToken = default);
     Task SendAsync(ConversationKey expectedConversation, string content, CancellationToken cancellationToken = default) =>
         string.Equals(SelectedConversation?.CanonicalKey, expectedConversation.CanonicalKey, StringComparison.Ordinal)
@@ -38,6 +44,12 @@ public interface IClientSession
     Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ChannelSummary>>([]);
     Task SubscribeToChannelAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException());
     Task SetSubscriptionPreferenceAsync(long channelId, SubscriptionPreference preference, bool value, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException());
+    Task<ChannelSettingsSnapshot> LoadChannelSettingsSnapshotAsync(CancellationToken cancellationToken = default) => Task.FromException<ChannelSettingsSnapshot>(new NotSupportedException("Channel settings are not available."));
+    Task<ChannelDetails> LoadChannelDetailsAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException<ChannelDetails>(new NotSupportedException("Channel settings are not available."));
+    Task UpdateChannelAsync(long channelId, string? name, string? description, long? folderId, bool clearFolder = false, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel settings are not available."));
+    Task<ChannelFolder> CreateChannelFolderAsync(string name, string? description, CancellationToken cancellationToken = default) => Task.FromException<ChannelFolder>(new NotSupportedException("Channel settings are not available."));
+    Task<string> GetChannelEmailAddressAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException<string>(new NotSupportedException("Channel settings are not available."));
+    Task ArchiveChannelAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel settings are not available."));
     Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default);
     Task MarkDisplayedReadAsync(ConversationKey expectedConversation, CancellationToken cancellationToken = default);
     Task ClearLocalCacheAsync(CancellationToken cancellationToken = default);

@@ -63,7 +63,9 @@ public sealed class ZulipGatewayTests
         using var handler = new RecordingHandler(Json("""
             {"queue_id":"queue-1","last_event_id":9,"event_queue_longpoll_timeout_seconds":90,"idle_queue_timeout_secs":3600,"max_message_length":10000,"max_topic_length":60,"max_file_upload_size_mib":25,
              "subscriptions":[{"stream_id":42,"name":"general","future":1}],
-             "realm_users":[{"user_id":7,"full_name":"Ada","email":"ada@example.test"}],
+             "realm_users":[{"user_id":7,"full_name":"Ada","email":"ada@example.test","role":200}],
+             "is_admin":true,
+             "user_topics":[{"stream_id":42,"topic_name":"follow me","visibility_policy":3}],
              "recent_private_conversations":[{"user_ids":[9,10]},{"user_ids":[]}],
              "unread_msgs":{"count":3,"streams":[{"stream_id":42,"topic":"hello","unread_message_ids":[1,2]}],"pms":[{"other_user_id":9,"unread_message_ids":[3]}],"huddles":[],"old_unreads_missing":false},
              "unknown":{}}
@@ -91,6 +93,8 @@ public sealed class ZulipGatewayTests
         Assert.Contains(result.RecentDirectMessages, item => item is DirectMessage direct && direct.OtherUserIds.Count == 0);
         Assert.Equal(3, result.Unread.Total);
         Assert.Equal(25, result.MaxFileUploadSizeMiB);
+        Assert.True(result.IsOrganizationAdministrator);
+        Assert.Equal(TopicVisibilityPolicy.Followed, Assert.Single(result.UserTopics!).Policy);
         Assert.Empty(result.Events);
     }
 
@@ -713,6 +717,205 @@ public sealed class ZulipGatewayTests
         var request = Assert.Single(handler.Requests);
         Assert.Equal("https://chat.example.test/user_avatars/7/avatar.png", request.Uri!.AbsoluteUri);
         Assert.Equal("Basic", request.Authorization!.Scheme);
+    }
+
+    [Fact]
+    public async Task Register_UserTopicsAllowsEmptyNameAndConflictingAdminDeclarationFailsClosed()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"queue_id":"queue-1","last_event_id":9,"event_queue_longpoll_timeout_seconds":90,"max_message_length":100,"max_topic_length":60,
+             "subscriptions":[],"realm_users":[{"user_id":7,"full_name":"Ada","role":300}],"recent_private_conversations":[],"unread_msgs":{"count":0,"streams":[],"pms":[],"huddles":[]},
+             "is_admin":true,"user_topics":[{"stream_id":42,"topic_name":"","visibility_policy":1}]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.RegisterAsync(new RegisterRequest(Credentials));
+
+        Assert.False(result.IsOrganizationAdministrator);
+        var topic = Assert.Single(result.UserTopics!);
+        Assert.Equal(string.Empty, topic.Topic);
+        Assert.Equal(TopicVisibilityPolicy.Muted, topic.Policy);
+    }
+
+    [Fact]
+    public async Task Register_CurrentMemberWithoutAdminRole_IsNotOrganizationAdministrator()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"queue_id":"queue-1","last_event_id":9,"event_queue_longpoll_timeout_seconds":90,"max_message_length":100,"max_topic_length":60,
+             "subscriptions":[],"realm_users":[{"user_id":7,"full_name":"Ada","role":300}],"recent_private_conversations":[],"unread_msgs":{"count":0,"streams":[],"pms":[],"huddles":[]}}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.RegisterAsync(new RegisterRequest(Credentials));
+
+        Assert.False(result.IsOrganizationAdministrator);
+    }
+
+    [Fact]
+    public async Task ChannelSettingsSnapshot_UsesAuthoritativeQueriesAndParsesGroupsWithoutEmailLogging()
+    {
+        using var handler = new RecordingHandler(
+            Json("""{"user_id":7,"role":100}"""),
+            Json("""{"streams":[{"stream_id":42,"name":"general","description":"desc"}]}"""),
+            Json("""{"channel_folders":[{"id":3,"name":"Work","description":"d"}]}"""),
+            Json("""{"user_groups":[{"id":10,"name":"admins","members":[7],"direct_subgroup_ids":[],"deactivated":false}]}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        var snapshot = await gateway.GetChannelSettingsSnapshotAsync(new ChannelSettingsSnapshotRequest(Credentials, new ChannelSettingsLimits(60, 1024, 60, 1024)));
+
+        Assert.Equal(4, handler.Requests.Count);
+        var query = ParseQuery(handler.Requests[1].Uri!);
+        Assert.Equal("true", query["include_all"]);
+        Assert.Equal("false", query["exclude_archived"]);
+        Assert.Equal(10, Assert.Single(snapshot.UserGroups).GroupId);
+        Assert.True(snapshot.IsOrganizationAdministrator);
+        Assert.Equal("Work", Assert.Single(snapshot.Folders).Name);
+    }
+
+    [Fact]
+    public async Task ChannelDetails_ParsesNamedAndAnonymousPermissionGroups()
+    {
+        using var namedHandler = new RecordingHandler(Json("""{"stream":{"stream_id":42,"name":"general","can_administer_channel_group":10,"can_send_message_group":{"direct_members":[7],"direct_subgroups":[11]},"stream_weekly_traffic":9,"folder_id":3,"creator_id":7,"date_created":100}}"""));
+        using var namedGateway = new ZulipGateway(namedHandler);
+        var detail = await namedGateway.GetChannelDetailsAsync(new ChannelDetailsRequest(Credentials, 42));
+        Assert.Equal(9, detail.WeeklyTraffic);
+        Assert.IsType<NamedChannelGroupSetting>(detail.CanAdministerChannelGroup);
+        var anonymous = Assert.IsType<AnonymousChannelGroupSetting>(detail.CanSendMessageGroup);
+        Assert.Equal([7], anonymous.DirectMembers);
+
+        using var malformedHandler = new RecordingHandler(Json("""{"stream":{"stream_id":42,"name":"general","can_administer_channel_group":"bad"}}"""));
+        using var malformedGateway = new ZulipGateway(malformedHandler);
+        var malformed = await malformedGateway.GetChannelDetailsAsync(new ChannelDetailsRequest(Credentials, 42));
+        Assert.Null(malformed.CanAdministerChannelGroup);
+    }
+
+    [Fact]
+    public async Task ChannelWrites_UseExactFormsAndDoNotRetryFailures()
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success"}"""), Json("""{"channel_folder_id":4}"""), Json("""{"email_address":"private@example.test"}"""), Json("""{"result":"success"}"""));
+        using var gateway = new ZulipGateway(handler);
+        await gateway.UpdateChannelAsync(new UpdateChannelRequest(Credentials, 42, "new", "description", null, true));
+        await gateway.CreateChannelFolderAsync(new CreateChannelFolderRequest(Credentials, "Folder", "desc"));
+        var email = await gateway.GetChannelEmailAddressAsync(new ChannelEmailAddressRequest(Credentials, 42));
+        await gateway.ArchiveChannelAsync(new ArchiveChannelRequest(Credentials, 42));
+        Assert.Equal("private@example.test", email);
+        Assert.Equal(HttpMethod.Patch, handler.Requests[0].Method);
+        var update = ParseForm(handler.Requests[0].Body);
+        Assert.Equal("new", update["new_name"]);
+        Assert.Equal("null", update["folder_id"]);
+        Assert.Equal("/api/v1/channel_folders/create", handler.Requests[1].Uri!.AbsolutePath);
+        Assert.Equal("desc", ParseForm(handler.Requests[1].Body)["description"]);
+        Assert.Equal("/api/v1/streams/42/email_address", handler.Requests[2].Uri!.AbsolutePath);
+        Assert.Equal(HttpMethod.Delete, handler.Requests[3].Method);
+
+        using var failureHandler = new RecordingHandler(Json("""{"code":"BAD_REQUEST","msg":"no"}""", HttpStatusCode.BadRequest));
+        using var failureGateway = new ZulipGateway(failureHandler);
+        await Assert.ThrowsAsync<GatewayException>(() => failureGateway.ArchiveChannelAsync(new ArchiveChannelRequest(Credentials, 42)));
+        Assert.Single(failureHandler.Requests);
+    }
+
+    [Fact]
+    public async Task TopicOperations_UseOfficialEndpointsFormsAndSingleWriteAttempts()
+    {
+        using var handler = new RecordingHandler(
+            Json("""{"result":"success"}"""),
+            Json("""{"last_processed_id":11,"found_newest":false}"""),
+            Json("""{"messages":[{"id":9}]}"""),
+            Json("""{"result":"success"}"""),
+            Json("""{"complete":false}"""));
+        using var gateway = new ZulipGateway(handler);
+        var source = new ChannelTopic(42, "private topic");
+        await gateway.SetTopicVisibilityPolicyAsync(new SetTopicVisibilityPolicyRequest(Credentials, source, TopicVisibilityPolicy.Followed));
+        var read = await gateway.MarkTopicReadAsync(new MarkTopicReadRequest(Credentials, source));
+        var anchor = await gateway.ResolveTopicAnchorAsync(new ResolveTopicAnchorRequest(Credentials, source));
+        await gateway.MoveTopicAsync(new MoveTopicRequest(Credentials, source, anchor.MessageId!.Value, new ChannelTopic(43, "renamed")));
+        var deleted = await gateway.DeleteTopicAsync(new DeleteTopicRequest(Credentials, source));
+
+        Assert.False(deleted.Complete);
+        Assert.Equal(11, read.LastProcessedMessageId);
+        Assert.Equal(9, anchor.MessageId);
+        Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
+        Assert.Equal("/api/v1/user_topics", handler.Requests[0].Uri!.AbsolutePath);
+        var policy = ParseForm(handler.Requests[0].Body);
+        Assert.Equal("42", policy["stream_id"]);
+        Assert.Equal("private topic", policy["topic"]);
+        Assert.Equal("3", policy["visibility_policy"]);
+        var readForm = ParseForm(handler.Requests[1].Body);
+        Assert.Equal("oldest", readForm["anchor"]);
+        Assert.Equal("false", readForm["include_anchor"]);
+        Assert.Equal("1000", readForm["num_after"]);
+        Assert.Contains("unread", readForm["narrow"], StringComparison.Ordinal);
+        var anchorQuery = ParseQuery(handler.Requests[2].Uri!);
+        Assert.Equal("oldest", anchorQuery["anchor"]);
+        Assert.Equal("1", anchorQuery["num_after"]);
+        Assert.Equal("/api/v1/messages/9", handler.Requests[3].Uri!.AbsolutePath);
+        var move = ParseForm(handler.Requests[3].Body);
+        Assert.Equal("change_all", move["propagate_mode"]);
+        Assert.Equal("43", move["stream_id"]);
+        Assert.DoesNotContain("send_notification_to_old_thread", move);
+        Assert.DoesNotContain("send_notification_to_new_thread", move);
+        Assert.Equal("/api/v1/streams/42/delete_topic", handler.Requests[4].Uri!.AbsolutePath);
+        Assert.DoesNotContain("private topic", new SetTopicVisibilityPolicyRequest(Credentials, source, TopicVisibilityPolicy.Muted).ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("private topic", new DeleteTopicRequest(Credentials, source).ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SetTopicVisibilityPolicy_WhenServerIgnoresParameter_FailsClosedWithoutRetry()
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success","ignored_parameters_unsupported":["visibility_policy"]}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        var error = await Assert.ThrowsAsync<GatewayException>(() => gateway.SetTopicVisibilityPolicyAsync(
+            new SetTopicVisibilityPolicyRequest(Credentials, new ChannelTopic(42, string.Empty), TopicVisibilityPolicy.Muted)));
+
+        Assert.Equal(GatewayErrorKind.Protocol, error.Kind);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task ChannelSettingsSnapshot_WhenCurrentUserIsGuest_SkipsUnavailableUserGroups()
+    {
+        using var handler = new RecordingHandler(
+            Json("""{"user_id":7,"role":600,"is_guest":true}"""),
+            Json("""{"streams":[{"stream_id":42,"name":"guest-visible"}]}"""),
+            Json("""{"channel_folders":[]}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        var snapshot = await gateway.GetChannelSettingsSnapshotAsync(
+            new ChannelSettingsSnapshotRequest(Credentials, new ChannelSettingsLimits(null, null, null, null)));
+
+        Assert.True(snapshot.IsGuest);
+        Assert.Empty(snapshot.UserGroups);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData("{\"role\":100}")]
+    [InlineData("{\"user_id\":8,\"role\":100}")]
+    [InlineData("{\"user_id\":7,\"role\":400,\"is_admin\":true}")]
+    [InlineData("{\"user_id\":7,\"role\":600,\"is_guest\":false}")]
+    public async Task ChannelSettingsSnapshot_WhenOwnUserIdentityOrRoleIsInconsistent_FailsClosed(string ownUserJson)
+    {
+        using var handler = new RecordingHandler(Json(ownUserJson));
+        using var gateway = new ZulipGateway(handler);
+
+        var error = await Assert.ThrowsAsync<GatewayException>(() => gateway.GetChannelSettingsSnapshotAsync(
+            new ChannelSettingsSnapshotRequest(Credentials, new ChannelSettingsLimits(null, null, null, null))));
+
+        Assert.Equal(GatewayErrorKind.Protocol, error.Kind);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task UpdateChannel_WhenServerIgnoresUnsupportedField_FailsClosedWithoutRetry()
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success","ignored_parameters_unsupported":["folder_id"]}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        await Assert.ThrowsAsync<GatewayException>(() => gateway.UpdateChannelAsync(
+            new UpdateChannelRequest(Credentials, 42, null, null, 3)));
+
+        Assert.Single(handler.Requests);
     }
 
     private static HttpResponseMessage Json(string json, HttpStatusCode status = HttpStatusCode.OK, TimeSpan? retryAfter = null)

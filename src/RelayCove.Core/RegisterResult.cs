@@ -11,4 +11,10 @@ public sealed record RegisterResult(
     IReadOnlyList<ConversationKey> RecentDirectMessages,
     UnreadState Unread,
     IReadOnlyList<DomainEvent> Events,
-    int? MaxFileUploadSizeMiB = null);
+    int? MaxFileUploadSizeMiB = null,
+    int? MaxChannelNameLength = null,
+    int? MaxChannelDescriptionLength = null,
+    int? MaxChannelFolderNameLength = null,
+    int? MaxChannelFolderDescriptionLength = null,
+    IReadOnlyList<UserTopicVisibility>? UserTopics = null,
+    bool IsOrganizationAdministrator = false);

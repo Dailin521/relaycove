@@ -8,4 +8,6 @@ public sealed record ChannelSummary(
     int? SubscriberCount,
     bool IsPrivate = false,
     bool IsSubscribed = false,
-    string? Color = null);
+    string? Color = null,
+    int? WeeklyTraffic = null,
+    long? FolderId = null);

@@ -1628,6 +1628,92 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task LoadTopicsAsync_WhenRegisterContainsUserTopicPolicies_ReturnsEphemeralPolicy()
+    {
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(userTopics: [new UserTopicVisibility(8, "release", TopicVisibilityPolicy.Followed)])),
+            TopicsHandler = (_, _) => Task.FromResult<TopicsResult>(new TopicsResult([new TopicSummary(8, "release", 80)]))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var topic = Assert.Single(await session.LoadTopicsAsync(8));
+
+        Assert.Equal(TopicVisibilityPolicy.Followed, topic.VisibilityPolicy);
+        Assert.Equal(TopicVisibilityPolicy.None, session.State.Topics[new ChannelTopic(8, "release").CanonicalKey].VisibilityPolicy);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task MoveTopicAsync_WhenTopicHasNoFirstMessage_ThrowsWithoutMutation()
+    {
+        var gateway = new FakeGateway
+        {
+            ResolveTopicAnchorHandler = (_, _) => Task.FromResult(new TopicAnchorResult(null))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => session.MoveTopicAsync(new ChannelTopic(8, "old"), new ChannelTopic(8, "new")));
+
+        Assert.Equal(0, gateway.MoveTopicCalls);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task LoadChannelSettingsSnapshotAsync_WhenSuperseded_CancelsOlderSnapshot()
+    {
+        var calls = 0;
+        var snapshot = new ChannelSettingsSnapshot(
+            [new ChannelSummary(7, "engineering", null, false, 2)],
+            [],
+            [],
+            10,
+            true,
+            false,
+            new ChannelSettingsLimits(60, 1024, 60, 1024));
+        var gateway = new FakeGateway
+        {
+            ChannelSettingsSnapshotHandler = (_, cancellationToken) =>
+                ++calls == 1 ? Never<ChannelSettingsSnapshot>(cancellationToken) : Task.FromResult(snapshot)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var older = session.LoadChannelSettingsSnapshotAsync();
+        await WaitUntilAsync(() => calls == 1);
+        var current = await session.LoadChannelSettingsSnapshotAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => older);
+        Assert.Equal("engineering", Assert.Single(current.Channels).Name);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task UpdateChannelAsync_WhenServerConfirms_UpdatesSubscriptionWithoutHiddenRefresh()
+    {
+        var updates = new List<UpdateChannelRequest>();
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(7, "engineering")])),
+            UpdateChannelHandler = (request, _) =>
+            {
+                updates.Add(request);
+                return Task.CompletedTask;
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.UpdateChannelAsync(7, "platform", null, null);
+
+        Assert.Equal("platform", session.State.Subscriptions[7].Name);
+        Assert.Equal("platform", Assert.Single(updates).Name);
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task UnsubscribeChannelAsync_WhenServerConfirms_RemovesChannelAndSelection()
     {
         var channel = new Subscription(7, "Engineering");
@@ -1807,9 +1893,12 @@ public sealed class ClientSessionTests
         IReadOnlyList<DomainEvent>? events = null,
         IReadOnlyList<ConversationKey>? recent = null,
         UnreadState? unread = null,
-        int? maxFileUploadSizeMiB = null) =>
+        int? maxFileUploadSizeMiB = null,
+        IReadOnlyList<UserTopicVisibility>? userTopics = null,
+        bool isOrganizationAdministrator = false) =>
         new(queue, 1, TimeSpan.FromSeconds(25), 1_000, 100, subscriptions ?? [],
-            [new UserProfile(10, "Me", "me@example.test")], recent ?? [], unread ?? new UnreadState(), events ?? [], maxFileUploadSizeMiB);
+            [new UserProfile(10, "Me", "me@example.test")], recent ?? [], unread ?? new UnreadState(), events ?? [], maxFileUploadSizeMiB,
+            UserTopics: userTopics, IsOrganizationAdministrator: isOrganizationAdministrator);
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
@@ -2048,6 +2137,7 @@ public sealed class ClientSessionTests
         public List<SubscribeChannelRequest> SubscribeRequests { get; } = [];
         public List<SetSubscriptionPreferenceRequest> PreferenceRequests { get; } = [];
         public int AvailableChannelsCalls { get; private set; }
+        public int MoveTopicCalls { get; private set; }
         public Func<RegisterRequest, CancellationToken, Task<RegisterResult>> RegisterHandler { get; set; } = (_, _) => Task.FromResult(Register());
         public Func<GetEventsRequest, CancellationToken, Task<EventBatch>>? GetEventsHandler { get; set; }
         public Func<HistoryRequest, CancellationToken, Task<HistoryResult>> HistoryHandler { get; set; } = (_, _) => Task.FromResult(new HistoryResult([], false, false));
@@ -2066,6 +2156,10 @@ public sealed class ClientSessionTests
         public Func<AvailableChannelsRequest, CancellationToken, Task<IReadOnlyList<ChannelSummary>>>? AvailableChannelsHandler { get; set; }
         public Func<SubscribeChannelRequest, CancellationToken, Task<SubscribeChannelResult>>? SubscribeChannelHandler { get; set; }
         public Func<SetSubscriptionPreferenceRequest, CancellationToken, Task>? SetSubscriptionPreferenceHandler { get; set; }
+        public Func<ResolveTopicAnchorRequest, CancellationToken, Task<TopicAnchorResult>>? ResolveTopicAnchorHandler { get; set; }
+        public Func<MoveTopicRequest, CancellationToken, Task>? MoveTopicHandler { get; set; }
+        public Func<ChannelSettingsSnapshotRequest, CancellationToken, Task<ChannelSettingsSnapshot>>? ChannelSettingsSnapshotHandler { get; set; }
+        public Func<UpdateChannelRequest, CancellationToken, Task>? UpdateChannelHandler { get; set; }
         public Func<DeleteQueueRequest, CancellationToken, Task>? DeleteQueueHandler { get; set; }
         public Func<TopicsRequest, CancellationToken, Task<TopicsResult>> TopicsHandler { get; set; } = (_, _) => Task.FromResult(new TopicsResult([]));
 
@@ -2203,6 +2297,22 @@ public sealed class ClientSessionTests
             PreferenceRequests.Add(request);
             return SetSubscriptionPreferenceHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
         }
+
+        public Task<TopicAnchorResult> ResolveTopicAnchorAsync(ResolveTopicAnchorRequest request, CancellationToken cancellationToken = default) =>
+            ResolveTopicAnchorHandler?.Invoke(request, cancellationToken) ?? Task.FromResult(new TopicAnchorResult(null));
+
+        public Task MoveTopicAsync(MoveTopicRequest request, CancellationToken cancellationToken = default)
+        {
+            MoveTopicCalls++;
+            return MoveTopicHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
+        }
+
+        public Task<ChannelSettingsSnapshot> GetChannelSettingsSnapshotAsync(ChannelSettingsSnapshotRequest request, CancellationToken cancellationToken = default) =>
+            ChannelSettingsSnapshotHandler?.Invoke(request, cancellationToken) ??
+            Task.FromResult(new ChannelSettingsSnapshot([], [], [], request.Credentials.UserId, false, false, request.Limits));
+
+        public Task UpdateChannelAsync(UpdateChannelRequest request, CancellationToken cancellationToken = default) =>
+            UpdateChannelHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
 
         public Task DeleteQueueAsync(DeleteQueueRequest request, CancellationToken cancellationToken = default)
         {

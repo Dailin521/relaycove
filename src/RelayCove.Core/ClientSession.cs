@@ -33,6 +33,12 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
     private IReadOnlyDictionary<long, ChannelSummary> _availableChannels = new Dictionary<long, ChannelSummary>();
     private CancellationTokenSource? _channelCatalogCancellation;
     private long _channelCatalogGeneration;
+    private CancellationTokenSource? _channelSettingsCancellation;
+    private long _channelSettingsGeneration;
+    private ChannelSettingsSnapshot? _channelSettingsSnapshot;
+    private ChannelSettingsLimits _channelSettingsLimits = new(null, null, null, null);
+    private IReadOnlyDictionary<string, TopicVisibilityPolicy> _topicVisibilityPolicies = new Dictionary<string, TopicVisibilityPolicy>(StringComparer.Ordinal);
+    private bool _isOrganizationAdministrator;
 
     private ClientState _state = ClientState.Empty;
     private AccountId? _accountId;
@@ -91,6 +97,11 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
     public long? CurrentUserId
     {
         get { lock (_stateGate) return _credentials?.UserId; }
+    }
+
+    public bool IsOrganizationAdministrator
+    {
+        get { lock (_stateGate) return _isOrganizationAdministrator; }
     }
 
     public long MaxFileUploadBytes
@@ -496,13 +507,13 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                     ? _credentials
                     : null;
             }
-            if (credentials is null) return cached;
+            if (credentials is null) return DecorateTopics(cached);
             try
             {
                 var result = await _gateway.GetTopicsAsync(new TopicsRequest(credentials, channelId), cancellationToken).ConfigureAwait(false);
                 var events = result.Topics.Select(topic => (DomainEvent)new TopicUpsertEvent(topic, Source: DomainEventSource.History)).ToArray();
                 await StoreThenApplyAsync(events, cancellationToken).ConfigureAwait(false);
-                return result.Topics;
+                return DecorateTopics(result.Topics);
             }
             catch (GatewayException exception) when (IsUnauthorized(exception))
             {
@@ -512,7 +523,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             catch (GatewayException exception) when (IsNetwork(exception))
             {
                 Mutate(state => state with { Connection = new ConnectionState(ConnectionStatus.Offline) });
-                return cached;
+                return DecorateTopics(cached);
             }
         }
         finally
@@ -1062,6 +1073,153 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         finally { }
     }
 
+    public async Task<ChannelSettingsSnapshot> LoadChannelSettingsSnapshotAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        CredentialEnvelope credentials;
+        AccountId accountId;
+        long generation;
+        CancellationTokenSource queryCancellation;
+        lock (_stateGate)
+        {
+            credentials = _state.Connection.Status == ConnectionStatus.Connected ? _credentials ?? throw new InvalidOperationException("No credentials are available.") : throw new InvalidOperationException("Channel settings require a connected session.");
+            accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+            _channelSettingsCancellation?.Cancel();
+            _channelSettingsCancellation?.Dispose();
+            queryCancellation = _channelSettingsCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _runCancellation?.Token ?? _disposeCancellation.Token);
+            generation = ++_channelSettingsGeneration;
+        }
+        try
+        {
+            var snapshot = await _gateway.GetChannelSettingsSnapshotAsync(new ChannelSettingsSnapshotRequest(credentials, _channelSettingsLimits), queryCancellation.Token).ConfigureAwait(false);
+            lock (_stateGate)
+            {
+                if (!IsChannelSettingsCurrentLocked(accountId, generation, queryCancellation)) throw new OperationCanceledException(queryCancellation.Token);
+                var subscriptions = _state.Subscriptions;
+                var channels = snapshot.Channels.Select(channel => subscriptions.TryGetValue(channel.ChannelId, out var subscription)
+                    ? channel with { IsSubscribed = true, Color = subscription.Color }
+                    : channel with { IsSubscribed = false, Color = null }).ToArray();
+                _channelSettingsSnapshot = snapshot with { Channels = channels };
+                _availableChannels = channels.ToDictionary(channel => channel.ChannelId);
+                return _channelSettingsSnapshot;
+            }
+        }
+        catch (GatewayException exception) when (IsUnauthorized(exception))
+        {
+            if (IsChannelSettingsCurrent(accountId, generation, queryCancellation)) await HandleUnauthorizedAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public async Task SetTopicVisibilityPolicyAsync(ChannelTopic topic, TopicVisibilityPolicy policy, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(topic);
+        if (!Enum.IsDefined(policy)) throw new ArgumentOutOfRangeException(nameof(policy));
+        ThrowIfDisposed();
+        try { await _gateway.SetTopicVisibilityPolicyAsync(new SetTopicVisibilityPolicyRequest(GetConnectedCredentials(), topic, policy), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+        lock (_stateGate)
+        {
+            var policies = new Dictionary<string, TopicVisibilityPolicy>(_topicVisibilityPolicies, StringComparer.Ordinal) { [topic.CanonicalKey] = policy };
+            _topicVisibilityPolicies = policies;
+        }
+    }
+
+    public async Task MarkTopicReadAsync(ChannelTopic topic, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(topic);
+        ThrowIfDisposed();
+        var credentials = GetConnectedCredentials();
+        long? anchor = null;
+        while (true)
+        {
+            TopicReadResult result;
+            try { result = await _gateway.MarkTopicReadAsync(new MarkTopicReadRequest(credentials, topic, anchor), cancellationToken).ConfigureAwait(false); }
+            catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+            if (result.FoundNewest) return;
+            if (result.LastProcessedMessageId is not > 0 || result.LastProcessedMessageId == anchor)
+                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+            anchor = result.LastProcessedMessageId;
+        }
+    }
+
+    public async Task MoveTopicAsync(ChannelTopic source, ChannelTopic destination, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        if (source == destination) return;
+        ThrowIfDisposed();
+        var credentials = GetConnectedCredentials();
+        TopicAnchorResult anchor;
+        try { anchor = await _gateway.ResolveTopicAnchorAsync(new ResolveTopicAnchorRequest(credentials, source), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+        if (anchor.MessageId is not > 0) throw new InvalidOperationException("The topic has no message anchor.");
+        try { await _gateway.MoveTopicAsync(new MoveTopicRequest(credentials, source, anchor.MessageId.Value, destination), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+    }
+
+    public Task SetTopicResolvedAsync(ChannelTopic topic, bool isResolved, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(topic);
+        var name = isResolved ? TopicResolution.Resolve(topic.Topic) : TopicResolution.Unresolve(topic.Topic);
+        return string.Equals(name, topic.Topic, StringComparison.Ordinal) ? Task.CompletedTask : MoveTopicAsync(topic, new ChannelTopic(topic.ChannelId, name), cancellationToken);
+    }
+
+    public async Task<TopicDeleteResult> DeleteTopicAsync(ChannelTopic topic, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(topic);
+        ThrowIfDisposed();
+        if (!IsOrganizationAdministrator) throw new InvalidOperationException("Deleting a topic requires an organization administrator.");
+        try { return await _gateway.DeleteTopicAsync(new DeleteTopicRequest(GetConnectedCredentials(), topic), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+    }
+
+    public async Task<ChannelDetails> LoadChannelDetailsAsync(long channelId, CancellationToken cancellationToken = default)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        ThrowIfDisposed();
+        CredentialEnvelope credentials;
+        lock (_stateGate) credentials = _state.Connection.Status == ConnectionStatus.Connected ? _credentials ?? throw new InvalidOperationException("No credentials are available.") : throw new InvalidOperationException("Channel settings require a connected session.");
+        try { return await _gateway.GetChannelDetailsAsync(new ChannelDetailsRequest(credentials, channelId), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+    }
+
+    public async Task UpdateChannelAsync(long channelId, string? name, string? description, long? folderId, bool clearFolder = false, CancellationToken cancellationToken = default)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        ThrowIfDisposed();
+        var credentials = GetConnectedCredentials();
+        try { await _gateway.UpdateChannelAsync(new UpdateChannelRequest(credentials, channelId, name, description, folderId, clearFolder), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+        if (!string.IsNullOrWhiteSpace(name)) await StoreThenApplyAsync([new SubscriptionPatchedEvent(channelId, name.Trim(), null, Source: DomainEventSource.Local)], cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<ChannelFolder> CreateChannelFolderAsync(string name, string? description, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        ChannelFolder folder;
+        try { folder = await _gateway.CreateChannelFolderAsync(new CreateChannelFolderRequest(GetConnectedCredentials(), name, description), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+        return folder;
+    }
+
+    public async Task<string> GetChannelEmailAddressAsync(long channelId, CancellationToken cancellationToken = default)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        ThrowIfDisposed();
+        try { return await _gateway.GetChannelEmailAddressAsync(new ChannelEmailAddressRequest(GetConnectedCredentials(), channelId), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+    }
+
+    public async Task ArchiveChannelAsync(long channelId, CancellationToken cancellationToken = default)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        ThrowIfDisposed();
+        try { await _gateway.ArchiveChannelAsync(new ArchiveChannelRequest(GetConnectedCredentials(), channelId), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+        await StoreThenApplyAsync([new SubscriptionPatchedEvent(channelId, null, false, Source: DomainEventSource.Local)], cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task SubscribeToChannelAsync(long channelId, CancellationToken cancellationToken = default)
     {
         if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
@@ -1497,6 +1655,15 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             _maxMessageLength = normalizedRegister.MaxMessageLength;
             _maxTopicLength = normalizedRegister.MaxTopicLength;
             _maxFileUploadBytes = checked((long)(normalizedRegister.MaxFileUploadSizeMiB ?? 10) * 1024 * 1024);
+            _channelSettingsLimits = new ChannelSettingsLimits(
+                normalizedRegister.MaxChannelNameLength,
+                normalizedRegister.MaxChannelDescriptionLength,
+                normalizedRegister.MaxChannelFolderNameLength,
+                normalizedRegister.MaxChannelFolderDescriptionLength);
+            _topicVisibilityPolicies = (normalizedRegister.UserTopics ?? [])
+                .Where(item => item.ChannelId > 0 && Enum.IsDefined(item.Policy))
+                .ToDictionary(item => new ChannelTopic(item.ChannelId, item.Topic).CanonicalKey, item => item.Policy, StringComparer.Ordinal);
+            _isOrganizationAdministrator = normalizedRegister.IsOrganizationAdministrator;
             _recentDirectMessages = MergeRecentDirectMessages(
                 normalizedRegister.RecentDirectMessages,
                 DeriveRecentDirectMessages(snapshot));
@@ -2368,6 +2535,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             _eventLoop = null;
             CancelMessageQueriesLocked();
             CancelChannelCatalogLocked();
+            CancelChannelSettingsLocked();
             InvalidateHistoryLocked(clearConversation: false);
         }
         cancellation?.Cancel();
@@ -2393,6 +2561,9 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         {
             CancelMessageQueriesLocked();
             CancelChannelCatalogLocked();
+            CancelChannelSettingsLocked();
+            _topicVisibilityPolicies = new Dictionary<string, TopicVisibilityPolicy>(StringComparer.Ordinal);
+            _isOrganizationAdministrator = false;
             _credentials = null;
             _queueId = null;
             _selectedConversation = null;
@@ -2452,6 +2623,27 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         _channelCatalogCancellation?.Dispose();
         _channelCatalogCancellation = null;
         _availableChannels = new Dictionary<long, ChannelSummary>();
+    }
+
+    private bool IsChannelSettingsCurrent(AccountId accountId, long generation, CancellationTokenSource cancellation) { lock (_stateGate) return IsChannelSettingsCurrentLocked(accountId, generation, cancellation); }
+    private bool IsChannelSettingsCurrentLocked(AccountId accountId, long generation, CancellationTokenSource cancellation) => _accountId == accountId && _channelSettingsGeneration == generation && ReferenceEquals(_channelSettingsCancellation, cancellation) && _runCancellation is not null;
+    private void CancelChannelSettingsLocked()
+    {
+        _channelSettingsGeneration++;
+        try { _channelSettingsCancellation?.Cancel(); } catch (ObjectDisposedException) { }
+        _channelSettingsCancellation?.Dispose();
+        _channelSettingsCancellation = null;
+        _channelSettingsSnapshot = null;
+    }
+
+    private IReadOnlyList<TopicSummary> DecorateTopics(IEnumerable<TopicSummary> topics)
+    {
+        lock (_stateGate)
+        {
+            return topics.Select(topic => _topicVisibilityPolicies.TryGetValue(new ChannelTopic(topic.ChannelId, topic.Topic).CanonicalKey, out var policy)
+                ? topic with { VisibilityPolicy = policy }
+                : topic with { VisibilityPolicy = TopicVisibilityPolicy.None }).ToArray();
+        }
     }
 
     private void ValidateSend(ConversationKey conversation, string content)
