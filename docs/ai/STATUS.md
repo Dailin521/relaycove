@@ -1,9 +1,17 @@
-# RelayCove Status — Stage 21 / 22W / 22M / 23 / 24
+# RelayCove Status — Stage 21 / 22W / 22M / 23 / 24.6
 
-Updated: 2026-08-17
-Integration basis: the `main` commit containing this file; parent `1712d36`
+Updated: 2026-08-19
+Integration basis: `main@2fc29a2`; Stage 24.6 changes are validated locally but not yet committed
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W/22M, Stage 23 and Stage 24 through Stage 24.4 are preserved in `main`; Stage 24.5 adds real-window-verified activation-bottom stabilization on top of `1712d36`. Stage 24.5 used the formal non-preview client and the existing Realm session for navigation acceptance; it did not send or mutate a message, run LiveTests, deploy or close the remaining Stage 21 gates. Normal history/event reads ran, and the existing automatic mark-read path could submit viewed-message flags. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+Current delivery: Stage 22W/22M, Stage 23 and Stage 24 through Stage 24.5 are preserved in `main`. Stage 24.6 is a validated but uncommitted local `main@2fc29a2` candidate that replaces the Windows Composer caret implementation; its real-window evidence used only the Debug no-network preview on `DISPLAY2`. It did not contact a Realm, run LiveTests, deploy or close the remaining Stage 21 gates. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+
+## Stage 24.6 Windows Composer sustained caret — 2026-08-19
+
+- The early Canvas self-drawn caret trial is rejected: even after range-coordinate corrections, its visual result remained unlike a normal Windows text box. It is not part of the candidate.
+- The Composer uses a purpose-built MAUI `ComposerEditor` with a Windows `RichEditBox` handler, but keeps the document's `CaretType.Normal`. Windows owns caret position, geometry and blinking; the App does not draw a second caret, run a caret timer, or change global Windows caret/registry settings.
+- CRLF and selection offsets remain explicitly mapped between the MAUI string and RichEdit paragraph model. The native `RichEditBox` keeps existing IME, plain-Enter send, Ctrl+Enter newline, selection and focus behavior.
+- `DISPLAY2` validation at 150%, 1024×768 DIP / 1536×1152 pixels covered real mouse focus in an empty draft, Chinese text boundaries, selection replacement, multiline input, conversation switching, send-and-clear/refocus and three samples after five seconds. The native caret appeared with normal Windows geometry and samples were hidden→visible→hidden after the old timeout window. App xUnit passed 129/129.
+- Evidence is under `artifacts/maui/screenshots/stage24-6-composer-caret/`; the exact hashes and test procedure are recorded in the Stage 24.6 work log. Fast, Full, Live, real Realm access, package and clean-VM gates were not run. The candidate remains uncommitted and unpushed.
 
 ## Stage 24.5 message activation and viewport stability — 2026-08-17
 

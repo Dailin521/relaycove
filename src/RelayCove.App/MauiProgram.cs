@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RelayCove.App.Controls;
 using RelayCove.App.Platforms.Windows;
+using RelayCove.App.Platforms.Windows.Handlers;
 using RelayCove.App.Services;
 using RelayCove.App.ViewModels;
 using RelayCove.Core;
@@ -15,7 +16,10 @@ public static class MauiProgram
     public static MauiApp CreateMauiApp()
     {
         var builder = MauiApp.CreateBuilder();
-        builder.UseMauiApp<App>();
+        builder
+            .UseMauiApp<App>()
+            .ConfigureMauiHandlers(handlers =>
+                handlers.AddHandler<ComposerEditor, ComposerEditorHandler>());
 
 #if DEBUG
         builder.Logging.AddDebug();

@@ -18,7 +18,7 @@
 - 冻结日期：2026-08-12
 - 目标视口：1440×900；补充检查 1024×768
 - 历史原型（只读）：[RelayCove-UI-Playground.html](baselines/chat-ui-v1/RelayCove-UI-Playground.html)；日常 Web 验收不再使用此入口
-- 当前任务：[Stage 24.2 当前可见消息标读与 Composer Enter](../ai/tasks/2026-08-17-stage-24-2-unread-enter.md)；Stage 22/23/24 的 dated task 已转为历史证据。真实 Realm 原生写与完整 Windows 人工验收仍开放。
+- 当前任务：[Stage 24.6 Windows Composer 持续光标](../ai/tasks/2026-08-19-stage-24-6-composer-caret.md)；此前 Stage 22/23/24 的 dated task 只作历史证据。真实 Realm 原生写与完整 Windows 人工验收仍开放。
 
 ## 重要边界
 

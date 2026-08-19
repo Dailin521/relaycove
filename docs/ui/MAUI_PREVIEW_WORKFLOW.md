@@ -153,6 +153,13 @@ dotnet test tests/RelayCove.App.Tests/RelayCove.App.Tests.csproj -c Debug --no-b
 - 不要恢复全局“只要之前靠近底部，任何 LayoutUpdated 都滚到底”的补丁。它会把发送、图片测量、Composer 布局变化和分页全部变成重复 `ChangeView`，表现为消息闪屏。
 - 自动化记录至少包含会话名、`VerticalScrollPercent`、首/末可见消息和最终截图。只看最终一帧无法发现 70%→100% 的中间跳动；只看百分比也不能证明最后一条消息确实可见。
 
+### 6.3 Windows Composer 光标经验
+
+- WinUI 原生输入控件的 caret blink rate 与 caret timeout 是不同设置。同位置 `Select` 不会可靠重启 timeout，不能把“最初闪了几次”当成持续光标验收。
+- 不要在原生 caret 上绘制背景色遮罩。插入点可能紧贴 CJK 字形，遮罩会留下白条、裁字或与系统 caret 形成双光标。
+- 原生 `RichEditBox` 能满足持续光标时，保留它自己的 caret，让 Windows 负责位置、字形高度与闪烁。不要叠加应用光标；若原生行为异常，先核对焦点丢失、控件重建和选择回写，而不是猜测文字坐标。
+- 自动化至少截图文本开头、中间字符边界、末尾、换行，以及系统 timeout 之后一组“显示/隐藏”帧。副屏 DPI 下必须使用目标 HWND 的 `PrintWindow`；通用屏幕区域截图可能因虚拟桌面坐标缩放截到主屏。
+
 ## 7. 常见故障
 
 | 现象 | 主要原因 | 处理 |
@@ -168,6 +175,7 @@ dotnet test tests/RelayCove.App.Tests/RelayCove.App.Tests.csproj -c Debug --no-b
 | 连续场景截图尺寸偶尔沿用主屏缩放 | HWND 尚未完成副屏 DPI 迁移或与启动定位计时器竞态 | 先无激活移动到副屏，等待启动计时器完成，再读取 DPI 和最终调整 DWM 边界 |
 | 缓存会话重新进入后随机停在中段或约 97.5% | 把上一次激活确认永久去重，或者只定位一次后任由后续行高变化推离底部 | 每次访问重置激活身份；首次到底立即显示，并在用户未主动滚动时持续锚定最新消息 |
 | 发送后消息区反复闪动 | 用全局 LayoutUpdated 保底或让 RealtimeFollow 进入激活重试循环 | 分离激活、实时跟随和分页锚点；实时追加保持列表可见且不运行激活稳定循环 |
+| Composer 光标约 5 秒后停止，或自绘后出现白条/切字/位置异常 | 焦点/控件生命周期或选择回写有问题，或叠加/遮盖系统 caret | 保留原生 caret；先复现并核对焦点、控件重建和选择回写，逐一验证首次空点击、CJK 开头/中间/末尾、切换/发送后聚焦与 timeout 后帧 |
 
 ## 8. 交付记录
 

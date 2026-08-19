@@ -37,24 +37,36 @@
                         Height="{Binding ViewModel.ComposerHeight, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}" />
                 </Button.Behaviors>
             </Button>
-            <Editor x:Name="ComposerEditor"
-                    Grid.Row="2"
-                    Margin="0"
-                    MinimumHeightRequest="64"
-                    Style="{StaticResource ComposerEditorStyle}"
-                    Text="{Binding ComposerText, Mode=TwoWay}"
-                    Placeholder="{Binding ComposerPlaceholder}"
-                    IsEnabled="{Binding CanCompose}"
-                    SemanticProperties.Description="多行消息输入框；Enter 发送，Ctrl+Enter 换行">
-                <Editor.Behaviors>
-                    <windowsBehaviors:ComposerEnterBehavior
-                        Command="{Binding ViewModel.SendCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}" />
-                    <windowsBehaviors:ComposerSelectionBehavior
-                        CursorPosition="{Binding ViewModel.ComposerCursorPosition, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}"
-                        SelectionLength="{Binding ViewModel.ComposerSelectionLength, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}"
-                        FocusRequest="{Binding ViewModel.ComposerFocusRequest, Source={x:Reference Root}, x:DataType=controls:ComposerView}" />
-                </Editor.Behaviors>
-            </Editor>
+            <controls:ComposerEditor x:Name="ComposerEditor"
+                                     Grid.Row="2"
+                                     Margin="0"
+                                     MinimumHeightRequest="64"
+                                     FontFamily="{StaticResource RelayCoveFontFamily}"
+                                     FontSize="{DynamicResource BaseFontSize}"
+                                     TextColor="{AppThemeBinding Light={StaticResource LightTextColor}, Dark={StaticResource DarkTextColor}}"
+                                     Text="{Binding ComposerText, Mode=TwoWay}"
+                                     IsEnabled="{Binding CanCompose}"
+                                     SendCommand="{Binding ViewModel.SendCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
+                                     CursorPosition="{Binding ViewModel.ComposerCursorPosition, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}"
+                                     SelectionLength="{Binding ViewModel.ComposerSelectionLength, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}"
+                                     FocusRequest="{Binding ViewModel.ComposerFocusRequest, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
+                                     SemanticProperties.Description="多行消息输入框；Enter 发送，Ctrl+Enter 换行" />
+            <Label Grid.Row="2"
+                   Margin="17,7,13,7"
+                   Text="{Binding ComposerPlaceholder}"
+                   FontFamily="{StaticResource RelayCoveFontFamily}"
+                   FontSize="{DynamicResource BaseFontSize}"
+                   TextColor="{AppThemeBinding Light={StaticResource LightMutedColor}, Dark={StaticResource DarkMutedColor}}"
+                   HorizontalOptions="Start"
+                   VerticalOptions="Start"
+                   InputTransparent="True"
+                   IsVisible="False">
+                <Label.Triggers>
+                    <DataTrigger TargetType="Label" Binding="{Binding ComposerText}" Value="">
+                        <Setter Property="IsVisible" Value="True" />
+                    </DataTrigger>
+                </Label.Triggers>
+            </Label>
 
             <VerticalStackLayout Grid.Row="1" Margin="10,0,10,4" Spacing="3">
                 <CollectionView ItemsSource="{Binding Attachments}"
