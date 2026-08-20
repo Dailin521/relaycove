@@ -185,4 +185,95 @@
         <Setter Property="VerticalOptions" Value="Center" />
         <Setter Property="Stroke" Value="{StaticResource StrongBorderBrush}" />
     </Style>
+
+    <!-- Channel settings overlay only: these do not alter shared controls. -->
+    <Style x:Key="ChannelSettingsToolButtonStyle" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
+        <Setter Property="HeightRequest" Value="34" />
+        <Setter Property="MinimumHeightRequest" Value="34" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="BorderWidth" Value="1" />
+        <Setter Property="BackgroundColor" Value="Transparent" />
+    </Style>
+    <Style x:Key="SettingsSectionBorderStyle" TargetType="Border" BasedOn="{StaticResource CardBorderStyle}">
+        <Setter Property="Padding" Value="16" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="Stroke" Value="{StaticResource BorderBrush}" />
+        <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+    </Style>
+    <Style x:Key="ChannelSettingsTabStyle" TargetType="Button" BasedOn="{StaticResource ChannelSettingsToolButtonStyle}">
+        <Setter Property="MinimumWidthRequest" Value="112" />
+        <Setter Property="HorizontalOptions" Value="Start" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="BorderWidth" Value="0" />
+        <Setter Property="CornerRadius" Value="6" />
+    </Style>
+    <Style x:Key="ChannelSettingsPickerStyle" TargetType="Picker">
+        <Setter Property="Background" Value="{StaticResource SurfaceSoftBrush}" />
+        <Setter Property="HeightRequest" Value="40" />
+        <Setter Property="FontFamily" Value="{StaticResource RelayCoveFontFamily}" />
+        <Setter Property="FontSize" Value="{DynamicResource BaseFontSize}" />
+        <Setter Property="TextColor" Value="{AppThemeBinding Light={StaticResource LightTextColor}, Dark={StaticResource DarkTextColor}}" />
+    </Style>
+    <Style x:Key="ChannelSettingsCheckBoxStyle" TargetType="CheckBox">
+        <Setter Property="Color" Value="{StaticResource AccentColor}" />
+    </Style>
+    <Style x:Key="ChannelSettingsActionRowStyle" TargetType="Button" BasedOn="{StaticResource ChannelSettingsToolButtonStyle}">
+        <Setter Property="HorizontalOptions" Value="End" />
+        <Setter Property="MinimumWidthRequest" Value="68" />
+        <Setter Property="Background" Value="Transparent" />
+    </Style>
+    <Style x:Key="ChannelSettingsListRowStyle" TargetType="Border">
+        <Setter Property="Stroke" Value="{StaticResource BorderBrush}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Padding" Value="10,8" />
+    </Style>
+    <Style x:Key="ChannelSettingsColorPreviewStyle" TargetType="Border">
+        <Setter Property="Stroke" Value="{StaticResource StrongBorderBrush}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="StrokeShape"><Setter.Value><RoundRectangle CornerRadius="10" /></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="ChannelSettingsColorSelectorStyle" TargetType="Button" BasedOn="{StaticResource ChannelSettingsToolButtonStyle}">
+        <Setter Property="Padding" Value="10,0" />
+    </Style>
+    <Style x:Key="ChannelSettingsColorPickerBorderStyle" TargetType="Border" BasedOn="{StaticResource DialogBorderStyle}">
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="Margin" Value="0" />
+        <Setter Property="WidthRequest" Value="318" />
+        <Setter Property="MinimumWidthRequest" Value="318" />
+        <Setter Property="MaximumWidthRequest" Value="318" />
+        <Setter Property="MaximumHeightRequest" Value="620" />
+        <Setter Property="HorizontalOptions" Value="Start" />
+        <Setter Property="VerticalOptions" Value="Start" />
+        <Setter Property="StrokeShape"><Setter.Value><RoundRectangle CornerRadius="8" /></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="ChannelSettingsColorPickerConfirmStyle" TargetType="Button" BasedOn="{StaticResource IconButtonStyle}">
+        <Setter Property="BackgroundColor" Value="Transparent" />
+        <Setter Property="TextColor"
+                Value="{AppThemeBinding Light={StaticResource LightTextColor}, Dark={StaticResource DarkTextColor}}" />
+        <Setter Property="BorderWidth" Value="0" />
+        <Setter Property="WidthRequest" Value="34" />
+        <Setter Property="HeightRequest" Value="34" />
+    </Style>
+    <Style x:Key="ChannelSettingsColorSwatchStyle" TargetType="Border">
+        <Setter Property="Stroke" Value="{StaticResource BorderBrush}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="StrokeShape"><Setter.Value><RoundRectangle CornerRadius="7" /></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="ChannelSettingsColorSwatchButtonStyle" TargetType="Button">
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="BorderWidth" Value="0" />
+        <Setter Property="CornerRadius" Value="13" />
+        <Setter Property="MinimumWidthRequest" Value="26" />
+        <Setter Property="MinimumHeightRequest" Value="26" />
+    </Style>
+    <Style x:Key="ChannelSettingsColorCustomButtonStyle" TargetType="Button" BasedOn="{StaticResource ChannelSettingsToolButtonStyle}">
+        <Setter Property="HorizontalOptions" Value="Fill" />
+        <Setter Property="Padding" Value="12,0" />
+        <Setter Property="BorderWidth" Value="0" />
+        <Setter Property="CornerRadius" Value="0" />
+    </Style>
 </ResourceDictionary>

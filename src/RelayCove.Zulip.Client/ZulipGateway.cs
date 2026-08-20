@@ -389,7 +389,9 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         var fields = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["topic"] = request.Destination.Topic,
-            ["propagate_mode"] = "change_all"
+            ["propagate_mode"] = "change_all",
+            ["send_notification_to_old_thread"] = "false",
+            ["send_notification_to_new_thread"] = "true"
         };
         if (request.Source.ChannelId != request.Destination.ChannelId)
             fields["stream_id"] = request.Destination.ChannelId.ToString(CultureInfo.InvariantCulture);
@@ -672,6 +674,29 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
         using var streamsResponse = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "streams", streamsQuery, request.Credentials, cancellationToken).ConfigureAwait(false);
         using var streamsDocument = await ReadDocumentAsync(streamsResponse, cancellationToken).ConfigureAwait(false);
+        var subscriptionsQuery = new Dictionary<string, string>(StringComparer.Ordinal) { ["include_subscribers"] = "false" };
+        using var subscriptionsResponse = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "users/me/subscriptions", subscriptionsQuery, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var subscriptionsDocument = await ReadDocumentAsync(subscriptionsResponse, cancellationToken).ConfigureAwait(false);
+        var subscribedIds = GetRequiredSubscriptionChannelIds(subscriptionsDocument.RootElement);
+        var streamsRoot = streamsDocument.RootElement;
+        EnsureNotErrorResponse(streamsRoot);
+        if (streamsRoot.ValueKind != JsonValueKind.Object ||
+            !TryGetProperty(streamsRoot, "streams", out var streams) ||
+            streams.ValueKind != JsonValueKind.Array)
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        var channels = streams.EnumerateArray()
+            .Select(ToChannelSummary)
+            .Where(static item => item is not null)
+            .Cast<ChannelSummary>()
+            .ToArray();
+        var channelsById = new Dictionary<long, ChannelSummary>();
+        foreach (var channel in channels)
+        {
+            if (!channelsById.TryAdd(channel.ChannelId, channel))
+                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        }
+        if (subscribedIds.Any(id => !channelsById.ContainsKey(id)))
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
         using var foldersResponse = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "channel_folders", foldersQuery, request.Credentials, cancellationToken).ConfigureAwait(false);
         using var foldersDocument = await ReadDocumentAsync(foldersResponse, cancellationToken).ConfigureAwait(false);
         IReadOnlyList<ChannelUserGroup> groups = [];
@@ -686,7 +711,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
                 .ToArray();
         }
         return new ChannelSettingsSnapshot(
-            GetArray(streamsDocument.RootElement, "streams").Select(ToChannelSummary).Where(static item => item is not null).Cast<ChannelSummary>().ToArray(),
+            channels.Select(channel => channel with { IsSubscribed = subscribedIds.Contains(channel.ChannelId) }).ToArray(),
             GetArray(foldersDocument.RootElement, "channel_folders").Select(ToChannelFolder).Where(static item => item is not null).Cast<ChannelFolder>().OrderBy(static item => item.Order).ToArray(),
             groups,
             currentUserId.Value,
@@ -755,6 +780,135 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         if (request.ChannelId <= 0) throw new ArgumentOutOfRangeException(nameof(request));
         using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Delete, $"streams/{request.ChannelId.ToString(CultureInfo.InvariantCulture)}", null, request.Credentials, cancellationToken).ConfigureAwait(false);
         using var ignored = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<long> CreateChannelAsync(CreateChannelRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.Options.Name);
+        var options = request.Options;
+        if (options.IsPrivate && options.IsWebPublic) throw new ArgumentException("Private channels cannot be web-public.", nameof(request));
+        if (!options.IsPrivate && !options.HistoryPublicToSubscribers) throw new ArgumentException("Public channels must expose history to subscribers.", nameof(request));
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["name"] = options.Name.Trim(),
+            ["description"] = options.Description ?? string.Empty,
+            ["subscribers"] = JsonSerializer.Serialize(new[] { request.Credentials.UserId }, JsonOptions),
+            ["invite_only"] = options.IsPrivate ? "true" : "false",
+            ["is_web_public"] = options.IsWebPublic ? "true" : "false",
+            ["history_public_to_subscribers"] = options.HistoryPublicToSubscribers ? "true" : "false",
+            ["is_default_stream"] = options.IsDefaultStream ? "true" : "false"
+        };
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Post, "channels/create", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        if (!string.Equals(GetString(document.RootElement, "result"), "success", StringComparison.OrdinalIgnoreCase))
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        EnsureNoUnsupportedParameters(document.RootElement);
+        return GetInt64(document.RootElement, "id") is { } channelId && channelId > 0
+            ? channelId
+            : throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+    }
+
+    public async Task<ChannelPersonalSettings> GetChannelPersonalSettingsAsync(ChannelMembersRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var query = new Dictionary<string, string>(StringComparer.Ordinal) { ["include_subscribers"] = "false" };
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "users/me/subscriptions", query, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        var subscription = GetArray(document.RootElement, "subscriptions").FirstOrDefault(item => GetInt64(item, "stream_id", "channel_id") == request.ChannelId);
+        if (subscription.ValueKind != JsonValueKind.Object) throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        return new ChannelPersonalSettings(
+            request.ChannelId,
+            GetString(subscription, "color"),
+            GetBoolean(subscription, "is_muted") ?? false,
+            GetBoolean(subscription, "pin_to_top") ?? false,
+            GetBoolean(subscription, "desktop_notifications"),
+            GetBoolean(subscription, "audible_notifications"),
+            GetBoolean(subscription, "push_notifications"),
+            GetBoolean(subscription, "email_notifications"),
+            GetBoolean(subscription, "wildcard_mentions_notify"));
+    }
+
+    public async Task SetChannelPersonalSettingAsync(SetChannelPersonalSettingRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var (property, value) = ToPersonalSetting(request.Change);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal) { ["property"] = property, ["value"] = value };
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Patch, $"users/me/subscriptions/{request.ChannelId.ToString(CultureInfo.InvariantCulture)}", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        EnsureNoUnsupportedParameters(document.RootElement);
+    }
+
+    public async Task<IReadOnlyList<long>> GetChannelMemberIdsAsync(ChannelMembersRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Get, $"streams/{request.ChannelId.ToString(CultureInfo.InvariantCulture)}/members", null, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        EnsureNotErrorResponse(document.RootElement);
+        if (!TryGetProperty(document.RootElement, "subscribers", out var subscribers) || subscribers.ValueKind != JsonValueKind.Array)
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        var ids = new List<long>();
+        foreach (var item in subscribers.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Number || !item.TryGetInt64(out var id) || id <= 0)
+                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+            ids.Add(id);
+        }
+        return ids.Distinct().ToArray();
+    }
+
+    public async Task<IReadOnlyList<UserProfile>> GetRealmUsersAsync(RealmUsersRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "users", null, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        EnsureNotErrorResponse(document.RootElement);
+        EnsureNoUnsupportedParameters(document.RootElement);
+        if (!TryGetProperty(document.RootElement, "members", out var members) || members.ValueKind != JsonValueKind.Array)
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+
+        var users = new List<UserProfile>();
+        var ids = new HashSet<long>();
+        foreach (var item in members.EnumerateArray())
+        {
+            var user = ToRequiredRealmUser(item);
+            if (!ids.Add(user.UserId)) throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+            users.Add(user);
+        }
+        return users;
+    }
+
+    public async Task ModifyChannelMembersAsync(ModifyChannelMembersRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.ChannelName);
+        if (request.PrincipalIds.Count == 0 || request.PrincipalIds.Any(static id => id <= 0)) throw new ArgumentException("At least one valid principal is required.", nameof(request));
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["subscriptions"] = request.Add
+                ? JsonSerializer.Serialize(new[] { new { name = request.ChannelName } }, JsonOptions)
+                : JsonSerializer.Serialize(new[] { request.ChannelName }, JsonOptions),
+            ["principals"] = JsonSerializer.Serialize(request.PrincipalIds, JsonOptions)
+        };
+        if (request.Add)
+        {
+            fields["authorization_errors_fatal"] = "true";
+            fields["send_new_subscription_messages"] = request.SendNewSubscriptionMessages ? "true" : "false";
+        }
+        using var response = await SendAsync(request.Credentials.Realm, request.Add ? HttpMethod.Post : HttpMethod.Delete, "users/me/subscriptions", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        EnsureNoUnsupportedParameters(document.RootElement);
+        if (HasMemberOperationFailure(document.RootElement)) throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+    }
+
+    public async Task UpdateChannelAdvancedSettingsAsync(UpdateChannelAdvancedRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var fields = ToAdvancedFields(request.Change);
+        if (fields.Count == 0) return;
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Patch, $"streams/{request.ChannelId.ToString(CultureInfo.InvariantCulture)}", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        EnsureNoUnsupportedParameters(document.RootElement);
     }
 
     public async Task MarkReadAsync(MarkReadRequest request, CancellationToken cancellationToken = default)
@@ -1587,7 +1741,17 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             ToChannelGroupSetting(value, "can_add_subscribers_group"),
             ToChannelGroupSetting(value, "can_send_message_group"),
             ToChannelGroupSetting(value, "can_subscribe_group"),
-            ToChannelGroupSetting(value, "can_create_topic_group"));
+            ToChannelGroupSetting(value, "can_create_topic_group"),
+            GetBoolean(value, "history_public_to_subscribers") ?? false,
+            GetBoolean(value, "is_default_stream") ?? false,
+            ToTopicsPolicy(value),
+            GetInt32(value, "message_retention_days"),
+            ToChannelGroupSetting(value, "can_remove_subscribers_group"),
+            ToChannelGroupSetting(value, "can_move_messages_within_channel_group"),
+            ToChannelGroupSetting(value, "can_move_messages_out_of_channel_group"),
+            ToChannelGroupSetting(value, "can_resolve_topics_group"),
+            ToChannelGroupSetting(value, "can_delete_any_message_group"),
+            ToChannelGroupSetting(value, "can_delete_own_message_group"));
     }
 
     private static ChannelFolder? ToChannelFolder(JsonElement value)
@@ -1653,6 +1817,23 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             : null;
     }
 
+    private static UserProfile ToRequiredRealmUser(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object ||
+            GetInt64(value, "user_id") is not { } id || id <= 0 ||
+            GetString(value, "full_name") is not { } fullName || string.IsNullOrWhiteSpace(fullName) ||
+            GetString(value, "email") is not { } email || string.IsNullOrWhiteSpace(email) ||
+            GetBoolean(value, "is_active") is not { } isActive ||
+            GetBoolean(value, "is_bot") is not { } isBot)
+        {
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        }
+
+        var avatarVersion = GetInt32(value, "avatar_version");
+        if (avatarVersion is < 0) throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        return new UserProfile(id, fullName, email, isActive, GetString(value, "avatar_url"), avatarVersion, isBot);
+    }
+
     private static IReadOnlyList<UserTopicVisibility> ToUserTopicVisibilities(JsonElement root)
     {
         return GetArray(root, "user_topics")
@@ -1685,6 +1866,133 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         if (GetStringArray(root, "ignored_parameters_unsupported").Length > 0)
             throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
     }
+
+    private static void EnsureNotErrorResponse(JsonElement root)
+    {
+        if (string.Equals(GetString(root, "result"), "error", StringComparison.OrdinalIgnoreCase))
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+    }
+
+    private static HashSet<long> GetRequiredSubscriptionChannelIds(JsonElement root)
+    {
+        EnsureNotErrorResponse(root);
+        if (root.ValueKind != JsonValueKind.Object ||
+            !TryGetProperty(root, "subscriptions", out var subscriptions) ||
+            subscriptions.ValueKind != JsonValueKind.Array)
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+
+        var channelIds = new HashSet<long>();
+        foreach (var subscription in subscriptions.EnumerateArray())
+        {
+            var channelId = GetInt64(subscription, "stream_id");
+            if (subscription.ValueKind != JsonValueKind.Object || channelId is not > 0 || !channelIds.Add(channelId.Value))
+                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        }
+
+        return channelIds;
+    }
+
+    private static (string Property, string Value) ToPersonalSetting(ChannelPersonalSettingChange change)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+        return change.Setting switch
+        {
+            ChannelPersonalSetting.Color when !string.IsNullOrWhiteSpace(change.ColorValue) => ("color", change.ColorValue),
+            ChannelPersonalSetting.Muted when change.BooleanValue is { } value => ("is_muted", value ? "true" : "false"),
+            ChannelPersonalSetting.Pinned when change.BooleanValue is { } value => ("pin_to_top", value ? "true" : "false"),
+            ChannelPersonalSetting.DesktopNotifications when change.BooleanValue is { } value => ("desktop_notifications", value ? "true" : "false"),
+            ChannelPersonalSetting.AudibleNotifications when change.BooleanValue is { } value => ("audible_notifications", value ? "true" : "false"),
+            ChannelPersonalSetting.PushNotifications when change.BooleanValue is { } value => ("push_notifications", value ? "true" : "false"),
+            ChannelPersonalSetting.EmailNotifications when change.BooleanValue is { } value => ("email_notifications", value ? "true" : "false"),
+            ChannelPersonalSetting.WildcardMentionsNotify when change.BooleanValue is { } value => ("wildcard_mentions_notify", value ? "true" : "false"),
+            _ => throw new ArgumentException("The personal setting value is invalid.", nameof(change))
+        };
+    }
+
+    private static bool HasMemberOperationFailure(JsonElement root)
+    {
+        return GetArray(root, "unauthorized", "not_removed", "not_added", "not_subscribed", "failed", "errors").Length > 0 ||
+            GetObject(root, "unauthorized").ValueKind == JsonValueKind.Object;
+    }
+
+    private static Dictionary<string, string> ToAdvancedFields(ChannelAdvancedSettingsChange change)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal);
+        AddBoolean(fields, "is_archived", change.IsArchived);
+        AddBoolean(fields, "is_private", change.IsPrivate);
+        AddBoolean(fields, "is_web_public", change.IsWebPublic);
+        AddBoolean(fields, "history_public_to_subscribers", change.HistoryPublicToSubscribers);
+        AddBoolean(fields, "is_default_stream", change.IsDefaultStream);
+        if (change.IsArchived is true) throw new ArgumentException("Archiving uses the dedicated archive operation.", nameof(change));
+        if (change.TopicsPolicy is { } topicsPolicy) fields["topics_policy"] = ToTopicsPolicy(topicsPolicy);
+        if (change.RetentionPolicy is { } retention) fields["message_retention_days"] = ToRetentionValue(retention);
+        if (change.GroupSetting is { } groupName)
+        {
+            if (change.NewGroup is null || change.OldGroup is null) throw new ArgumentException("Both old and new group settings are required.", nameof(change));
+            fields[ToGroupSettingProperty(groupName)] = JsonSerializer.Serialize(new { @new = ToGroupValue(change.NewGroup), old = ToGroupValue(change.OldGroup) }, JsonOptions);
+        }
+        return fields;
+    }
+
+    private static void AddBoolean(IDictionary<string, string> fields, string property, bool? value)
+    {
+        if (value is { } actual) fields[property] = actual ? "true" : "false";
+    }
+
+    private static string ToTopicsPolicy(ChannelTopicsPolicy policy) => policy switch
+    {
+        ChannelTopicsPolicy.Inherit => "inherit",
+        ChannelTopicsPolicy.AllowEmptyTopic => "allow_empty_topic",
+        ChannelTopicsPolicy.DisableEmptyTopic => "disable_empty_topic",
+        ChannelTopicsPolicy.EmptyTopicOnly => "empty_topic_only",
+        _ => throw new ArgumentOutOfRangeException(nameof(policy))
+    };
+
+    private static ChannelTopicsPolicy? ToTopicsPolicy(JsonElement value)
+    {
+        var policy = GetString(value, "topics_policy");
+        return policy switch
+        {
+            null => null,
+            "inherit" => ChannelTopicsPolicy.Inherit,
+            "allow_empty_topic" => ChannelTopicsPolicy.AllowEmptyTopic,
+            "disable_empty_topic" => ChannelTopicsPolicy.DisableEmptyTopic,
+            "empty_topic_only" => ChannelTopicsPolicy.EmptyTopicOnly,
+            _ => throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse)
+        };
+    }
+
+    private static string ToRetentionValue(ChannelRetentionPolicy retention) => retention.Kind switch
+    {
+        ChannelRetentionKind.RealmDefault when retention.Days is null => "realm_default",
+        ChannelRetentionKind.Unlimited when retention.Days is null => "unlimited",
+        ChannelRetentionKind.Days when retention.Days is > 0 => retention.Days.Value.ToString(CultureInfo.InvariantCulture),
+        _ => throw new ArgumentException("The retention policy is invalid.", nameof(retention))
+    };
+
+    private static string ToGroupSettingProperty(ChannelGroupSettingName setting) => setting switch
+    {
+        ChannelGroupSettingName.CanSubscribe => "can_subscribe_group",
+        ChannelGroupSettingName.CanAddSubscribers => "can_add_subscribers_group",
+        ChannelGroupSettingName.CanRemoveSubscribers => "can_remove_subscribers_group",
+        ChannelGroupSettingName.CanAdministerChannel => "can_administer_channel_group",
+        ChannelGroupSettingName.CanSendMessage => "can_send_message_group",
+        ChannelGroupSettingName.CanCreateTopic => "can_create_topic_group",
+        ChannelGroupSettingName.CanMoveMessagesWithinChannel => "can_move_messages_within_channel_group",
+        ChannelGroupSettingName.CanMoveMessagesOutOfChannel => "can_move_messages_out_of_channel_group",
+        ChannelGroupSettingName.CanResolveTopics => "can_resolve_topics_group",
+        ChannelGroupSettingName.CanDeleteAnyMessage => "can_delete_any_message_group",
+        ChannelGroupSettingName.CanDeleteOwnMessage => "can_delete_own_message_group",
+        _ => throw new ArgumentOutOfRangeException(nameof(setting))
+    };
+
+    private static object ToGroupValue(ChannelGroupSetting group) => group switch
+    {
+        NamedChannelGroupSetting named => named.GroupId,
+        AnonymousChannelGroupSetting anonymous => new { direct_members = anonymous.DirectMembers, direct_subgroups = anonymous.DirectSubgroups },
+        _ => throw new ArgumentOutOfRangeException(nameof(group))
+    };
 
     private static EmojiReaction? ToReactionOrNull(JsonElement value)
     {

@@ -91,5 +91,62 @@ public sealed class ChannelPermissionEvaluatorTests
         Assert.True(result.CanAdministerChannel);
         Assert.False(result.HasContentAccess);
         Assert.False(result.CanSendMessages);
+        Assert.True(result.CanRemoveSubscribers);
+    }
+
+    [Fact]
+    public void Evaluate_WhenAddAndRemoveGroupsArePresent_GrantsOnlyTheirScopedCapabilities()
+    {
+        var groups = new[]
+        {
+            new ChannelUserGroup(10, "add", false, [7], []),
+            new ChannelUserGroup(11, "remove", false, [7], [])
+        };
+        var channel = new ChannelDetails(42, "general", null, false, false, false, null, null, null, null, null, null,
+            CanAddSubscribersGroup: new NamedChannelGroupSetting(10),
+            CanRemoveSubscribersGroup: new NamedChannelGroupSetting(11));
+        var snapshot = new ChannelSettingsSnapshot([new ChannelSummary(42, "general", null, false, null)], [], groups, 7, false, false, new ChannelSettingsLimits(null, null, null, null));
+
+        var result = ChannelPermissionEvaluator.Evaluate(channel, snapshot, true);
+
+        Assert.True(result.CanAddSubscribers);
+        Assert.True(result.CanRemoveSubscribers);
+    }
+
+    [Fact]
+    public void Evaluate_WhenSubscribedToPrivateChannelAndInRemoveGroup_GrantsRemoval()
+    {
+        var groups = new[] { new ChannelUserGroup(11, "remove", false, [7], []) };
+        var channel = new ChannelDetails(
+            42,
+            "private",
+            null,
+            false,
+            true,
+            false,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            CanRemoveSubscribersGroup: new NamedChannelGroupSetting(11));
+        var snapshot = new ChannelSettingsSnapshot(
+            [new ChannelSummary(42, "private", null, false, null, IsPrivate: true, IsSubscribed: true)],
+            [],
+            groups,
+            7,
+            false,
+            false,
+            new ChannelSettingsLimits(null, null, null, null));
+
+        var result = ChannelPermissionEvaluator.Evaluate(channel, snapshot, true);
+
+        Assert.True(result.HasContentAccess);
+        Assert.True(result.CanRemoveSubscribers);
     }
 }

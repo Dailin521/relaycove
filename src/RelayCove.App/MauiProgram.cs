@@ -19,7 +19,10 @@ public static class MauiProgram
         builder
             .UseMauiApp<App>()
             .ConfigureMauiHandlers(handlers =>
-                handlers.AddHandler<ComposerEditor, ComposerEditorHandler>());
+            {
+                handlers.AddHandler<ComposerEditor, ComposerEditorHandler>();
+                handlers.AddHandler<NativeColorPicker, NativeColorPickerHandler>();
+            });
 
 #if DEBUG
         builder.Logging.AddDebug();

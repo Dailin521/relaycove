@@ -1628,6 +1628,68 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task GetRealmUsersAsync_WhenConnected_ReturnsGatewaySnapshotWithoutMutatingState()
+    {
+        var users = new UserProfile[]
+        {
+            new(41, "Ada", "ada@example.test", true),
+            new(42, "Build Bot", "bot@example.test", true, isBot: true)
+        };
+        var gateway = new FakeGateway
+        {
+            RealmUsersHandler = (_, _) => Task.FromResult<IReadOnlyList<UserProfile>>(users)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var result = await session.GetRealmUsersAsync();
+
+        Assert.Equal(users, result);
+        Assert.Single(gateway.RealmUsersRequests);
+        Assert.DoesNotContain(41, session.State.Users.Keys);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task AddChannelMembersAsync_WhenDetailsAreFresh_UsesAuthoritativeChannelNameOnce()
+    {
+        var gateway = new FakeGateway
+        {
+            ChannelDetailsHandler = (request, _) => Task.FromResult(Details(request.ChannelId, "renamed"))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.AddChannelMembersAsync(7, [41], true);
+
+        var change = Assert.Single(gateway.MemberModificationRequests);
+        Assert.Equal("renamed", change.ChannelName);
+        Assert.Equal([41], change.PrincipalIds);
+        Assert.True(change.Add);
+        Assert.True(change.SendNewSubscriptionMessages);
+        Assert.Single(gateway.ChannelDetailsRequests);
+        await session.StopAsync();
+    }
+
+    [Theory]
+    [InlineData(7, 8, false)]
+    [InlineData(7, 7, true)]
+    public async Task RemoveChannelMembersAsync_WhenDetailsDoNotIdentifyAnActiveTarget_FailsBeforeWrite(long requestedId, long returnedId, bool archived)
+    {
+        var gateway = new FakeGateway
+        {
+            ChannelDetailsHandler = (_, _) => Task.FromResult(Details(returnedId, "engineering", archived))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => session.RemoveChannelMembersAsync(requestedId, [41]));
+
+        Assert.Empty(gateway.MemberModificationRequests);
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task LoadTopicsAsync_WhenRegisterContainsUserTopicPolicies_ReturnsEphemeralPolicy()
     {
         var gateway = new FakeGateway
@@ -1691,6 +1753,30 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task LoadChannelSettingsSnapshotAsync_WhenGatewayConfirmsSubscription_PreservesAuthorityWithoutLocalState()
+    {
+        var snapshot = new ChannelSettingsSnapshot(
+            [new ChannelSummary(7, "private", null, false, 2, IsPrivate: true, IsSubscribed: true)],
+            [],
+            [],
+            10,
+            false,
+            false,
+            new ChannelSettingsLimits(60, 1024, 60, 1024));
+        var gateway = new FakeGateway
+        {
+            ChannelSettingsSnapshotHandler = (_, _) => Task.FromResult(snapshot)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var current = await session.LoadChannelSettingsSnapshotAsync();
+
+        Assert.True(Assert.Single(current.Channels).IsSubscribed);
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task UpdateChannelAsync_WhenServerConfirms_UpdatesSubscriptionWithoutHiddenRefresh()
     {
         var updates = new List<UpdateChannelRequest>();
@@ -1710,6 +1796,70 @@ public sealed class ClientSessionTests
 
         Assert.Equal("platform", session.State.Subscriptions[7].Name);
         Assert.Equal("platform", Assert.Single(updates).Name);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task CreateChannelAsync_WhenServerConfirms_ReturnsCreatedChannelWithoutHiddenRefresh()
+    {
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(isOrganizationAdministrator: true)),
+            CreateChannelHandler = (_, _) => Task.FromResult(44L)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var options = new ChannelCreateOptions("new-channel", "description", true, false, true, false);
+
+        var channel = await session.CreateChannelAsync(options);
+
+        Assert.Equal(44, channel.ChannelId);
+        Assert.Equal("new-channel", channel.Name);
+        Assert.True(channel.IsPrivate);
+        Assert.True(channel.IsSubscribed);
+        Assert.Equal(options, Assert.Single(gateway.CreateChannelRequests).Options);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task SetChannelPersonalSettingAsync_WhenColorIsConfirmed_UpdatesLocalSubscriptionAndPublishesState()
+    {
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(7, "engineering", color: "#A47462")]))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var publishedColors = new List<string?>();
+        session.StateChanged += (_, eventArgs) => publishedColors.Add(eventArgs.State.Subscriptions.GetValueOrDefault(7)?.Color);
+
+        await session.SetChannelPersonalSettingAsync(
+            7,
+            new ChannelPersonalSettingChange(ChannelPersonalSetting.Color, ColorValue: "#4F8DE4"));
+
+        Assert.Equal("#4F8DE4", session.State.Subscriptions[7].Color);
+        Assert.Contains("#4F8DE4", publishedColors);
+        Assert.Equal("#4F8DE4", Assert.Single(gateway.PersonalSettingRequests).Change.ColorValue);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task SetChannelPersonalSettingAsync_WhenColorWriteFails_DoesNotChangeLocalSubscription()
+    {
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(7, "engineering", color: "#A47462")])),
+            SetChannelPersonalSettingHandler = (_, _) => Task.FromException(new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await Assert.ThrowsAsync<GatewayException>(() => session.SetChannelPersonalSettingAsync(
+            7,
+            new ChannelPersonalSettingChange(ChannelPersonalSetting.Color, ColorValue: "#4F8DE4")));
+
+        Assert.Equal("#A47462", session.State.Subscriptions[7].Color);
+        Assert.Single(gateway.PersonalSettingRequests);
         await session.StopAsync();
     }
 
@@ -1880,6 +2030,9 @@ public sealed class ClientSessionTests
 
     private static CredentialEnvelope Credential() =>
         new(RealmEndpoint.Parse("https://zulip.example/"), "me@example.test", 10, "api-key");
+
+    private static ChannelDetails Details(long channelId, string name, bool isArchived = false) =>
+        new(channelId, name, null, isArchived, false, false, null, null, null, null, null, null);
 
     private static StoredAccount Stored(CredentialEnvelope credential) =>
         new(AccountId.Create(credential.Realm, credential.UserId), credential.Realm, credential.Email, credential.UserId);
@@ -2136,6 +2289,11 @@ public sealed class ClientSessionTests
         public List<DeleteQueueRequest> DeleteQueueRequests { get; } = [];
         public List<SubscribeChannelRequest> SubscribeRequests { get; } = [];
         public List<SetSubscriptionPreferenceRequest> PreferenceRequests { get; } = [];
+        public List<RealmUsersRequest> RealmUsersRequests { get; } = [];
+        public List<ChannelDetailsRequest> ChannelDetailsRequests { get; } = [];
+        public List<ModifyChannelMembersRequest> MemberModificationRequests { get; } = [];
+        public List<SetChannelPersonalSettingRequest> PersonalSettingRequests { get; } = [];
+        public List<CreateChannelRequest> CreateChannelRequests { get; } = [];
         public int AvailableChannelsCalls { get; private set; }
         public int MoveTopicCalls { get; private set; }
         public Func<RegisterRequest, CancellationToken, Task<RegisterResult>> RegisterHandler { get; set; } = (_, _) => Task.FromResult(Register());
@@ -2159,7 +2317,12 @@ public sealed class ClientSessionTests
         public Func<ResolveTopicAnchorRequest, CancellationToken, Task<TopicAnchorResult>>? ResolveTopicAnchorHandler { get; set; }
         public Func<MoveTopicRequest, CancellationToken, Task>? MoveTopicHandler { get; set; }
         public Func<ChannelSettingsSnapshotRequest, CancellationToken, Task<ChannelSettingsSnapshot>>? ChannelSettingsSnapshotHandler { get; set; }
+        public Func<RealmUsersRequest, CancellationToken, Task<IReadOnlyList<UserProfile>>>? RealmUsersHandler { get; set; }
+        public Func<ChannelDetailsRequest, CancellationToken, Task<ChannelDetails>>? ChannelDetailsHandler { get; set; }
+        public Func<ModifyChannelMembersRequest, CancellationToken, Task>? ModifyChannelMembersHandler { get; set; }
         public Func<UpdateChannelRequest, CancellationToken, Task>? UpdateChannelHandler { get; set; }
+        public Func<SetChannelPersonalSettingRequest, CancellationToken, Task>? SetChannelPersonalSettingHandler { get; set; }
+        public Func<CreateChannelRequest, CancellationToken, Task<long>>? CreateChannelHandler { get; set; }
         public Func<DeleteQueueRequest, CancellationToken, Task>? DeleteQueueHandler { get; set; }
         public Func<TopicsRequest, CancellationToken, Task<TopicsResult>> TopicsHandler { get; set; } = (_, _) => Task.FromResult(new TopicsResult([]));
 
@@ -2310,6 +2473,36 @@ public sealed class ClientSessionTests
         public Task<ChannelSettingsSnapshot> GetChannelSettingsSnapshotAsync(ChannelSettingsSnapshotRequest request, CancellationToken cancellationToken = default) =>
             ChannelSettingsSnapshotHandler?.Invoke(request, cancellationToken) ??
             Task.FromResult(new ChannelSettingsSnapshot([], [], [], request.Credentials.UserId, false, false, request.Limits));
+
+        public Task<IReadOnlyList<UserProfile>> GetRealmUsersAsync(RealmUsersRequest request, CancellationToken cancellationToken = default)
+        {
+            RealmUsersRequests.Add(request);
+            return RealmUsersHandler?.Invoke(request, cancellationToken) ?? Task.FromResult<IReadOnlyList<UserProfile>>([]);
+        }
+
+        public Task<ChannelDetails> GetChannelDetailsAsync(ChannelDetailsRequest request, CancellationToken cancellationToken = default)
+        {
+            ChannelDetailsRequests.Add(request);
+            return ChannelDetailsHandler?.Invoke(request, cancellationToken) ?? Task.FromResult(Details(request.ChannelId, "engineering"));
+        }
+
+        public Task ModifyChannelMembersAsync(ModifyChannelMembersRequest request, CancellationToken cancellationToken = default)
+        {
+            MemberModificationRequests.Add(request);
+            return ModifyChannelMembersHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
+        }
+
+        public Task SetChannelPersonalSettingAsync(SetChannelPersonalSettingRequest request, CancellationToken cancellationToken = default)
+        {
+            PersonalSettingRequests.Add(request);
+            return SetChannelPersonalSettingHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
+        }
+
+        public Task<long> CreateChannelAsync(CreateChannelRequest request, CancellationToken cancellationToken = default)
+        {
+            CreateChannelRequests.Add(request);
+            return CreateChannelHandler?.Invoke(request, cancellationToken) ?? Task.FromResult(44L);
+        }
 
         public Task UpdateChannelAsync(UpdateChannelRequest request, CancellationToken cancellationToken = default) =>
             UpdateChannelHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;

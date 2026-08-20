@@ -4,5 +4,6 @@ public enum ChannelSettingsConfirmation
 {
     None,
     Unsubscribe,
-    Archive
+    Archive,
+    Unarchive
 }

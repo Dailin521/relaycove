@@ -105,9 +105,16 @@ public partial class ConversationPaneView : ContentView
         }
     }
 
-    public void FocusBrowseChannelsButton() => BrowseChannelsButton.Focus();
+    private void OnCreateChannelClicked(object? sender, EventArgs eventArgs)
+    {
+        if (BindingContext is not ShellViewModel viewModel) return;
+        _channelMenuTrigger = null;
+        viewModel.OpenCreateChannelSettingsCommand.Execute(null);
+    }
 
-    public void FocusChannelMenuButton() => _channelMenuTrigger?.Focus();
+    public void FocusConversationFilter() => ConversationFilterEntry.Focus();
+
+    public void FocusChannelMenuButton() => (_channelMenuTrigger ?? CreateChannelButton).Focus();
 
     public void FocusTopicMenuButton() => _topicMenuTrigger?.Focus();
 

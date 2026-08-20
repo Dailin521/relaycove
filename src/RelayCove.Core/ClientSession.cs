@@ -1096,9 +1096,9 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             {
                 if (!IsChannelSettingsCurrentLocked(accountId, generation, queryCancellation)) throw new OperationCanceledException(queryCancellation.Token);
                 var subscriptions = _state.Subscriptions;
-                var channels = snapshot.Channels.Select(channel => subscriptions.TryGetValue(channel.ChannelId, out var subscription)
-                    ? channel with { IsSubscribed = true, Color = subscription.Color }
-                    : channel with { IsSubscribed = false, Color = null }).ToArray();
+                var channels = snapshot.Channels.Select(channel => channel.IsSubscribed && subscriptions.TryGetValue(channel.ChannelId, out var subscription)
+                    ? channel with { Color = subscription.Color }
+                    : channel).ToArray();
                 _channelSettingsSnapshot = snapshot with { Channels = channels };
                 _availableChannels = channels.ToDictionary(channel => channel.ChannelId);
                 return _channelSettingsSnapshot;
@@ -1218,6 +1218,129 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         try { await _gateway.ArchiveChannelAsync(new ArchiveChannelRequest(GetConnectedCredentials(), channelId), cancellationToken).ConfigureAwait(false); }
         catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
         await StoreThenApplyAsync([new SubscriptionPatchedEvent(channelId, null, false, Source: DomainEventSource.Local)], cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<ChannelSummary> CreateChannelAsync(ChannelCreateOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.Name);
+        ThrowIfDisposed();
+        if (!IsOrganizationAdministrator) throw new InvalidOperationException("Creating a channel requires an organization administrator.");
+        var credentials = GetConnectedCredentials();
+        long channelId;
+        try { channelId = await _gateway.CreateChannelAsync(new CreateChannelRequest(credentials, options), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+        return new ChannelSummary(channelId, options.Name.Trim(), options.Description, false, 1, options.IsPrivate, true);
+    }
+
+    public async Task<ChannelPersonalSettings> GetChannelPersonalSettingsAsync(long channelId, CancellationToken cancellationToken = default)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        ThrowIfDisposed();
+        try { return await _gateway.GetChannelPersonalSettingsAsync(new ChannelMembersRequest(GetConnectedCredentials(), channelId), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+    }
+
+    public async Task SetChannelPersonalSettingAsync(long channelId, ChannelPersonalSettingChange change, CancellationToken cancellationToken = default)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        ArgumentNullException.ThrowIfNull(change);
+        ThrowIfDisposed();
+        CredentialEnvelope credentials;
+        AccountId accountId;
+        long generation;
+        CancellationTokenSource runCancellation;
+        lock (_stateGate)
+        {
+            credentials = _state.Connection.Status == ConnectionStatus.Connected
+                ? _credentials ?? throw new InvalidOperationException("No credentials are available.")
+                : throw new InvalidOperationException("Channel personal settings require a connected session.");
+            accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+            generation = _queryEpoch;
+            runCancellation = _runCancellation ?? throw new InvalidOperationException("The session is stopped.");
+        }
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runCancellation.Token);
+        try { await _gateway.SetChannelPersonalSettingAsync(new SetChannelPersonalSettingRequest(credentials, channelId, change), linked.Token).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception))
+        {
+            if (IsChannelOperationCurrent(accountId, generation, runCancellation)) await HandleUnauthorizedAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        if (change.Setting != ChannelPersonalSetting.Color || string.IsNullOrWhiteSpace(change.ColorValue)) return;
+        var changed = false;
+        lock (_stateGate)
+        {
+            if (!IsChannelOperationCurrentLocked(accountId, generation, runCancellation) ||
+                !_state.Subscriptions.TryGetValue(channelId, out var subscription) ||
+                string.Equals(subscription.Color, change.ColorValue, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _state = _state with
+            {
+                Subscriptions = new Dictionary<long, Subscription>(_state.Subscriptions)
+                {
+                    [channelId] = subscription with { Color = change.ColorValue }
+                }
+            };
+            changed = true;
+        }
+        if (changed) RaiseStateChanged();
+    }
+
+    public async Task<IReadOnlyList<long>> GetChannelMemberIdsAsync(long channelId, CancellationToken cancellationToken = default)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        ThrowIfDisposed();
+        try { return await _gateway.GetChannelMemberIdsAsync(new ChannelMembersRequest(GetConnectedCredentials(), channelId), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+    }
+
+    public async Task<IReadOnlyList<UserProfile>> GetRealmUsersAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        try { return await _gateway.GetRealmUsersAsync(new RealmUsersRequest(GetConnectedCredentials()), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+    }
+
+    public Task AddChannelMembersAsync(long channelId, IReadOnlyList<long> principalIds, bool sendNewSubscriptionMessages, CancellationToken cancellationToken = default) =>
+        ModifyChannelMembersAsync(channelId, principalIds, true, sendNewSubscriptionMessages, cancellationToken);
+
+    public Task RemoveChannelMembersAsync(long channelId, IReadOnlyList<long> principalIds, CancellationToken cancellationToken = default) =>
+        ModifyChannelMembersAsync(channelId, principalIds, false, false, cancellationToken);
+
+    public async Task UpdateChannelAdvancedSettingsAsync(long channelId, ChannelAdvancedSettingsChange change, CancellationToken cancellationToken = default)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        ArgumentNullException.ThrowIfNull(change);
+        ThrowIfDisposed();
+        try { await _gateway.UpdateChannelAdvancedSettingsAsync(new UpdateChannelAdvancedRequest(GetConnectedCredentials(), channelId, change), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+        await LoadChannelSettingsSnapshotAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task UnarchiveChannelAsync(long channelId, CancellationToken cancellationToken = default)
+    {
+        if (!IsOrganizationAdministrator) return Task.FromException(new InvalidOperationException("Unarchiving a channel requires an organization administrator."));
+        return UpdateChannelAdvancedSettingsAsync(channelId, new ChannelAdvancedSettingsChange(IsArchived: false), cancellationToken);
+    }
+
+    private async Task ModifyChannelMembersAsync(long channelId, IReadOnlyList<long> principalIds, bool add, bool sendNewSubscriptionMessages, CancellationToken cancellationToken)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        ArgumentNullException.ThrowIfNull(principalIds);
+        ThrowIfDisposed();
+        var credentials = GetConnectedCredentials();
+        ChannelDetails details;
+        try { details = await _gateway.GetChannelDetailsAsync(new ChannelDetailsRequest(credentials, channelId), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+        if (details.ChannelId != channelId || details.IsArchived || string.IsNullOrWhiteSpace(details.Name))
+            throw new InvalidOperationException("Refresh channel settings before changing members.");
+        try { await _gateway.ModifyChannelMembersAsync(new ModifyChannelMembersRequest(credentials, details.Name, principalIds, add, sendNewSubscriptionMessages), cancellationToken).ConfigureAwait(false); }
+        catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
     }
 
     public async Task SubscribeToChannelAsync(long channelId, CancellationToken cancellationToken = default)

@@ -1,136 +1,253 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:controls="clr-namespace:RelayCove.App.Controls"
              xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
+             xmlns:windowsBehaviors="clr-namespace:RelayCove.App.Platforms.Windows.Behaviors"
              x:Class="RelayCove.App.Controls.ChannelSettingsOverlayView"
              x:Name="Root"
              x:DataType="viewModels:ChannelSettingsViewModel">
+    <ContentView.Resources>
+        <DataTemplate x:Key="ChannelRowTemplate" x:DataType="viewModels:ChannelSettingsChannelItem">
+            <Border Margin="8,2" Style="{StaticResource ChannelSettingsListRowStyle}">
+                <Border.Triggers>
+                    <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
+                        <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
+                        <Setter Property="Stroke" Value="{StaticResource AccentColor}" />
+                    </DataTrigger>
+                </Border.Triggers>
+                <Border.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="OnChannelRowTapped" CommandParameter="{Binding .}" />
+                </Border.GestureRecognizers>
+                <Grid ColumnDefinitions="32,24,*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="8">
+                    <Button Text="{Binding SubscriptionGlyph}" Clicked="OnChannelSubscriptionClicked" Style="{StaticResource IconButtonStyle}" SemanticProperties.Description="切换频道订阅" />
+                    <Label Grid.Column="1" Text="{Binding PrivacyGlyph}" TextColor="{Binding Color}" FontSize="18" VerticalTextAlignment="Center" />
+                    <Label Grid.Column="2" Text="{Binding Name}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                    <Label Grid.Column="3" Text="{Binding SubscriberLabel}" Style="{StaticResource MutedLabelStyle}" />
+                    <Label Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="2" Text="{Binding DescriptionLabel}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="TailTruncation" />
+                    <Label Grid.Row="2" Grid.Column="2" Grid.ColumnSpan="2" Text="{Binding TrafficLabel}" Style="{StaticResource MutedLabelStyle}" />
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </ContentView.Resources>
+
     <Grid IsVisible="{Binding IsOpen}">
         <BoxView Background="{StaticResource OverlayBrush}">
-            <BoxView.GestureRecognizers>
-                <TapGestureRecognizer Command="{Binding CloseTopLayerCommand}" />
-            </BoxView.GestureRecognizers>
+            <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseTopLayerCommand}" /></BoxView.GestureRecognizers>
         </BoxView>
-        <Border Margin="20" Background="{StaticResource SurfaceBrush}" Stroke="{StaticResource StrongBorderBrush}" StrokeThickness="1">
-            <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+        <Border Margin="20" MaximumWidthRequest="1240" MaximumHeightRequest="820" HorizontalOptions="Center" VerticalOptions="Center" Background="{StaticResource SurfaceBrush}" Stroke="{StaticResource StrongBorderBrush}" StrokeThickness="1">
+            <Border.StrokeShape><RoundRectangle CornerRadius="14" /></Border.StrokeShape>
             <Grid RowDefinitions="58,*">
-                <Grid Padding="20,0" ColumnDefinitions="Auto,*,Auto" Background="{StaticResource SurfaceSoftBrush}">
-                    <Button Text="‹" IsVisible="{Binding IsNarrowDetailVisible}" Command="{Binding BackToListCommand}" Style="{StaticResource IconButtonStyle}" />
-                    <Label Grid.Column="1" Text="频道" Style="{StaticResource BaseLabelStyle}" FontSize="20" FontAttributes="Bold" HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
-                    <Button x:Name="CloseButton" Grid.Column="2" Text="×" Style="{StaticResource IconButtonStyle}" Command="{Binding CloseCommand}" SemanticProperties.Description="关闭频道设置" />
+                <Grid Padding="18,0" ColumnDefinitions="Auto,*,Auto" Background="{StaticResource SurfaceSoftBrush}">
+                    <Button Text="‹" IsVisible="{Binding IsNarrowBackVisible}" Command="{Binding BackToListCommand}" Style="{StaticResource IconButtonStyle}" SemanticProperties.Description="返回频道目录" />
+                    <Label Grid.Column="1" Text="频道设置" HorizontalTextAlignment="Center" VerticalTextAlignment="Center" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                    <Button x:Name="CloseButton" Grid.Column="2" Text="×" Command="{Binding CloseCommand}" Style="{StaticResource IconButtonStyle}" SemanticProperties.Description="关闭频道设置" />
                 </Grid>
-                <Grid Grid.Row="1" ColumnSpacing="0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="{Binding ListPaneWidth}" />
-                        <ColumnDefinition Width="{Binding DetailPaneWidth}" />
-                    </Grid.ColumnDefinitions>
-                    <Grid Grid.Column="0" IsVisible="{Binding IsDesktopListVisible}" RowDefinitions="Auto,Auto,*" Background="{StaticResource GroundBrush}">
-                        <Grid Padding="12,10" ColumnDefinitions="*,*,*" ColumnSpacing="6">
-                            <Button Text="已订阅" Command="{Binding SetSubscribedModeCommand}" Style="{StaticResource BaseButtonStyle}" />
-                            <Button Grid.Column="1" Text="可用" Command="{Binding SetAvailableModeCommand}" Style="{StaticResource BaseButtonStyle}" />
-                            <Button Grid.Column="2" Text="全部" Command="{Binding SetAllModeCommand}" Style="{StaticResource BaseButtonStyle}" />
-                        </Grid>
-                        <VerticalStackLayout Grid.Row="1" Padding="12,0,12,8" Spacing="6">
-                            <Entry Text="{Binding SearchText}" Placeholder="搜索" Style="{StaticResource BaseEntryStyle}" />
-                            <Grid ColumnDefinitions="*,*" ColumnSpacing="6">
-                                <Picker ItemsSource="{Binding ArchiveFilterOptions}" SelectedIndex="{Binding ArchiveFilterIndex}" Title="归档" />
-                                <Picker Grid.Column="1" ItemsSource="{Binding SortOptions}" SelectedIndex="{Binding SortIndex}" Title="排序" />
+
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="{Binding ListPaneWidth}" /><ColumnDefinition Width="1" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+
+                    <Grid Grid.Column="0" IsVisible="{Binding IsDesktopListVisible}" RowDefinitions="Auto,*" Background="{StaticResource GroundBrush}">
+                        <VerticalStackLayout Padding="12,12,12,8" Spacing="8">
+                            <Grid ColumnDefinitions="*,*,*" ColumnSpacing="5">
+                                <Button Text="已订阅" Command="{Binding SetSubscribedModeCommand}" Style="{StaticResource ChannelSettingsToolButtonStyle}"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsSubscribedListMode}" Value="True"><Setter Property="BackgroundColor" Value="{StaticResource SurfaceSelectedBrush}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers></Button>
+                                <Button Grid.Column="1" Text="可用" Command="{Binding SetAvailableModeCommand}" Style="{StaticResource ChannelSettingsToolButtonStyle}"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsAvailableListMode}" Value="True"><Setter Property="BackgroundColor" Value="{StaticResource SurfaceSelectedBrush}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers></Button>
+                                <Button Grid.Column="2" Text="全部" Command="{Binding SetAllModeCommand}" Style="{StaticResource ChannelSettingsToolButtonStyle}"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsAllListMode}" Value="True"><Setter Property="BackgroundColor" Value="{StaticResource SurfaceSelectedBrush}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers></Button>
                             </Grid>
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                                <Entry Text="{Binding SearchText}" Placeholder="搜索频道" Style="{StaticResource BaseEntryStyle}" />
+                                <Button Grid.Column="1" Text="↻" Command="{Binding RefreshCommand}" IsEnabled="{Binding CanRefreshSettings}" Style="{StaticResource ChannelSettingsToolButtonStyle}" SemanticProperties.Description="刷新频道设置" />
+                                <Button Grid.Column="2" Text="+" Command="{Binding OpenCreateChannelCommand}" IsEnabled="{Binding CanOpenCreateChannel}" Style="{StaticResource ChannelSettingsToolButtonStyle}" SemanticProperties.Description="创建频道" />
+                            </Grid>
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="6">
+                                <Picker ItemsSource="{Binding ArchiveFilterOptions}" SelectedIndex="{Binding ArchiveFilterIndex}" Title="归档状态" Style="{StaticResource ChannelSettingsPickerStyle}" />
+                                <Picker Grid.Column="1" ItemsSource="{Binding SortOptions}" SelectedIndex="{Binding SortIndex}" Title="排序方式" Style="{StaticResource ChannelSettingsPickerStyle}" />
+                            </Grid>
+                            <Label Text="{Binding ChannelCountLabel}" Style="{StaticResource MutedLabelStyle}" />
                         </VerticalStackLayout>
-                        <Grid Grid.Row="2">
-                            <CollectionView ItemsSource="{Binding FilteredChannels}" SelectionMode="None">
-                                <CollectionView.ItemTemplate>
-                                    <DataTemplate x:DataType="viewModels:ChannelSettingsChannelItem">
-                                        <Border Padding="14,10" StrokeThickness="0">
-                                            <Border.Triggers>
-                                                <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
-                                                    <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
-                                                </DataTrigger>
-                                            </Border.Triggers>
-                                            <Border.GestureRecognizers><TapGestureRecognizer Command="{Binding BindingContext.SelectChannelCommand, Source={x:Reference Root}}" CommandParameter="{Binding .}" /></Border.GestureRecognizers>
-                                            <Grid ColumnDefinitions="30,30,*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="7">
-                                                <Button Text="{Binding SubscriptionGlyph}"
-                                                        WidthRequest="28"
-                                                        HeightRequest="28"
-                                                        Padding="0"
-                                                        Command="{Binding BindingContext.ChangeChannelSubscriptionCommand, Source={x:Reference Root}}"
-                                                        CommandParameter="{Binding .}"
-                                                        Style="{StaticResource IconButtonStyle}" />
-                                                <Label Grid.Column="1" Text="{Binding PrivacyGlyph}" TextColor="{Binding Color}" FontSize="21" FontAttributes="Bold" VerticalTextAlignment="Center" />
-                                                <Label Grid.Column="2" Text="{Binding Name}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" FontSize="16" LineBreakMode="TailTruncation" />
-                                                <Label Grid.Column="3" Text="{Binding SubscriberLabel}" Style="{StaticResource MutedLabelStyle}" FontSize="11" />
-                                                <Label Grid.Row="1" Grid.Column="2" Grid.ColumnSpan="2" Text="{Binding DescriptionLabel}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="TailTruncation" />
-                                                <Label Grid.Row="2" Grid.Column="2" Text="{Binding TrafficLabel}" Style="{StaticResource MutedLabelStyle}" FontSize="11" />
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </CollectionView.ItemTemplate>
-                            </CollectionView>
-                            <ActivityIndicator IsRunning="{Binding IsLoading}" IsVisible="{Binding IsLoading}" HorizontalOptions="Center" VerticalOptions="Center" />
-                        </Grid>
-                    </Grid>
-                    <Grid Grid.Column="0" IsVisible="{Binding IsNarrowListVisible}" RowDefinitions="Auto,Auto,Auto,*" Background="{StaticResource GroundBrush}">
-                        <Grid Padding="12,10" ColumnDefinitions="*,*,*" ColumnSpacing="6">
-                            <Button Text="已订阅" Command="{Binding SetSubscribedModeCommand}" Style="{StaticResource BaseButtonStyle}" />
-                            <Button Grid.Column="1" Text="可用" Command="{Binding SetAvailableModeCommand}" Style="{StaticResource BaseButtonStyle}" />
-                            <Button Grid.Column="2" Text="全部" Command="{Binding SetAllModeCommand}" Style="{StaticResource BaseButtonStyle}" />
-                        </Grid>
-                        <Entry Grid.Row="1" Margin="12,0,12,8" Text="{Binding SearchText}" Placeholder="搜索" Style="{StaticResource BaseEntryStyle}" />
-                        <Grid Grid.Row="2" Margin="12,0,12,8" ColumnDefinitions="*,*" ColumnSpacing="6">
-                            <Picker ItemsSource="{Binding ArchiveFilterOptions}" SelectedIndex="{Binding ArchiveFilterIndex}" Title="归档" />
-                            <Picker Grid.Column="1" ItemsSource="{Binding SortOptions}" SelectedIndex="{Binding SortIndex}" Title="排序" />
-                        </Grid>
-                        <CollectionView Grid.Row="3" ItemsSource="{Binding FilteredChannels}" SelectionMode="None">
-                            <CollectionView.ItemTemplate>
-                                <DataTemplate x:DataType="viewModels:ChannelSettingsChannelItem">
-                                    <Grid Padding="10,4" ColumnDefinitions="Auto,*" ColumnSpacing="6">
-                                        <Button Text="{Binding SubscriptionGlyph}"
-                                                WidthRequest="32"
-                                                Command="{Binding BindingContext.ChangeChannelSubscriptionCommand, Source={x:Reference Root}}"
-                                                CommandParameter="{Binding .}"
-                                                Style="{StaticResource IconButtonStyle}" />
-                                        <Button Grid.Column="1"
-                                                Text="{Binding Name}"
-                                                HorizontalOptions="Fill"
-                                                Command="{Binding BindingContext.SelectChannelCommand, Source={x:Reference Root}}"
-                                                CommandParameter="{Binding .}"
-                                                Style="{StaticResource BaseButtonStyle}" />
-                                    </Grid>
-                                </DataTemplate>
-                            </CollectionView.ItemTemplate>
+                        <CollectionView Grid.Row="1" ItemsSource="{Binding FilteredChannels}" ItemTemplate="{StaticResource ChannelRowTemplate}" SelectionMode="None">
+                            <CollectionView.EmptyView><Label Margin="16" Text="没有符合条件的频道" Style="{StaticResource MutedLabelStyle}" /></CollectionView.EmptyView>
                         </CollectionView>
                     </Grid>
-                    <ScrollView Grid.Column="1" IsVisible="{Binding IsDesktopDetailVisible}">
-                        <VerticalStackLayout Padding="28,22" Spacing="14">
-                            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="8">
-                                <VerticalStackLayout><Label Text="{Binding PrivacyLabel}" Style="{StaticResource MutedLabelStyle}" /><Label Text="{Binding SelectedName}" Style="{StaticResource BaseLabelStyle}" FontSize="24" FontAttributes="Bold" /></VerticalStackLayout>
-                                <Button Grid.Column="1" Text="编辑" Command="{Binding BeginEditNameCommand}" IsEnabled="{Binding CanAdminister}" Style="{StaticResource BaseButtonStyle}" />
-                                <Button Grid.Column="2" Text="前往频道" Command="{Binding ViewChannelCommand}" Style="{StaticResource BaseButtonStyle}" />
-                                <Button Grid.Column="3" Text="{Binding SubscriptionActionLabel}" Command="{Binding ChangeSubscriptionCommand}" IsEnabled="{Binding CanChangeSubscription}" Style="{StaticResource BaseButtonStyle}" />
-                                <Button Grid.Column="4" Text="归档" Command="{Binding RequestArchiveCommand}" IsEnabled="{Binding CanArchive}" Style="{StaticResource BaseButtonStyle}" />
+
+                    <Grid Grid.Column="0" IsVisible="{Binding IsNarrowListVisible}" RowDefinitions="Auto,*" Background="{StaticResource GroundBrush}">
+                        <VerticalStackLayout Padding="12,12,12,8" Spacing="8">
+                            <Grid ColumnDefinitions="*,*,*" ColumnSpacing="5">
+                                <Button Text="已订阅" Command="{Binding SetSubscribedModeCommand}" Style="{StaticResource ChannelSettingsToolButtonStyle}"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsSubscribedListMode}" Value="True"><Setter Property="BackgroundColor" Value="{StaticResource SurfaceSelectedBrush}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers></Button>
+                                <Button Grid.Column="1" Text="可用" Command="{Binding SetAvailableModeCommand}" Style="{StaticResource ChannelSettingsToolButtonStyle}"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsAvailableListMode}" Value="True"><Setter Property="BackgroundColor" Value="{StaticResource SurfaceSelectedBrush}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers></Button>
+                                <Button Grid.Column="2" Text="全部" Command="{Binding SetAllModeCommand}" Style="{StaticResource ChannelSettingsToolButtonStyle}"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsAllListMode}" Value="True"><Setter Property="BackgroundColor" Value="{StaticResource SurfaceSelectedBrush}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers></Button>
                             </Grid>
-                            <Border Padding="16,8" HorizontalOptions="Start" Background="{StaticResource SurfaceSelectedBrush}" StrokeThickness="0">
-                                <Label Text="General" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
-                            </Border>
-                            <Grid ColumnDefinitions="*,Auto"><VerticalStackLayout><Label Text="说明" Style="{StaticResource MutedLabelStyle}" /><Label Text="{Binding DescriptionLabel}" Style="{StaticResource BaseLabelStyle}" /></VerticalStackLayout><Button Grid.Column="1" Text="编辑" Command="{Binding BeginEditDescriptionCommand}" IsEnabled="{Binding CanAdminister}" Style="{StaticResource BaseButtonStyle}" /></Grid>
-                            <Label Text="{Binding CreatorLabel}" Style="{StaticResource MutedLabelStyle}" />
-                            <Label Text="{Binding DateLabel}" Style="{StaticResource MutedLabelStyle}" />
-                            <Label Text="{Binding ChannelIdLabel}" Style="{StaticResource MutedLabelStyle}" />
-                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
-                            <Label Text="设置" Style="{StaticResource BaseLabelStyle}" FontSize="21" FontAttributes="Bold" />
-                            <Label Text="频道文件夹" Style="{StaticResource BaseLabelStyle}" />
-                            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="7"><Picker ItemsSource="{Binding Folders}" ItemDisplayBinding="{Binding Name}" SelectedItem="{Binding DraftFolder, Mode=TwoWay}" IsEnabled="{Binding CanAdminister}" /><Button Grid.Column="1" Text="清除" Command="{Binding ClearFolderCommand}" IsEnabled="{Binding CanAdminister}" Style="{StaticResource BaseButtonStyle}" /><Button Grid.Column="2" Text="取消" Command="{Binding CancelFolderCommand}" IsEnabled="{Binding IsFolderDirty}" Style="{StaticResource BaseButtonStyle}" /><Button Grid.Column="3" Text="保存" Command="{Binding SaveFolderCommand}" IsEnabled="{Binding CanSaveFolder}" Style="{StaticResource PrimaryButtonStyle}" /><Button Grid.Column="4" Text="新建文件夹" Command="{Binding OpenCreateFolderCommand}" IsEnabled="{Binding CanCreateFolder}" Style="{StaticResource BaseButtonStyle}" /></Grid>
-                            <Label Text="频道邮件地址" Style="{StaticResource BaseLabelStyle}" />
-                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="7"><Label Text="{Binding EmailAddress}" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" LineBreakMode="TailTruncation" /><Button Grid.Column="1" Text="获取" Command="{Binding FetchEmailCommand}" IsEnabled="{Binding CanFetchEmail}" Style="{StaticResource BaseButtonStyle}" /><Button Grid.Column="2" Text="复制" Command="{Binding CopyEmailCommand}" IsEnabled="{Binding HasEmailAddress}" Style="{StaticResource BaseButtonStyle}" /></Grid>
-                            <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{StaticResource DangerLabelStyle}" />
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6">
+                                <Entry Text="{Binding SearchText}" Placeholder="搜索频道" Style="{StaticResource BaseEntryStyle}" />
+                                <Button Grid.Column="1" Text="↻" Command="{Binding RefreshCommand}" IsEnabled="{Binding CanRefreshSettings}" Style="{StaticResource ChannelSettingsToolButtonStyle}" SemanticProperties.Description="刷新频道设置" />
+                                <Button Grid.Column="2" Text="+" Command="{Binding OpenCreateChannelCommand}" IsEnabled="{Binding CanOpenCreateChannel}" Style="{StaticResource ChannelSettingsToolButtonStyle}" SemanticProperties.Description="创建频道" />
+                            </Grid>
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="6">
+                                <Picker ItemsSource="{Binding ArchiveFilterOptions}" SelectedIndex="{Binding ArchiveFilterIndex}" Style="{StaticResource ChannelSettingsPickerStyle}" />
+                                <Picker Grid.Column="1" ItemsSource="{Binding SortOptions}" SelectedIndex="{Binding SortIndex}" Style="{StaticResource ChannelSettingsPickerStyle}" />
+                            </Grid>
+                            <Label Text="{Binding ChannelCountLabel}" Style="{StaticResource MutedLabelStyle}" />
+                        </VerticalStackLayout>
+                        <CollectionView Grid.Row="1" ItemsSource="{Binding FilteredChannels}" ItemTemplate="{StaticResource ChannelRowTemplate}" SelectionMode="None">
+                            <CollectionView.EmptyView><Label Margin="16" Text="没有符合条件的频道" Style="{StaticResource MutedLabelStyle}" /></CollectionView.EmptyView>
+                        </CollectionView>
+                    </Grid>
+
+                    <BoxView Grid.Column="1" Background="{StaticResource BorderBrush}" />
+                    <ScrollView Grid.Column="2" IsVisible="{Binding IsDesktopDetailVisible}">
+                        <VerticalStackLayout Padding="24,20,24,28" MaximumWidthRequest="820" HorizontalOptions="Fill" Spacing="14">
+                            <Grid RowDefinitions="Auto,Auto" RowSpacing="10">
+                                <VerticalStackLayout>
+                                    <Label Text="{Binding PrivacyLabel}" Style="{StaticResource MutedLabelStyle}" />
+                                    <Label Text="{Binding SelectedName}" Style="{StaticResource BaseLabelStyle}" FontSize="24" FontAttributes="Bold" LineBreakMode="TailTruncation">
+                                        <Label.Triggers><DataTrigger TargetType="Label" Binding="{Binding IsCompactSettingsHeader}" Value="True"><Setter Property="FontSize" Value="20" /></DataTrigger></Label.Triggers>
+                                    </Label>
+                                </VerticalStackLayout>
+                                <FlexLayout Grid.Row="1" Direction="Row" Wrap="Wrap" JustifyContent="End" AlignItems="Center">
+                                    <Button Margin="0,0,6,6" Text="编辑" Command="{Binding BeginEditNameCommand}" IsEnabled="{Binding CanAdminister}" Style="{StaticResource ChannelSettingsToolButtonStyle}" />
+                                    <Button Margin="0,0,6,6" Text="前往频道" Command="{Binding ViewChannelCommand}" Style="{StaticResource ChannelSettingsToolButtonStyle}" />
+                                    <Button Margin="0,0,6,6" Text="{Binding SubscriptionActionLabel}" Command="{Binding ChangeSubscriptionCommand}" IsEnabled="{Binding CanChangeSubscription}" Style="{StaticResource ChannelSettingsToolButtonStyle}" />
+                                    <Button Margin="0,0,0,6" Text="{Binding ArchiveActionLabel}" Command="{Binding RequestArchiveCommand}" IsVisible="{Binding CanChangeArchive}" Style="{StaticResource ChannelSettingsToolButtonStyle}" />
+                                </FlexLayout>
+                            </Grid>
+
+                            <ScrollView Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
+                                <HorizontalStackLayout Spacing="4">
+                                    <Button Text="General" Command="{Binding SelectTabCommand}" CommandParameter="General" Style="{StaticResource ChannelSettingsTabStyle}"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsGeneralTab}" Value="True"><Setter Property="BackgroundColor" Value="{StaticResource SurfaceSelectedBrush}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers></Button>
+                                    <Button Text="个人" Command="{Binding SelectTabCommand}" CommandParameter="Personal" IsEnabled="{Binding CanChangePersonal}" Style="{StaticResource ChannelSettingsTabStyle}"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsPersonalTab}" Value="True"><Setter Property="BackgroundColor" Value="{StaticResource SurfaceSelectedBrush}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers></Button>
+                                    <Button Text="订阅者" Command="{Binding SelectTabCommand}" CommandParameter="Subscribers" IsEnabled="{Binding CanViewMembers}" Style="{StaticResource ChannelSettingsTabStyle}"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsSubscribersTab}" Value="True"><Setter Property="BackgroundColor" Value="{StaticResource SurfaceSelectedBrush}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers></Button>
+                                    <Button Text="权限" Command="{Binding SelectTabCommand}" CommandParameter="Permissions" Style="{StaticResource ChannelSettingsTabStyle}"><Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding IsPermissionsTab}" Value="True"><Setter Property="BackgroundColor" Value="{StaticResource SurfaceSelectedBrush}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers></Button>
+                                </HorizontalStackLayout>
+                            </ScrollView>
+                            <ActivityIndicator IsRunning="{Binding IsTabLoading}" IsVisible="{Binding IsTabLoading}" />
+
+                            <VerticalStackLayout IsVisible="{Binding IsGeneralTab}" Spacing="12">
+                                <Border Style="{StaticResource SettingsSectionBorderStyle}"><VerticalStackLayout Spacing="10"><Grid ColumnDefinitions="*,Auto"><Label Text="关于频道" Style="{StaticResource SectionHeaderStyle}" /><Button Grid.Column="1" Text="编辑说明" Command="{Binding BeginEditDescriptionCommand}" IsEnabled="{Binding CanAdminister}" Style="{StaticResource ChannelSettingsToolButtonStyle}" /></Grid><Label Text="{Binding DescriptionLabel}" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" /><BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" /><Label Text="{Binding CreatorLabel}" Style="{StaticResource BaseLabelStyle}" /><HorizontalStackLayout Spacing="14"><Label Text="{Binding DateLabel}" Style="{StaticResource MutedLabelStyle}" /><Label Text="{Binding ChannelIdLabel}" Style="{StaticResource MutedLabelStyle}" /></HorizontalStackLayout></VerticalStackLayout></Border>
+                                <Border Style="{StaticResource SettingsSectionBorderStyle}"><VerticalStackLayout Spacing="10"><Label Text="频道文件夹" Style="{StaticResource SectionHeaderStyle}" /><Label Text="{Binding FolderLabel, StringFormat='当前：{0}'}" Style="{StaticResource MutedLabelStyle}" /><Picker ItemsSource="{Binding Folders}" ItemDisplayBinding="{Binding Name}" SelectedItem="{Binding DraftFolder, Mode=TwoWay}" IsEnabled="{Binding CanAdminister}" Style="{StaticResource ChannelSettingsPickerStyle}" /><FlexLayout Direction="Row" Wrap="Wrap" JustifyContent="End"><Button Margin="0,0,6,6" Text="移出文件夹" Command="{Binding ClearFolderCommand}" IsEnabled="{Binding CanClearFolder}" Style="{StaticResource ChannelSettingsToolButtonStyle}" /><Button Margin="0,0,6,6" Text="取消更改" Command="{Binding CancelFolderCommand}" IsEnabled="{Binding IsFolderDirty}" Style="{StaticResource ChannelSettingsToolButtonStyle}" /><Button Margin="0,0,6,6" Text="保存" Command="{Binding SaveFolderCommand}" IsEnabled="{Binding CanSaveFolder}" Style="{StaticResource PrimaryButtonStyle}" /><Button Margin="0,0,0,6" Text="新建文件夹" Command="{Binding OpenCreateFolderCommand}" IsEnabled="{Binding CanCreateFolder}" Style="{StaticResource ChannelSettingsToolButtonStyle}" /></FlexLayout></VerticalStackLayout></Border>
+                                <Border Style="{StaticResource SettingsSectionBorderStyle}"><VerticalStackLayout Spacing="10"><Label Text="频道邮件地址" Style="{StaticResource SectionHeaderStyle}" /><Label Text="{Binding EmailAddress, TargetNullValue='尚未获取频道邮件地址'}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" /><HorizontalStackLayout HorizontalOptions="End" Spacing="6"><Button Text="获取地址" Command="{Binding FetchEmailCommand}" IsEnabled="{Binding CanFetchEmail}" Style="{StaticResource ChannelSettingsToolButtonStyle}" /><Button Text="复制" Command="{Binding CopyEmailCommand}" IsEnabled="{Binding HasEmailAddress}" Style="{StaticResource ChannelSettingsToolButtonStyle}" /></HorizontalStackLayout></VerticalStackLayout></Border>
+                            </VerticalStackLayout>
+
+                            <VerticalStackLayout IsVisible="{Binding IsPersonalTab}" Spacing="12">
+                                <Border Style="{StaticResource SettingsSectionBorderStyle}">
+                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                        <VerticalStackLayout Spacing="2">
+                                            <Label Text="频道颜色" Style="{StaticResource SectionHeaderStyle}" />
+                                            <Label Text="仅影响你看到的频道颜色" Style="{StaticResource MutedLabelStyle}" />
+                                        </VerticalStackLayout>
+                                        <Button Grid.Column="1" Text="修改颜色" Clicked="OnOpenColorPickerClicked" IsEnabled="{Binding CanChangePersonal}" Style="{StaticResource ChannelSettingsColorSelectorStyle}" SemanticProperties.Description="修改频道颜色">
+                                            <Button.ImageSource>
+                                                <FontImageSource Glyph="●" Color="{Binding PersonalColorPreview}" Size="18" />
+                                            </Button.ImageSource>
+                                        </Button>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SettingsSectionBorderStyle}"><VerticalStackLayout Spacing="0"><Label Margin="0,0,0,6" Text="通知" Style="{StaticResource SectionHeaderStyle}" />
+                                    <Grid Padding="0,7" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10"><Label Text="桌面通知" Style="{StaticResource BaseLabelStyle}" /><Label Grid.Column="1" Text="{Binding DesktopNotificationsStatus}" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" /><Button Grid.Column="2" Text="{Binding DesktopNotificationsAction}" Command="{Binding SetPersonalSettingCommand}" CommandParameter="DesktopNotifications" IsEnabled="{Binding CanChangePersonal}" Style="{StaticResource ChannelSettingsActionRowStyle}" /></Grid><BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                                    <Grid Padding="0,7" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10"><Label Text="声音通知" Style="{StaticResource BaseLabelStyle}" /><Label Grid.Column="1" Text="{Binding AudibleNotificationsStatus}" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" /><Button Grid.Column="2" Text="{Binding AudibleNotificationsAction}" Command="{Binding SetPersonalSettingCommand}" CommandParameter="AudibleNotifications" IsEnabled="{Binding CanChangePersonal}" Style="{StaticResource ChannelSettingsActionRowStyle}" /></Grid><BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                                    <Grid Padding="0,7" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10"><Label Text="推送通知" Style="{StaticResource BaseLabelStyle}" /><Label Grid.Column="1" Text="{Binding PushNotificationsStatus}" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" /><Button Grid.Column="2" Text="{Binding PushNotificationsAction}" Command="{Binding SetPersonalSettingCommand}" CommandParameter="PushNotifications" IsEnabled="{Binding CanChangePersonal}" Style="{StaticResource ChannelSettingsActionRowStyle}" /></Grid><BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                                    <Grid Padding="0,7" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10"><Label Text="邮件通知" Style="{StaticResource BaseLabelStyle}" /><Label Grid.Column="1" Text="{Binding EmailNotificationsStatus}" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" /><Button Grid.Column="2" Text="{Binding EmailNotificationsAction}" Command="{Binding SetPersonalSettingCommand}" CommandParameter="EmailNotifications" IsEnabled="{Binding CanChangePersonal}" Style="{StaticResource ChannelSettingsActionRowStyle}" /></Grid><BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                                    <Grid Padding="0,7" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10"><Label Text="通配符提及" Style="{StaticResource BaseLabelStyle}" /><Label Grid.Column="1" Text="{Binding WildcardNotificationsStatus}" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" /><Button Grid.Column="2" Text="{Binding WildcardNotificationsAction}" Command="{Binding SetPersonalSettingCommand}" CommandParameter="WildcardMentionsNotify" IsEnabled="{Binding CanChangePersonal}" Style="{StaticResource ChannelSettingsActionRowStyle}" /></Grid>
+                                    <Label Margin="0,8,0,0" Text="继承状态只能读取；当前 Zulip 单频道接口不支持恢复为继承。" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                                </VerticalStackLayout></Border>
+                                <Border Style="{StaticResource SettingsSectionBorderStyle}"><VerticalStackLayout Spacing="0"><Label Margin="0,0,0,6" Text="整理" Style="{StaticResource SectionHeaderStyle}" /><Grid Padding="0,7" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10"><Label Text="频道静音" Style="{StaticResource BaseLabelStyle}" /><Label Grid.Column="1" Text="{Binding PersonalMutedStatus}" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" /><Button Grid.Column="2" Text="{Binding PersonalMutedLabel}" Command="{Binding SetPersonalSettingCommand}" CommandParameter="Muted" IsEnabled="{Binding CanChangePersonal}" Style="{StaticResource ChannelSettingsActionRowStyle}" /></Grid><BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" /><Grid Padding="0,7" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10"><Label Text="侧边栏置顶" Style="{StaticResource BaseLabelStyle}" /><Label Grid.Column="1" Text="{Binding PersonalPinnedStatus}" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" /><Button Grid.Column="2" Text="{Binding PersonalPinnedLabel}" Command="{Binding SetPersonalSettingCommand}" CommandParameter="Pinned" IsEnabled="{Binding CanChangePersonal}" Style="{StaticResource ChannelSettingsActionRowStyle}" /></Grid></VerticalStackLayout></Border>
+                            </VerticalStackLayout>
+
+                            <VerticalStackLayout IsVisible="{Binding IsSubscribersTab}" Spacing="12">
+                                <Label Text="{Binding MemberManagementStatus}" IsVisible="{Binding HasMemberManagementStatus}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                                <Border Style="{StaticResource SettingsSectionBorderStyle}"><VerticalStackLayout Spacing="8"><Grid ColumnDefinitions="*,Auto"><Label Text="已订阅者" Style="{StaticResource SectionHeaderStyle}" /><Label Grid.Column="1" Text="{Binding MemberCountLabel}" Style="{StaticResource MutedLabelStyle}" /></Grid><CollectionView ItemsSource="{Binding SubscribedMembers}" HeightRequest="{Binding MemberListHeight}"><CollectionView.EmptyView><Label Margin="6" Text="暂无已订阅者" Style="{StaticResource MutedLabelStyle}" /></CollectionView.EmptyView><CollectionView.ItemTemplate><DataTemplate x:DataType="viewModels:ChannelMemberItem"><Border Margin="0,2" Style="{StaticResource ChannelSettingsListRowStyle}"><Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><VerticalStackLayout Spacing="1"><Label Text="{Binding Name}" Style="{StaticResource BaseLabelStyle}" /><Label Text="{Binding EmailLabel}" Style="{StaticResource MutedLabelStyle}" /></VerticalStackLayout><Button Grid.Column="1" Text="移除" Clicked="OnRemoveMemberClicked" IsEnabled="{Binding BindingContext.CanRemoveMembers, Source={x:Reference Root}}" Style="{StaticResource ChannelSettingsActionRowStyle}" /></Grid></Border></DataTemplate></CollectionView.ItemTemplate></CollectionView></VerticalStackLayout></Border>
+                                <Border Style="{StaticResource SettingsSectionBorderStyle}"><VerticalStackLayout Spacing="9"><Label Text="添加订阅者" Style="{StaticResource SectionHeaderStyle}" /><Label Text="候选列表来自组织成员，仅显示可添加的活跃用户。" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" /><Entry Text="{Binding MemberSearchText}" Placeholder="按姓名或邮箱搜索" Style="{StaticResource BaseEntryStyle}" /><CollectionView ItemsSource="{Binding CandidateMembers}" HeightRequest="{Binding CandidateListHeight}"><CollectionView.EmptyView><Label Margin="6" Text="没有可添加的用户" Style="{StaticResource MutedLabelStyle}" /></CollectionView.EmptyView><CollectionView.ItemTemplate><DataTemplate x:DataType="viewModels:ChannelMemberItem"><Border Margin="0,2" Style="{StaticResource ChannelSettingsListRowStyle}"><Grid ColumnDefinitions="Auto,*" ColumnSpacing="8"><CheckBox IsChecked="{Binding IsSelected}" Style="{StaticResource ChannelSettingsCheckBoxStyle}" SemanticProperties.Description="选择此用户" /><VerticalStackLayout Grid.Column="1" Spacing="1"><Label Text="{Binding Name}" Style="{StaticResource BaseLabelStyle}" /><Label Text="{Binding EmailLabel}" Style="{StaticResource MutedLabelStyle}" /></VerticalStackLayout></Grid></Border></DataTemplate></CollectionView.ItemTemplate></CollectionView><Grid ColumnDefinitions="Auto,*" ColumnSpacing="8"><CheckBox IsChecked="{Binding SendNewSubscriptionMessages}" Style="{StaticResource ChannelSettingsCheckBoxStyle}" SemanticProperties.Description="发送新订阅通知" /><Label Grid.Column="1" Text="向新增订阅者发送通知" Style="{StaticResource BaseLabelStyle}" VerticalTextAlignment="Center" /></Grid><Button Text="添加已选成员" Command="{Binding AddSelectedMembersCommand}" IsEnabled="{Binding CanAddSelectedMembers}" Style="{StaticResource PrimaryButtonStyle}" /></VerticalStackLayout></Border>
+                            </VerticalStackLayout>
+
+                            <VerticalStackLayout IsVisible="{Binding IsPermissionsTab}" Spacing="12">
+                                <Border Style="{StaticResource SettingsSectionBorderStyle}"><VerticalStackLayout Spacing="9"><Label Text="频道可见性" Style="{StaticResource SectionHeaderStyle}" /><Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="8"><CheckBox IsChecked="{Binding DraftIsPrivate}" IsEnabled="{Binding CanChangeAdvanced}" Style="{StaticResource ChannelSettingsCheckBoxStyle}" /><Label Grid.Column="1" Text="私有频道" VerticalTextAlignment="Center" Style="{StaticResource BaseLabelStyle}" /><CheckBox Grid.Column="2" IsChecked="{Binding DraftIsWebPublic}" IsEnabled="{Binding CanChangeWebPublic}" Style="{StaticResource ChannelSettingsCheckBoxStyle}" /><Label Grid.Column="3" Text="Web 公开" VerticalTextAlignment="Center" Style="{StaticResource BaseLabelStyle}" /></Grid><Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="8"><CheckBox IsChecked="{Binding DraftHistoryPublic}" IsEnabled="{Binding CanChangeAdvanced}" Style="{StaticResource ChannelSettingsCheckBoxStyle}" /><Label Grid.Column="1" Text="共享历史" VerticalTextAlignment="Center" Style="{StaticResource BaseLabelStyle}" /><CheckBox Grid.Column="2" IsChecked="{Binding DraftIsDefault}" IsEnabled="{Binding CanSetDraftDefault}" Style="{StaticResource ChannelSettingsCheckBoxStyle}" /><Label Grid.Column="3" Text="默认频道" VerticalTextAlignment="Center" Style="{StaticResource BaseLabelStyle}" /></Grid></VerticalStackLayout></Border>
+                                <Border Style="{StaticResource SettingsSectionBorderStyle}"><VerticalStackLayout Spacing="9"><Label Text="话题与保留" Style="{StaticResource SectionHeaderStyle}" /><Label Text="话题策略" Style="{StaticResource MutedLabelStyle}" /><Picker ItemsSource="{Binding TopicsPolicyOptions}" SelectedItem="{Binding DraftTopicsPolicy}" IsEnabled="{Binding CanChangeAdvanced}" Style="{StaticResource ChannelSettingsPickerStyle}" /><Label Text="消息保留策略" Style="{StaticResource MutedLabelStyle}" /><Grid ColumnDefinitions="*,*" ColumnSpacing="8"><Picker ItemsSource="{Binding RetentionOptions}" SelectedIndex="{Binding RetentionMode}" IsEnabled="{Binding CanChangeAdvanced}" Style="{StaticResource ChannelSettingsPickerStyle}" /><Entry Grid.Column="1" Text="{Binding RetentionDaysText}" Placeholder="保留天数" Keyboard="Numeric" IsEnabled="{Binding CanChangeAdvanced}" Style="{StaticResource BaseEntryStyle}" /></Grid><Button Text="保存高级设置" Command="{Binding SaveAdvancedCommand}" IsEnabled="{Binding CanChangeAdvanced}" Style="{StaticResource PrimaryButtonStyle}" /></VerticalStackLayout></Border>
+                                <Border Style="{StaticResource SettingsSectionBorderStyle}"><VerticalStackLayout Spacing="9"><Grid ColumnDefinitions="*,Auto"><Label Text="权限组" Style="{StaticResource SectionHeaderStyle}" /><Label Grid.Column="1" Text="{Binding Permissions.Count, StringFormat='{0} 项'}" Style="{StaticResource MutedLabelStyle}" /></Grid><Label Text="匿名自定义权限组保持只读；命名组可选择新的组后保存。" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" /><CollectionView ItemsSource="{Binding Permissions}" SelectedItem="{Binding SelectedPermission, Mode=TwoWay}" SelectionMode="Single" HeightRequest="{Binding PermissionListHeight}"><CollectionView.ItemTemplate><DataTemplate x:DataType="viewModels:ChannelPermissionItem"><Border Margin="0,2" Style="{StaticResource ChannelSettingsListRowStyle}"><VerticalStackLayout Spacing="3"><Label Text="{Binding Label}" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" /><Label Text="{Binding ValueLabel}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" /></VerticalStackLayout></Border></DataTemplate></CollectionView.ItemTemplate></CollectionView><Label Text="修改所选命名权限组" Style="{StaticResource MutedLabelStyle}" /><Picker ItemsSource="{Binding NamedGroups}" ItemDisplayBinding="{Binding Name}" SelectedItem="{Binding SelectedNamedGroup}" IsEnabled="{Binding CanChangeAdvanced}" Style="{StaticResource ChannelSettingsPickerStyle}" /><Button Text="保存命名权限组" Command="{Binding SaveNamedGroupCommand}" IsEnabled="{Binding CanSaveSelectedNamedGroup}" Style="{StaticResource ChannelSettingsToolButtonStyle}" /></VerticalStackLayout></Border>
+                            </VerticalStackLayout>
+                            <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{StaticResource DangerLabelStyle}" LineBreakMode="WordWrap" />
                         </VerticalStackLayout>
                     </ScrollView>
-                    <ScrollView Grid.Column="1" IsVisible="{Binding IsNarrowDetailVisible}"><VerticalStackLayout Padding="20" Spacing="12"><Label Text="{Binding PrivacyLabel}" Style="{StaticResource MutedLabelStyle}" /><Label Text="{Binding SelectedName}" Style="{StaticResource BaseLabelStyle}" FontSize="22" FontAttributes="Bold" /><Border Padding="14,7" HorizontalOptions="Start" Background="{StaticResource SurfaceSelectedBrush}" StrokeThickness="0"><Label Text="General" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" /></Border><Grid ColumnDefinitions="*,*,*" ColumnSpacing="7"><Button Text="编辑名称" Command="{Binding BeginEditNameCommand}" IsEnabled="{Binding CanAdminister}" Style="{StaticResource BaseButtonStyle}" /><Button Grid.Column="1" Text="{Binding SubscriptionActionLabel}" Command="{Binding ChangeSubscriptionCommand}" IsEnabled="{Binding CanChangeSubscription}" Style="{StaticResource BaseButtonStyle}" /><Button Grid.Column="2" Text="前往频道" Command="{Binding ViewChannelCommand}" Style="{StaticResource BaseButtonStyle}" /></Grid><Label Text="说明" Style="{StaticResource MutedLabelStyle}" /><Label Text="{Binding DescriptionLabel}" Style="{StaticResource BaseLabelStyle}" /><Button Text="编辑说明" Command="{Binding BeginEditDescriptionCommand}" IsEnabled="{Binding CanAdminister}" Style="{StaticResource BaseButtonStyle}" HorizontalOptions="Start" /><Label Text="{Binding CreatorLabel}" Style="{StaticResource MutedLabelStyle}" /><Label Text="{Binding DateLabel}" Style="{StaticResource MutedLabelStyle}" /><Label Text="{Binding ChannelIdLabel}" Style="{StaticResource MutedLabelStyle}" /><Label Text="频道文件夹" Style="{StaticResource BaseLabelStyle}" /><Grid ColumnDefinitions="*,Auto,Auto,Auto"><Picker ItemsSource="{Binding Folders}" ItemDisplayBinding="{Binding Name}" SelectedItem="{Binding DraftFolder, Mode=TwoWay}" IsEnabled="{Binding CanAdminister}" /><Button Grid.Column="1" Text="取消" Command="{Binding CancelFolderCommand}" IsEnabled="{Binding IsFolderDirty}" Style="{StaticResource BaseButtonStyle}" /><Button Grid.Column="2" Text="保存" Command="{Binding SaveFolderCommand}" IsEnabled="{Binding CanSaveFolder}" Style="{StaticResource PrimaryButtonStyle}" /><Button Grid.Column="3" Text="新建" Command="{Binding OpenCreateFolderCommand}" IsEnabled="{Binding CanCreateFolder}" Style="{StaticResource BaseButtonStyle}" /></Grid><Label Text="频道邮件地址" Style="{StaticResource BaseLabelStyle}" /><Grid ColumnDefinitions="*,Auto,Auto"><Label Text="{Binding EmailAddress}" Style="{StaticResource MutedLabelStyle}" /><Button Grid.Column="1" Text="获取" Command="{Binding FetchEmailCommand}" IsEnabled="{Binding CanFetchEmail}" Style="{StaticResource BaseButtonStyle}" /><Button Grid.Column="2" Text="复制" Command="{Binding CopyEmailCommand}" IsEnabled="{Binding HasEmailAddress}" Style="{StaticResource BaseButtonStyle}" /></Grid><Button Text="归档频道" Command="{Binding RequestArchiveCommand}" IsEnabled="{Binding CanArchive}" Style="{StaticResource BaseButtonStyle}" HorizontalOptions="Start" /><Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{StaticResource DangerLabelStyle}" /></VerticalStackLayout></ScrollView>
                 </Grid>
             </Grid>
         </Border>
-        <Grid IsVisible="{Binding IsEditDialogOpen}"><BoxView Background="{StaticResource OverlayBrush}"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseTopLayerCommand}" /></BoxView.GestureRecognizers></BoxView><Border Style="{StaticResource DialogBorderStyle}" MaximumWidthRequest="480"><VerticalStackLayout Spacing="12"><Label Text="{Binding EditLabel}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" /><Editor x:Name="EditValueEditor" Text="{Binding EditValue}" AutoSize="TextChanges" MinimumHeightRequest="90" /><Label Text="{Binding EditError}" Style="{StaticResource DangerLabelStyle}" /><HorizontalStackLayout HorizontalOptions="End" Spacing="8"><Button Text="取消" Command="{Binding CancelEditCommand}" Style="{StaticResource BaseButtonStyle}" /><Button Text="保存" Command="{Binding SaveEditCommand}" IsEnabled="{Binding CanSaveEdit}" Style="{StaticResource PrimaryButtonStyle}" /></HorizontalStackLayout></VerticalStackLayout></Border></Grid>
-        <Grid IsVisible="{Binding IsCreateFolderOpen}"><BoxView Background="{StaticResource OverlayBrush}"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseTopLayerCommand}" /></BoxView.GestureRecognizers></BoxView><Border Style="{StaticResource DialogBorderStyle}" MaximumWidthRequest="480"><VerticalStackLayout Spacing="12"><Label Text="新建频道文件夹" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" /><Entry x:Name="NewFolderNameEntry" Text="{Binding NewFolderName}" Placeholder="文件夹名称" /><Entry Text="{Binding NewFolderDescription}" Placeholder="说明（可选）" /><Label Text="{Binding EditError}" Style="{StaticResource DangerLabelStyle}" /><HorizontalStackLayout HorizontalOptions="End" Spacing="8"><Button Text="取消" Command="{Binding CancelCreateFolderCommand}" Style="{StaticResource BaseButtonStyle}" /><Button Text="创建" Command="{Binding CreateFolderCommand}" IsEnabled="{Binding CanCreateNewFolder}" Style="{StaticResource PrimaryButtonStyle}" /></HorizontalStackLayout></VerticalStackLayout></Border></Grid>
-        <Grid IsVisible="{Binding IsConfirmationOpen}"><BoxView Background="{StaticResource OverlayBrush}"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseTopLayerCommand}" /></BoxView.GestureRecognizers></BoxView><Border Style="{StaticResource DialogBorderStyle}" MaximumWidthRequest="460"><VerticalStackLayout Spacing="12"><Label Text="{Binding ConfirmationText}" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" /><HorizontalStackLayout HorizontalOptions="End" Spacing="8"><Button x:Name="ConfirmationCancelButton" Text="取消" Command="{Binding CancelConfirmationCommand}" Style="{StaticResource BaseButtonStyle}" /><Button Text="确认" Command="{Binding ConfirmCommand}" Style="{StaticResource BaseButtonStyle}" /></HorizontalStackLayout></VerticalStackLayout></Border></Grid>
+
+        <Grid IsVisible="{Binding IsColorPickerOpen}">
+            <BoxView BackgroundColor="Transparent"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseTopLayerCommand}" /></BoxView.GestureRecognizers></BoxView>
+            <Border Style="{StaticResource ChannelSettingsColorPickerBorderStyle}">
+                <Border.Behaviors>
+                    <windowsBehaviors:PopoverAnchorBehavior AnchorX="{Binding ColorPickerAnchorX}" AnchorY="{Binding ColorPickerAnchorY}" />
+                </Border.Behaviors>
+                <Grid RowDefinitions="Auto,*">
+                    <Grid Background="{Binding PersonalColorPreviewSoft}" Padding="14,9" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                        <Label Text="{Binding ColorPickerPrivacyGlyph}" FontFamily="{Binding ColorPickerPrivacyFontFamily}" TextColor="{Binding PersonalColorPreview}" FontSize="18" VerticalTextAlignment="Center" />
+                        <Label Grid.Column="1"
+                               Text="{Binding ColorPickerPreviewName}"
+                               TextColor="{AppThemeBinding Light={StaticResource LightTextColor}, Dark={StaticResource DarkTextColor}}"
+                               FontAttributes="Bold"
+                               VerticalTextAlignment="Center"
+                               LineBreakMode="TailTruncation" />
+                        <Button Grid.Column="2" x:Name="ColorPickerConfirmButton" Text="✓" Command="{Binding SavePersonalColorCommand}" IsEnabled="{Binding CanSavePersonalColor}" Style="{StaticResource ChannelSettingsColorPickerConfirmStyle}" SemanticProperties.Description="保存频道颜色" />
+                    </Grid>
+                    <ScrollView Grid.Row="1" VerticalScrollBarVisibility="Default">
+                    <VerticalStackLayout Spacing="0">
+                    <FlexLayout Padding="10" Direction="Row" Wrap="Wrap" JustifyContent="SpaceBetween" AlignItems="Center" BindableLayout.ItemsSource="{Binding ColorPalette}">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="viewModels:ChannelColorOption">
+                                <Border Margin="8" WidthRequest="28" HeightRequest="28" Background="{Binding Hex}" Style="{StaticResource ChannelSettingsColorSwatchStyle}">
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="14" /></Border.StrokeShape>
+                                    <Border.Triggers><DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True"><Setter Property="Stroke" Value="{StaticResource AccentColor}" /><Setter Property="StrokeThickness" Value="3" /></DataTrigger></Border.Triggers>
+                                    <Button Text="" BackgroundColor="{Binding Hex}" Clicked="OnColorSwatchClicked" Style="{StaticResource ChannelSettingsColorSwatchButtonStyle}" SemanticProperties.Description="选择频道颜色" SemanticProperties.Hint="{Binding Hex}" />
+                                </Border>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </FlexLayout>
+                    <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                    <Button Text="🌈  自定义颜色" Command="{Binding ToggleCustomColorCommand}" Style="{StaticResource ChannelSettingsColorCustomButtonStyle}" SemanticProperties.Description="展开自定义颜色选择器" />
+                    <VerticalStackLayout Padding="10,0,10,10" Spacing="8" IsVisible="{Binding IsCustomColorExpanded}">
+                        <controls:NativeColorPicker HexColor="{Binding PersonalColor, Mode=TwoWay}" HeightRequest="320" />
+                        <Label Text="{Binding PersonalColorPreviewLabel}" Style="{StaticResource MutedLabelStyle}" HorizontalTextAlignment="Center" />
+                    </VerticalStackLayout>
+                    <Label Margin="10,0,10,8" Text="{Binding PersonalColorError}" IsVisible="{Binding HasPersonalColorError}" Style="{StaticResource DangerLabelStyle}" />
+                    <Label Margin="10,0,10,8" Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{StaticResource DangerLabelStyle}" LineBreakMode="WordWrap" />
+                    </VerticalStackLayout>
+                    </ScrollView>
+                </Grid>
+            </Border>
+        </Grid>
+        <Grid IsVisible="{Binding IsEditDialogOpen}"><BoxView Background="{StaticResource OverlayBrush}"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseTopLayerCommand}" /></BoxView.GestureRecognizers></BoxView><Border Style="{StaticResource DialogBorderStyle}"><VerticalStackLayout Spacing="10"><Label Text="{Binding EditLabel}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" /><Editor x:Name="EditValueEditor" Text="{Binding EditValue}" AutoSize="TextChanges" MinimumHeightRequest="90" /><Label Text="{Binding EditError}" Style="{StaticResource DangerLabelStyle}" /><Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><Button Text="取消" Command="{Binding CancelEditCommand}" Style="{StaticResource ChannelSettingsToolButtonStyle}" /><Button Grid.Column="1" Text="保存" Command="{Binding SaveEditCommand}" IsEnabled="{Binding CanSaveEdit}" Style="{StaticResource PrimaryButtonStyle}" /></Grid></VerticalStackLayout></Border></Grid>
+        <Grid IsVisible="{Binding IsConfirmationOpen}"><BoxView Background="{StaticResource OverlayBrush}"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseTopLayerCommand}" /></BoxView.GestureRecognizers></BoxView><Border Style="{StaticResource DialogBorderStyle}"><VerticalStackLayout Spacing="12"><Label Text="{Binding ConfirmationText}" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" /><Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><Button x:Name="ConfirmationCancelButton" Text="取消" Command="{Binding CancelConfirmationCommand}" Style="{StaticResource ChannelSettingsToolButtonStyle}" /><Button Grid.Column="1" Text="确认" Command="{Binding ConfirmCommand}" Style="{StaticResource PrimaryButtonStyle}" /></Grid></VerticalStackLayout></Border></Grid>
+        <Grid IsVisible="{Binding IsCreateChannelOpen}">
+            <BoxView Background="{StaticResource OverlayBrush}">
+                <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseTopLayerCommand}" /></BoxView.GestureRecognizers>
+            </BoxView>
+            <Border Style="{StaticResource DialogBorderStyle}">
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="创建频道" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                    <Label Text="频道名称" Style="{StaticResource MutedLabelStyle}" />
+                    <Entry x:Name="NewChannelNameEntry" Text="{Binding NewChannelName}" Placeholder="频道名称" Style="{StaticResource BaseEntryStyle}" />
+                    <Label Text="频道描述" Style="{StaticResource MutedLabelStyle}" />
+                    <Editor Text="{Binding NewChannelDescription}" Placeholder="频道描述（可选）" AutoSize="TextChanges" MinimumHeightRequest="72" />
+                    <Label Text="谁能访问此频道" Style="{StaticResource MutedLabelStyle}" />
+                    <Picker ItemsSource="{Binding NewChannelPrivacyOptions}"
+                            SelectedIndex="{Binding NewChannelPrivacyIndex}"
+                            Style="{StaticResource ChannelSettingsPickerStyle}" />
+                    <Label Text="{Binding NewChannelPrivacyDescription}" Style="{StaticResource MutedLabelStyle}" />
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                        <CheckBox IsChecked="{Binding NewChannelHistoryPublic}" IsEnabled="{Binding CanShareNewChannelHistory}" Style="{StaticResource ChannelSettingsCheckBoxStyle}" />
+                        <Label Grid.Column="1" Text="让后续订阅者看到历史消息" Style="{StaticResource BaseLabelStyle}" VerticalTextAlignment="Center" />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                        <CheckBox IsChecked="{Binding NewChannelIsDefault}" IsEnabled="{Binding CanSetNewChannelDefault}" Style="{StaticResource ChannelSettingsCheckBoxStyle}" />
+                        <Label Grid.Column="1" Text="新用户的默认频道" Style="{StaticResource BaseLabelStyle}" VerticalTextAlignment="Center" />
+                    </Grid>
+                    <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{StaticResource DangerLabelStyle}" LineBreakMode="WordWrap" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <Button Text="取消" Command="{Binding CancelCreateChannelCommand}" Style="{StaticResource ChannelSettingsToolButtonStyle}" />
+                        <Button Grid.Column="1" Text="创建" Command="{Binding CreateChannelCommand}" IsEnabled="{Binding CanSubmitCreateChannel}" Style="{StaticResource PrimaryButtonStyle}" />
+                    </Grid>
+                </VerticalStackLayout>
+            </Border>
+        </Grid>
+        <Grid IsVisible="{Binding IsCreateFolderOpen}"><BoxView Background="{StaticResource OverlayBrush}"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseTopLayerCommand}" /></BoxView.GestureRecognizers></BoxView><Border Style="{StaticResource DialogBorderStyle}"><VerticalStackLayout Spacing="10"><Label Text="新建频道文件夹" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" /><Entry x:Name="NewFolderNameEntry" Text="{Binding NewFolderName}" Placeholder="文件夹名称" Style="{StaticResource BaseEntryStyle}" /><Entry Text="{Binding NewFolderDescription}" Placeholder="说明（可选）" Style="{StaticResource BaseEntryStyle}" /><Label Text="{Binding EditError}" Style="{StaticResource DangerLabelStyle}" /><Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{StaticResource DangerLabelStyle}" LineBreakMode="WordWrap" /><Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><Button Text="取消" Command="{Binding CancelCreateFolderCommand}" Style="{StaticResource ChannelSettingsToolButtonStyle}" /><Button Grid.Column="1" Text="创建" Command="{Binding CreateFolderCommand}" IsEnabled="{Binding CanCreateNewFolder}" Style="{StaticResource PrimaryButtonStyle}" /></Grid></VerticalStackLayout></Border></Grid>
+        <Grid IsVisible="{Binding IsMemberRemovalConfirmationOpen}"><BoxView Background="{StaticResource OverlayBrush}"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseTopLayerCommand}" /></BoxView.GestureRecognizers></BoxView><Border Style="{StaticResource DialogBorderStyle}"><VerticalStackLayout Spacing="12"><Label Text="{Binding MemberRemovalConfirmationText}" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" /><Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{StaticResource DangerLabelStyle}" LineBreakMode="WordWrap" /><Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><Button x:Name="MemberRemovalCancelButton" Text="取消" Command="{Binding CancelRemoveMemberCommand}" Style="{StaticResource ChannelSettingsToolButtonStyle}" /><Button Grid.Column="1" Text="移除" Command="{Binding ConfirmRemoveMemberCommand}" IsEnabled="{Binding CanConfirmRemoveMember}" Style="{StaticResource PrimaryButtonStyle}" /></Grid></VerticalStackLayout></Border></Grid>
     </Grid>
 </ContentView>

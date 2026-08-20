@@ -78,6 +78,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private double _composerHeight = DefaultComposerHeight;
     private double _viewportWidth = 1440d;
     private long? _channelUnsubscribeTargetId;
+    private bool _restoreTopicMenuFocusToHeader;
     private long _channelBrowserGeneration;
     private AccountId? _channelBrowserAccountId;
     private CancellationTokenSource? _channelBrowserCancellation;
@@ -298,6 +299,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial int TopicMenuFocusRequest { get; set; }
 
     [ObservableProperty]
+    public partial int HeaderTopicMenuFocusRequest { get; set; }
+
+    [ObservableProperty]
     public partial bool IsTopicMoveDialogOpen { get; set; }
 
     [ObservableProperty]
@@ -463,7 +467,25 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial string DetailsBody { get; set; } = "选择会话后显示可靠的会话信息。";
 
     [ObservableProperty]
+    public partial string DetailsKindLabel { get; set; } = "会话";
+
+    [ObservableProperty]
+    public partial string DetailsGlyph { get; set; } = "•";
+
+    [ObservableProperty]
+    public partial string DetailsIdentifierLabel { get; set; } = "尚未选择会话";
+
+    [ObservableProperty]
+    public partial string DetailsStateLabel { get; set; } = "没有可显示的状态";
+
+    [ObservableProperty]
+    public partial string DetailsAvailableMessage { get; set; } = "选择会话后显示已经接通的能力。";
+
+    [ObservableProperty]
     public partial string DetailsUnavailableMessage { get; set; } = "成员关系、presence、共同频道与频道管理暂不可用。";
+
+    [ObservableProperty]
+    public partial bool ShowChannelDetails { get; set; }
 
     [ObservableProperty]
     public partial string NavigationUnreadLabel { get; set; } = string.Empty;
@@ -480,6 +502,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool LoginVisible => !IsLoggedIn;
     public bool MainVisible => IsLoggedIn;
     public bool HasSelectedConversation => _session.SelectedConversation is not null;
+    public bool HasSelectedTopic => SelectedTopic is { } topic &&
+        _session.SelectedConversation is ChannelTopic current &&
+        string.Equals(topic.CanonicalKey, current.CanonicalKey, StringComparison.Ordinal);
     public bool IsConversationContentVisible =>
         !IsAuthoritativeEmptyChannel &&
         _session.SelectedConversation is { } selected &&
@@ -599,6 +624,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool CanCloseChannelUnsubscribe => !IsChannelUnsubscribeBusy;
     public bool HasChannelBrowserError => !string.IsNullOrWhiteSpace(ChannelBrowserError);
     public bool CanManageSelectedChannel => CanUnsubscribeSelectedChannel;
+    public bool ShowChannelActionBoundary => ShowChannelDetails && !CanManageSelectedChannel;
     public bool CanManageActiveChannel => ActiveChannelAction is { } channel &&
         _projectedState.Subscriptions.ContainsKey(channel.ChannelId) &&
         _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
@@ -1767,6 +1793,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         topic.IsActionMenuOpen = true;
         TopicMenuAnchorX = Math.Max(0d, request.AnchorX);
         TopicMenuAnchorY = Math.Max(0d, request.AnchorY);
+        _restoreTopicMenuFocusToHeader = request.RestoreFocusToHeader;
         TopicActionStatus = null;
         IsTopicMenuOpen = true;
         NotifyTopicActionProperties();
@@ -2313,6 +2340,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         await ChannelSettings.OpenAsync(channel.ChannelId);
     }
 
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task OpenCreateChannelSettingsAsync()
+    {
+        CloseTransientOverlays();
+        var channelId = (_session.SelectedConversation as ChannelTopic)?.ChannelId ?? Channels.FirstOrDefault()?.ChannelId;
+        await ChannelSettings.OpenCreateAsync(channelId);
+    }
+
     private async Task SetSelectedChannelPreferenceAsync(SubscriptionPreference preference)
     {
         if (_session.SelectedConversation is not ChannelTopic selected ||
@@ -2454,9 +2489,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         if (ActiveTopicAction is { } topic) topic.IsActionMenuOpen = false;
         var wasOpen = IsTopicMenuOpen;
+        var restoreToHeader = _restoreTopicMenuFocusToHeader;
+        _restoreTopicMenuFocusToHeader = false;
         IsTopicMenuOpen = false;
         ActiveTopicAction = null;
-        if (restoreFocus && wasOpen) TopicMenuFocusRequest++;
+        if (restoreFocus && wasOpen)
+        {
+            if (restoreToHeader) HeaderTopicMenuFocusRequest++;
+            else TopicMenuFocusRequest++;
+        }
         NotifyTopicActionProperties();
     }
 
@@ -2728,8 +2769,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     partial void OnSelectedTopicChanged(TopicItem? value)
     {
+        OnPropertyChanged(nameof(HasSelectedTopic));
         RefreshNavigationSelectionProjection();
     }
+
+    partial void OnShowChannelDetailsChanged(bool value) => OnPropertyChanged(nameof(ShowChannelActionBoundary));
 
     partial void OnSelectedDirectMessageChanged(NavigationItem? value)
     {
@@ -3963,29 +4007,69 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             case ChannelTopic channelTopic:
                 {
-                    var channelName = state.Subscriptions.GetValueOrDefault(channelTopic.ChannelId)?.Name ?? $"频道 {channelTopic.ChannelId}";
+                    var subscription = state.Subscriptions.GetValueOrDefault(channelTopic.ChannelId);
+                    var channelName = subscription?.Name ?? $"频道 {channelTopic.ChannelId}";
+                    var unreadCount = GetConversationUnread(state.Unread, channelTopic);
+                    var topic = SelectedTopic is { } selectedTopic &&
+                        string.Equals(selectedTopic.CanonicalKey, channelTopic.CanonicalKey, StringComparison.Ordinal)
+                            ? selectedTopic
+                            : null;
+                    var topicState = topic is null
+                        ? null
+                        : $"{topic.VisibilityLabel}{(topic.IsResolved ? " · 已解决" : string.Empty)}";
                     ConversationTitle = string.IsNullOrEmpty(channelTopic.Topic) ? "（无主题）" : channelTopic.Topic;
                     ConversationSubtitle = $"# {channelName}";
                     DetailsTitle = $"# {channelName}";
-                    DetailsBody = $"当前话题：{ConversationTitle}";
-                    DetailsUnavailableMessage = "成员数、频道成员关系与 presence 尚不可用；退出频道已接入真实 Realm。";
+                    DetailsBody = $"话题：{ConversationTitle}";
+                    DetailsKindLabel = "频道话题";
+                    DetailsGlyph = "#";
+                    DetailsIdentifierLabel = $"频道 ID：{channelTopic.ChannelId} · {(subscription?.IsActive == true ? "已订阅" : "订阅状态不可用")}";
+                    DetailsStateLabel = string.Join(" · ", new[]
+                    {
+                        DescribeConnection(state.Connection),
+                        unreadCount > 0 ? $"未读 {unreadCount} 条" : "无未读",
+                        subscription?.IsMuted == true ? "频道已静音" : "频道未静音",
+                        subscription?.IsPinned == true ? "已置顶" : "未置顶",
+                        topicState
+                    }.Where(static value => !string.IsNullOrWhiteSpace(value)));
+                    DetailsAvailableMessage = "当前频道与话题身份、未读状态、频道静音、置顶和退出已接通；话题级操作可从右上角菜单进入。";
+                    DetailsUnavailableMessage = "此详情面板不加载频道描述、隐私、创建者、订阅者列表、presence、共同频道、文件夹、邮箱地址或权限组。频道成员和管理信息请进入“频道设置”；所有写操作仍由 Zulip 服务端最终裁决。";
+                    ShowChannelDetails = true;
                     break;
                 }
             case DirectMessage directMessage:
+                var directUnreadCount = GetConversationUnread(state.Unread, directMessage);
                 ConversationTitle = DescribeDirectMessage(directMessage, state.Users, _session.CurrentUserId);
                 ConversationSubtitle = DescribeDirectMessageKind(directMessage);
                 DetailsTitle = ConversationTitle;
                 DetailsBody = directMessage.OtherUserIds.Count == 0
                     ? "这是给自己的私信。"
                     : $"可靠参与者：{DescribeDirectMessage(directMessage, state.Users, _session.CurrentUserId)}";
-                DetailsUnavailableMessage = "presence、共同频道、静音与成员管理尚不可用。";
+                DetailsKindLabel = "私信";
+                DetailsGlyph = "@";
+                DetailsIdentifierLabel = directMessage.OtherUserIds.Count switch
+                {
+                    0 => "给自己的私信",
+                    1 => "一对一私信 · 2 位参与者",
+                    _ => $"群组私信 · {directMessage.OtherUserIds.Count + 1} 位参与者"
+                };
+                DetailsStateLabel = $"{DescribeConnection(state.Connection)} · {(directUnreadCount > 0 ? $"未读 {directUnreadCount} 条" : "无未读")}";
+                DetailsAvailableMessage = "当前 Realm 中可解析的参与者、消息收发、搜索、收藏和附件已接通。";
+                DetailsUnavailableMessage = "此详情面板不加载 presence、共同频道、已读回执、私信静音或成员管理；未知用户会保留用户 ID，不从缓存推断身份。";
+                ShowChannelDetails = false;
                 break;
             default:
                 ConversationTitle = "选择会话";
                 ConversationSubtitle = "从左侧选择会话开始";
                 DetailsTitle = "会话详情";
                 DetailsBody = "选择会话后显示可靠的会话信息。";
-                DetailsUnavailableMessage = "成员关系、presence、共同频道与频道管理暂不可用。";
+                DetailsKindLabel = "会话";
+                DetailsGlyph = "•";
+                DetailsIdentifierLabel = "尚未选择会话";
+                DetailsStateLabel = DescribeConnection(state.Connection);
+                DetailsAvailableMessage = "选择会话后显示已经接通的能力。";
+                DetailsUnavailableMessage = "未选择会话时不会推断成员关系、presence、共同频道或管理权限。";
+                ShowChannelDetails = false;
                 IsDetailsOpen = false;
                 break;
         }
@@ -4171,6 +4255,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void NotifyProjectionProperties()
     {
         OnPropertyChanged(nameof(HasSelectedConversation));
+        OnPropertyChanged(nameof(HasSelectedTopic));
         OnPropertyChanged(nameof(ComposerPlaceholder));
         OnPropertyChanged(nameof(HasMessages));
         OnPropertyChanged(nameof(IsMessageListEmpty));
@@ -4184,6 +4269,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanSend));
         OnPropertyChanged(nameof(CanMarkRead));
         OnPropertyChanged(nameof(CanUnsubscribeSelectedChannel));
+        OnPropertyChanged(nameof(CanManageSelectedChannel));
+        OnPropertyChanged(nameof(ShowChannelActionBoundary));
         OnPropertyChanged(nameof(SelectedChannelMuteLabel));
         OnPropertyChanged(nameof(SelectedChannelPinLabel));
         OnPropertyChanged(nameof(MessageEmptyTitle));

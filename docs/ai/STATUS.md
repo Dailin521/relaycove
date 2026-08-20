@@ -1,9 +1,18 @@
-# RelayCove Status — Stage 21 / 22W / 22M / 23 / 24.9
+# RelayCove Status — Stage 21 / 22W / 22M / 23 / 24.10
 
-Updated: 2026-08-19
-Integration basis: `main@a750dcd`; Stage 24.8 and Stage 24.9 are local candidates awaiting user Visual Studio UI/interaction confirmation
+Updated: 2026-08-20
+Integration basis: `main@faa5a5e`; Stage 24.10 is a local candidate awaiting user Visual Studio UI/interaction confirmation
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W/22M, Stage 23 and Stage 24 through Stage 24.7 are preserved in `main`; Stage 24.7 is `main@a750dcd`. Stage 24.8 and Stage 24.9 are local `main` candidates that add the official-style General channel settings/new-topic entry and the official-style topic row/menu respectively. They have scoped deterministic evidence and await user Visual Studio confirmation; they did not contact a Realm, run Fast/Full/Live, deploy or close the remaining Stage 21 gates. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+Current delivery: Stage 22W/22M, Stage 23 and Stage 24 through Stage 24.9 are preserved in `main`; Stage 24.8 and Stage 24.9 were delivered together at `main@faa5a5e`. Stage 24.10 is a local `main` candidate that completes the channel-settings information architecture and protocol surface while retaining RelayCove's modern minimalist visual language. It has scoped deterministic evidence and awaits user Visual Studio confirmation; it did not contact a Realm, run Fast/Full/Live, deploy or close the remaining Stage 21 gates. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+
+## Stage 24.10 complete channel settings — 2026-08-19
+
+- The settings overlay now follows the Zulip 12.1 channel-management structure without copying its dense legacy skin. Wide windows use a modern minimalist directory/detail layout; narrow windows retain the same subscribed/available/all modes, search, archive filter and sorting before navigating to the shared detail surface.
+- General, Personal, Subscribers and Permissions are real sections. Personal color follows the official compact “current color / change color” structure and opens a 4×6 palette with a live channel preview; palette/custom input remain local until the user explicitly confirms. Mute, pin and notification choices retain inherited read-only states. Subscribers combine authoritative member IDs, accessible realm users and the current user's authoritative subscriptions; add/remove use separate permission gates and a named removal confirmation.
+- Permissions exposes public/private/Web-public state, shared history, default-channel administration, topic policy, retention and all modeled channel group settings. Named groups submit exact old/new values; anonymous custom groups remain readable and fail closed. Create-channel supports the three privacy states and uses an explicit modal; public channels always share history.
+- Organization-admin-only archive and unarchive, member removal and other dangerous mutations capture the selected channel ID and require confirmation. Snapshot, detail, personal and member reads use cancellation/generation checks; writes are never automatically retried and refresh only while the same settings target remains open.
+- Protocol/Core now cover channel creation, personal subscription settings, members, advanced settings and unarchive. Official string topic policies, `realm_default`/`unlimited` retention values, strict member response validation and nested group permission evaluation are tested. Independent protocol and App reviews found no remaining P0/P1 after the protocol-value, stale-load, capability and XAML-binding corrections.
+- Deterministic evidence on this worktree: App Debug build passed with 0 warnings/errors; Core passed 126/126, Zulip.Client passed 85/85 and App passed 190/190. All HTTP/session tests use fake transports. Fast, Full, Live, package, production Realm and real writes were not run. Earlier visual candidates were rejected as rough/incomplete; the candidate with official-style color picker and corrected private-channel member removal awaits Visual Studio/manual confirmation.
 
 ## Stage 24.9 official-style topic row and menu — 2026-08-19
 

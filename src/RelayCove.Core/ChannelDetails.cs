@@ -16,4 +16,14 @@ public sealed record ChannelDetails(
     ChannelGroupSetting? CanAddSubscribersGroup = null,
     ChannelGroupSetting? CanSendMessageGroup = null,
     ChannelGroupSetting? CanSubscribeGroup = null,
-    ChannelGroupSetting? CanCreateTopicGroup = null);
+    ChannelGroupSetting? CanCreateTopicGroup = null,
+    bool HistoryPublicToSubscribers = false,
+    bool IsDefaultStream = false,
+    ChannelTopicsPolicy? TopicsPolicy = null,
+    int? MessageRetentionDays = null,
+    ChannelGroupSetting? CanRemoveSubscribersGroup = null,
+    ChannelGroupSetting? CanMoveMessagesWithinChannelGroup = null,
+    ChannelGroupSetting? CanMoveMessagesOutOfChannelGroup = null,
+    ChannelGroupSetting? CanResolveTopicsGroup = null,
+    ChannelGroupSetting? CanDeleteAnyMessageGroup = null,
+    ChannelGroupSetting? CanDeleteOwnMessageGroup = null);

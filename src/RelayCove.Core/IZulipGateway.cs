@@ -36,6 +36,13 @@ public interface IZulipGateway
     Task<ChannelFolder> CreateChannelFolderAsync(CreateChannelFolderRequest request, CancellationToken cancellationToken = default) => Task.FromException<ChannelFolder>(new NotSupportedException("Channel settings are not available."));
     Task<string> GetChannelEmailAddressAsync(ChannelEmailAddressRequest request, CancellationToken cancellationToken = default) => Task.FromException<string>(new NotSupportedException("Channel settings are not available."));
     Task ArchiveChannelAsync(ArchiveChannelRequest request, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel settings are not available."));
+    Task<long> CreateChannelAsync(CreateChannelRequest request, CancellationToken cancellationToken = default) => Task.FromException<long>(new NotSupportedException("Channel creation is not available."));
+    Task<ChannelPersonalSettings> GetChannelPersonalSettingsAsync(ChannelMembersRequest request, CancellationToken cancellationToken = default) => Task.FromException<ChannelPersonalSettings>(new NotSupportedException("Channel personal settings are not available."));
+    Task SetChannelPersonalSettingAsync(SetChannelPersonalSettingRequest request, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel personal settings are not available."));
+    Task<IReadOnlyList<UserProfile>> GetRealmUsersAsync(RealmUsersRequest request, CancellationToken cancellationToken = default) => Task.FromException<IReadOnlyList<UserProfile>>(new NotSupportedException("Realm users are not available."));
+    Task<IReadOnlyList<long>> GetChannelMemberIdsAsync(ChannelMembersRequest request, CancellationToken cancellationToken = default) => Task.FromException<IReadOnlyList<long>>(new NotSupportedException("Channel members are not available."));
+    Task ModifyChannelMembersAsync(ModifyChannelMembersRequest request, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel members are not available."));
+    Task UpdateChannelAdvancedSettingsAsync(UpdateChannelAdvancedRequest request, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel settings are not available."));
     Task MarkReadAsync(MarkReadRequest request, CancellationToken cancellationToken = default);
     Task DeleteQueueAsync(DeleteQueueRequest request, CancellationToken cancellationToken = default);
 }

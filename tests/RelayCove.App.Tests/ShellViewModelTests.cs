@@ -150,7 +150,7 @@ public sealed class ShellViewModelTests
         var channel = new ChannelTopic(4, "release");
         var direct = new DirectMessage([8]);
         var state = new ClientState(
-            subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering") },
+            subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering", isMuted: true, isPinned: true) },
             users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
             unread: new UnreadState(
                 new Dictionary<string, int>
@@ -168,7 +168,40 @@ public sealed class ShellViewModelTests
         Assert.Equal("99+", Assert.Single(viewModel.DirectMessages).UnreadLabel);
         Assert.Equal("99+", viewModel.NavigationUnreadLabel);
         Assert.True(viewModel.HasNavigationUnread);
-        Assert.Contains("成员数", viewModel.DetailsUnavailableMessage, StringComparison.Ordinal);
+        Assert.True(viewModel.ShowChannelDetails);
+        Assert.Equal("频道话题", viewModel.DetailsKindLabel);
+        Assert.Contains("频道 ID：4", viewModel.DetailsIdentifierLabel, StringComparison.Ordinal);
+        Assert.Contains("未读 5 条", viewModel.DetailsStateLabel, StringComparison.Ordinal);
+        Assert.Contains("频道已静音", viewModel.DetailsStateLabel, StringComparison.Ordinal);
+        Assert.Contains("已置顶", viewModel.DetailsStateLabel, StringComparison.Ordinal);
+        Assert.Contains("此详情面板不加载", viewModel.DetailsUnavailableMessage, StringComparison.Ordinal);
+        Assert.Contains("频道设置", viewModel.DetailsUnavailableMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Projection_WhenDirectMessageIsSelected_ShowsReliableParticipantsAndExplicitBoundary()
+    {
+        var direct = new DirectMessage([8]);
+        var state = new ClientState(
+            users: new Dictionary<long, UserProfile>
+            {
+                [7] = new UserProfile(7, "Dal"),
+                [8] = new UserProfile(8, "Bea")
+            },
+            unread: new UnreadState(new Dictionary<string, int> { [direct.CanonicalKey] = 3 }),
+            connection: new ConnectionState(RelayCove.Core.ConnectionStatus.Connected));
+        var session = new FakeSession { StateValue = state, Recent = [direct], Selected = direct, CurrentUserId = 7 };
+        using var viewModel = CreateViewModel(session);
+
+        session.Publish();
+
+        Assert.False(viewModel.ShowChannelDetails);
+        Assert.Equal("私信", viewModel.DetailsKindLabel);
+        Assert.Equal("一对一私信 · 2 位参与者", viewModel.DetailsIdentifierLabel);
+        Assert.Contains("未读 3 条", viewModel.DetailsStateLabel, StringComparison.Ordinal);
+        Assert.Contains("Bea", viewModel.DetailsBody, StringComparison.Ordinal);
+        Assert.Contains("presence", viewModel.DetailsUnavailableMessage, StringComparison.Ordinal);
+        Assert.Contains("不从缓存推断身份", viewModel.DetailsUnavailableMessage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2132,14 +2165,21 @@ public sealed class ShellViewModelTests
         viewModel.ActivateChannel(viewModel.Channels.Single());
         await WaitUntilAsync(() => viewModel.Topics.Count == 1);
         var topic = viewModel.Topics.Single();
+        viewModel.ActivateTopic(topic);
+        await WaitUntilAsync(() => session.SelectedConversation is ChannelTopic selected && selected.CanonicalKey == topic.CanonicalKey);
+        Assert.True(viewModel.HasSelectedTopic);
         var selectedBeforeMenu = session.SelectedConversation;
-        viewModel.OpenTopicMenuAtCommand.Execute(new TopicMenuRequest(topic, 20, 20));
+        var rowFocusRequestBeforeMenu = viewModel.TopicMenuFocusRequest;
+        var headerFocusRequestBeforeMenu = viewModel.HeaderTopicMenuFocusRequest;
+        viewModel.OpenTopicMenuAtCommand.Execute(new TopicMenuRequest(topic, 20, 20, RestoreFocusToHeader: true));
 
         await ((IAsyncRelayCommand)viewModel.MarkActiveTopicReadCommand).ExecuteAsync(null);
 
         Assert.Equal(new ChannelTopic(4, "review"), readTarget);
         Assert.Equal(selectedBeforeMenu, session.SelectedConversation);
         Assert.False(viewModel.IsTopicMenuOpen);
+        Assert.Equal(rowFocusRequestBeforeMenu, viewModel.TopicMenuFocusRequest);
+        Assert.Equal(headerFocusRequestBeforeMenu + 1, viewModel.HeaderTopicMenuFocusRequest);
     }
 
     [Fact]

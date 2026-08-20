@@ -13,6 +13,7 @@ public static class ChannelPermissionEvaluator
         var userId = snapshot.CurrentUserId;
         var administerGroup = IsMember(userId, channel.CanAdministerChannelGroup, snapshot.UserGroups);
         var addSubscribersGroup = IsMember(userId, channel.CanAddSubscribersGroup, snapshot.UserGroups);
+        var removeSubscribersGroup = IsMember(userId, channel.CanRemoveSubscribersGroup, snapshot.UserGroups);
         var subscribeGroup = IsMember(userId, channel.CanSubscribeGroup, snapshot.UserGroups);
         var sendGroup = IsMember(userId, channel.CanSendMessageGroup, snapshot.UserGroups);
         var createTopicGroup = IsMember(userId, channel.CanCreateTopicGroup, snapshot.UserGroups);
@@ -24,7 +25,9 @@ public static class ChannelPermissionEvaluator
         var canSubscribe = !channel.IsArchived && !isSubscribed && (!snapshot.IsGuest && !channel.IsPrivate || subscribeGroup);
         var canSend = !channel.IsArchived && content && sendGroup;
         var canCreateTopics = canSend && createTopicGroup;
-        return new ChannelSettingsAccess(userId, snapshot.IsOrganizationAdministrator, snapshot.IsGuest, metadata, content, canAdminister, canSubscribe, canSend, canCreateTopics);
+        var canAddSubscribers = metadata && (administrator || addSubscribersGroup);
+        var canRemoveSubscribers = administrator || content && removeSubscribersGroup;
+        return new ChannelSettingsAccess(userId, snapshot.IsOrganizationAdministrator, snapshot.IsGuest, metadata, content, canAdminister, canSubscribe, canSend, canCreateTopics, canAddSubscribers, canRemoveSubscribers);
     }
 
     public static bool IsMember(long userId, ChannelGroupSetting? setting, IReadOnlyList<ChannelUserGroup> groups)

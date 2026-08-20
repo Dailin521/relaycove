@@ -46,13 +46,15 @@
                          Command="{Binding ToggleDetailsCommand}"
                          IsEnabled="{Binding HasSelectedConversation}"
                          SemanticProperties.Description="{Binding DetailsButtonDescription}" />
-            <ImageButton Grid.Column="4"
+            <ImageButton x:Name="TopicMenuButton"
+                         Grid.Column="4"
                          Source="icon_more.png"
                          Style="{StaticResource ImageIconButtonStyle}"
                          WidthRequest="39"
                          HeightRequest="39"
-                         IsEnabled="False"
-                         SemanticProperties.Description="更多会话操作尚未进入能力门" />
+                         IsEnabled="{Binding HasSelectedTopic}"
+                         Clicked="OnTopicMenuClicked"
+                         SemanticProperties.Description="当前话题操作" />
         </Grid>
         <BoxView Grid.Row="1" Background="{StaticResource BorderBrush}" />
     </Grid>

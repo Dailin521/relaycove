@@ -143,7 +143,7 @@ public partial class MainPage : ContentPage
                 Dispatcher.Dispatch(() => ChannelBrowserCloseButton.Focus());
                 break;
             case nameof(ShellViewModel.IsChannelBrowserOpen):
-                Dispatcher.Dispatch(ConversationPane.FocusBrowseChannelsButton);
+                Dispatcher.Dispatch(ConversationPane.FocusConversationFilter);
                 break;
             case nameof(ShellViewModel.ChannelSettings) when _viewModel.ChannelSettings.IsOpen:
                 Dispatcher.Dispatch(ChannelSettingsOverlay.FocusCloseButton);
@@ -171,6 +171,9 @@ public partial class MainPage : ContentPage
                 break;
             case nameof(ShellViewModel.TopicMenuFocusRequest):
                 Dispatcher.Dispatch(ConversationPane.FocusTopicMenuButton);
+                break;
+            case nameof(ShellViewModel.HeaderTopicMenuFocusRequest):
+                Dispatcher.Dispatch(ChatHeader.FocusTopicMenuButton);
                 break;
             case nameof(ShellViewModel.IsEditDialogOpen) when _viewModel.IsEditDialogOpen:
                 Dispatcher.Dispatch(() => EditMessageEditor.Focus());
