@@ -30,10 +30,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private readonly IFileSelectionService _fileSelectionService;
     private readonly IRealmMediaService _realmMediaService;
     private readonly IFileSaveService _fileSaveService;
+    private readonly IConversationPreferencesStore _conversationPreferencesStore;
     private readonly Dictionary<string, string> _drafts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<AttachmentDraftItem>> _attachmentDrafts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, long> _draftVersions = new(StringComparer.Ordinal);
     private readonly List<ConversationContactChoice> _allNewConversationChoices = [];
+    private readonly Dictionary<long, IReadOnlyList<UserProfile>> _privateGroupMembers = [];
+    private readonly HashSet<long> _privateGroupRosterLoadAttempts = [];
     private readonly Dictionary<long, string> _lastSelectedTopicByChannel = [];
     private readonly ResettableObservableCollection<MessageItem> _messages = [];
     private readonly Dictionary<string, Dictionary<string, MessageItem>> _messageItemsByConversation = new(StringComparer.Ordinal);
@@ -71,6 +74,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private long _savedLoadGeneration;
     private AccountId? _savedAccountId;
     private AccountId? _messageItemCacheAccountId;
+    private AccountId? _privateGroupRosterAccountId;
     private ClientState _projectedState = ClientState.Empty;
     private IReadOnlyList<TopicSummary> _loadedTopics = [];
     private long? _loadedTopicsChannelId;
@@ -78,15 +82,17 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private double _composerHeight = DefaultComposerHeight;
     private double _viewportWidth = 1440d;
     private long? _channelUnsubscribeTargetId;
-    private bool _restoreTopicMenuFocusToHeader;
     private long _channelBrowserGeneration;
     private AccountId? _channelBrowserAccountId;
     private CancellationTokenSource? _channelBrowserCancellation;
+    private CancellationTokenSource? _detailsLoadCancellation;
+    private long _detailsLoadGeneration;
     private string? _projectedConversationKey;
     private long? _newestProjectedMessageId;
     private long _lastAutomaticLoadOlderMilliseconds = long.MinValue;
     private int _automaticLoadOlderInFlight;
     private bool _isMessageViewportNearBottom = true;
+    private bool _isMessageViewportBeyondJumpThreshold;
     private bool _isWindowActive;
     private bool _autoMarkReadInFlight;
     private bool _autoMarkReadPending;
@@ -109,7 +115,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IPlatformInteractionService platformInteractions,
         IFileSelectionService fileSelectionService,
         IRealmMediaService realmMediaService,
-        IFileSaveService fileSaveService)
+        IFileSaveService fileSaveService,
+        IConversationPreferencesStore? conversationPreferencesStore = null)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _lastRealmStore = lastRealmStore ?? throw new ArgumentNullException(nameof(lastRealmStore));
@@ -120,6 +127,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _fileSelectionService = fileSelectionService ?? throw new ArgumentNullException(nameof(fileSelectionService));
         _realmMediaService = realmMediaService ?? throw new ArgumentNullException(nameof(realmMediaService));
         _fileSaveService = fileSaveService ?? throw new ArgumentNullException(nameof(fileSaveService));
+        _conversationPreferencesStore = conversationPreferencesStore ?? new InMemoryConversationPreferencesStore();
         Realm = _lastRealmStore.Get();
         AppearanceMode = _appearanceService.Current;
         ApplyUiPreferences(_uiPreferencesService.Current);
@@ -136,6 +144,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public ObservableCollection<TopicItem> Topics { get; } = [];
     public ObservableCollection<NavigationItem> DirectMessages { get; } = [];
     public ObservableCollection<NavigationItem> FilteredDirectMessages { get; } = [];
+    public ObservableCollection<ConversationListItem> Conversations { get; } = [];
+    public ObservableCollection<ConversationListItem> FilteredConversations { get; } = [];
     public ObservableCollection<ContactItem> KnownContacts { get; } = [];
     public ObservableCollection<MessageItem> Messages => _messages;
     public ObservableCollection<SearchResultItem> SearchResults { get; } = [];
@@ -143,6 +153,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public ObservableCollection<AvailableChannelItem> AvailableChannels { get; } = [];
     public ObservableCollection<AttachmentDraftItem> Attachments { get; } = [];
     public ObservableCollection<ConversationContactChoice> NewConversationChoices { get; } = [];
+    public ObservableCollection<ConversationSettingsMemberItem> DetailsMembers { get; } = [];
+    public ObservableCollection<ConversationSettingsMemberItem> GroupInviteCandidates { get; } = [];
+    public ObservableCollection<ConversationSettingsMemberItem> GroupMemberActionCandidates { get; } = [];
     public ChannelSettingsViewModel ChannelSettings { get; }
     public IReadOnlyList<EmojiChoice> EmojiChoices { get; } =
     [
@@ -207,6 +220,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial string NewConversationTopic { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string NewPrivateGroupName { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string? NewConversationError { get; set; }
 
     [ObservableProperty]
     public partial bool IsChannelBrowserOpen { get; set; }
@@ -297,9 +316,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial int TopicMenuFocusRequest { get; set; }
-
-    [ObservableProperty]
-    public partial int HeaderTopicMenuFocusRequest { get; set; }
 
     [ObservableProperty]
     public partial bool IsTopicMoveDialogOpen { get; set; }
@@ -416,6 +432,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial NavigationItem? SelectedDirectMessage { get; set; }
 
     [ObservableProperty]
+    public partial ConversationListItem? SelectedConversationItem { get; set; }
+
+    [ObservableProperty]
     public partial ShellSection SelectedSection { get; set; } = ShellSection.Messages;
 
     [ObservableProperty]
@@ -441,9 +460,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial UiConversationWidthMode ConversationWidthMode { get; set; } = UiConversationWidthMode.Standard;
-
-    [ObservableProperty]
-    public partial bool OpenDetailsByDefault { get; set; }
 
     [ObservableProperty]
     public partial bool AreChannelsExpanded { get; set; } = true;
@@ -488,6 +504,78 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial bool ShowChannelDetails { get; set; }
 
     [ObservableProperty]
+    public partial bool ShowDirectMessageSettings { get; set; }
+
+    [ObservableProperty]
+    public partial string? DetailsAvatarUrl { get; set; }
+
+    [ObservableProperty]
+    public partial string DetailsAvatarInitial { get; set; } = "?";
+
+    [ObservableProperty]
+    public partial string DetailsChannelName { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string DetailsChannelAnnouncement { get; set; } = "暂无群公告";
+
+    [ObservableProperty]
+    public partial string DetailsRemark { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial bool IsDetailsLoading { get; set; }
+
+    [ObservableProperty]
+    public partial string? DetailsLoadError { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsSelectedDirectMessageMuted { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsSelectedDirectMessagePinned { get; set; }
+
+    [ObservableProperty]
+    public partial long? DetailsPrivateGroupOwnerId { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsPrivateGroupAuthorityLoaded { get; set; }
+
+    [ObservableProperty]
+    public partial string EditablePrivateGroupName { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial string EditablePrivateGroupAnnouncement { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial ConversationSettingsMemberItem? SelectedGroupInviteCandidate { get; set; }
+
+    [ObservableProperty]
+    public partial ConversationSettingsMemberItem? SelectedGroupRemoveCandidate { get; set; }
+
+    [ObservableProperty]
+    public partial ConversationSettingsMemberItem? SelectedGroupTransferCandidate { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsPrivateGroupActionBusy { get; set; }
+
+    [ObservableProperty]
+    public partial string? PrivateGroupActionStatus { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsGroupRemoveConfirmationVisible { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsGroupTransferConfirmationVisible { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsGroupDissolveConfirmationVisible { get; set; }
+
+    [ObservableProperty]
+    public partial bool ClearConversationCacheConfirmationVisible { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsClearConversationCacheBusy { get; set; }
+
+    [ObservableProperty]
     public partial string NavigationUnreadLabel { get; set; } = string.Empty;
 
     [ObservableProperty]
@@ -501,12 +589,17 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     public bool LoginVisible => !IsLoggedIn;
     public bool MainVisible => IsLoggedIn;
-    public bool HasSelectedConversation => _session.SelectedConversation is not null;
+    public bool HasSelectedConversation => IsRelayCoveConversation(_session.SelectedConversation, _projectedState);
+    public bool CanOpenConversationSettings => _session.SelectedConversation is ChannelTopic channel &&
+            PrivateGroupPolicy.IsEligible(_projectedState.Subscriptions.GetValueOrDefault(channel.ChannelId)) &&
+            channel.Topic.Length == 0 ||
+        _session.SelectedConversation is DirectMessage { OtherUserIds.Count: 1 };
     public bool HasSelectedTopic => SelectedTopic is { } topic &&
         _session.SelectedConversation is ChannelTopic current &&
         string.Equals(topic.CanonicalKey, current.CanonicalKey, StringComparison.Ordinal);
     public bool IsConversationContentVisible =>
         !IsAuthoritativeEmptyChannel &&
+        HasSelectedConversation &&
         _session.SelectedConversation is { } selected &&
         string.Equals(_displayedConversationKey, selected.CanonicalKey, StringComparison.Ordinal);
     public string ComposerPlaceholder => HasSelectedConversation
@@ -600,17 +693,29 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool HasSavedError => !string.IsNullOrWhiteSpace(SavedError);
     public bool HasNewConversationChoices => NewConversationChoices.Count > 0;
     public bool IsNewConversationChoiceEmpty => !HasNewConversationChoices;
-    public bool IsNewConversationChoicesVisible => IsNewDirectConversationMode && HasNewConversationChoices;
-    public bool IsNewConversationChoiceEmptyVisible => IsNewDirectConversationMode && IsNewConversationChoiceEmpty;
-    public bool CanStartNewConversation => _allNewConversationChoices.Any(choice => choice.IsSelected);
+    public bool IsNewConversationChoicesVisible => HasNewConversationChoices;
+    public bool IsNewConversationChoiceEmptyVisible => IsNewConversationChoiceEmpty;
+    public bool CanStartNewConversation => IsNewDirectConversationMode &&
+        _allNewConversationChoices.Count(choice => choice.IsSelected) == 1;
     public bool IsNewDirectConversationMode => !IsNewChannelConversationMode;
     public bool IsLockedChannelTopicComposer => IsNewChannelConversationMode && IsNewConversationChannelLocked;
     public bool IsNewUnlockedChannelTopicComposer => IsNewChannelConversationMode && !IsNewConversationChannelLocked;
     public bool IsNewConversationModeSwitcherVisible => !IsLockedChannelTopicComposer;
     public bool IsNewConversationChannelPickerVisible => IsNewChannelConversationMode && !IsNewConversationChannelLocked;
     public bool IsLockedChannelTopicVisible => IsLockedChannelTopicComposer;
-    public bool CanStartNewChannelConversation => NewConversationChannel is not null &&
-        !string.IsNullOrWhiteSpace(NewConversationTopic);
+    public bool CanStartNewChannelConversation => IsNewChannelConversationMode &&
+        CanCreatePrivateGroup &&
+        !string.IsNullOrWhiteSpace(NewPrivateGroupName) &&
+        _allNewConversationChoices.Count(choice => choice.IsSelected) >= 2;
+    public bool CanCreatePrivateGroup => _session.CanCreatePrivateGroup &&
+        _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
+    public string PrivateGroupCreateDisabledReason => CanCreatePrivateGroup
+        ? "群聊至少选择两名其他成员。"
+        : !_session.CanCreatePrivateGroup
+            ? "当前组织未授权此账号创建私有群聊。"
+            : "当前未连接，暂时无法创建群聊。";
+    public bool ShowPrivateGroupCreateDisabledReason => IsNewConversationOpen && !CanCreatePrivateGroup;
+    public bool HasNewConversationError => !string.IsNullOrWhiteSpace(NewConversationError);
     public bool CanChooseNewConversationChannel => !IsNewConversationChannelLocked;
     public bool HasActiveMessageAction => ActiveMessageAction is not null;
     public bool CanEditActiveMessage => ActiveMessageAction?.CanEditOrDelete == true;
@@ -625,6 +730,36 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool HasChannelBrowserError => !string.IsNullOrWhiteSpace(ChannelBrowserError);
     public bool CanManageSelectedChannel => CanUnsubscribeSelectedChannel;
     public bool ShowChannelActionBoundary => ShowChannelDetails && !CanManageSelectedChannel;
+    public bool HasDetailsLoadError => !string.IsNullOrWhiteSpace(DetailsLoadError);
+    public bool HasDetailsMembers => DetailsMembers.Count > 0;
+    public bool ShowDetailsMembersEmptyState => !HasDetailsMembers && !IsDetailsLoading;
+    public string DetailsMemberCountLabel => $"{DetailsMembers.Count} 位成员";
+    public bool IsCurrentUserPrivateGroupOwner => DetailsPrivateGroupOwnerId is { } ownerId &&
+        ownerId == _session.CurrentUserId;
+    public bool CanManagePrivateGroup => IsPrivateGroupAuthorityLoaded &&
+        IsCurrentUserPrivateGroupOwner &&
+        !IsPrivateGroupActionBusy;
+    public bool ShowPrivateGroupManagementBoundary => IsPrivateGroupAuthorityLoaded &&
+        DetailsPrivateGroupOwnerId is null &&
+        !IsDetailsLoading;
+    public string PrivateGroupManagementBoundary =>
+        "此群的管理权限不是 RelayCove 单群主结构，仅提供个人设置；不会推断或改写权限。";
+    public bool HasPrivateGroupActionStatus => !string.IsNullOrWhiteSpace(PrivateGroupActionStatus);
+    public bool CanInvitePrivateGroupMember => CanManagePrivateGroup && SelectedGroupInviteCandidate is not null;
+    public bool CanRemovePrivateGroupMember => CanManagePrivateGroup && SelectedGroupRemoveCandidate is not null;
+    public bool CanTransferPrivateGroupOwnership => CanManagePrivateGroup && SelectedGroupTransferCandidate is not null;
+    public bool CanExitPrivateGroup => IsPrivateGroupAuthorityLoaded &&
+        CanUnsubscribeSelectedChannel &&
+        !IsCurrentUserPrivateGroupOwner &&
+        !IsPrivateGroupActionBusy;
+    public bool IsSelectedChannelMuted => _session.SelectedConversation is ChannelTopic selected &&
+        _projectedState.Subscriptions.GetValueOrDefault(selected.ChannelId)?.IsMuted == true;
+    public bool IsSelectedChannelPinned => _session.SelectedConversation is ChannelTopic selected &&
+        _projectedState.Subscriptions.GetValueOrDefault(selected.ChannelId)?.IsPinned == true;
+    public bool CanClearConversationCache => HasSelectedConversation && !IsClearConversationCacheBusy;
+    public string ClearConversationCacheDescription => _session.SelectedConversation is ChannelTopic
+        ? "只清除当前账号下此群聊在本机的缓存，不删除服务器消息；重新进入后会再次同步。"
+        : "只清除此私信在本机的缓存，不删除服务器消息；重新进入后会再次同步。";
     public bool CanManageActiveChannel => ActiveChannelAction is { } channel &&
         _projectedState.Subscriptions.ContainsKey(channel.ChannelId) &&
         _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
@@ -736,19 +871,17 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool HasCurrentConversationUnread => _session.SelectedConversation is { } selected &&
         GetConversationUnread(_projectedState.Unread, selected) > 0;
     public bool ShowLoadOlderButton => IsConversationContentVisible && !IsNativePreview && !HasReachedOldestMessage;
-    public bool ShowNewMessagesButton => NewMessageCount > 0;
-    public string NewMessagesButtonText => $"{NewMessageCount} 条新消息";
+    public bool ShowNewMessagesButton => NewMessageCount > 0 || _isMessageViewportBeyondJumpThreshold;
+    public string NewMessagesButtonText => "跳转到最新消息";
     public string MessageEmptyTitle => !HasSelectedConversation
         ? "选择一个会话"
         : _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Offline
             ? "当前离线缓存没有更多可显示消息"
             : "这里还没有消息";
-    public string DetailsButtonDescription => IsDetailsOpen ? "收起会话详情" : "展开会话详情";
     public GridLength ConversationPaneWidth =>
         IsNarrowLayout
             ? IsConversationListVisibleOnNarrow ? GridLength.Star : new GridLength(0)
             : new GridLength(ConversationWidthSliderValue);
-    public GridLength NavigationRailWidth => new(IsIntermediateLayout ? 48d : 60d);
     public GridLength ChatPaneWidth =>
         IsNarrowLayout
             ? IsConversationListVisibleOnNarrow ? new GridLength(0) : GridLength.Star
@@ -762,7 +895,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             var conversationWidth = IsNarrowLayout ? 0d : ConversationWidthSliderValue;
             var detailsWidth = IsInlineDetailsVisible ? 284d : 0d;
-            var chatPaneWidth = Math.Max(0d, _viewportWidth - NavigationRailWidth.Value - conversationWidth - detailsWidth);
+            var chatPaneWidth = Math.Max(0d, _viewportWidth - conversationWidth - detailsWidth);
             var messageContentWidth = Math.Max(0d, chatPaneWidth - 40d);
             var rowWidth = Math.Min(690d, messageContentWidth * (IsNarrowLayout ? 0.90d : 0.76d));
 
@@ -795,10 +928,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         finally
         {
             Project(_session.State);
-            if (OpenDetailsByDefault && IsWideLayout && _session.SelectedConversation is not null)
-            {
-                IsDetailsOpen = true;
-            }
 #if DEBUG
             if (NativeShellPreviewSession.IsRequested)
             {
@@ -818,32 +947,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void ActivateInitialConversationIfAvailable()
     {
         if (!IsLoggedIn || _session.SelectedConversation is not null) return;
-        if (_session.RecentDirectMessages.FirstOrDefault() is DirectMessage recentDirect)
-        {
-            var directItem = DirectMessages.FirstOrDefault(item => string.Equals(
-                item.Conversation.CanonicalKey,
-                recentDirect.CanonicalKey,
-                StringComparison.Ordinal)) ?? CreateDirectNavigationItem(_projectedState, recentDirect);
-            _ = ActivateConversationFromNavigationAsync(recentDirect, null, null, directItem);
-            return;
-        }
-
-        var recentTopic = _projectedState.Topics.Values
-            .OrderByDescending(topic => topic.MaxMessageId)
-            .ThenBy(topic => topic.Topic, StringComparer.Ordinal)
-            .FirstOrDefault();
-        if (recentTopic is null) return;
-        var topicItem = new TopicItem(
-            recentTopic.ChannelId,
-            recentTopic.Topic,
-            recentTopic.MaxMessageId,
-            GetConversationUnread(_projectedState.Unread, new ChannelTopic(recentTopic.ChannelId, recentTopic.Topic)),
-            isSelected: true);
-        _ = ActivateConversationFromNavigationAsync(
-            new ChannelTopic(recentTopic.ChannelId, recentTopic.Topic),
-            Channels.FirstOrDefault(channel => channel.ChannelId == recentTopic.ChannelId),
-            topicItem,
-            null);
+        if (Conversations.FirstOrDefault() is { } conversation) ActivateConversation(conversation);
     }
 
     internal void ApplyNativePreviewScene(string? scene)
@@ -880,6 +984,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             case "details":
                 CloseTransientOverlays();
                 IsDetailsOpen = true;
+                _ = LoadConversationSettingsAsync();
                 break;
             case "narrow-list":
                 CloseTransientOverlays();
@@ -948,7 +1053,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             OnPropertyChanged(nameof(MessageRowMaximumWidth));
             OnPropertyChanged(nameof(IsIntermediateLayout));
-            OnPropertyChanged(nameof(NavigationRailWidth));
             return;
         }
 
@@ -1051,10 +1155,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         int lastVisibleItemIndex,
         double verticalOffset,
         long? timestampMilliseconds = null,
-        double? bottomDistanceDip = null)
+        double? bottomDistanceDip = null,
+        double? viewportHeightDip = null,
+        string? expectedConversationKey = null,
+        long expectedHistoryGeneration = long.MinValue)
     {
+        if (!IsMessageViewportReportCurrent(expectedConversationKey, expectedHistoryGeneration)) return;
         _ = verticalOffset;
-        UpdateMessageViewportBottomState(bottomDistanceDip, lastVisibleItemIndex);
+        UpdateMessageViewportBottomState(bottomDistanceDip, viewportHeightDip, lastVisibleItemIndex);
 
         // Programmatic realization and the final native jump both raise viewport
         // callbacks. Starting pagination from those transient positions lets a
@@ -1113,16 +1221,46 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
     }
 
-    internal void ReportMessageBottomDistance(double bottomDistanceDip)
+    internal void ReportMessageBottomDistance(
+        double bottomDistanceDip,
+        double? viewportHeightDip = null,
+        string? expectedConversationKey = null,
+        long expectedHistoryGeneration = long.MinValue)
     {
-        if (!double.IsFinite(bottomDistanceDip)) return;
-        UpdateMessageViewportBottomState(Math.Max(0d, bottomDistanceDip), -1);
+        if (!double.IsFinite(bottomDistanceDip) ||
+            !IsMessageViewportReportCurrent(expectedConversationKey, expectedHistoryGeneration))
+        {
+            return;
+        }
+        UpdateMessageViewportBottomState(Math.Max(0d, bottomDistanceDip), viewportHeightDip, -1);
     }
 
-    private void UpdateMessageViewportBottomState(double? bottomDistanceDip, int lastVisibleItemIndex)
+    private bool IsMessageViewportReportCurrent(
+        string? expectedConversationKey,
+        long expectedHistoryGeneration)
+    {
+        if (expectedHistoryGeneration == long.MinValue)
+        {
+            return true;
+        }
+
+        return expectedConversationKey is not null &&
+            expectedHistoryGeneration == CurrentHistoryGeneration &&
+            string.Equals(expectedConversationKey, CurrentConversationKey, StringComparison.Ordinal);
+    }
+
+    private void UpdateMessageViewportBottomState(
+        double? bottomDistanceDip,
+        double? viewportHeightDip,
+        int lastVisibleItemIndex)
     {
         var isNearBottom = MessageViewportPolicy.IsNearBottom(bottomDistanceDip, lastVisibleItemIndex, Messages.Count);
         _isMessageViewportNearBottom = isNearBottom;
+        if (PendingMessageScrollRequest is null && !IsNavigationPending)
+        {
+            SetMessageViewportBeyondJumpThreshold(
+                MessageViewportPolicy.ShouldShowJumpToLatest(bottomDistanceDip, viewportHeightDip));
+        }
         if (!isNearBottom)
         {
             CancelAutoMarkReadOperation(allowRetry: true);
@@ -1317,6 +1455,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         UnavailableFeatureMessage = null;
     }
 
+    [RelayCommand]
+    private void ToggleSettings()
+    {
+        if (IsSettingsSection)
+        {
+            ShowMessages();
+            return;
+        }
+
+        ShowSettings();
+    }
+
     [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
     private async Task ShowSavedAsync(CancellationToken cancellationToken)
     {
@@ -1381,20 +1531,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         result ??= SelectedSearchResult;
         if (result is null) return;
-        if (result.Conversation is null && result.ChannelId is { } channelId)
-        {
-            SelectedSection = ShellSection.Messages;
-            if (Channels.FirstOrDefault(channel => channel.ChannelId == channelId) is { } channel)
-            {
-                ActivateChannel(channel);
-            }
-            CloseSearch();
-            return;
-        }
-        if (result.Conversation is null) return;
+        if (result.Conversation is not { } conversation ||
+            !IsRelayCoveConversation(conversation, _projectedState)) return;
         var opened = result.MessageId is { } messageId
-            ? await ExecuteSessionActionAsync(() => _session.OpenMessageAsync(result.Conversation, messageId))
-            : await ActivateConversationFromNavigationAsync(result.Conversation, null, null, null);
+            ? await ExecuteSessionActionAsync(() => _session.OpenMessageAsync(conversation, messageId))
+            : await ActivateConversationFromNavigationAsync(conversation, null, null, null);
         if (opened)
         {
             SelectedSection = ShellSection.Messages;
@@ -1429,7 +1570,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 return;
             }
             var existing = _serverSearchResults.Select(result => result.Id).ToHashSet(StringComparer.Ordinal);
-            var older = page.Messages.OrderByDescending(message => message.Id).Select(ToSearchResult)
+            var older = page.Messages
+                .Where(message => IsRelayCoveConversation(message.Conversation, _projectedState))
+                .OrderByDescending(message => message.Id)
+                .Select(ToSearchResult)
                 .Where(result => existing.Add(result.Id)).ToArray();
             _serverSearchResults = _serverSearchResults.Concat(older).ToArray();
             _searchBeforeMessageId = page.FoundOldest ? null : page.Messages.MinBy(message => message.Id)?.Id;
@@ -1465,7 +1609,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     [RelayCommand(AllowConcurrentExecutions = false)]
     private async Task OpenSavedMessageAsync(SavedMessageItem? message)
     {
-        if (message is null) return;
+        if (message is null || !IsRelayCoveConversation(message.Conversation, _projectedState)) return;
         if (await ExecuteSessionActionAsync(() => _session.OpenMessageAsync(message.Conversation, message.MessageId)))
         {
             SelectedSection = ShellSection.Messages;
@@ -1492,8 +1636,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         CloseTransientOverlays();
         IsNewChannelConversationMode = false;
         IsNewConversationChannelLocked = false;
-        NewConversationChannel = Channels.FirstOrDefault();
         NewConversationTopic = string.Empty;
+        NewPrivateGroupName = string.Empty;
+        NewConversationError = null;
         ClearNewConversationChoices();
         foreach (var user in _projectedState.Users.Values
                      .Where(user => user.IsActive && user.UserId != _session.CurrentUserId)
@@ -1516,19 +1661,32 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IsNewConversationChannelLocked = false;
         NewConversationQuery = string.Empty;
         NewConversationTopic = string.Empty;
+        NewPrivateGroupName = string.Empty;
+        NewConversationError = null;
         ClearNewConversationChoices();
     }
 
     [RelayCommand]
-    private void ShowNewDirectConversation() => IsNewChannelConversationMode = false;
+    private void ShowNewDirectConversation()
+    {
+        IsNewChannelConversationMode = false;
+        NewConversationError = null;
+        var selected = _allNewConversationChoices.Where(choice => choice.IsSelected).ToArray();
+        foreach (var choice in selected.Skip(1)) choice.IsSelected = false;
+    }
 
     [RelayCommand]
     private void ShowNewChannelConversation()
     {
         if (!IsNewConversationOpen) OpenNewConversation();
+        if (!CanCreatePrivateGroup)
+        {
+            NewConversationError = PrivateGroupCreateDisabledReason;
+            return;
+        }
         IsNewChannelConversationMode = true;
         IsNewConversationChannelLocked = false;
-        NewConversationChannel ??= Channels.FirstOrDefault();
+        NewConversationError = null;
     }
 
     [RelayCommand]
@@ -1553,26 +1711,52 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     [RelayCommand(AllowConcurrentExecutions = false)]
     private async Task StartNewChannelConversationAsync()
     {
-        var channel = NewConversationChannel;
-        var topic = NewConversationTopic.Trim();
-        if (channel is null || topic.Length == 0) return;
-        var conversation = new ChannelTopic(channel.ChannelId, topic);
-        _loadedTopics = _loadedTopics
-            .Where(item => !string.Equals(
-                new ChannelTopic(item.ChannelId, item.Topic).CanonicalKey,
-                conversation.CanonicalKey,
-                StringComparison.Ordinal))
-            .Append(new TopicSummary(channel.ChannelId, topic))
+        var memberIds = _allNewConversationChoices
+            .Where(choice => choice.IsSelected)
+            .Select(choice => choice.UserId)
+            .OrderBy(static userId => userId)
             .ToArray();
-        _loadedTopicsChannelId = channel.ChannelId;
-        _hasAuthoritativeTopics = true;
-        var topicItem = new TopicItem(channel.ChannelId, topic, null, isSelected: true);
-        if (await ActivateConversationFromNavigationAsync(conversation, channel, topicItem, null))
+        var name = NewPrivateGroupName.Trim();
+        if (!CanStartNewChannelConversation || memberIds.Length < 2 || name.Length == 0) return;
+        NewConversationError = null;
+        try
         {
-            _lastSelectedTopicByChannel[channel.ChannelId] = topic;
-            SelectedSection = ShellSection.Messages;
-            if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
-            CloseNewConversation();
+            var created = await _session.CreatePrivateGroupAsync(new PrivateGroupCreateOptions(name, memberIds));
+            var currentUserId = _session.CurrentUserId;
+            _privateGroupMembers[created.ChannelId] = memberIds
+                .Prepend(currentUserId ?? 0)
+                .Where(id => id > 0)
+                .Distinct()
+                .OrderBy(static id => id)
+                .Select(id => _session.State.Users.GetValueOrDefault(id))
+                .Where(static user => user is not null)
+                .Cast<UserProfile>()
+                .ToArray();
+            Project(_session.State);
+            var channel = Channels.FirstOrDefault(item => item.ChannelId == created.ChannelId);
+            var topicItem = new TopicItem(created.ChannelId, string.Empty, null, isSelected: true);
+            if (await ActivateConversationFromNavigationAsync(created.Conversation, channel, topicItem, null))
+            {
+                SelectedSection = ShellSection.Messages;
+                if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
+                CloseNewConversation();
+            }
+        }
+        catch (GatewayException exception)
+        {
+            NewConversationError = $"群聊创建未完成：{DescribeGatewayFailure(exception)} 不会自动重试。";
+        }
+        catch (InvalidOperationException exception)
+        {
+            NewConversationError = DescribeInvalidOperation(exception);
+        }
+        catch (OperationCanceledException)
+        {
+            NewConversationError = "群聊创建已取消；结果不确定时请先刷新列表，不会自动重试。";
+        }
+        catch
+        {
+            NewConversationError = "群聊创建失败；结果不确定时请先刷新列表，不会自动重试。";
         }
     }
 
@@ -1584,7 +1768,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             .Select(choice => choice.UserId)
             .OrderBy(userId => userId)
             .ToArray();
-        if (userIds.Length == 0) return;
+        if (userIds.Length != 1) return;
         if (await ActivateConversationFromNavigationAsync(new DirectMessage(userIds), null, null, null))
         {
             SelectedSection = ShellSection.Messages;
@@ -1793,7 +1977,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         topic.IsActionMenuOpen = true;
         TopicMenuAnchorX = Math.Max(0d, request.AnchorX);
         TopicMenuAnchorY = Math.Max(0d, request.AnchorY);
-        _restoreTopicMenuFocusToHeader = request.RestoreFocusToHeader;
         TopicActionStatus = null;
         IsTopicMenuOpen = true;
         NotifyTopicActionProperties();
@@ -2147,6 +2330,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             return;
         }
+        if (IsCurrentUserPrivateGroupOwner)
+        {
+            PrivateGroupActionStatus = "群主退出前必须先转让群主，或使用“解散群聊”。";
+            return;
+        }
+        if (!CanExitPrivateGroup) return;
         RequestChannelUnsubscribeCore(selected.ChannelId, subscription.Name);
     }
 
@@ -2157,6 +2346,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             !_projectedState.Subscriptions.TryGetValue(channel.ChannelId, out var subscription) ||
             !CanManageActiveChannel)
         {
+            return;
+        }
+        if (PrivateGroupPolicy.IsEligible(subscription) && IsCurrentUserPrivateGroupOwner)
+        {
+            CloseChannelMenuCore(restoreFocus: false);
+            PrivateGroupActionStatus = "群主退出前必须先转让群主，或使用“解散群聊”。";
             return;
         }
 
@@ -2371,11 +2566,512 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IsChannelUnsubscribeConfirmationOpen = true;
     }
 
-    [RelayCommand]
-    private void ToggleDetails()
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ToggleDetailsAsync()
     {
-        if (!HasSelectedConversation) return;
-        IsDetailsOpen = !IsDetailsOpen;
+        if (!CanOpenConversationSettings) return;
+        if (IsDetailsOpen)
+        {
+            CloseDetailsCore();
+            return;
+        }
+
+        IsDetailsOpen = true;
+        await LoadConversationSettingsAsync();
+    }
+
+    [RelayCommand]
+    private void SaveDetailsRemark()
+    {
+        if (!TryGetConversationPreferenceTarget(out var accountId, out var preferenceKey)) return;
+        var current = _conversationPreferencesStore.Get(accountId, preferenceKey);
+        _conversationPreferencesStore.Save(accountId, preferenceKey, current with { Remark = DetailsRemark });
+        DetailsRemark = _conversationPreferencesStore.Get(accountId, preferenceKey).Remark ?? string.Empty;
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task SavePrivateGroupNameAsync()
+    {
+        if (!TryGetSelectedPrivateGroup(out var group) || !CanManagePrivateGroup) return;
+        var name = EditablePrivateGroupName.Trim();
+        if (name.Length == 0)
+        {
+            PrivateGroupActionStatus = "群聊名称不能为空。";
+            return;
+        }
+
+        var expectedKey = group.CanonicalKey;
+        IsPrivateGroupActionBusy = true;
+        PrivateGroupActionStatus = null;
+        try
+        {
+            await _session.UpdateChannelAsync(group.ChannelId, name, null, null);
+            if (!IsSelectedConversation(expectedKey)) return;
+            DetailsChannelName = name;
+            EditablePrivateGroupName = name;
+            PrivateGroupActionStatus = "群聊名称已更新。";
+        }
+        catch (Exception exception)
+        {
+            if (IsSelectedConversation(expectedKey)) PrivateGroupActionStatus = DescribePrivateGroupActionFailure("更新群聊名称", exception);
+        }
+        finally
+        {
+            IsPrivateGroupActionBusy = false;
+        }
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task SavePrivateGroupAnnouncementAsync()
+    {
+        if (!TryGetSelectedPrivateGroup(out var group) || !CanManagePrivateGroup) return;
+        var announcement = EditablePrivateGroupAnnouncement.Trim();
+        var expectedKey = group.CanonicalKey;
+        IsPrivateGroupActionBusy = true;
+        PrivateGroupActionStatus = null;
+        try
+        {
+            await _session.UpdateChannelAsync(group.ChannelId, null, announcement, null);
+            if (!IsSelectedConversation(expectedKey)) return;
+            DetailsChannelAnnouncement = announcement.Length == 0 ? "暂无群公告" : announcement;
+            EditablePrivateGroupAnnouncement = announcement;
+            PrivateGroupActionStatus = "群公告已更新。";
+        }
+        catch (Exception exception)
+        {
+            if (IsSelectedConversation(expectedKey)) PrivateGroupActionStatus = DescribePrivateGroupActionFailure("更新群公告", exception);
+        }
+        finally
+        {
+            IsPrivateGroupActionBusy = false;
+        }
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task InvitePrivateGroupMemberAsync()
+    {
+        if (!TryGetSelectedPrivateGroup(out var group) || !CanInvitePrivateGroupMember || SelectedGroupInviteCandidate is not { } target) return;
+        var expectedKey = group.CanonicalKey;
+        IsPrivateGroupActionBusy = true;
+        PrivateGroupActionStatus = null;
+        try
+        {
+            await _session.AddChannelMembersAsync(group.ChannelId, [target.UserId], false);
+            if (!IsSelectedConversation(expectedKey)) return;
+            await LoadConversationSettingsAsync();
+            if (IsSelectedConversation(expectedKey)) PrivateGroupActionStatus = $"已邀请 {target.Name}。";
+        }
+        catch (Exception exception)
+        {
+            if (IsSelectedConversation(expectedKey)) PrivateGroupActionStatus = DescribePrivateGroupActionFailure("邀请成员", exception);
+        }
+        finally
+        {
+            IsPrivateGroupActionBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private void RequestRemovePrivateGroupMember()
+    {
+        if (CanRemovePrivateGroupMember) IsGroupRemoveConfirmationVisible = true;
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ConfirmRemovePrivateGroupMemberAsync()
+    {
+        if (!IsGroupRemoveConfirmationVisible || !TryGetSelectedPrivateGroup(out var group) ||
+            !CanRemovePrivateGroupMember || SelectedGroupRemoveCandidate is not { } target) return;
+        var expectedKey = group.CanonicalKey;
+        IsGroupRemoveConfirmationVisible = false;
+        IsPrivateGroupActionBusy = true;
+        PrivateGroupActionStatus = null;
+        try
+        {
+            await _session.RemoveChannelMembersAsync(group.ChannelId, [target.UserId]);
+            if (!IsSelectedConversation(expectedKey)) return;
+            await LoadConversationSettingsAsync();
+            if (IsSelectedConversation(expectedKey)) PrivateGroupActionStatus = $"已移除 {target.Name}。";
+        }
+        catch (Exception exception)
+        {
+            if (IsSelectedConversation(expectedKey)) PrivateGroupActionStatus = DescribePrivateGroupActionFailure("移除成员", exception);
+        }
+        finally
+        {
+            IsPrivateGroupActionBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private void RequestTransferPrivateGroupOwnership()
+    {
+        if (CanTransferPrivateGroupOwnership) IsGroupTransferConfirmationVisible = true;
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ConfirmTransferPrivateGroupOwnershipAsync()
+    {
+        if (!IsGroupTransferConfirmationVisible || !TryGetSelectedPrivateGroup(out var group) ||
+            !CanTransferPrivateGroupOwnership || SelectedGroupTransferCandidate is not { } target) return;
+        var expectedKey = group.CanonicalKey;
+        IsGroupTransferConfirmationVisible = false;
+        IsPrivateGroupActionBusy = true;
+        PrivateGroupActionStatus = null;
+        try
+        {
+            var result = await _session.TransferPrivateGroupOwnershipAsync(group.ChannelId, target.UserId);
+            if (result.PreviousOwnerExited)
+            {
+                CloseDetailsCore();
+                UnavailableFeatureMessage = result.Status;
+                return;
+            }
+            if (!IsSelectedConversation(expectedKey)) return;
+            await LoadConversationSettingsAsync();
+            if (IsSelectedConversation(expectedKey)) PrivateGroupActionStatus = result.Status;
+        }
+        catch (Exception exception)
+        {
+            if (IsSelectedConversation(expectedKey)) PrivateGroupActionStatus = DescribePrivateGroupActionFailure("转让群主", exception);
+        }
+        finally
+        {
+            IsPrivateGroupActionBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private void RequestDissolvePrivateGroup()
+    {
+        if (CanManagePrivateGroup) IsGroupDissolveConfirmationVisible = true;
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ConfirmDissolvePrivateGroupAsync()
+    {
+        if (!IsGroupDissolveConfirmationVisible || !TryGetSelectedPrivateGroup(out var group) || !CanManagePrivateGroup) return;
+        var expectedKey = group.CanonicalKey;
+        IsGroupDissolveConfirmationVisible = false;
+        IsPrivateGroupActionBusy = true;
+        PrivateGroupActionStatus = null;
+        try
+        {
+            var result = await _session.DissolvePrivateGroupAsync(group.ChannelId);
+            if (result.OwnerExited)
+            {
+                CloseDetailsCore();
+                UnavailableFeatureMessage = result.Status;
+                return;
+            }
+            if (!IsSelectedConversation(expectedKey)) return;
+            await LoadConversationSettingsAsync();
+            if (IsSelectedConversation(expectedKey)) PrivateGroupActionStatus = result.Status;
+        }
+        catch (Exception exception)
+        {
+            if (IsSelectedConversation(expectedKey)) PrivateGroupActionStatus = DescribePrivateGroupActionFailure("解散群聊", exception);
+        }
+        finally
+        {
+            IsPrivateGroupActionBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private void CancelPrivateGroupConfirmation()
+    {
+        if (IsPrivateGroupActionBusy) return;
+        IsGroupRemoveConfirmationVisible = false;
+        IsGroupTransferConfirmationVisible = false;
+        IsGroupDissolveConfirmationVisible = false;
+    }
+
+    [RelayCommand]
+    private void ToggleDirectMessageMuted()
+    {
+        if (_session.SelectedConversation is not DirectMessage ||
+            !TryGetConversationPreferenceTarget(out var accountId, out var preferenceKey)) return;
+        var current = _conversationPreferencesStore.Get(accountId, preferenceKey);
+        _conversationPreferencesStore.Save(accountId, preferenceKey, current with { IsMuted = !current.IsMuted });
+        ProjectConversationPreference();
+    }
+
+    [RelayCommand]
+    private void ToggleDirectMessagePinned()
+    {
+        if (_session.SelectedConversation is not DirectMessage ||
+            !TryGetConversationPreferenceTarget(out var accountId, out var preferenceKey)) return;
+        var current = _conversationPreferencesStore.Get(accountId, preferenceKey);
+        _conversationPreferencesStore.Save(accountId, preferenceKey, current with { IsPinned = !current.IsPinned });
+        ProjectConversationPreference();
+        Project(_projectedState);
+    }
+
+    [RelayCommand]
+    private void RequestClearConversationCache()
+    {
+        if (HasSelectedConversation) ClearConversationCacheConfirmationVisible = true;
+    }
+
+    [RelayCommand]
+    private void CancelClearConversationCache() => ClearConversationCacheConfirmationVisible = false;
+
+    [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
+    private async Task ConfirmClearConversationCacheAsync(CancellationToken cancellationToken)
+    {
+        if (!ClearConversationCacheConfirmationVisible ||
+            _session.SelectedConversation is not { } selected ||
+            IsClearConversationCacheBusy) return;
+        IsClearConversationCacheBusy = true;
+        try
+        {
+            if (await ExecuteSessionActionAsync(
+                    () => _session.ClearConversationCacheAsync(selected, cancellationToken),
+                    "无法清除当前会话的本机缓存；没有删除任何服务器消息。"))
+            {
+                ClearConversationCacheConfirmationVisible = false;
+            }
+        }
+        finally
+        {
+            IsClearConversationCacheBusy = false;
+        }
+    }
+
+    private async Task LoadConversationSettingsAsync()
+    {
+        CancelDetailsLoad();
+        if (_session.SelectedConversation is not { } selected) return;
+        var expectedKey = selected.CanonicalKey;
+        var generation = ++_detailsLoadGeneration;
+        var cancellation = _detailsLoadCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token);
+        DetailsLoadError = null;
+        DetailsMembers.Clear();
+        ResetPrivateGroupSettings();
+        NotifyDetailsMembersChanged();
+        ProjectConversationPreference();
+        ProjectDirectMessageAvatar(selected);
+        if (selected is not ChannelTopic channel)
+        {
+            IsDetailsLoading = false;
+            return;
+        }
+
+        IsDetailsLoading = true;
+        DetailsChannelName = _projectedState.Subscriptions.GetValueOrDefault(channel.ChannelId)?.Name ?? ConversationSubtitle;
+        DetailsChannelAnnouncement = "正在加载群公告…";
+        try
+        {
+            var details = await _session.LoadChannelDetailsAsync(channel.ChannelId, cancellation.Token);
+            if (!IsDetailsLoadCurrent(generation, cancellation, expectedKey)) return;
+            if (!PrivateGroupPolicy.IsEligible(details) || channel.Topic.Length != 0)
+            {
+                DetailsLoadError = "此频道已不再符合 RelayCove 私有群聊规则；未提供管理操作。";
+                DetailsChannelAnnouncement = "群公告暂不可用";
+                return;
+            }
+            DetailsChannelName = details.Name;
+            DetailsChannelAnnouncement = string.IsNullOrWhiteSpace(details.Description)
+                ? "暂无群公告"
+                : details.Description;
+            EditablePrivateGroupName = details.Name;
+            EditablePrivateGroupAnnouncement = details.Description ?? string.Empty;
+            DetailsPrivateGroupOwnerId = PrivateGroupPolicy.TryGetOwnerId(details);
+            IsPrivateGroupAuthorityLoaded = true;
+            NotifyPrivateGroupActionProperties();
+
+            var memberIdsTask = _session.GetChannelMemberIdsAsync(channel.ChannelId, cancellation.Token);
+            var usersTask = _session.GetRealmUsersAsync(cancellation.Token);
+            await Task.WhenAll(memberIdsTask, usersTask);
+            if (!IsDetailsLoadCurrent(generation, cancellation, expectedKey)) return;
+
+            var memberIds = await memberIdsTask;
+            var users = await usersTask;
+            var usersById = users.ToDictionary(user => user.UserId);
+            if (memberIds.Any(id => !usersById.ContainsKey(id)))
+            {
+                DetailsLoadError = "成员资料不完整，暂时无法安全显示全部成员。";
+                return;
+            }
+            Reconcile(
+                DetailsMembers,
+                memberIds.Select(id => usersById[id])
+                    .OrderBy(user => user.UserId)
+                    .Select(user => new ConversationSettingsMemberItem(
+                        user.UserId,
+                        user.FullName,
+                        user.AvatarUrl,
+                        user.IsBot,
+                        user.UserId == DetailsPrivateGroupOwnerId)),
+                item => item.UserId);
+            Reconcile(
+                GroupMemberActionCandidates,
+                memberIds.Select(id => usersById[id])
+                    .Where(user => user.UserId != _session.CurrentUserId && user.IsActive && !user.IsBot)
+                    .OrderBy(user => user.FullName, StringComparer.Ordinal)
+                    .ThenBy(user => user.UserId)
+                    .Select(user => new ConversationSettingsMemberItem(user.UserId, user.FullName, user.AvatarUrl, user.IsBot)),
+                item => item.UserId);
+            var memberIdSet = memberIds.ToHashSet();
+            Reconcile(
+                GroupInviteCandidates,
+                users.Where(user => user.IsActive && !user.IsBot && user.UserId != _session.CurrentUserId && !memberIdSet.Contains(user.UserId))
+                    .OrderBy(user => user.FullName, StringComparer.Ordinal)
+                    .ThenBy(user => user.UserId)
+                    .Select(user => new ConversationSettingsMemberItem(user.UserId, user.FullName, user.AvatarUrl, user.IsBot)),
+                item => item.UserId);
+            _privateGroupMembers[channel.ChannelId] = memberIds
+                .OrderBy(static id => id)
+                .Select(id => usersById[id])
+                .ToArray();
+            NotifyDetailsMembersChanged();
+            NotifyPrivateGroupActionProperties();
+            Project(_projectedState);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+        catch
+        {
+            if (IsDetailsLoadCurrent(generation, cancellation, expectedKey))
+            {
+                DetailsLoadError = IsPrivateGroupAuthorityLoaded
+                    ? "群资料已加载，但成员列表暂不可用；未改变任何设置。"
+                    : "无法加载群资料；未改变任何设置。";
+                if (!IsPrivateGroupAuthorityLoaded) DetailsChannelAnnouncement = "群公告暂不可用";
+            }
+        }
+        finally
+        {
+            if (IsDetailsLoadCurrent(generation, cancellation, expectedKey)) IsDetailsLoading = false;
+        }
+    }
+
+    private bool IsDetailsLoadCurrent(long generation, CancellationTokenSource cancellation, string expectedKey) =>
+        !_disposed && IsDetailsOpen &&
+        generation == _detailsLoadGeneration &&
+        ReferenceEquals(cancellation, _detailsLoadCancellation) &&
+        !cancellation.IsCancellationRequested &&
+        string.Equals(_session.SelectedConversation?.CanonicalKey, expectedKey, StringComparison.Ordinal);
+
+    private void ProjectDirectMessageAvatar(ConversationKey selected)
+    {
+        DetailsAvatarUrl = null;
+        DetailsAvatarInitial = "?";
+        if (selected is not DirectMessage directMessage) return;
+        var avatar = GetDirectMessageAvatar(directMessage, _projectedState.Users, _session.CurrentUserId);
+        DetailsAvatarUrl = avatar?.AvatarUrl;
+        DetailsAvatarInitial = AvatarInitials.Create(DetailsTitle, avatar?.IsBot == true);
+    }
+
+    private void ProjectConversationPreference()
+    {
+        if (!TryGetConversationPreferenceTarget(out var accountId, out var preferenceKey))
+        {
+            DetailsRemark = string.Empty;
+            IsSelectedDirectMessageMuted = false;
+            IsSelectedDirectMessagePinned = false;
+            return;
+        }
+
+        var preference = _conversationPreferencesStore.Get(accountId, preferenceKey);
+        DetailsRemark = preference.Remark ?? string.Empty;
+        IsSelectedDirectMessageMuted = preference.IsMuted;
+        IsSelectedDirectMessagePinned = preference.IsPinned;
+    }
+
+    private bool TryGetConversationPreferenceTarget(out AccountId accountId, out string preferenceKey)
+    {
+        if (_session.AccountId is not { } currentAccount || _session.SelectedConversation is not { } selected)
+        {
+            accountId = default;
+            preferenceKey = string.Empty;
+            return false;
+        }
+
+        accountId = currentAccount;
+        preferenceKey = selected.CanonicalKey;
+        return true;
+    }
+
+    private bool IsDirectMessagePinned(DirectMessage conversation)
+    {
+        if (_session.AccountId is not { } accountId) return false;
+        return _conversationPreferencesStore.Get(accountId, conversation.CanonicalKey).IsPinned;
+    }
+
+    private void NotifyDetailsMembersChanged()
+    {
+        OnPropertyChanged(nameof(HasDetailsMembers));
+        OnPropertyChanged(nameof(ShowDetailsMembersEmptyState));
+        OnPropertyChanged(nameof(DetailsMemberCountLabel));
+    }
+
+    private void ResetPrivateGroupSettings()
+    {
+        DetailsPrivateGroupOwnerId = null;
+        IsPrivateGroupAuthorityLoaded = false;
+        EditablePrivateGroupName = string.Empty;
+        EditablePrivateGroupAnnouncement = string.Empty;
+        SelectedGroupInviteCandidate = null;
+        SelectedGroupRemoveCandidate = null;
+        SelectedGroupTransferCandidate = null;
+        IsPrivateGroupActionBusy = false;
+        PrivateGroupActionStatus = null;
+        IsGroupRemoveConfirmationVisible = false;
+        IsGroupTransferConfirmationVisible = false;
+        IsGroupDissolveConfirmationVisible = false;
+        Reconcile(GroupInviteCandidates, [], item => item.UserId);
+        Reconcile(GroupMemberActionCandidates, [], item => item.UserId);
+        NotifyPrivateGroupActionProperties();
+    }
+
+    private bool TryGetSelectedPrivateGroup(out ChannelTopic group)
+    {
+        if (_session.SelectedConversation is ChannelTopic
+            {
+                Topic.Length: 0
+            } selected &&
+            PrivateGroupPolicy.IsEligible(_projectedState.Subscriptions.GetValueOrDefault(selected.ChannelId)))
+        {
+            group = selected;
+            return true;
+        }
+
+        group = null!;
+        return false;
+    }
+
+    private bool IsSelectedConversation(string expectedKey) =>
+        IsDetailsOpen && string.Equals(
+            _session.SelectedConversation?.CanonicalKey,
+            expectedKey,
+            StringComparison.Ordinal);
+
+    private static string DescribePrivateGroupActionFailure(string action, Exception exception) => exception switch
+    {
+        OperationCanceledException => $"{action}已取消；结果不确定时不会自动重试，请刷新后确认。",
+        GatewayException gateway => $"{action}未完成：{DescribeGatewayFailure(gateway)} 不会自动重试。",
+        InvalidOperationException invalid => $"{action}未执行：{DescribeInvalidOperation(invalid)}",
+        _ => $"{action}失败；结果不确定时不会自动重试，请刷新后确认。"
+    };
+
+    private void CloseDetailsCore()
+    {
+        CancelDetailsLoad();
+        ClearConversationCacheConfirmationVisible = false;
+        ResetPrivateGroupSettings();
+        IsDetailsOpen = false;
+    }
+
+    private void CancelDetailsLoad()
+    {
+        var cancellation = Interlocked.Exchange(ref _detailsLoadCancellation, null);
+        _detailsLoadGeneration++;
+        if (cancellation is null) return;
+        cancellation.Cancel();
+        cancellation.Dispose();
     }
 
     [RelayCommand]
@@ -2489,14 +3185,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         if (ActiveTopicAction is { } topic) topic.IsActionMenuOpen = false;
         var wasOpen = IsTopicMenuOpen;
-        var restoreToHeader = _restoreTopicMenuFocusToHeader;
-        _restoreTopicMenuFocusToHeader = false;
         IsTopicMenuOpen = false;
         ActiveTopicAction = null;
         if (restoreFocus && wasOpen)
         {
-            if (restoreToHeader) HeaderTopicMenuFocusRequest++;
-            else TopicMenuFocusRequest++;
+            TopicMenuFocusRequest++;
         }
         NotifyTopicActionProperties();
     }
@@ -2610,6 +3303,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     partial void OnIsNewConversationOpenChanged(bool value)
     {
         if (!value) ClearNewConversationChoices();
+        OnPropertyChanged(nameof(ShowPrivateGroupCreateDisabledReason));
         NotifyOverlayProperties();
     }
     partial void OnIsChannelBrowserOpenChanged(bool value) => NotifyOverlayProperties();
@@ -2679,12 +3373,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     partial void OnIsDetailsOpenChanged(bool value)
     {
+        if (!value)
+        {
+            CancelDetailsLoad();
+            ClearConversationCacheConfirmationVisible = false;
+        }
         OnPropertyChanged(nameof(IsInlineDetailsVisible));
         OnPropertyChanged(nameof(IsOverlayDetailsVisible));
         OnPropertyChanged(nameof(IsPrimaryShellEnabled));
         OnPropertyChanged(nameof(InlineDetailsWidth));
         OnPropertyChanged(nameof(MessageRowMaximumWidth));
-        OnPropertyChanged(nameof(DetailsButtonDescription));
         RequestAutoMarkDisplayedRead(_projectedState);
     }
 
@@ -2739,8 +3437,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         SaveUiPreferences();
     }
 
-    partial void OnOpenDetailsByDefaultChanged(bool value) => SaveUiPreferences();
-
     partial void OnAreChannelsExpandedChanged(bool value)
     {
         OnPropertyChanged(nameof(ChannelListHeight));
@@ -2754,6 +3450,44 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     partial void OnUnavailableFeatureMessageChanged(string? value) =>
         OnPropertyChanged(nameof(HasUnavailableFeatureMessage));
+
+    partial void OnDetailsLoadErrorChanged(string? value) => OnPropertyChanged(nameof(HasDetailsLoadError));
+
+    partial void OnIsDetailsLoadingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowDetailsMembersEmptyState));
+        NotifyPrivateGroupActionProperties();
+    }
+
+    partial void OnDetailsPrivateGroupOwnerIdChanged(long? value) => NotifyPrivateGroupActionProperties();
+
+    partial void OnIsPrivateGroupAuthorityLoadedChanged(bool value) => NotifyPrivateGroupActionProperties();
+
+    partial void OnIsPrivateGroupActionBusyChanged(bool value) => NotifyPrivateGroupActionProperties();
+
+    partial void OnPrivateGroupActionStatusChanged(string? value) => OnPropertyChanged(nameof(HasPrivateGroupActionStatus));
+
+    partial void OnSelectedGroupInviteCandidateChanged(ConversationSettingsMemberItem? value) =>
+        OnPropertyChanged(nameof(CanInvitePrivateGroupMember));
+
+    partial void OnSelectedGroupRemoveCandidateChanged(ConversationSettingsMemberItem? value) =>
+        OnPropertyChanged(nameof(CanRemovePrivateGroupMember));
+
+    partial void OnSelectedGroupTransferCandidateChanged(ConversationSettingsMemberItem? value) =>
+        OnPropertyChanged(nameof(CanTransferPrivateGroupOwnership));
+
+    private void NotifyPrivateGroupActionProperties()
+    {
+        OnPropertyChanged(nameof(IsCurrentUserPrivateGroupOwner));
+        OnPropertyChanged(nameof(CanManagePrivateGroup));
+        OnPropertyChanged(nameof(ShowPrivateGroupManagementBoundary));
+        OnPropertyChanged(nameof(CanInvitePrivateGroupMember));
+        OnPropertyChanged(nameof(CanRemovePrivateGroupMember));
+        OnPropertyChanged(nameof(CanTransferPrivateGroupOwnership));
+        OnPropertyChanged(nameof(CanExitPrivateGroup));
+    }
+
+    partial void OnIsClearConversationCacheBusyChanged(bool value) => OnPropertyChanged(nameof(CanClearConversationCache));
 
     partial void OnSelectedChannelChanged(ChannelItem? value)
     {
@@ -2780,19 +3514,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         RefreshNavigationSelectionProjection();
     }
 
+    partial void OnSelectedConversationItemChanged(ConversationListItem? value) =>
+        RefreshNavigationSelectionProjection();
+
     partial void OnConversationFilterQueryChanged(string value) => ProjectConversationFilter();
 
     public void SelectFirstFilteredConversation()
     {
-        if (FilteredChannels.FirstOrDefault() is { } channel)
-        {
-            ActivateChannel(channel);
-            return;
-        }
-        if (FilteredDirectMessages.FirstOrDefault() is { } directMessage)
-        {
-            ActivateDirectMessage(directMessage);
-        }
+        if (FilteredConversations.FirstOrDefault() is { } conversation) ActivateConversation(conversation);
     }
 
     public void ClearConversationFilter() => ConversationFilterQuery = string.Empty;
@@ -2838,6 +3567,35 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _ = ActivateConversationFromNavigationAsync(directMessage.Conversation, null, null, directMessage);
     }
 
+    internal void ActivateConversation(ConversationListItem conversation)
+    {
+        ArgumentNullException.ThrowIfNull(conversation);
+        if (IsNavigationPending && string.Equals(
+                _navigationConversationKey,
+                conversation.Conversation.CanonicalKey,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ConversationFilterQuery = string.Empty;
+        SetExpandedChannel(null);
+        SelectedConversationItem = conversation;
+        var channel = conversation.Conversation is ChannelTopic channelTopic
+            ? Channels.FirstOrDefault(item => item.ChannelId == channelTopic.ChannelId)
+            : null;
+        var topic = conversation.Conversation is ChannelTopic selectedTopic
+            ? new TopicItem(selectedTopic.ChannelId, selectedTopic.Topic, null, isSelected: true)
+            : null;
+        var direct = conversation.Conversation is DirectMessage
+            ? DirectMessages.FirstOrDefault(item => string.Equals(
+                item.Conversation.CanonicalKey,
+                conversation.Conversation.CanonicalKey,
+                StringComparison.Ordinal))
+            : null;
+        _ = ActivateConversationFromNavigationAsync(conversation.Conversation, channel, topic, direct);
+    }
+
     partial void OnIsNewChannelConversationModeChanged(bool value) =>
         NotifyNewConversationModeProperties();
 
@@ -2850,6 +3608,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     partial void OnNewConversationTopicChanged(string value) =>
         OnPropertyChanged(nameof(CanStartNewChannelConversation));
 
+    partial void OnNewPrivateGroupNameChanged(string value) =>
+        OnPropertyChanged(nameof(CanStartNewChannelConversation));
+
+    partial void OnNewConversationErrorChanged(string? value) =>
+        OnPropertyChanged(nameof(HasNewConversationError));
+
     private void NotifyNewConversationModeProperties()
     {
         OnPropertyChanged(nameof(IsNewDirectConversationMode));
@@ -2860,6 +3624,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsNewConversationModeSwitcherVisible));
         OnPropertyChanged(nameof(IsNewConversationChannelPickerVisible));
         OnPropertyChanged(nameof(IsLockedChannelTopicVisible));
+        OnPropertyChanged(nameof(CanStartNewConversation));
+        OnPropertyChanged(nameof(CanStartNewChannelConversation));
+        OnPropertyChanged(nameof(CanCreatePrivateGroup));
+        OnPropertyChanged(nameof(PrivateGroupCreateDisabledReason));
+        OnPropertyChanged(nameof(ShowPrivateGroupCreateDisabledReason));
     }
 
     private async Task OpenChannelFromSettingsAsync(long channelId)
@@ -2882,7 +3651,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
     }
 
-    private async Task ActivateChannelAsync(ChannelItem channel, bool openDetailsWhenReady = false)
+    private async Task ActivateChannelAsync(ChannelItem channel)
     {
         var (generation, cancellation) = BeginNavigation();
         SelectedChannel = Channels.FirstOrDefault(item => item.ChannelId == channel.ChannelId) ?? channel;
@@ -2921,7 +3690,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 new ChannelTopic(topic.ChannelId, topic.Topic),
                 generation,
                 cancellation);
-            if (openDetailsWhenReady && IsNavigationCurrent(generation, cancellation)) IsDetailsOpen = true;
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -2951,6 +3719,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         NavigationItem? directMessage)
     {
         var (generation, cancellation) = BeginNavigation(conversation.CanonicalKey);
+        SelectedConversationItem = Conversations.FirstOrDefault(item => string.Equals(
+            item.Conversation.CanonicalKey,
+            conversation.CanonicalKey,
+            StringComparison.Ordinal));
         SelectedChannel = channel;
         SelectedTopic = topic;
         SelectedDirectMessage = directMessage;
@@ -3024,13 +3796,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             TryPublishPendingActivationScroll();
         }
         if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
-        if (OpenDetailsByDefault && IsWideLayout) IsDetailsOpen = true;
         NotifyConversationAvailability();
         return true;
     }
 
     private (long Generation, CancellationTokenSource Cancellation) BeginNavigation(string? conversationKey = null)
     {
+        if (IsDetailsOpen) CloseDetailsCore();
         CancelAutoMarkReadOperation(allowRetry: true);
         CancelNavigation();
         // A completed activation belongs to the previous visit. Re-entering the
@@ -3054,6 +3826,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _pendingActivationScrollReason = null;
         PendingMessageScrollRequest = null;
         NewMessageCount = 0;
+        SetMessageViewportBeyondJumpThreshold(false);
         if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
         NotifyConversationAvailability();
         return (generation, cancellation);
@@ -3198,6 +3971,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void Project(ClientState state)
     {
         _projectedState = state;
+        if (_privateGroupRosterAccountId != _session.AccountId)
+        {
+            _privateGroupRosterAccountId = _session.AccountId;
+            _privateGroupMembers.Clear();
+            _privateGroupRosterLoadAttempts.Clear();
+        }
         if (_searchAccountId != _session.AccountId)
         {
             CancelSearchInput();
@@ -3225,7 +4004,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             var savedIds = SavedMessages.Select(item => item.MessageId).ToHashSet();
             foreach (var saved in SavedMessages.ToArray())
             {
-                if (state.Messages.TryGetValue(saved.MessageId, out var message) && !message.IsStarred)
+                if (!IsRelayCoveConversation(saved.Conversation, state) ||
+                    state.Messages.TryGetValue(saved.MessageId, out var message) && !message.IsStarred)
                 {
                     SavedMessages.Remove(saved);
                 }
@@ -3272,8 +4052,28 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             DirectMessages,
             _session.RecentDirectMessages
                 .OfType<DirectMessage>()
+                .OrderByDescending(IsDirectMessagePinned)
                 .Select(item => CreateDirectNavigationItem(state, item)),
             item => item.Conversation.CanonicalKey);
+
+        var directConversations = _session.RecentDirectMessages
+            .OfType<DirectMessage>()
+            .Concat(_session.SelectedConversation is DirectMessage selectedDirect ? [selectedDirect] : [])
+            .Where(static conversation => conversation.OtherUserIds.Count <= 1)
+            .DistinctBy(static conversation => conversation.CanonicalKey)
+            .Select(conversation => CreateDirectConversationListItem(state, conversation));
+        var privateGroups = state.Subscriptions.Values
+            .Where(static subscription => PrivateGroupPolicy.IsEligible(subscription))
+            .Select(subscription => CreatePrivateGroupConversationListItem(state, subscription));
+        ReconcileConversationListItems(
+            Conversations,
+            directConversations
+                .Concat(privateGroups)
+                .OrderByDescending(static item => item.IsPinned)
+                .ThenByDescending(static item => item.LatestMessageTimestamp)
+                .ThenBy(static item => item.Conversation.CanonicalKey, StringComparer.Ordinal),
+            item => item.Conversation.CanonicalKey);
+        SchedulePrivateGroupRosterLoads(state);
 
         ProjectConversationFilter();
 
@@ -3288,7 +4088,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
         ProjectTopics(state, SelectedChannel?.ChannelId);
 
-        var selected = _session.SelectedConversation;
+        var selected = IsRelayCoveConversation(_session.SelectedConversation, state)
+            ? _session.SelectedConversation
+            : null;
         var selectedKey = selected?.CanonicalKey;
         var conversationChanged = !string.Equals(_projectedConversationKey, selectedKey, StringComparison.Ordinal);
         var previousNewestMessageId = conversationChanged ? null : _newestProjectedMessageId;
@@ -3340,6 +4142,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         if (conversationChanged)
         {
             NewMessageCount = 0;
+            SetMessageViewportBeyondJumpThreshold(false);
             _lastAutomaticLoadOlderMilliseconds = long.MinValue;
             PendingMessageScrollRequest = null;
             if (!IsNavigationPending &&
@@ -3387,6 +4190,67 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ProjectSearch();
         NotifyProjectionProperties();
         RequestAutoMarkDisplayedRead(state);
+    }
+
+    private void SchedulePrivateGroupRosterLoads(ClientState state)
+    {
+        if (_session.AccountId is not { } accountId ||
+            state.Connection.Status != RelayCove.Core.ConnectionStatus.Connected) return;
+        var channelIds = state.Subscriptions.Values
+            .Where(static subscription => PrivateGroupPolicy.IsEligible(subscription))
+            .Select(static subscription => subscription.ChannelId)
+            .Where(channelId => !_privateGroupMembers.ContainsKey(channelId) && _privateGroupRosterLoadAttempts.Add(channelId))
+            .OrderBy(static channelId => channelId)
+            .ToArray();
+        if (channelIds.Length == 0) return;
+        _ = LoadPrivateGroupRostersAsync(accountId, channelIds);
+    }
+
+    private async Task LoadPrivateGroupRostersAsync(AccountId accountId, IReadOnlyList<long> channelIds)
+    {
+        try
+        {
+            var users = await _session.GetRealmUsersAsync(_lifetimeCancellation.Token);
+            var usersById = users.ToDictionary(static user => user.UserId);
+            var loaded = new Dictionary<long, IReadOnlyList<UserProfile>>();
+            foreach (var channelId in channelIds)
+            {
+                var memberIds = await _session.GetChannelMemberIdsAsync(channelId, _lifetimeCancellation.Token);
+                if (memberIds.Any(id => !usersById.ContainsKey(id))) continue;
+                loaded[channelId] = memberIds
+                    .Distinct()
+                    .OrderBy(static id => id)
+                    .Select(id => usersById[id])
+                    .ToArray();
+            }
+            if (loaded.Count == 0) return;
+
+            _dispatcher.Dispatch(() =>
+            {
+                if (_disposed || _session.AccountId != accountId) return;
+                foreach (var (channelId, members) in loaded)
+                {
+                    if (PrivateGroupPolicy.IsEligible(_session.State.Subscriptions.GetValueOrDefault(channelId)))
+                    {
+                        _privateGroupMembers[channelId] = members;
+                    }
+                }
+                Project(_session.State);
+            });
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch
+        {
+            // The unified list remains usable with the group-name initial.
+            // Settings performs its own authoritative load and can populate the roster later.
+            _dispatcher.Dispatch(() =>
+            {
+                if (_disposed || _session.AccountId != accountId) return;
+                foreach (var channelId in channelIds) _privateGroupRosterLoadAttempts.Remove(channelId);
+            });
+        }
     }
 
     private List<MessageItem> BuildMessageItems(ClientState state, ConversationKey? selected)
@@ -3592,7 +4456,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             _searchBeforeMessageId = null;
             var page = await _session.SearchMessagesAsync(query, null, 50, cancellation.Token).ConfigureAwait(false);
             if (!IsSearchCurrent(generation, accountId) || !IsSearchOpen || !string.Equals(SearchQuery.Trim(), query, StringComparison.Ordinal)) return;
-            _serverSearchResults = page.Messages.OrderByDescending(message => message.Id).Select(ToSearchResult).ToArray();
+            _serverSearchResults = page.Messages
+                .Where(message => IsRelayCoveConversation(message.Conversation, _projectedState))
+                .OrderByDescending(message => message.Id)
+                .Select(ToSearchResult)
+                .ToArray();
             ProjectSearch();
             _searchBeforeMessageId = page.FoundOldest ? null : page.Messages.MinBy(message => message.Id)?.Id;
             OnPropertyChanged(nameof(HasMoreSearchResults));
@@ -3658,7 +4526,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 OnPropertyChanged(nameof(HasMoreSavedMessages));
                 return;
             }
-            var items = page.Messages.OrderByDescending(message => message.Id).Select(ToSavedMessage).ToArray();
+            var items = page.Messages
+                .Where(message => IsRelayCoveConversation(message.Conversation, _projectedState))
+                .OrderByDescending(message => message.Id)
+                .Select(ToSavedMessage)
+                .ToArray();
             if (replace)
             {
                 Reconcile(SavedMessages, items, item => item.MessageId);
@@ -3722,6 +4594,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         return new SavedMessageItem(message.Id, message.Conversation, sender, TruncateForSearch(message.Content), message.Timestamp.LocalDateTime.ToString("g"));
     }
 
+    private static bool IsRelayCoveConversation(ConversationKey? conversation, ClientState state) => conversation switch
+    {
+        DirectMessage direct => direct.OtherUserIds.Count <= 1,
+        ChannelTopic { Topic.Length: 0 } channel =>
+            PrivateGroupPolicy.IsEligible(state.Subscriptions.GetValueOrDefault(channel.ChannelId)),
+        _ => false
+    };
+
     private void CancelSearchInput()
     {
         _searchInputCancellation?.Cancel();
@@ -3733,31 +4613,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         var query = SearchQuery.Trim();
         var results = new List<SearchResultItem>();
-        foreach (var channel in _projectedState.Subscriptions.Values
-                     .Where(channel => channel.IsActive && (query.Length == 0 || Contains(channel.Name, query)))
-                     .OrderBy(channel => channel.Name, StringComparer.Ordinal))
+        foreach (var conversation in Conversations
+                     .Where(item => query.Length == 0 || Contains(item.Title, query) || Contains(item.Detail, query)))
         {
             results.Add(new SearchResultItem(
-                $"channel:{channel.ChannelId}",
-                "频道",
-                $"# {channel.Name}",
-                "打开频道话题列表",
-                ChannelId: channel.ChannelId));
-        }
-        foreach (var topic in _projectedState.Topics.Values
-                     .Where(topic => query.Length == 0 || Contains(topic.Topic, query) ||
-                                     Contains(_projectedState.Subscriptions.GetValueOrDefault(topic.ChannelId)?.Name, query))
-                     .OrderByDescending(topic => topic.MaxMessageId)
-                     .ThenBy(topic => topic.Topic, StringComparer.Ordinal))
-        {
-            var conversation = new ChannelTopic(topic.ChannelId, topic.Topic);
-            var channelName = _projectedState.Subscriptions.GetValueOrDefault(topic.ChannelId)?.Name ?? $"频道 {topic.ChannelId}";
-            results.Add(new SearchResultItem(
-                $"topic:{conversation.CanonicalKey}",
-                "话题",
-                string.IsNullOrEmpty(topic.Topic) ? "（无主题）" : topic.Topic,
-                $"# {channelName}",
-                conversation));
+                $"conversation:{conversation.Conversation.CanonicalKey}",
+                conversation.IsPrivateGroup ? "群聊" : "私信",
+                conversation.Title,
+                conversation.Detail ?? (conversation.IsPrivateGroup ? "群聊" : "私信"),
+                conversation.Conversation));
         }
         foreach (var user in _projectedState.Users.Values
                      .Where(user => user.IsActive && (query.Length == 0 || Contains(user.FullName, query)))
@@ -3775,8 +4639,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 conversation));
         }
         foreach (var message in _projectedState.Messages.Values
-                     .Where(message => query.Length == 0 || Contains(message.Content, query) ||
-                                       Contains(message.SenderDisplayName, query))
+                     .Where(message => IsRelayCoveConversation(message.Conversation, _projectedState) &&
+                                       (query.Length == 0 || Contains(message.Content, query) ||
+                                        Contains(message.SenderDisplayName, query)))
                      .OrderByDescending(message => message.Id))
         {
             var sender = message.SenderDisplayName ?? _projectedState.Users.GetValueOrDefault(message.SenderId)?.FullName ?? $"用户 {message.SenderId}";
@@ -3789,7 +4654,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 message.Id));
         }
 
-        Reconcile(SearchResults, _serverSearchResults.Concat(results.Take(50)), item => item.Id);
+        Reconcile(
+            SearchResults,
+            _serverSearchResults
+                .Where(result => IsRelayCoveConversation(result.Conversation, _projectedState))
+                .Concat(results.Take(50)),
+            item => item.Id);
         OnPropertyChanged(nameof(HasSearchResults));
         OnPropertyChanged(nameof(IsSearchEmpty));
     }
@@ -3819,6 +4689,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             FilteredDirectMessages,
             DirectMessages.Where(item => query.Length == 0 || Contains(item.Title, query) || Contains(item.Detail, query)),
             item => item.Conversation.CanonicalKey);
+        ReconcileConversationListItems(
+            FilteredConversations,
+            Conversations.Where(item => query.Length == 0 || Contains(item.Title, query) || Contains(item.Detail, query)),
+            item => item.Conversation.CanonicalKey);
         OnPropertyChanged(nameof(ChannelListHeight));
     }
 
@@ -3826,7 +4700,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         if (eventArgs.PropertyName == nameof(ConversationContactChoice.IsSelected))
         {
+            if (sender is ConversationContactChoice selected && selected.IsSelected && IsNewDirectConversationMode)
+            {
+                foreach (var other in _allNewConversationChoices.Where(choice => !ReferenceEquals(choice, selected) && choice.IsSelected))
+                    other.IsSelected = false;
+            }
             OnPropertyChanged(nameof(CanStartNewConversation));
+            OnPropertyChanged(nameof(CanStartNewChannelConversation));
         }
     }
 
@@ -3843,6 +4723,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsNewConversationChoicesVisible));
         OnPropertyChanged(nameof(IsNewConversationChoiceEmptyVisible));
         OnPropertyChanged(nameof(CanStartNewConversation));
+        OnPropertyChanged(nameof(CanStartNewChannelConversation));
     }
 
     private void ProjectTopics(ClientState state, long? selectedChannelId)
@@ -3955,6 +4836,20 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     private void SynchronizeSelection(ConversationKey? selected)
     {
+        var unified = selected is null
+            ? null
+            : Conversations.FirstOrDefault(item => string.Equals(
+                item.Conversation.CanonicalKey,
+                selected.CanonicalKey,
+                StringComparison.Ordinal));
+        if (!string.Equals(
+                SelectedConversationItem?.Conversation.CanonicalKey,
+                unified?.Conversation.CanonicalKey,
+                StringComparison.Ordinal))
+        {
+            SelectedConversationItem = unified;
+        }
+
         switch (selected)
         {
             case ChannelTopic channelTopic:
@@ -4003,6 +4898,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     private void ProjectConversation(ConversationKey? selected, ClientState state)
     {
+        if (!IsRelayCoveConversation(selected, state)) selected = null;
         switch (selected)
         {
             case ChannelTopic channelTopic:
@@ -4010,6 +4906,25 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                     var subscription = state.Subscriptions.GetValueOrDefault(channelTopic.ChannelId);
                     var channelName = subscription?.Name ?? $"频道 {channelTopic.ChannelId}";
                     var unreadCount = GetConversationUnread(state.Unread, channelTopic);
+                    if (channelTopic.Topic.Length == 0 && PrivateGroupPolicy.IsEligible(subscription))
+                    {
+                        var memberCount = _privateGroupMembers.GetValueOrDefault(channelTopic.ChannelId)?.Count;
+                        ConversationTitle = channelName;
+                        ConversationSubtitle = memberCount is > 0 ? $"{memberCount} 位成员" : "群聊";
+                        DetailsTitle = channelName;
+                        DetailsBody = ConversationSubtitle;
+                        DetailsKindLabel = "私有群聊";
+                        DetailsGlyph = string.Empty;
+                        DetailsIdentifierLabel = memberCount is > 0
+                            ? $"私有群聊 · {memberCount} 位成员"
+                            : "私有群聊";
+                        DetailsStateLabel = unreadCount > 0 ? $"未读 {unreadCount} 条" : "无未读";
+                        DetailsAvailableMessage = string.Empty;
+                        DetailsUnavailableMessage = string.Empty;
+                        ShowChannelDetails = true;
+                        ShowDirectMessageSettings = false;
+                        break;
+                    }
                     var topic = SelectedTopic is { } selectedTopic &&
                         string.Equals(selectedTopic.CanonicalKey, channelTopic.CanonicalKey, StringComparison.Ordinal)
                             ? selectedTopic
@@ -4035,17 +4950,25 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                     DetailsAvailableMessage = "当前频道与话题身份、未读状态、频道静音、置顶和退出已接通；话题级操作可从右上角菜单进入。";
                     DetailsUnavailableMessage = "此详情面板不加载频道描述、隐私、创建者、订阅者列表、presence、共同频道、文件夹、邮箱地址或权限组。频道成员和管理信息请进入“频道设置”；所有写操作仍由 Zulip 服务端最终裁决。";
                     ShowChannelDetails = true;
+                    ShowDirectMessageSettings = false;
                     break;
                 }
             case DirectMessage directMessage:
-                var directUnreadCount = GetConversationUnread(state.Unread, directMessage);
                 ConversationTitle = DescribeDirectMessage(directMessage, state.Users, _session.CurrentUserId);
                 ConversationSubtitle = DescribeDirectMessageKind(directMessage);
                 DetailsTitle = ConversationTitle;
-                DetailsBody = directMessage.OtherUserIds.Count == 0
-                    ? "这是给自己的私信。"
-                    : $"可靠参与者：{DescribeDirectMessage(directMessage, state.Users, _session.CurrentUserId)}";
-                DetailsKindLabel = "私信";
+                DetailsBody = directMessage.OtherUserIds.Count switch
+                {
+                    0 => "仅你自己可见",
+                    1 => $"与 {ConversationTitle} 的私信",
+                    _ => $"{directMessage.OtherUserIds.Count + 1} 位参与者：你、{DescribeDirectMessageParticipants(directMessage, state.Users)}"
+                };
+                DetailsKindLabel = directMessage.OtherUserIds.Count switch
+                {
+                    0 => "给自己",
+                    1 => "私信",
+                    _ => "群组私信"
+                };
                 DetailsGlyph = "@";
                 DetailsIdentifierLabel = directMessage.OtherUserIds.Count switch
                 {
@@ -4053,10 +4976,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                     1 => "一对一私信 · 2 位参与者",
                     _ => $"群组私信 · {directMessage.OtherUserIds.Count + 1} 位参与者"
                 };
-                DetailsStateLabel = $"{DescribeConnection(state.Connection)} · {(directUnreadCount > 0 ? $"未读 {directUnreadCount} 条" : "无未读")}";
-                DetailsAvailableMessage = "当前 Realm 中可解析的参与者、消息收发、搜索、收藏和附件已接通。";
-                DetailsUnavailableMessage = "此详情面板不加载 presence、共同频道、已读回执、私信静音或成员管理；未知用户会保留用户 ID，不从缓存推断身份。";
+                DetailsStateLabel = string.Empty;
+                DetailsAvailableMessage = string.Empty;
+                DetailsUnavailableMessage = string.Empty;
                 ShowChannelDetails = false;
+                ShowDirectMessageSettings = directMessage.OtherUserIds.Count == 1;
                 break;
             default:
                 ConversationTitle = "选择会话";
@@ -4070,7 +4994,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 DetailsAvailableMessage = "选择会话后显示已经接通的能力。";
                 DetailsUnavailableMessage = "未选择会话时不会推断成员关系、presence、共同频道或管理权限。";
                 ShowChannelDetails = false;
-                IsDetailsOpen = false;
+                ShowDirectMessageSettings = false;
+                CloseDetailsCore();
                 break;
         }
     }
@@ -4255,6 +5180,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void NotifyProjectionProperties()
     {
         OnPropertyChanged(nameof(HasSelectedConversation));
+        OnPropertyChanged(nameof(CanOpenConversationSettings));
+        OnPropertyChanged(nameof(CanCreatePrivateGroup));
+        OnPropertyChanged(nameof(PrivateGroupCreateDisabledReason));
+        OnPropertyChanged(nameof(ShowPrivateGroupCreateDisabledReason));
         OnPropertyChanged(nameof(HasSelectedTopic));
         OnPropertyChanged(nameof(ComposerPlaceholder));
         OnPropertyChanged(nameof(HasMessages));
@@ -4271,6 +5200,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanUnsubscribeSelectedChannel));
         OnPropertyChanged(nameof(CanManageSelectedChannel));
         OnPropertyChanged(nameof(ShowChannelActionBoundary));
+        OnPropertyChanged(nameof(IsSelectedChannelMuted));
+        OnPropertyChanged(nameof(IsSelectedChannelPinned));
+        OnPropertyChanged(nameof(CanClearConversationCache));
+        NotifyPrivateGroupActionProperties();
+        OnPropertyChanged(nameof(ClearConversationCacheDescription));
         OnPropertyChanged(nameof(SelectedChannelMuteLabel));
         OnPropertyChanged(nameof(SelectedChannelPinLabel));
         OnPropertyChanged(nameof(MessageEmptyTitle));
@@ -4465,8 +5399,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         if (request.Reason == MessageScrollReason.ManualJumpToLatest)
         {
             NewMessageCount = 0;
+            SetMessageViewportBeyondJumpThreshold(false);
         }
         RequestAutoMarkDisplayedRead(_projectedState);
+    }
+
+    private void SetMessageViewportBeyondJumpThreshold(bool value)
+    {
+        if (_isMessageViewportBeyondJumpThreshold == value) return;
+        _isMessageViewportBeyondJumpThreshold = value;
+        OnPropertyChanged(nameof(ShowNewMessagesButton));
     }
 
     internal string? CurrentConversationKey => _session.SelectedConversation?.CanonicalKey;
@@ -4507,7 +5449,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsOverlayDetailsVisible));
         OnPropertyChanged(nameof(IsPrimaryShellEnabled));
         OnPropertyChanged(nameof(ConversationPaneWidth));
-        OnPropertyChanged(nameof(NavigationRailWidth));
         OnPropertyChanged(nameof(ChatPaneWidth));
         OnPropertyChanged(nameof(InlineDetailsWidth));
         OnPropertyChanged(nameof(MessageRowMaximumWidth));
@@ -4531,7 +5472,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             ConversationWidthMode = preferences.ConversationWidth;
             _fontSize = preferences.FontSize ?? FontScaleSliderValue;
             _conversationPaneWidth = preferences.ConversationPaneWidth ?? ConversationWidthSliderValue;
-            OpenDetailsByDefault = preferences.OpenDetailsByDefault;
             AreChannelsExpanded = preferences.ChannelsExpanded;
             AreDirectMessagesExpanded = preferences.DirectMessagesExpanded;
         }
@@ -4549,7 +5489,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             DensityMode,
             FontScaleMode,
             ConversationWidthMode,
-            OpenDetailsByDefault,
             AreChannelsExpanded,
             AreDirectMessagesExpanded,
             FontScaleSliderValue,
@@ -4749,6 +5688,38 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
     }
 
+    private static void ReconcileConversationListItems(
+        ObservableCollection<ConversationListItem> target,
+        IEnumerable<ConversationListItem> items,
+        Func<ConversationListItem, string> keySelector)
+    {
+        var desired = items.ToArray();
+        for (var index = 0; index < desired.Length; index++)
+        {
+            var candidate = desired[index];
+            var key = keySelector(candidate);
+            var existingIndex = -1;
+            for (var searchIndex = index; searchIndex < target.Count; searchIndex++)
+            {
+                if (string.Equals(keySelector(target[searchIndex]), key, StringComparison.Ordinal))
+                {
+                    existingIndex = searchIndex;
+                    break;
+                }
+            }
+
+            if (existingIndex < 0)
+            {
+                target.Insert(index, candidate);
+                continue;
+            }
+            if (existingIndex != index) target.Move(existingIndex, index);
+            target[index].ApplyFrom(candidate);
+        }
+
+        while (target.Count > desired.Length) target.RemoveAt(target.Count - 1);
+    }
+
     private static int GetChannelUnread(UnreadState unread, long channelId)
     {
         var prefix = $"channel:{channelId}:";
@@ -4899,6 +5870,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 : "给自己"
             : string.Join(", ", message.OtherUserIds.Select(id => users.GetValueOrDefault(id)?.FullName ?? $"用户 {id}"));
 
+    private static string DescribeDirectMessageParticipants(
+        DirectMessage message,
+        IReadOnlyDictionary<long, UserProfile> users) =>
+        string.Join("、", message.OtherUserIds.Select(id => users.GetValueOrDefault(id)?.FullName ?? $"用户 {id}"));
+
     private static string DescribeDirectMessageKind(DirectMessage message) => message.OtherUserIds.Count switch
     {
         0 => "self-DM",
@@ -4915,6 +5891,81 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             1 => users.GetValueOrDefault(message.OtherUserIds[0]),
             _ => null
         };
+
+    private ConversationListItem CreateDirectConversationListItem(ClientState state, DirectMessage conversation)
+    {
+        var avatar = GetDirectMessageAvatar(conversation, state.Users, _session.CurrentUserId);
+        var latestMessage = state.ConversationSummaries.TryGetValue(conversation.CanonicalKey, out var summary)
+            ? summary.LatestMessage
+            : state.Messages.Values
+                .Where(message => message.Conversation == conversation)
+                .OrderByDescending(message => message.Id)
+                .FirstOrDefault();
+        var existing = Conversations.FirstOrDefault(item => string.Equals(
+            item.Conversation.CanonicalKey,
+            conversation.CanonicalKey,
+            StringComparison.Ordinal));
+        var preference = _session.AccountId is { } accountId
+            ? _conversationPreferencesStore.Get(accountId, conversation.CanonicalKey)
+            : new ConversationPreference();
+        return new ConversationListItem(
+            conversation,
+            DescribeDirectMessage(conversation, state.Users, _session.CurrentUserId),
+            latestMessage is null ? existing?.Detail ?? DescribeDirectMessageKind(conversation) : TruncateForSearch(latestMessage.Content),
+            GetConversationUnread(state.Unread, conversation),
+            avatar?.AvatarUrl,
+            avatar?.IsBot ?? false,
+            latestMessage is null ? existing?.Timestamp : FormatConversationTimestamp(latestMessage.Timestamp.LocalDateTime),
+            latestMessage?.Timestamp,
+            string.Equals(_session.SelectedConversation?.CanonicalKey, conversation.CanonicalKey, StringComparison.Ordinal),
+            preference.IsMuted,
+            preference.IsPinned);
+    }
+
+    private ConversationListItem CreatePrivateGroupConversationListItem(ClientState state, Subscription subscription)
+    {
+        var conversation = new ChannelTopic(subscription.ChannelId, string.Empty);
+        var latestMessage = state.ConversationSummaries.TryGetValue(conversation.CanonicalKey, out var summary)
+            ? summary.LatestMessage
+            : state.Messages.Values
+                .Where(message => message.Conversation == conversation)
+                .OrderByDescending(message => message.Id)
+                .FirstOrDefault();
+        var existing = Conversations.FirstOrDefault(item => string.Equals(
+            item.Conversation.CanonicalKey,
+            conversation.CanonicalKey,
+            StringComparison.Ordinal));
+        var sender = latestMessage is null
+            ? null
+            : latestMessage.SenderDisplayName ??
+              state.Users.GetValueOrDefault(latestMessage.SenderId)?.FullName ??
+              $"用户 {latestMessage.SenderId}";
+        var detail = latestMessage is null
+            ? existing?.Detail ?? "群聊"
+            : $"{sender}: {TruncateForSearch(latestMessage.Content)}";
+        var tiles = _privateGroupMembers.GetValueOrDefault(subscription.ChannelId)?
+            .OrderBy(static user => user.UserId)
+            .Take(4)
+            .Select((user, index) => new ConversationAvatarTile(
+                user.UserId,
+                user.FullName,
+                user.AvatarUrl,
+                user.IsBot,
+                index / 2,
+                index % 2))
+            .ToArray() ?? [];
+        return new ConversationListItem(
+            conversation,
+            subscription.Name,
+            detail,
+            GetConversationUnread(state.Unread, conversation),
+            timestamp: latestMessage is null ? existing?.Timestamp : FormatConversationTimestamp(latestMessage.Timestamp.LocalDateTime),
+            latestMessageTimestamp: latestMessage?.Timestamp,
+            isSelected: string.Equals(_session.SelectedConversation?.CanonicalKey, conversation.CanonicalKey, StringComparison.Ordinal),
+            isMuted: subscription.IsMuted,
+            isPinned: subscription.IsPinned,
+            avatarTiles: tiles);
+    }
 
     private NavigationItem CreateDirectNavigationItem(ClientState state, DirectMessage conversation)
     {
@@ -4939,6 +5990,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             ? existing?.Timestamp
             : FormatConversationTimestamp(latestMessage.Timestamp.LocalDateTime);
 
+        var preference = _session.AccountId is { } accountId
+            ? _conversationPreferencesStore.Get(accountId, conversation.CanonicalKey)
+            : new ConversationPreference();
         return new NavigationItem(
             conversation,
             DescribeDirectMessage(conversation, state.Users, _session.CurrentUserId),
@@ -4950,7 +6004,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             string.Equals(
                 SelectedDirectMessage?.Conversation.CanonicalKey,
                 conversation.CanonicalKey,
-                StringComparison.Ordinal));
+                StringComparison.Ordinal),
+            preference.IsMuted,
+            preference.IsPinned);
     }
 
     private void RefreshNavigationSelectionProjection()
@@ -4974,6 +6030,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 item.Conversation.CanonicalKey,
                 StringComparison.Ordinal);
             item.IsSelected = isSelected;
+        }
+
+        foreach (var item in Conversations)
+        {
+            item.IsSelected = string.Equals(
+                _session.SelectedConversation?.CanonicalKey,
+                item.Conversation.CanonicalKey,
+                StringComparison.Ordinal);
         }
 
         ProjectConversationFilter();
@@ -5044,6 +6108,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         CancelAutoMarkReadOperation(allowRetry: false);
         _lifetimeCancellation.Cancel();
         CancelNavigation();
+        CancelDetailsLoad();
         CancelSearchInput();
         ClearNewConversationChoices();
         ChannelSettings.PropertyChanged -= OnChannelSettingsPropertyChanged;

@@ -8,7 +8,7 @@
              Background="{StaticResource SurfaceBrush}">
     <Grid RowDefinitions="*,1">
         <Grid Grid.Row="0"
-              ColumnDefinitions="Auto,*,39,39,39"
+              ColumnDefinitions="Auto,*,39,39"
               Padding="18,0,13,0"
               ColumnSpacing="3">
             <ImageButton Grid.Column="0"
@@ -37,24 +37,15 @@
                          HeightRequest="39"
                          Command="{Binding OpenSearchCommand}"
                          SemanticProperties.Description="搜索当前已加载工作区" />
-            <ImageButton x:Name="DetailsButton"
+            <ImageButton x:Name="SettingsButton"
                          Grid.Column="3"
-                         Source="icon_info.png"
-                         Style="{StaticResource ImageIconButtonStyle}"
-                         WidthRequest="39"
-                         HeightRequest="39"
-                         Command="{Binding ToggleDetailsCommand}"
-                         IsEnabled="{Binding HasSelectedConversation}"
-                         SemanticProperties.Description="{Binding DetailsButtonDescription}" />
-            <ImageButton x:Name="TopicMenuButton"
-                         Grid.Column="4"
                          Source="icon_more.png"
                          Style="{StaticResource ImageIconButtonStyle}"
                          WidthRequest="39"
                          HeightRequest="39"
-                         IsEnabled="{Binding HasSelectedTopic}"
-                         Clicked="OnTopicMenuClicked"
-                         SemanticProperties.Description="当前话题操作" />
+                         Command="{Binding ToggleDetailsCommand}"
+                         IsEnabled="{Binding CanOpenConversationSettings}"
+                         SemanticProperties.Description="打开会话设置" />
         </Grid>
         <BoxView Grid.Row="1" Background="{StaticResource BorderBrush}" />
     </Grid>

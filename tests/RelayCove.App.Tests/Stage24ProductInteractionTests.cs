@@ -29,7 +29,7 @@ public sealed class Stage24ProductInteractionTests
     }
 
     [Fact]
-    public void PreferencesAndViewport_WhenUsingContinuousValues_PreserveValuesAndUse820IntermediateRail()
+    public void PreferencesAndViewport_WhenUsingContinuousValues_PreserveValuesWithoutPrimaryRail()
     {
         var preferences = new TestPreferences { Current = new UiPreferences(FontSize: 13d, ConversationPaneWidth: 296d) };
         using var viewModel = Create(new TestSession(), preferences);
@@ -39,7 +39,7 @@ public sealed class Stage24ProductInteractionTests
         viewModel.UpdateViewport(820d);
 
         Assert.True(viewModel.IsIntermediateLayout);
-        Assert.Equal(48d, viewModel.NavigationRailWidth.Value);
+        Assert.Equal(367.84d, viewModel.MessageRowMaximumWidth, 2);
     }
 
     [Fact]

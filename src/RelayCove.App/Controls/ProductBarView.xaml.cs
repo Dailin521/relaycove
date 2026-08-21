@@ -12,6 +12,16 @@ public partial class ProductBarView : TitleBar
         typeof(bool),
         typeof(ProductBarView));
 
+    public static readonly BindableProperty IsAccountMenuOpenProperty = BindableProperty.Create(
+        nameof(IsAccountMenuOpen),
+        typeof(bool),
+        typeof(ProductBarView));
+
+    public static readonly BindableProperty IsSettingsSectionProperty = BindableProperty.Create(
+        nameof(IsSettingsSection),
+        typeof(bool),
+        typeof(ProductBarView));
+
     public ProductBarView(IWindowShellAdapter windowShellAdapter)
     {
         _windowShellAdapter = windowShellAdapter ?? throw new ArgumentNullException(nameof(windowShellAdapter));
@@ -26,11 +36,43 @@ public partial class ProductBarView : TitleBar
         set => SetValue(IsPinnedProperty, value);
     }
 
+    public bool IsAccountMenuOpen
+    {
+        get => (bool)GetValue(IsAccountMenuOpenProperty);
+        set => SetValue(IsAccountMenuOpenProperty, value);
+    }
+
+    public bool IsSettingsSection
+    {
+        get => (bool)GetValue(IsSettingsSectionProperty);
+        set => SetValue(IsSettingsSectionProperty, value);
+    }
+
     public void Bind(ShellViewModel viewModel)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
         BindingContext = viewModel;
+        AccountButton.Command = viewModel.ToggleAccountMenuCommand;
+        SettingsButton.Command = viewModel.ToggleSettingsCommand;
         ThemeButton.Command = viewModel.ToggleThemeCommand;
+        AccountButtonBorder.SetBinding(
+            IsVisibleProperty,
+            new Binding(nameof(ShellViewModel.MainVisible), source: viewModel));
+        AccountInitialLabel.SetBinding(
+            Label.TextProperty,
+            new Binding(nameof(ShellViewModel.CurrentUserInitial), source: viewModel));
+        AccountAvatar.SetBinding(
+            RealmMediaImageView.SourceUrlProperty,
+            new Binding(nameof(ShellViewModel.CurrentUserAvatarUrl), source: viewModel));
+        SettingsButton.SetBinding(
+            IsVisibleProperty,
+            new Binding(nameof(ShellViewModel.MainVisible), source: viewModel));
+        SetBinding(
+            IsAccountMenuOpenProperty,
+            new Binding(nameof(ShellViewModel.IsAccountMenuOpen), source: viewModel));
+        SetBinding(
+            IsSettingsSectionProperty,
+            new Binding(nameof(ShellViewModel.IsSettingsSection), source: viewModel));
         ConnectionStatusLabel.SetBinding(
             Label.TextProperty,
             new Binding(nameof(ShellViewModel.ConnectionStatus), source: viewModel));

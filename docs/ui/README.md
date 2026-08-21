@@ -1,6 +1,6 @@
 # RelayCove UI 文档索引
 
-这里保存 RelayCove 双前端共享的视觉基线、交互规格、功能矩阵和验收规则。`RelayCove.Web` 是正式产品，`RelayCove.App` 在 Web 交互版本冻结后用原生 MAUI 复刻。
+这里保存 RelayCove 历史双前端视觉基线、交互规格、功能矩阵和验收规则。自 Stage 25 的 2026-08-21 产品决策起，`RelayCove.App` 是唯一继续开发和交付的客户端；`RelayCove.Web` 与冻结基线只作历史证据，Web 源码是否从仓库移除另行决定。
 
 ## 权威顺序
 
@@ -18,13 +18,13 @@
 - 冻结日期：2026-08-12
 - 目标视口：1440×900；补充检查 1024×768
 - 历史原型（只读）：[RelayCove-UI-Playground.html](baselines/chat-ui-v1/RelayCove-UI-Playground.html)；日常 Web 验收不再使用此入口
-- 当前任务：[Stage 24.6 Windows Composer 持续光标](../ai/tasks/2026-08-19-stage-24-6-composer-caret.md)；此前 Stage 22/23/24 的 dated task 只作历史证据。真实 Realm 原生写与完整 Windows 人工验收仍开放。
+- 当前任务：[Stage 25 微信式统一会话与私有群聊](../ai/tasks/2026-08-21-stage-25-unified-private-groups.md)；Stage 24.11 至 Stage 24.17 是当前工作树中的前序候选，Stage 24.14 与 Stage 24.17 已获用户人工确认。Stage 25 不改写冻结基线，也不声称 Web 已对齐；真实 Realm 群创建/生命周期写与用户 Visual Studio 人工验收仍开放。
 
 ## 重要边界
 
 - 现有 Zulip 官方 Web 保留不修改；RelayCove.Web 与 MAUI 都直接连接同一 Realm，不新增服务端、BFF 或代理。
-- 两端共享 Token、规格、功能矩阵与验收场景，不共享 UI 运行时代码。
+- 两端共享 Token、协议安全边界与可复用验收场景，不共享 UI 运行时代码；Stage 25 的 MAUI 信息架构差异在交互规格第 1.1 节显式覆盖。
 - MAUI 必须使用原生 XAML、控件和 ViewModel，不得把 RelayCove.Web 或冻结 HTML 放进 WebView。
 - Zulip 仍是用户、权限、频道、话题和消息的唯一事实源。
-- Stage 22W 已实施任意附件选择/拖放/安全文件卡片、真实头像、可折叠频道/私信组、当前用户频道退订、完整引用/表情/reaction/edit/delete/star。MAUI 已原生实现受控头像/图片/文件附件、完整消息菜单、reaction/edit/delete/star、服务器搜索/saved、已知用户新会话和普通用户频道自助能力；这些原生真实 Zulip 写入仍需按门禁验收。完整成员关系、`@` 候选、presence 和管理员频道管理继续保持隐藏或明确不可用。
+- Stage 25 MAUI 左栏只显示一对一/self-DM 与合格私有空话题群聊；公开/旧多话题频道、group-DM、话题入口和公开频道浏览均无产品入口。旧活动频道已由用户授权全部归档；群成员与管理权限仍只使用权威读取，`@` 候选、presence 与复杂外部权限管理继续失败关闭。
 - 截图用于视觉比较；交互规格用于行为判断；两者都不能替代 Windows 真实窗口验收。

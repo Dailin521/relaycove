@@ -6,6 +6,7 @@ internal static class MessageViewportPolicy
     internal const int NearBottomItemThreshold = 2;
     internal const double NearBottomDistanceDip = 96d;
     internal const double BottomAlignmentToleranceDip = 2d;
+    internal const double JumpToLatestViewportMultiplier = 2d;
     internal const long AutomaticLoadDebounceMilliseconds = 350;
 
     internal static bool IsNearBottom(double? bottomDistanceDip, int lastVisibleItemIndex, int itemCount)
@@ -27,6 +28,16 @@ internal static class MessageViewportPolicy
         double.IsFinite(scrollableHeight) &&
         double.IsFinite(verticalOffset) &&
         Math.Max(0d, scrollableHeight - verticalOffset) > BottomAlignmentToleranceDip;
+
+    internal static bool ShouldShowJumpToLatest(
+        double? bottomDistanceDip,
+        double? viewportHeightDip) =>
+        bottomDistanceDip is { } bottomDistance &&
+        viewportHeightDip is { } viewportHeight &&
+        double.IsFinite(bottomDistance) &&
+        double.IsFinite(viewportHeight) &&
+        viewportHeight > 0d &&
+        Math.Max(0d, bottomDistance) > viewportHeight * JumpToLatestViewportMultiplier;
 
     internal static bool ShouldRequestOlder(
         int firstVisibleItemIndex,

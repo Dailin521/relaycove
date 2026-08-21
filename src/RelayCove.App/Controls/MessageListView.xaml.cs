@@ -29,6 +29,9 @@ public partial class MessageListView : ContentView
     private double _stabilizedAnchorOffset;
     private bool _anchorRestoreScheduled;
     private double? _lastReportedBottomDistance;
+    private double? _lastReportedViewportHeight;
+    private string? _viewportConversationKey;
+    private long _viewportHistoryGeneration;
     private MessageScrollRequest? _activeScrollRequest;
     private bool _scrollAttemptScheduled;
     private bool _finalScrollIssued;
@@ -102,7 +105,11 @@ public partial class MessageListView : ContentView
         // anchor, which then fights the pending jump-to-latest request.
         if (_activeScrollRequest is not null)
         {
-            _lastReportedBottomDistance = GetBottomDistanceDip();
+            if (TryGetViewportMetrics(out var activeBottomDistance, out var activeViewportHeight))
+            {
+                _lastReportedBottomDistance = activeBottomDistance;
+                _lastReportedViewportHeight = activeViewportHeight;
+            }
             ScheduleMessageScroll();
             return;
         }
@@ -139,24 +146,39 @@ public partial class MessageListView : ContentView
             _firstVisibleViewportOffset = hasVisibleOffset ? visibleOffset : 0d;
         }
 
-        var bottomDistance = GetBottomDistanceDip();
-        _lastReportedBottomDistance = bottomDistance;
+        var hasViewportMetrics = TryGetViewportMetrics(out var bottomDistance, out var viewportHeight);
+        _lastReportedBottomDistance = hasViewportMetrics ? bottomDistance : null;
+        _lastReportedViewportHeight = hasViewportMetrics ? viewportHeight : null;
         await _viewModel.ReportMessageViewportAsync(
             eventArgs.FirstVisibleItemIndex,
             eventArgs.LastVisibleItemIndex,
             eventArgs.VerticalOffset,
-            bottomDistanceDip: bottomDistance);
+            bottomDistanceDip: hasViewportMetrics ? bottomDistance : null,
+            viewportHeightDip: hasViewportMetrics ? viewportHeight : null,
+            expectedConversationKey: _viewportConversationKey,
+            expectedHistoryGeneration: _viewportHistoryGeneration);
     }
 
     private double? GetBottomDistanceDip()
     {
+        return TryGetViewportMetrics(out var bottomDistance, out _)
+            ? bottomDistance
+            : null;
+    }
+
+    private bool TryGetViewportMetrics(out double bottomDistanceDip, out double viewportHeightDip)
+    {
+        bottomDistanceDip = 0d;
+        viewportHeightDip = 0d;
         if (MessageCollection.Handler?.PlatformView is not WinUiDependencyObject platformRoot ||
             FindDescendant<WinUiScrollViewer>(platformRoot) is not { } scrollViewer)
         {
-            return null;
+            return false;
         }
 
-        return Math.Max(0d, scrollViewer.ScrollableHeight - scrollViewer.VerticalOffset);
+        bottomDistanceDip = Math.Max(0d, scrollViewer.ScrollableHeight - scrollViewer.VerticalOffset);
+        viewportHeightDip = Math.Max(0d, scrollViewer.ViewportHeight);
+        return true;
     }
 
     private void OnMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs eventArgs)
@@ -458,10 +480,21 @@ public partial class MessageListView : ContentView
 
     private void ReportLayoutBottomDistance()
     {
-        if (_viewModel is null || GetBottomDistanceDip() is not { } distance) return;
-        if (_lastReportedBottomDistance is { } previous && Math.Abs(previous - distance) <= 0.5d) return;
+        if (_viewModel is null || !TryGetViewportMetrics(out var distance, out var viewportHeight)) return;
+        if (_lastReportedBottomDistance is { } previousDistance &&
+            _lastReportedViewportHeight is { } previousViewportHeight &&
+            Math.Abs(previousDistance - distance) <= 0.5d &&
+            Math.Abs(previousViewportHeight - viewportHeight) <= 0.5d)
+        {
+            return;
+        }
         _lastReportedBottomDistance = distance;
-        _viewModel.ReportMessageBottomDistance(distance);
+        _lastReportedViewportHeight = viewportHeight;
+        _viewModel.ReportMessageBottomDistance(
+            distance,
+            viewportHeight,
+            _viewportConversationKey,
+            _viewportHistoryGeneration);
     }
 
     private void MaintainViewportAnchorAfterLayout()
@@ -521,11 +554,23 @@ public partial class MessageListView : ContentView
         }
 
         ClearActiveScrollRequest();
-        if (request is null) return;
+        if (request is null)
+        {
+            if (_viewModel is null ||
+                !string.Equals(_viewportConversationKey, _viewModel.CurrentConversationKey, StringComparison.Ordinal) ||
+                _viewportHistoryGeneration != _viewModel.CurrentHistoryGeneration)
+            {
+                _viewportConversationKey = null;
+                _viewportHistoryGeneration = 0;
+            }
+            return;
+        }
         ClearPendingPrependAnchor();
         ClearStabilizedAnchor();
         _firstVisibleMessageId = null;
         _firstVisibleViewportOffset = 0d;
+        _viewportConversationKey = request.ConversationKey;
+        _viewportHistoryGeneration = request.Generation;
         _activeScrollRequest = request;
         _keepLatestMessageInView = ShouldKeepLatestMessageInView(request);
         SetActivationPositioning(IsActivationRequest(request));

@@ -13,11 +13,12 @@ public sealed class NativeShellPreviewSessionTests
         Assert.Equal(6, session.CurrentUserId);
         Assert.Equal("林远", session.State.Users[6].FullName);
         Assert.Equal(4, session.State.Subscriptions.Count);
-        Assert.Equal(
-            ["design", "engineering", "product", "release"],
-            session.State.Subscriptions.Values.OrderBy(item => item.Name).Select(item => item.Name));
+        Assert.Equal(2, session.State.Subscriptions.Values.Count(PrivateGroupPolicy.IsEligible));
+        Assert.Contains(session.State.Subscriptions.Values, item => item.Name == "产品设计群");
+        Assert.Contains(session.State.Subscriptions.Values, item => item.Name == "Windows 客户端群");
         Assert.Equal(5, session.RecentDirectMessages.Count);
-        Assert.Equal(new ChannelTopic(6, "UI 设计讨论"), session.SelectedConversation);
+        Assert.Equal(new ChannelTopic(6, string.Empty), session.SelectedConversation);
+        Assert.True(session.CanCreatePrivateGroup);
 
         var selectedMessages = session.State.Messages.Values
             .Where(message => message.Conversation == session.SelectedConversation)

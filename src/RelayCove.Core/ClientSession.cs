@@ -39,6 +39,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
     private ChannelSettingsLimits _channelSettingsLimits = new(null, null, null, null);
     private IReadOnlyDictionary<string, TopicVisibilityPolicy> _topicVisibilityPolicies = new Dictionary<string, TopicVisibilityPolicy>(StringComparer.Ordinal);
     private bool _isOrganizationAdministrator;
+    private bool _canCreatePrivateGroup;
 
     private ClientState _state = ClientState.Empty;
     private AccountId? _accountId;
@@ -102,6 +103,11 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
     public bool IsOrganizationAdministrator
     {
         get { lock (_stateGate) return _isOrganizationAdministrator; }
+    }
+
+    public bool CanCreatePrivateGroup
+    {
+        get { lock (_stateGate) return _canCreatePrivateGroup; }
     }
 
     public long MaxFileUploadBytes
@@ -175,10 +181,10 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             {
                 _credentials = credentials;
                 _accountId = account.AccountId;
-                _state = (cached?.State ?? ClientState.Empty) with
+                _state = FilterSupportedConversations((cached?.State ?? ClientState.Empty) with
                 {
                     Connection = new ConnectionState(ConnectionStatus.Offline, "cache_first")
-                };
+                });
                 _recentDirectMessages = MergeRecentDirectMessages(
                     cached?.RecentDirectMessages ?? [],
                     DeriveRecentDirectMessages(_state));
@@ -350,6 +356,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             lock (_stateGate)
             {
                 var accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+                EnsureSupportedConversationLocked(conversation);
                 CacheSelectedHistoryLocked();
                 priorHistoryCancellation = _historyCancellation;
                 var runToken = _runCancellation?.Token ?? _disposeCancellation.Token;
@@ -453,6 +460,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             lock (_stateGate)
             {
                 var accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+                EnsureSupportedConversationLocked(conversation);
                 var credentials = _state.Connection.Status == ConnectionStatus.Connected
                     ? _credentials ?? throw new InvalidOperationException("No credentials are available.")
                     : throw new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.RequestTimedOut);
@@ -492,6 +500,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
     {
         if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
         ThrowIfDisposed();
+        if (!PrivateGroupPolicy.IsEligible(State.Subscriptions.GetValueOrDefault(channelId)))
+            throw new InvalidOperationException("Only RelayCove private groups have a supported channel conversation.");
         await _commands.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -511,9 +521,10 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             try
             {
                 var result = await _gateway.GetTopicsAsync(new TopicsRequest(credentials, channelId), cancellationToken).ConfigureAwait(false);
-                var events = result.Topics.Select(topic => (DomainEvent)new TopicUpsertEvent(topic, Source: DomainEventSource.History)).ToArray();
+                var supportedTopics = result.Topics.Where(static topic => topic.Topic.Length == 0).ToArray();
+                var events = supportedTopics.Select(topic => (DomainEvent)new TopicUpsertEvent(topic, Source: DomainEventSource.History)).ToArray();
                 await StoreThenApplyAsync(events, cancellationToken).ConfigureAwait(false);
-                return DecorateTopics(result.Topics);
+                return DecorateTopics(supportedTopics);
             }
             catch (GatewayException exception) when (IsUnauthorized(exception))
             {
@@ -579,7 +590,15 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 if (!IsMessageQueryCurrentLocked(kind, generation, accountId, epoch, runCancellation))
                     throw new OperationCanceledException(requestCancellation.Token);
             }
-            return result;
+            lock (_stateGate)
+            {
+                return result with
+                {
+                    Messages = result.Messages
+                        .Where(message => IsSupportedConversation(_state, message.Conversation))
+                        .ToArray()
+                };
+            }
         }
         catch (GatewayException exception) when (IsUnauthorized(exception))
         {
@@ -939,7 +958,13 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         }
     }
 
-    public async Task UnsubscribeChannelAsync(long channelId, CancellationToken cancellationToken = default)
+    public Task UnsubscribeChannelAsync(long channelId, CancellationToken cancellationToken = default) =>
+        UnsubscribeChannelCoreAsync(channelId, allowConfirmedOwnerExit: false, cancellationToken);
+
+    private async Task UnsubscribeChannelCoreAsync(
+        long channelId,
+        bool allowConfirmedOwnerExit,
+        CancellationToken cancellationToken)
     {
         if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
         ThrowIfDisposed();
@@ -966,6 +991,27 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             if (subscription is null) return;
 
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, runToken);
+            if (!allowConfirmedOwnerExit && PrivateGroupPolicy.IsEligible(subscription))
+            {
+                ChannelDetails details;
+                try
+                {
+                    details = await _gateway.GetChannelDetailsAsync(
+                        new ChannelDetailsRequest(credentials, channelId),
+                        linked.Token).ConfigureAwait(false);
+                }
+                catch (GatewayException exception) when (IsUnauthorized(exception))
+                {
+                    await HandleUnauthorizedAsync().ConfigureAwait(false);
+                    throw;
+                }
+
+                if (details.ChannelId != channelId || !PrivateGroupPolicy.IsEligible(details))
+                    throw new InvalidOperationException("Refresh the private group before leaving it.");
+                if (PrivateGroupPolicy.TryGetOwnerId(details) == CurrentUserId)
+                    throw new InvalidOperationException("The group owner must transfer ownership or dissolve the group before leaving.");
+            }
+
             UnsubscribeChannelResult result;
             try
             {
@@ -1188,6 +1234,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
     {
         if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
         ThrowIfDisposed();
+        if (PrivateGroupPolicy.IsEligible(State.Subscriptions.GetValueOrDefault(channelId)))
+            await EnsurePrivateGroupOwnerAsync(channelId, cancellationToken).ConfigureAwait(false);
         var credentials = GetConnectedCredentials();
         try { await _gateway.UpdateChannelAsync(new UpdateChannelRequest(credentials, channelId, name, description, folderId, clearFolder), cancellationToken).ConfigureAwait(false); }
         catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
@@ -1231,6 +1279,78 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         try { channelId = await _gateway.CreateChannelAsync(new CreateChannelRequest(credentials, options), cancellationToken).ConfigureAwait(false); }
         catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
         return new ChannelSummary(channelId, options.Name.Trim(), options.Description, false, 1, options.IsPrivate, true);
+    }
+
+    public async Task<PrivateGroupCreated> CreatePrivateGroupAsync(
+        PrivateGroupCreateOptions options,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(options.Name);
+        ArgumentNullException.ThrowIfNull(options.OtherMemberIds);
+        ThrowIfDisposed();
+        await _commands.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!CanCreatePrivateGroup)
+                throw new InvalidOperationException("The current user is not authorized to create a private group.");
+
+            var currentUserId = CurrentUserId ?? throw new InvalidOperationException("No current user is available.");
+            var otherMemberIds = options.OtherMemberIds
+                .Where(id => id > 0 && id != currentUserId)
+                .Distinct()
+                .OrderBy(static id => id)
+                .ToArray();
+            if (otherMemberIds.Length < 2 || otherMemberIds.Length != options.OtherMemberIds.Count)
+                throw new ArgumentException("A private group requires at least two distinct other members.", nameof(options));
+
+            var state = State;
+            if (otherMemberIds.Any(id => !state.Users.TryGetValue(id, out var user) || !user.IsActive))
+                throw new InvalidOperationException("Refresh the active user directory before creating this group.");
+
+            var normalizedOptions = new PrivateGroupCreateOptions(options.Name.Trim(), otherMemberIds);
+            var credentials = GetConnectedCredentials();
+            long channelId;
+            try
+            {
+                channelId = await _gateway.CreatePrivateGroupAsync(
+                    new PrivateGroupCreateRequest(credentials, normalizedOptions),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (GatewayException exception) when (IsUnauthorized(exception))
+            {
+                await HandleUnauthorizedAsync().ConfigureAwait(false);
+                throw;
+            }
+            catch (GatewayException exception) when (IsMutationResultUncertain(exception))
+            {
+                var refreshed = await TryRefreshRegisterSnapshotAsync(credentials, cancellationToken).ConfigureAwait(false);
+                throw new InvalidOperationException(
+                    refreshed
+                        ? "群聊创建结果无法确认；已刷新权威会话列表，请先检查是否已创建，勿直接重试。"
+                        : "群聊创建结果无法确认，且暂时无法刷新权威会话列表；请恢复连接后先检查，勿直接重试。",
+                    exception);
+            }
+
+            var subscription = new Subscription(
+                channelId,
+                normalizedOptions.Name,
+                isPrivate: true,
+                topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly,
+                isWebPublic: false);
+            await StoreThenApplyAsync(
+                [new SubscriptionChangedEvent(subscription, false, Source: DomainEventSource.Local)],
+                cancellationToken).ConfigureAwait(false);
+            return new PrivateGroupCreated(
+                channelId,
+                normalizedOptions.Name,
+                new ChannelTopic(channelId, string.Empty),
+                otherMemberIds.Length + 1);
+        }
+        finally
+        {
+            _commands.Release();
+        }
     }
 
     public async Task<ChannelPersonalSettings> GetChannelPersonalSettingsAsync(long channelId, CancellationToken cancellationToken = default)
@@ -1322,10 +1442,225 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         await LoadChannelSettingsSnapshotAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<PrivateGroupTransferResult> TransferPrivateGroupOwnershipAsync(
+        long channelId,
+        long newOwnerId,
+        CancellationToken cancellationToken = default)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        if (newOwnerId <= 0) throw new ArgumentOutOfRangeException(nameof(newOwnerId));
+        ThrowIfDisposed();
+        var currentUserId = CurrentUserId ?? throw new InvalidOperationException("No current user is available.");
+        if (newOwnerId == currentUserId) throw new InvalidOperationException("The selected member already owns this group.");
+
+        var (credentials, details, memberIds) = await LoadPrivateGroupAuthorityAsync(channelId, cancellationToken).ConfigureAwait(false);
+        if (PrivateGroupPolicy.TryGetOwnerId(details) != currentUserId)
+            throw new InvalidOperationException("Only the confirmed RelayCove group owner can transfer ownership.");
+        if (!memberIds.Contains(newOwnerId) ||
+            !State.Users.TryGetValue(newOwnerId, out var newOwner) ||
+            !newOwner.IsActive ||
+            newOwner.IsBot)
+        {
+            throw new InvalidOperationException("Choose an active non-bot member of this group.");
+        }
+
+        var replacement = PrivateGroupPolicy.OwnerGroup(newOwnerId);
+        var updates = new[]
+        {
+            new ChannelGroupSettingUpdate(ChannelGroupSettingName.CanAdministerChannel, replacement, details.CanAdministerChannelGroup!),
+            new ChannelGroupSettingUpdate(ChannelGroupSettingName.CanAddSubscribers, replacement, details.CanAddSubscribersGroup!),
+            new ChannelGroupSettingUpdate(ChannelGroupSettingName.CanRemoveSubscribers, replacement, details.CanRemoveSubscribersGroup!)
+        };
+        try
+        {
+            await _gateway.UpdateChannelAdvancedSettingsAsync(
+                new UpdateChannelAdvancedRequest(credentials, channelId, new ChannelAdvancedSettingsChange(GroupSettings: updates)),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (GatewayException exception) when (IsUnauthorized(exception))
+        {
+            await HandleUnauthorizedAsync().ConfigureAwait(false);
+            throw;
+        }
+        catch (GatewayException exception) when (IsMutationResultUncertain(exception))
+        {
+            var refreshedOwnerId = await TryRefreshPrivateGroupOwnerAsync(credentials, channelId, cancellationToken).ConfigureAwait(false);
+            return refreshedOwnerId == newOwnerId
+                ? new PrivateGroupTransferResult(true, false, "群主已转让，但请求结果曾不确定，原群主尚未退出。")
+                : new PrivateGroupTransferResult(false, false, "群主转让结果无法确认；未退出群聊，请刷新后人工确认。" );
+        }
+
+        var confirmedOwnerId = await TryRefreshPrivateGroupOwnerAsync(credentials, channelId, cancellationToken).ConfigureAwait(false);
+        if (confirmedOwnerId != newOwnerId)
+            return new PrivateGroupTransferResult(false, false, "服务器尚未确认新群主；原群主未退出。" );
+
+        try
+        {
+            await UnsubscribeChannelCoreAsync(channelId, allowConfirmedOwnerExit: false, cancellationToken).ConfigureAwait(false);
+            return new PrivateGroupTransferResult(true, true, "群主已转让，原群主已退出群聊。" );
+        }
+        catch (OperationCanceledException)
+        {
+            return new PrivateGroupTransferResult(true, false, "群主已转让，但退出操作已取消；原群主仍在群内。" );
+        }
+        catch
+        {
+            return new PrivateGroupTransferResult(true, false, "群主已转让，但原群主尚未退出，请稍后只重试退出。" );
+        }
+    }
+
+    public async Task<PrivateGroupDissolveResult> DissolvePrivateGroupAsync(
+        long channelId,
+        CancellationToken cancellationToken = default)
+    {
+        if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
+        ThrowIfDisposed();
+        var currentUserId = CurrentUserId ?? throw new InvalidOperationException("No current user is available.");
+        var (credentials, details, memberIds) = await LoadPrivateGroupAuthorityAsync(channelId, cancellationToken).ConfigureAwait(false);
+        if (PrivateGroupPolicy.TryGetOwnerId(details) != currentUserId)
+            throw new InvalidOperationException("Only the confirmed RelayCove group owner can dissolve this group.");
+
+        var otherMemberIds = memberIds.Where(id => id != currentUserId).Distinct().OrderBy(static id => id).ToArray();
+        if (otherMemberIds.Length > 0)
+        {
+            try
+            {
+                await _gateway.ModifyChannelMembersAsync(
+                    new ModifyChannelMembersRequest(credentials, details.Name, otherMemberIds, false, false),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (GatewayException exception) when (IsUnauthorized(exception))
+            {
+                await HandleUnauthorizedAsync().ConfigureAwait(false);
+                throw;
+            }
+            catch (GatewayException exception) when (IsMutationResultUncertain(exception))
+            {
+                var refreshed = await TryGetChannelMemberIdsAsync(credentials, channelId, cancellationToken).ConfigureAwait(false);
+                return refreshed is not null && refreshed.All(id => id == currentUserId)
+                    ? new PrivateGroupDissolveResult(true, false, "其他成员已移除，但请求结果曾不确定；群主尚未退出。")
+                    : new PrivateGroupDissolveResult(false, false, "移除成员的结果无法确认；群主未退出，请刷新后人工确认。" );
+            }
+        }
+
+        var confirmedMembers = await TryGetChannelMemberIdsAsync(credentials, channelId, cancellationToken).ConfigureAwait(false);
+        if (confirmedMembers is null || confirmedMembers.Count != 1 || confirmedMembers[0] != currentUserId)
+            return new PrivateGroupDissolveResult(false, false, "仍有其他成员或出现并发变更；已停止解散，群主未退出。" );
+
+        try
+        {
+            await UnsubscribeChannelCoreAsync(channelId, allowConfirmedOwnerExit: true, cancellationToken).ConfigureAwait(false);
+            return new PrivateGroupDissolveResult(true, true, "所有成员已退出，群聊已从 RelayCove 列表移除；服务器私有历史未删除。" );
+        }
+        catch (OperationCanceledException)
+        {
+            return new PrivateGroupDissolveResult(true, false, "其他成员已移除，但群主退出已取消；服务器私有历史未删除。" );
+        }
+        catch
+        {
+            return new PrivateGroupDissolveResult(true, false, "其他成员已移除，但群主尚未退出；不要重复移除成员，只需重试退出。" );
+        }
+    }
+
     public Task UnarchiveChannelAsync(long channelId, CancellationToken cancellationToken = default)
     {
         if (!IsOrganizationAdministrator) return Task.FromException(new InvalidOperationException("Unarchiving a channel requires an organization administrator."));
         return UpdateChannelAdvancedSettingsAsync(channelId, new ChannelAdvancedSettingsChange(IsArchived: false), cancellationToken);
+    }
+
+    private async Task<(CredentialEnvelope Credentials, ChannelDetails Details, IReadOnlyList<long> MemberIds)> LoadPrivateGroupAuthorityAsync(
+        long channelId,
+        CancellationToken cancellationToken)
+    {
+        var (credentials, details) = await LoadPrivateGroupDetailsAsync(channelId, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<long> memberIds;
+        try
+        {
+            memberIds = await _gateway.GetChannelMemberIdsAsync(
+                new ChannelMembersRequest(credentials, channelId),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (GatewayException exception) when (IsUnauthorized(exception))
+        {
+            await HandleUnauthorizedAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        if (memberIds.Count == 0 || memberIds.Any(id => id <= 0) || memberIds.Distinct().Count() != memberIds.Count ||
+            CurrentUserId is not { } currentUserId || !memberIds.Contains(currentUserId))
+        {
+            throw new InvalidOperationException("Refresh the authoritative member list before managing this group.");
+        }
+
+        return (credentials, details, memberIds);
+    }
+
+    private async Task<(CredentialEnvelope Credentials, ChannelDetails Details)> LoadPrivateGroupDetailsAsync(
+        long channelId,
+        CancellationToken cancellationToken)
+    {
+        if (!PrivateGroupPolicy.IsEligible(State.Subscriptions.GetValueOrDefault(channelId)))
+            throw new InvalidOperationException("Refresh subscriptions before managing this private group.");
+
+        var credentials = GetConnectedCredentials();
+        ChannelDetails details;
+        try
+        {
+            details = await _gateway.GetChannelDetailsAsync(
+                new ChannelDetailsRequest(credentials, channelId),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (GatewayException exception) when (IsUnauthorized(exception))
+        {
+            await HandleUnauthorizedAsync().ConfigureAwait(false);
+            throw;
+        }
+
+        if (details.ChannelId != channelId || !PrivateGroupPolicy.IsEligible(details) || string.IsNullOrWhiteSpace(details.Name))
+            throw new InvalidOperationException("This channel is no longer an eligible RelayCove private group.");
+        return (credentials, details);
+    }
+
+    private async Task EnsurePrivateGroupOwnerAsync(long channelId, CancellationToken cancellationToken)
+    {
+        var (_, details) = await LoadPrivateGroupDetailsAsync(channelId, cancellationToken).ConfigureAwait(false);
+        if (PrivateGroupPolicy.TryGetOwnerId(details) != CurrentUserId)
+            throw new InvalidOperationException("Only the confirmed RelayCove group owner can manage this group.");
+    }
+
+    private async Task<long?> TryRefreshPrivateGroupOwnerAsync(
+        CredentialEnvelope credentials,
+        long channelId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var details = await _gateway.GetChannelDetailsAsync(
+                new ChannelDetailsRequest(credentials, channelId),
+                cancellationToken).ConfigureAwait(false);
+            return details.ChannelId == channelId ? PrivateGroupPolicy.TryGetOwnerId(details) : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task<IReadOnlyList<long>?> TryGetChannelMemberIdsAsync(
+        CredentialEnvelope credentials,
+        long channelId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _gateway.GetChannelMemberIdsAsync(
+                new ChannelMembersRequest(credentials, channelId),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task ModifyChannelMembersAsync(long channelId, IReadOnlyList<long> principalIds, bool add, bool sendNewSubscriptionMessages, CancellationToken cancellationToken)
@@ -1333,14 +1668,69 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
         ArgumentNullException.ThrowIfNull(principalIds);
         ThrowIfDisposed();
+        var requiresPrivateGroupOwner = PrivateGroupPolicy.IsEligible(State.Subscriptions.GetValueOrDefault(channelId));
         var credentials = GetConnectedCredentials();
         ChannelDetails details;
         try { details = await _gateway.GetChannelDetailsAsync(new ChannelDetailsRequest(credentials, channelId), cancellationToken).ConfigureAwait(false); }
         catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
         if (details.ChannelId != channelId || details.IsArchived || string.IsNullOrWhiteSpace(details.Name))
             throw new InvalidOperationException("Refresh channel settings before changing members.");
+        if (requiresPrivateGroupOwner &&
+            (!PrivateGroupPolicy.IsEligible(details) || PrivateGroupPolicy.TryGetOwnerId(details) != CurrentUserId))
+        {
+            throw new InvalidOperationException("Only the confirmed RelayCove group owner can change group members.");
+        }
         try { await _gateway.ModifyChannelMembersAsync(new ModifyChannelMembersRequest(credentials, details.Name, principalIds, add, sendNewSubscriptionMessages), cancellationToken).ConfigureAwait(false); }
         catch (GatewayException exception) when (IsUnauthorized(exception)) { await HandleUnauthorizedAsync().ConfigureAwait(false); throw; }
+        catch (GatewayException exception) when (IsMutationResultUncertain(exception))
+        {
+            var refreshed = await TryGetChannelMemberIdsAsync(credentials, channelId, cancellationToken).ConfigureAwait(false);
+            var confirmed = refreshed is not null && (add
+                ? principalIds.All(refreshed.Contains)
+                : principalIds.All(id => !refreshed.Contains(id)));
+            throw new InvalidOperationException(
+                confirmed
+                    ? "成员变更已由权威成员列表确认，但原请求结果曾不确定；请刷新群设置，勿重复操作。"
+                    : "成员变更结果无法确认；已尝试刷新权威成员列表，请先核对当前成员，勿直接重试。",
+                exception);
+        }
+    }
+
+    private async Task<bool> TryRefreshRegisterSnapshotAsync(
+        CredentialEnvelope credentials,
+        CancellationToken cancellationToken)
+    {
+        var expectedAccountId = RelayCove.Core.AccountId.Create(credentials.Realm, credentials.UserId);
+        await StopRunAsync(setOffline: false).ConfigureAwait(false);
+        try
+        {
+            var register = await _gateway.RegisterAsync(
+                new RegisterRequest(credentials),
+                cancellationToken).ConfigureAwait(false);
+            return await ApplyRegisterAsync(
+                register,
+                cancellationToken,
+                credentials,
+                expectedAccountId).ConfigureAwait(false);
+        }
+        catch (GatewayException exception) when (IsUnauthorized(exception))
+        {
+            await HandleUnauthorizedAsync().ConfigureAwait(false);
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            var shouldRestart = false;
+            lock (_stateGate)
+            {
+                shouldRestart = _credentials is not null && _runCancellation is null;
+            }
+            if (shouldRestart) StartRun();
+        }
     }
 
     public async Task SubscribeToChannelAsync(long channelId, CancellationToken cancellationToken = default)
@@ -1753,10 +2143,36 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         return await RegisterWithRetryAsync(credentials, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task ApplyRegisterAsync(RegisterResult register, CancellationToken cancellationToken)
+    private async Task<bool> ApplyRegisterAsync(
+        RegisterResult register,
+        CancellationToken cancellationToken,
+        CredentialEnvelope? expectedCredentials = null,
+        AccountId? expectedAccountId = null)
     {
-        var accountId = AccountId ?? throw new InvalidOperationException("No account is active.");
-        var normalizedRegister = register with { Events = NormalizeOwnMessages(register.Events) };
+        AccountId accountId;
+        lock (_stateGate)
+        {
+            accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+            if (expectedCredentials is not null &&
+                (expectedAccountId != accountId ||
+                 !EqualityComparer<CredentialEnvelope>.Default.Equals(_credentials, expectedCredentials)))
+            {
+                return false;
+            }
+        }
+        var eligibilityState = new ClientState(subscriptions: register.Subscriptions.ToDictionary(item => item.ChannelId));
+        var normalizedRegister = register with
+        {
+            Events = FilterConversationEventsForPersistence(
+                eligibilityState,
+                NormalizeOwnMessages(register.Events)),
+            RecentDirectMessages = register.RecentDirectMessages
+                .OfType<DirectMessage>()
+                .Where(static conversation => conversation.OtherUserIds.Count <= 1)
+                .Cast<ConversationKey>()
+                .ToArray(),
+            Unread = FilterSupportedUnread(register.Unread, eligibilityState)
+        };
         await _store.ReplaceRegisterSnapshotAsync(accountId, normalizedRegister, cancellationToken).ConfigureAwait(false);
         var loaded = await _store.LoadAsync(accountId, cancellationToken).ConfigureAwait(false);
         IReadOnlyDictionary<string, OutboxEntry> outbox;
@@ -1765,14 +2181,20 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             subscriptions: normalizedRegister.Subscriptions.ToDictionary(item => item.ChannelId),
             users: normalizedRegister.Users.ToDictionary(item => item.UserId),
             unread: normalizedRegister.Unread);
-        snapshot = DomainReducer.Apply(snapshot, normalizedRegister.Events) with
+        snapshot = FilterSupportedConversations(DomainReducer.Apply(snapshot, normalizedRegister.Events) with
         {
             Outbox = new Dictionary<string, OutboxEntry>(outbox, StringComparer.Ordinal),
             Connection = new ConnectionState(ConnectionStatus.Connected),
             LastEventId = register.LastEventId
-        };
+        });
         lock (_stateGate)
         {
+            if (expectedCredentials is not null &&
+                (expectedAccountId != _accountId ||
+                 !EqualityComparer<CredentialEnvelope>.Default.Equals(_credentials, expectedCredentials)))
+            {
+                return false;
+            }
             _queueId = normalizedRegister.QueueId;
             _longPollTimeout = normalizedRegister.EventQueueLongPollTimeout;
             _maxMessageLength = normalizedRegister.MaxMessageLength;
@@ -1787,11 +2209,11 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 .Where(item => item.ChannelId > 0 && Enum.IsDefined(item.Policy))
                 .ToDictionary(item => new ChannelTopic(item.ChannelId, item.Topic).CanonicalKey, item => item.Policy, StringComparer.Ordinal);
             _isOrganizationAdministrator = normalizedRegister.IsOrganizationAdministrator;
+            _canCreatePrivateGroup = normalizedRegister.CanCreatePrivateChannel;
             _recentDirectMessages = MergeRecentDirectMessages(
                 normalizedRegister.RecentDirectMessages,
                 DeriveRecentDirectMessages(snapshot));
-            if (_selectedConversation is ChannelTopic selected &&
-                (!snapshot.Subscriptions.TryGetValue(selected.ChannelId, out var selectedSubscription) || !selectedSubscription.IsActive))
+            if (_selectedConversation is { } selected && !IsSupportedConversation(snapshot, selected))
             {
                 _selectedConversation = null;
                 InvalidateHistoryLocked(clearConversation: true);
@@ -1799,13 +2221,14 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             _state = TrimMessageWindow(snapshot, _selectedConversation, retainOldest: false);
         }
         RaiseStateChanged();
+        return true;
     }
 
     private async Task StoreThenApplyAsync(IReadOnlyCollection<DomainEvent> events, CancellationToken cancellationToken)
     {
         if (events.Count == 0) return;
         var accountId = AccountId ?? throw new InvalidOperationException("No account is active.");
-        var normalizedEvents = NormalizeOwnMessages(events);
+        var normalizedEvents = FilterConversationEventsForPersistence(State, NormalizeOwnMessages(events));
         var summariesToRefresh = GetSummaryRefreshConversations(State, normalizedEvents);
         var topicsToRefresh = summariesToRefresh.OfType<ChannelTopic>().ToArray();
         await _store.ApplyBatchAsync(accountId, normalizedEvents, cancellationToken).ConfigureAwait(false);
@@ -1817,7 +2240,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             : await _store.QueryTopicSummariesAsync(accountId, topicsToRefresh, cancellationToken).ConfigureAwait(false);
         Mutate(state =>
         {
-            var next = DomainReducer.Apply(state, normalizedEvents);
+            var next = FilterSupportedConversations(DomainReducer.Apply(state, normalizedEvents));
             var summaries = new Dictionary<string, ConversationSummary>(next.ConversationSummaries);
             foreach (var conversation in summariesToRefresh) summaries.Remove(conversation.CanonicalKey);
             foreach (var summary in refreshedSummaries) summaries[summary.Conversation.CanonicalKey] = summary;
@@ -1827,7 +2250,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             {
                 topics[new ChannelTopic(topic.ChannelId, topic.Topic).CanonicalKey] = topic;
             }
-            return next with { ConversationSummaries = summaries, Topics = topics };
+            return FilterSupportedConversations(next with { ConversationSummaries = summaries, Topics = topics });
         });
         foreach (var flags in normalizedEvents.OfType<MessageFlagsChangedEvent>()
                      .Where(static item => string.Equals(item.Flag, "starred", StringComparison.OrdinalIgnoreCase)))
@@ -1986,7 +2409,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             var history = await _gateway.GetHistoryAsync(
                 new HistoryRequest(credentials, conversation, limit: HistoryPageSize), cancellationToken).ConfigureAwait(false);
             var normalizedHistory = NormalizeOwnMessages(history.Messages);
-            await _store.StoreMessagePageAsync(accountId, normalizedHistory, cancellationToken).ConfigureAwait(false);
+            if (!await StoreHistoryPageIfCurrentAsync(
+                    accountId, conversation, generation, normalizedHistory, cancellationToken).ConfigureAwait(false)) return;
             ApplyHistoryPageIfCurrent(conversation, generation, normalizedHistory, retainOldest: false);
             var hasOlderInCache = history.FoundOldest
                 ? false
@@ -2096,7 +2520,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 new HistoryRequest(credentials, conversation, beforeMessageId, includeAnchor: false, limit: HistoryPageSize),
                 cancellationToken).ConfigureAwait(false);
             var normalizedHistory = NormalizeOwnMessages(history.Messages);
-            await _store.StoreMessagePageAsync(accountId, normalizedHistory, cancellationToken).ConfigureAwait(false);
+            if (!await StoreHistoryPageIfCurrentAsync(
+                    accountId, conversation, generation, normalizedHistory, cancellationToken).ConfigureAwait(false)) return;
             ApplyHistoryPageIfCurrent(conversation, generation, normalizedHistory, retainOldest: true);
             var hasOlderInCache = history.FoundOldest
                 ? false
@@ -2169,10 +2594,9 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 }
                 return;
             }
-            if (!IsHistoryCurrentForAccount(accountId, conversation, generation)) return;
             var normalizedPage = NormalizeOwnMessages(page.Messages);
-            await _store.StoreMessagePageAsync(accountId, normalizedPage, cancellationToken).ConfigureAwait(false);
-            if (!IsHistoryCurrentForAccount(accountId, conversation, generation)) return;
+            if (!await StoreHistoryPageIfCurrentAsync(
+                    accountId, conversation, generation, normalizedPage, cancellationToken).ConfigureAwait(false)) return;
             ApplyHistoryPageIfCurrent(conversation, generation, normalizedPage, retainOldest: false);
             SetHistoryStateIfCurrent(conversation, generation, state => state with
             {
@@ -2383,6 +2807,52 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
 
     private static ChatMessage MarkOwnMessageRead(ChatMessage message, long currentUserId) =>
         message.SenderId == currentUserId && !message.IsRead ? message with { IsRead = true } : message;
+
+    private static IReadOnlyList<DomainEvent> FilterConversationEventsForPersistence(
+        ClientState initialState,
+        IEnumerable<DomainEvent> events)
+    {
+        var accepted = new List<DomainEvent>();
+        var state = initialState;
+        foreach (var domainEvent in events)
+        {
+            var filtered = domainEvent switch
+            {
+                MessageUpsertEvent upsert when !IsSupportedConversation(state, upsert.Message.Conversation) => null,
+                MessagesUpdatedEvent updated => FilterMessagesUpdatedEvent(state, updated),
+                SendConfirmedEvent sent when
+                    !IsSupportedConversation(state, sent.Message.Conversation) &&
+                    !state.Outbox.ContainsKey(sent.LocalId) => null,
+                OutboxQueuedEvent queued when !IsSupportedConversation(state, queued.Entry.Conversation) => null,
+                TopicUpsertEvent topic when !IsSupportedConversation(
+                    state,
+                    new ChannelTopic(topic.Topic.ChannelId, topic.Topic.Topic)) => null,
+                _ => domainEvent
+            };
+            if (filtered is not null)
+            {
+                accepted.Add(filtered);
+            }
+            else if (domainEvent.EventId is { } eventId)
+            {
+                accepted.Add(new IgnoredDomainEvent(
+                    domainEvent.GetType().Name,
+                    "unsupported_conversation",
+                    eventId,
+                    domainEvent.Source));
+            }
+            state = FilterSupportedConversations(DomainReducer.Apply(state, domainEvent));
+        }
+        return accepted;
+    }
+
+    private static DomainEvent? FilterMessagesUpdatedEvent(ClientState state, MessagesUpdatedEvent updated)
+    {
+        var messages = updated.Messages
+            .Where(message => IsSupportedConversation(state, message.Conversation))
+            .ToArray();
+        return messages.Length == 0 ? null : updated with { Messages = messages };
+    }
 
     private static IReadOnlyCollection<ConversationKey> GetSummaryRefreshConversations(
         ClientState state,
@@ -2687,6 +3157,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
             CancelChannelSettingsLocked();
             _topicVisibilityPolicies = new Dictionary<string, TopicVisibilityPolicy>(StringComparer.Ordinal);
             _isOrganizationAdministrator = false;
+            _canCreatePrivateGroup = false;
             _credentials = null;
             _queueId = null;
             _selectedConversation = null;
@@ -2748,6 +3219,26 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         _availableChannels = new Dictionary<long, ChannelSummary>();
     }
 
+    private async Task<bool> StoreHistoryPageIfCurrentAsync(
+        AccountId accountId,
+        ConversationKey conversation,
+        long generation,
+        IReadOnlyCollection<ChatMessage> messages,
+        CancellationToken cancellationToken)
+    {
+        await _commands.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            if (!IsHistoryCurrentForAccount(accountId, conversation, generation)) return false;
+            await _store.StoreMessagePageAsync(accountId, messages, cancellationToken).ConfigureAwait(false);
+            return IsHistoryCurrentForAccount(accountId, conversation, generation);
+        }
+        finally
+        {
+            _commands.Release();
+        }
+    }
+
     private bool IsChannelSettingsCurrent(AccountId accountId, long generation, CancellationTokenSource cancellation) { lock (_stateGate) return IsChannelSettingsCurrentLocked(accountId, generation, cancellation); }
     private bool IsChannelSettingsCurrentLocked(AccountId accountId, long generation, CancellationTokenSource cancellation) => _accountId == accountId && _channelSettingsGeneration == generation && ReferenceEquals(_channelSettingsCancellation, cancellation) && _runCancellation is not null;
     private void CancelChannelSettingsLocked()
@@ -2769,17 +3260,138 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         }
     }
 
+    public async Task ClearConversationCacheAsync(
+        ConversationKey expectedConversation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedConversation);
+        ThrowIfDisposed();
+        CancellationTokenSource? priorHistoryCancellation;
+        await _commands.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            AccountId accountId;
+            lock (_stateGate)
+            {
+                if (_selectedConversation is not { } selected || selected != expectedConversation)
+                {
+                    throw new InvalidOperationException("The selected conversation changed before clearing its cache.");
+                }
+                accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
+                priorHistoryCancellation = _historyCancellation;
+                _historyCancellation = null;
+                _latestHistoryTask = null;
+                _loadOlderTask = null;
+                _retainOldestWindow = false;
+                var generation = ++_historyGeneration;
+                _historyState = new ConversationHistoryState(
+                    selected,
+                    generation,
+                    false,
+                    false,
+                    false,
+                    null,
+                    null);
+            }
+
+            priorHistoryCancellation?.Cancel();
+            priorHistoryCancellation?.Dispose();
+            await _store.PurgeConversationAsync(accountId, expectedConversation, cancellationToken).ConfigureAwait(false);
+
+            lock (_stateGate)
+            {
+                if (_accountId != accountId || _selectedConversation != expectedConversation) return;
+                var key = expectedConversation.CanonicalKey;
+                _historyMemoryCache.Remove(key);
+                var lruNode = _historyMemoryLru.Find(key);
+                if (lruNode is not null) _historyMemoryLru.Remove(lruNode);
+                _state = _state with
+                {
+                    Messages = _state.Messages
+                        .Where(pair => pair.Value.Conversation != expectedConversation)
+                        .ToDictionary(pair => pair.Key, pair => pair.Value),
+                    ConversationSummaries = _state.ConversationSummaries
+                        .Where(pair => !string.Equals(pair.Key, key, StringComparison.Ordinal))
+                        .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
+                };
+            }
+            RaiseStateChanged();
+        }
+        finally
+        {
+            _commands.Release();
+        }
+    }
+
     private void ValidateSend(ConversationKey conversation, string content)
     {
         ValidateMessageContent(content);
-        if (conversation is ChannelTopic channel)
+        EnsureSupportedConversationLocked(conversation);
+    }
+
+    private void EnsureSupportedConversationLocked(ConversationKey conversation)
+    {
+        if (!IsSupportedConversation(_state, conversation))
+            throw new InvalidOperationException("This conversation is not supported by RelayCove.");
+    }
+
+    private static bool IsSupportedConversation(ClientState state, ConversationKey conversation) => conversation switch
+    {
+        DirectMessage direct => direct.OtherUserIds.Count <= 1,
+        ChannelTopic { Topic.Length: 0 } channel =>
+            PrivateGroupPolicy.IsEligible(state.Subscriptions.GetValueOrDefault(channel.ChannelId)),
+        _ => false
+    };
+
+    private static bool IsSupportedConversationKey(ClientState state, string key)
+    {
+        if (string.Equals(key, "dm:self", StringComparison.Ordinal)) return true;
+        if (key.StartsWith("dm:", StringComparison.Ordinal))
         {
-            if (!_state.Subscriptions.TryGetValue(channel.ChannelId, out var subscription) || !subscription.IsActive)
-            {
-                throw new InvalidOperationException("The channel is not subscribed.");
-            }
-            if (channel.Topic.Length > _maxTopicLength) throw new ArgumentException("Topic exceeds the server limit.", nameof(conversation));
+            var participants = key[3..];
+            return participants.Length > 0 && !participants.Contains(',') &&
+                long.TryParse(participants, NumberStyles.None, CultureInfo.InvariantCulture, out var userId) && userId > 0;
         }
+
+        foreach (var subscription in state.Subscriptions.Values.Where(static item => PrivateGroupPolicy.IsEligible(item)))
+        {
+            if (string.Equals(key, new ChannelTopic(subscription.ChannelId, string.Empty).CanonicalKey, StringComparison.Ordinal))
+                return true;
+        }
+        return false;
+    }
+
+    private static UnreadState FilterSupportedUnread(UnreadState unread, ClientState state)
+    {
+        var counts = unread.Counts
+            .Where(pair => IsSupportedConversationKey(state, pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        return new UnreadState(counts, reportedTotal: null, unread.IsTruncated);
+    }
+
+    private static ClientState FilterSupportedConversations(ClientState state)
+    {
+        var messages = state.Messages
+            .Where(pair => IsSupportedConversation(state, pair.Value.Conversation))
+            .ToDictionary(pair => pair.Key, pair => pair.Value);
+        var topics = state.Topics
+            .Where(pair => pair.Value.Topic.Length == 0 &&
+                PrivateGroupPolicy.IsEligible(state.Subscriptions.GetValueOrDefault(pair.Value.ChannelId)))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        var summaries = state.ConversationSummaries
+            .Where(pair => IsSupportedConversation(state, pair.Value.Conversation))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        var outbox = state.Outbox
+            .Where(pair => IsSupportedConversation(state, pair.Value.Conversation))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        return state with
+        {
+            Messages = messages,
+            Topics = topics,
+            ConversationSummaries = summaries,
+            Outbox = outbox,
+            Unread = FilterSupportedUnread(state.Unread, state)
+        };
     }
 
     private void ValidateMessageContent(string content)
@@ -2821,13 +3433,12 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         bool changed;
         lock (_stateGate)
         {
-            var next = update(_state);
+            var next = FilterSupportedConversations(update(_state));
             changed = !ReferenceEquals(next, _state);
             _recentDirectMessages = MergeRecentDirectMessages(
                 _recentDirectMessages,
                 DeriveRecentDirectMessages(next));
-            if (_selectedConversation is ChannelTopic selected &&
-                (!next.Subscriptions.TryGetValue(selected.ChannelId, out var selectedSubscription) || !selectedSubscription.IsActive))
+            if (_selectedConversation is { } selected && !IsSupportedConversation(next, selected))
             {
                 _selectedConversation = null;
                 InvalidateHistoryLocked(clearConversation: true);
@@ -2961,7 +3572,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
     }
 
     private static IReadOnlyList<ConversationKey> DeriveRecentDirectMessages(ClientState state) => state.Messages.Values
-        .Where(message => message.Conversation is DirectMessage)
+        .Where(message => message.Conversation is DirectMessage { OtherUserIds.Count: <= 1 })
         .GroupBy(message => message.Conversation.CanonicalKey, StringComparer.Ordinal)
         .OrderByDescending(group => group.Max(message => message.Timestamp))
         .ThenBy(group => group.Key, StringComparer.Ordinal)
@@ -2973,6 +3584,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
         IEnumerable<ConversationKey> additional) => primary
         .Concat(additional)
         .OfType<DirectMessage>()
+        .Where(static conversation => conversation.OtherUserIds.Count <= 1)
         .DistinctBy(conversation => conversation.CanonicalKey)
         .Cast<ConversationKey>()
         .ToArray();

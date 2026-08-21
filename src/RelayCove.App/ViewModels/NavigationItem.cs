@@ -13,6 +13,8 @@ public sealed class NavigationItem : ObservableObject
     private bool _isBot;
     private string? _timestamp;
     private bool _isSelected;
+    private bool _isMuted;
+    private bool _isPinned;
 
     public NavigationItem(
         ConversationKey conversation,
@@ -22,7 +24,9 @@ public sealed class NavigationItem : ObservableObject
         string? avatarUrl = null,
         bool isBot = false,
         string? timestamp = null,
-        bool isSelected = false)
+        bool isSelected = false,
+        bool isMuted = false,
+        bool isPinned = false)
     {
         _conversation = conversation;
         _title = title;
@@ -32,6 +36,8 @@ public sealed class NavigationItem : ObservableObject
         _isBot = isBot;
         _timestamp = timestamp;
         _isSelected = isSelected;
+        _isMuted = isMuted;
+        _isPinned = isPinned;
     }
 
     public ConversationKey Conversation => _conversation;
@@ -41,6 +47,8 @@ public sealed class NavigationItem : ObservableObject
     public string? AvatarUrl => _avatarUrl;
     public bool IsBot => _isBot;
     public string? Timestamp => _timestamp;
+    public bool IsMuted => _isMuted;
+    public bool IsPinned => _isPinned;
 
     public bool IsSelected
     {
@@ -53,6 +61,7 @@ public sealed class NavigationItem : ObservableObject
     public bool HasAvatar => !string.IsNullOrWhiteSpace(AvatarUrl);
     public bool ShowFallback => !HasAvatar;
     public bool HasTimestamp => !string.IsNullOrWhiteSpace(Timestamp);
+    public double ItemOpacity => IsMuted ? 0.62d : 1d;
     public Brush ToneBrush => new SolidColorBrush(
         Color.FromArgb(TonePalette[StableToneIndex(Conversation.CanonicalKey)]));
     public string Initial => AvatarInitials.Create(Title, IsBot);
@@ -92,6 +101,11 @@ public sealed class NavigationItem : ObservableObject
         {
             OnPropertyChanged(nameof(HasTimestamp));
         }
+        if (SetProperty(ref _isMuted, candidate.IsMuted, nameof(IsMuted)))
+        {
+            OnPropertyChanged(nameof(ItemOpacity));
+        }
+        SetProperty(ref _isPinned, candidate.IsPinned, nameof(IsPinned));
         IsSelected = candidate.IsSelected;
     }
 

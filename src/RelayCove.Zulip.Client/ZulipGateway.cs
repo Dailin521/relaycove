@@ -20,7 +20,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
     ];
     private static readonly string[] InitialFetchEventTypes =
     [
-        "subscription", "realm_user", "realm", "recent_private_conversations"
+        "subscription", "realm_user", "realm", "realm_user_groups", "recent_private_conversations"
     ];
     private static readonly IReadOnlyDictionary<string, bool> ClientCapabilities =
         new Dictionary<string, bool>(StringComparer.Ordinal)
@@ -174,7 +174,8 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             PositiveOrNull(GetInt32(root, "max_channel_folder_name_length")),
             PositiveOrNull(GetInt32(root, "max_channel_folder_description_length")),
             ToUserTopicVisibilities(root),
-            IsOrganizationAdministrator(root, request.Credentials.UserId));
+            IsOrganizationAdministrator(root, request.Credentials.UserId),
+            CanCreatePrivateChannel(root, request.Credentials.UserId));
     }
 
     public async Task<EventBatch> GetEventsAsync(GetEventsRequest request, CancellationToken cancellationToken = default)
@@ -798,6 +799,47 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             ["is_web_public"] = options.IsWebPublic ? "true" : "false",
             ["history_public_to_subscribers"] = options.HistoryPublicToSubscribers ? "true" : "false",
             ["is_default_stream"] = options.IsDefaultStream ? "true" : "false"
+        };
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Post, "channels/create", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        if (!string.Equals(GetString(document.RootElement, "result"), "success", StringComparison.OrdinalIgnoreCase))
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        EnsureNoUnsupportedParameters(document.RootElement);
+        return GetInt64(document.RootElement, "id") is { } channelId && channelId > 0
+            ? channelId
+            : throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+    }
+
+    public async Task<long> CreatePrivateGroupAsync(PrivateGroupCreateRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Options);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.Options.Name);
+        var otherMemberIds = request.Options.OtherMemberIds
+            .Where(id => id > 0 && id != request.Credentials.UserId)
+            .Distinct()
+            .OrderBy(static id => id)
+            .ToArray();
+        if (otherMemberIds.Length < 2 || otherMemberIds.Length != request.Options.OtherMemberIds.Count)
+            throw new ArgumentException("A private group requires at least two distinct other members.", nameof(request));
+
+        var subscribers = new[] { request.Credentials.UserId }.Concat(otherMemberIds).ToArray();
+        var ownerGroup = PrivateGroupPolicy.OwnerGroup(request.Credentials.UserId);
+        var serializedOwnerGroup = JsonSerializer.Serialize(ToGroupValue(ownerGroup), JsonOptions);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["name"] = request.Options.Name.Trim(),
+            ["description"] = string.Empty,
+            ["subscribers"] = JsonSerializer.Serialize(subscribers, JsonOptions),
+            ["announce"] = "false",
+            ["invite_only"] = "true",
+            ["is_web_public"] = "false",
+            ["history_public_to_subscribers"] = "true",
+            ["is_default_stream"] = "false",
+            ["topics_policy"] = JsonSerializer.Serialize("empty_topic_only", JsonOptions),
+            ["can_administer_channel_group"] = serializedOwnerGroup,
+            ["can_add_subscribers_group"] = serializedOwnerGroup,
+            ["can_remove_subscribers_group"] = serializedOwnerGroup
         };
         using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Post, "channels/create", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
         using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
@@ -1618,6 +1660,25 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             {
                 return [new SubscriptionPatchedEvent(channelId, null, !archived, eventId, source)];
             }
+            if (string.Equals(property, "invite_only", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(property, "is_private", StringComparison.OrdinalIgnoreCase))
+            {
+                return GetBoolean(value, "value") is { } isPrivate
+                    ? [new SubscriptionPatchedEvent(channelId, null, null, eventId, source, IsPrivate: isPrivate)]
+                    : [new SubscriptionPatchedEvent(channelId, null, null, eventId, source, ClearEligibility: true)];
+            }
+            if (string.Equals(property, "is_web_public", StringComparison.OrdinalIgnoreCase))
+            {
+                return GetBoolean(value, "value") is { } isWebPublic
+                    ? [new SubscriptionPatchedEvent(channelId, null, null, eventId, source, IsWebPublic: isWebPublic)]
+                    : [new SubscriptionPatchedEvent(channelId, null, null, eventId, source, ClearEligibility: true)];
+            }
+            if (string.Equals(property, "topics_policy", StringComparison.OrdinalIgnoreCase))
+            {
+                return TryParseTopicsPolicy(GetString(value, "value")) is { } topicsPolicy
+                    ? [new SubscriptionPatchedEvent(channelId, null, null, eventId, source, TopicsPolicy: topicsPolicy)]
+                    : [new SubscriptionPatchedEvent(channelId, null, null, eventId, source, ClearEligibility: true)];
+            }
         }
 
         if (string.Equals(op, "delete", StringComparison.OrdinalIgnoreCase))
@@ -1704,7 +1765,16 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         var id = GetInt64(value, "stream_id", "channel_id");
         var name = GetString(value, "name", "stream_name");
         return id is > 0 && !string.IsNullOrWhiteSpace(name)
-            ? new Subscription(id.Value, name, !(GetBoolean(value, "is_archived") ?? false), GetBoolean(value, "is_muted") ?? false, GetBoolean(value, "pin_to_top") ?? false, GetString(value, "color"))
+            ? new Subscription(
+                id.Value,
+                name,
+                !(GetBoolean(value, "is_archived") ?? false),
+                GetBoolean(value, "is_muted") ?? false,
+                GetBoolean(value, "pin_to_top") ?? false,
+                GetString(value, "color"),
+                GetBoolean(value, "invite_only"),
+                TryParseTopicsPolicy(GetString(value, "topics_policy")),
+                GetBoolean(value, "is_web_public"))
             : null;
     }
 
@@ -1861,6 +1931,83 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         return role is 100 or 200 && declaredAdmin is not false;
     }
 
+    private static bool CanCreatePrivateChannel(JsonElement root, long currentUserId)
+    {
+        if (!TryGetStrictGroupSetting(root, "realm_can_create_private_channel_group", out var setting) || setting is null)
+            return false;
+
+        var rawGroups = GetArray(root, "realm_user_groups");
+        var groups = rawGroups
+            .Select(ToStrictChannelUserGroup)
+            .Where(static group => group is not null)
+            .Cast<ChannelUserGroup>()
+            .ToArray();
+        if (groups.Length != rawGroups.Length || groups.Select(static group => group.GroupId).Distinct().Count() != groups.Length)
+            return false;
+        return ChannelPermissionEvaluator.IsMember(currentUserId, setting, groups);
+    }
+
+    private static ChannelUserGroup? ToStrictChannelUserGroup(JsonElement value)
+    {
+        var id = GetInt64(value, "id");
+        var name = GetString(value, "name");
+        if (value.ValueKind != JsonValueKind.Object || id is not > 0 || string.IsNullOrWhiteSpace(name) ||
+            !TryGetStrictInt64Array(value, "members", out var members) ||
+            !TryGetStrictInt64Array(value, "direct_subgroup_ids", out var directSubgroupIds))
+        {
+            return null;
+        }
+
+        var isDeactivated = false;
+        if (TryGetProperty(value, "deactivated", out var deactivated))
+        {
+            if (deactivated.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return null;
+            isDeactivated = deactivated.GetBoolean();
+        }
+        else if (TryGetProperty(value, "is_deactivated", out deactivated))
+        {
+            if (deactivated.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return null;
+            isDeactivated = deactivated.GetBoolean();
+        }
+
+        return new ChannelUserGroup(id.Value, name, isDeactivated, members, directSubgroupIds);
+    }
+
+    private static bool TryGetStrictGroupSetting(JsonElement root, string property, out ChannelGroupSetting? setting)
+    {
+        setting = null;
+        if (!TryGetProperty(root, property, out var value)) return false;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var groupId) && groupId > 0)
+        {
+            setting = new NamedChannelGroupSetting(groupId);
+            return true;
+        }
+        if (value.ValueKind != JsonValueKind.Object ||
+            !TryGetStrictInt64Array(value, "direct_members", out var members) ||
+            !TryGetStrictInt64Array(value, "direct_subgroups", out var subgroups))
+        {
+            return false;
+        }
+
+        setting = new AnonymousChannelGroupSetting(members, subgroups);
+        return true;
+    }
+
+    private static bool TryGetStrictInt64Array(JsonElement value, string property, out long[] values)
+    {
+        values = [];
+        if (!TryGetProperty(value, property, out var array) || array.ValueKind != JsonValueKind.Array) return false;
+        var parsed = new List<long>();
+        foreach (var item in array.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Number || !item.TryGetInt64(out var id) || id <= 0) return false;
+            parsed.Add(id);
+        }
+        if (parsed.Distinct().Count() != parsed.Count) return false;
+        values = parsed.ToArray();
+        return true;
+    }
+
     private static void EnsureNoUnsupportedParameters(JsonElement root)
     {
         if (GetStringArray(root, "ignored_parameters_unsupported").Length > 0)
@@ -1927,10 +2074,22 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         if (change.IsArchived is true) throw new ArgumentException("Archiving uses the dedicated archive operation.", nameof(change));
         if (change.TopicsPolicy is { } topicsPolicy) fields["topics_policy"] = ToTopicsPolicy(topicsPolicy);
         if (change.RetentionPolicy is { } retention) fields["message_retention_days"] = ToRetentionValue(retention);
+        var groupSettings = new List<ChannelGroupSettingUpdate>();
         if (change.GroupSetting is { } groupName)
         {
             if (change.NewGroup is null || change.OldGroup is null) throw new ArgumentException("Both old and new group settings are required.", nameof(change));
-            fields[ToGroupSettingProperty(groupName)] = JsonSerializer.Serialize(new { @new = ToGroupValue(change.NewGroup), old = ToGroupValue(change.OldGroup) }, JsonOptions);
+            groupSettings.Add(new ChannelGroupSettingUpdate(groupName, change.NewGroup, change.OldGroup));
+        }
+        if (change.GroupSettings is { Count: > 0 }) groupSettings.AddRange(change.GroupSettings);
+        foreach (var groupSetting in groupSettings)
+        {
+            ArgumentNullException.ThrowIfNull(groupSetting.NewGroup);
+            ArgumentNullException.ThrowIfNull(groupSetting.OldGroup);
+            var property = ToGroupSettingProperty(groupSetting.Name);
+            if (fields.ContainsKey(property)) throw new ArgumentException("A group setting can only be changed once per request.", nameof(change));
+            fields[property] = JsonSerializer.Serialize(
+                new { @new = ToGroupValue(groupSetting.NewGroup), old = ToGroupValue(groupSetting.OldGroup) },
+                JsonOptions);
         }
         return fields;
     }
@@ -1962,6 +2121,15 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             _ => throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse)
         };
     }
+
+    private static ChannelTopicsPolicy? TryParseTopicsPolicy(string? policy) => policy switch
+    {
+        "inherit" => ChannelTopicsPolicy.Inherit,
+        "allow_empty_topic" => ChannelTopicsPolicy.AllowEmptyTopic,
+        "disable_empty_topic" => ChannelTopicsPolicy.DisableEmptyTopic,
+        "empty_topic_only" => ChannelTopicsPolicy.EmptyTopicOnly,
+        _ => null
+    };
 
     private static string ToRetentionValue(ChannelRetentionPolicy retention) => retention.Kind switch
     {

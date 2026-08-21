@@ -6,6 +6,7 @@ public interface IClientSession
     RealmEndpoint? ActiveRealm { get; }
     long? CurrentUserId { get; }
     bool IsOrganizationAdministrator => false;
+    bool CanCreatePrivateGroup => false;
     long MaxFileUploadBytes { get; }
     ClientState State { get; }
     ConversationKey? SelectedConversation { get; }
@@ -51,6 +52,7 @@ public interface IClientSession
     Task<string> GetChannelEmailAddressAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException<string>(new NotSupportedException("Channel settings are not available."));
     Task ArchiveChannelAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel settings are not available."));
     Task<ChannelSummary> CreateChannelAsync(ChannelCreateOptions options, CancellationToken cancellationToken = default) => Task.FromException<ChannelSummary>(new NotSupportedException("Channel creation is not available."));
+    Task<PrivateGroupCreated> CreatePrivateGroupAsync(PrivateGroupCreateOptions options, CancellationToken cancellationToken = default) => Task.FromException<PrivateGroupCreated>(new NotSupportedException("Private-group creation is not available."));
     Task<ChannelPersonalSettings> GetChannelPersonalSettingsAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException<ChannelPersonalSettings>(new NotSupportedException("Channel personal settings are not available."));
     Task SetChannelPersonalSettingAsync(long channelId, ChannelPersonalSettingChange change, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel personal settings are not available."));
     Task<IReadOnlyList<UserProfile>> GetRealmUsersAsync(CancellationToken cancellationToken = default) => Task.FromException<IReadOnlyList<UserProfile>>(new NotSupportedException("Realm users are not available."));
@@ -58,9 +60,13 @@ public interface IClientSession
     Task AddChannelMembersAsync(long channelId, IReadOnlyList<long> principalIds, bool sendNewSubscriptionMessages, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel members are not available."));
     Task RemoveChannelMembersAsync(long channelId, IReadOnlyList<long> principalIds, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel members are not available."));
     Task UpdateChannelAdvancedSettingsAsync(long channelId, ChannelAdvancedSettingsChange change, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel settings are not available."));
+    Task<PrivateGroupTransferResult> TransferPrivateGroupOwnershipAsync(long channelId, long newOwnerId, CancellationToken cancellationToken = default) => Task.FromException<PrivateGroupTransferResult>(new NotSupportedException("Private-group ownership transfer is not available."));
+    Task<PrivateGroupDissolveResult> DissolvePrivateGroupAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException<PrivateGroupDissolveResult>(new NotSupportedException("Private-group dissolution is not available."));
     Task UnarchiveChannelAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel settings are not available."));
     Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default);
     Task MarkDisplayedReadAsync(ConversationKey expectedConversation, CancellationToken cancellationToken = default);
     Task ClearLocalCacheAsync(CancellationToken cancellationToken = default);
+    Task ClearConversationCacheAsync(ConversationKey expectedConversation, CancellationToken cancellationToken = default) =>
+        Task.FromException(new NotSupportedException("Conversation cache clearing is not available."));
     Task StopAsync(CancellationToken cancellationToken = default);
 }

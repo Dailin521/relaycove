@@ -10,7 +10,8 @@ public sealed record ChannelAdvancedSettingsChange(
     ChannelRetentionPolicy? RetentionPolicy = null,
     ChannelGroupSettingName? GroupSetting = null,
     ChannelGroupSetting? NewGroup = null,
-    ChannelGroupSetting? OldGroup = null)
+    ChannelGroupSetting? OldGroup = null,
+    IReadOnlyList<ChannelGroupSettingUpdate>? GroupSettings = null)
 {
     public override string ToString() => "ChannelAdvancedSettingsChange { Values = [redacted] }";
 }

@@ -131,7 +131,16 @@ public static class DomainReducer
                 subscriptions[subscriptionPatch.ChannelId] = subscriptionExisting with
                 {
                     Name = subscriptionPatch.Name ?? subscriptionExisting.Name,
-                    IsActive = subscriptionPatch.IsActive ?? subscriptionExisting.IsActive
+                    IsActive = subscriptionPatch.IsActive ?? subscriptionExisting.IsActive,
+                    IsPrivate = subscriptionPatch.ClearEligibility
+                        ? null
+                        : subscriptionPatch.IsPrivate ?? subscriptionExisting.IsPrivate,
+                    IsWebPublic = subscriptionPatch.ClearEligibility
+                        ? null
+                        : subscriptionPatch.IsWebPublic ?? subscriptionExisting.IsWebPublic,
+                    TopicsPolicy = subscriptionPatch.ClearEligibility
+                        ? null
+                        : subscriptionPatch.TopicsPolicy ?? subscriptionExisting.TopicsPolicy
                 };
                 break;
             case SubscriptionPreferenceChangedEvent preference when subscriptions.TryGetValue(preference.ChannelId, out var preferenceExisting):

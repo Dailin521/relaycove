@@ -82,7 +82,7 @@ public sealed class ZulipGatewayTests
         Assert.Equal("false", form["apply_markdown"]);
         Assert.Equal("false", form["include_subscribers"]);
         Assert.Equal("3600", form["idle_queue_timeout"]);
-        Assert.Equal("[\"subscription\",\"realm_user\",\"realm\",\"recent_private_conversations\"]", form["fetch_event_types"]);
+        Assert.Equal("[\"subscription\",\"realm_user\",\"realm\",\"realm_user_groups\",\"recent_private_conversations\"]", form["fetch_event_types"]);
         Assert.Contains("\"bulk_message_deletion\":true", form["client_capabilities"], StringComparison.Ordinal);
         Assert.Contains("\"archived_channels\":true", form["client_capabilities"], StringComparison.Ordinal);
         Assert.Equal("queue-1", result.QueueId);
@@ -94,8 +94,28 @@ public sealed class ZulipGatewayTests
         Assert.Equal(3, result.Unread.Total);
         Assert.Equal(25, result.MaxFileUploadSizeMiB);
         Assert.True(result.IsOrganizationAdministrator);
+        Assert.False(result.CanCreatePrivateChannel);
         Assert.Equal(TopicVisibilityPolicy.Followed, Assert.Single(result.UserTopics!).Policy);
         Assert.Empty(result.Events);
+    }
+
+    [Theory]
+    [InlineData("{\"direct_members\":[7],\"direct_subgroups\":[]}", "[]", true)]
+    [InlineData("1", "[{\"id\":1,\"name\":\"creators\",\"members\":[],\"direct_subgroup_ids\":[2]},{\"id\":2,\"name\":\"nested\",\"members\":[7],\"direct_subgroup_ids\":[]}]", true)]
+    [InlineData("1", "[{\"id\":1,\"name\":\"creators\",\"members\":[8],\"direct_subgroup_ids\":[]}]", false)]
+    [InlineData("1", "[{\"id\":1,\"name\":\"creators\",\"members\":[7,\"bad\"],\"direct_subgroup_ids\":[]}]", false)]
+    public async Task Register_WhenPrivateChannelCreatorGroupIsProvided_EvaluatesStrictMembership(
+        string permission,
+        string groups,
+        bool expected)
+    {
+        using var handler = new RecordingHandler(Json(RegisterPayload(permission, groups)));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.RegisterAsync(new RegisterRequest(Credentials));
+
+        Assert.Equal(expected, result.CanCreatePrivateChannel);
+        Assert.Single(handler.Requests);
     }
 
     [Fact]
@@ -409,6 +429,29 @@ public sealed class ZulipGatewayTests
         Assert.Equal(4, changed.ChannelId);
         Assert.Equal(SubscriptionPreference.Muted, changed.Preference);
         Assert.True(changed.Value);
+    }
+
+    [Theory]
+    [InlineData("false", false, false)]
+    [InlineData("true", true, false)]
+    [InlineData("\"invalid\"", null, true)]
+    public async Task Event_StreamWebPublicUpdate_MapsBooleanAndFailsClosedOnMalformedValue(
+        string value,
+        bool? expected,
+        bool clearEligibility)
+    {
+        using var handler = new RecordingHandler(Json($$"""
+            {"events":[{"id":23,"type":"stream","op":"update","stream_id":4,"property":"is_web_public","value":{{value}}}]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var batch = await gateway.GetEventsAsync(
+            new GetEventsRequest(Credentials, "queue-1", 22, TimeSpan.FromSeconds(30)));
+
+        var changed = Assert.IsType<SubscriptionPatchedEvent>(Assert.Single(batch.Events));
+        Assert.Equal(4, changed.ChannelId);
+        Assert.Equal(expected, changed.IsWebPublic);
+        Assert.Equal(clearEligibility, changed.ClearEligibility);
     }
 
     [Fact]
@@ -1155,6 +1198,94 @@ public sealed class ZulipGatewayTests
 
         Assert.Empty(handler.Requests);
     }
+
+    [Fact]
+    public async Task CreatePrivateGroup_UsesOneStrictPrivateEmptyTopicRequestWithInitialMembersAndOwnerGroups()
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success","id":61}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        var channelId = await gateway.CreatePrivateGroupAsync(new PrivateGroupCreateRequest(
+            Credentials,
+            new PrivateGroupCreateOptions("  产品设计群  ", [9, 8])));
+
+        Assert.Equal(61, channelId);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("/api/v1/channels/create", request.Uri!.AbsolutePath);
+        var form = ParseForm(request.Body);
+        Assert.Equal("产品设计群", form["name"]);
+        Assert.Equal(string.Empty, form["description"]);
+        Assert.Equal("false", form["announce"]);
+        Assert.Equal("true", form["invite_only"]);
+        Assert.Equal("false", form["is_web_public"]);
+        Assert.Equal("false", form["is_default_stream"]);
+        Assert.Equal("true", form["history_public_to_subscribers"]);
+        Assert.Equal("\"empty_topic_only\"", form["topics_policy"]);
+        using (var topicsPolicy = JsonDocument.Parse(form["topics_policy"]))
+            Assert.Equal("empty_topic_only", topicsPolicy.RootElement.GetString());
+        using (var subscribers = JsonDocument.Parse(form["subscribers"]))
+        {
+            Assert.Equal([7L, 8L, 9L], subscribers.RootElement.EnumerateArray().Select(static item => item.GetInt64()));
+        }
+        foreach (var field in new[]
+                 {
+                     "can_administer_channel_group",
+                     "can_add_subscribers_group",
+                     "can_remove_subscribers_group"
+                 })
+        {
+            using var owner = JsonDocument.Parse(form[field]);
+            Assert.Equal([7L], owner.RootElement.GetProperty("direct_members").EnumerateArray().Select(static item => item.GetInt64()));
+            Assert.Empty(owner.RootElement.GetProperty("direct_subgroups").EnumerateArray());
+        }
+        Assert.DoesNotContain("is_private", form.Keys);
+    }
+
+    [Theory]
+    [InlineData("{\"result\":\"success\"}")]
+    [InlineData("{\"result\":\"error\",\"id\":61}")]
+    [InlineData("{\"result\":\"success\",\"id\":61,\"ignored_parameters_unsupported\":[\"topics_policy\"]}")]
+    public async Task CreatePrivateGroup_WhenResponseIsUncertain_FailsClosedWithoutRetry(string payload)
+    {
+        using var handler = new RecordingHandler(Json(payload));
+        using var gateway = new ZulipGateway(handler);
+
+        await Assert.ThrowsAsync<GatewayException>(() => gateway.CreatePrivateGroupAsync(new PrivateGroupCreateRequest(
+            Credentials,
+            new PrivateGroupCreateOptions("group", [8, 9]))));
+
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(8, 8)]
+    [InlineData(7, 8)]
+    public async Task CreatePrivateGroup_WhenInitialMembersAreInvalid_FailsBeforeNetwork(long first, long second)
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success","id":61}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => gateway.CreatePrivateGroupAsync(new PrivateGroupCreateRequest(
+            Credentials,
+            new PrivateGroupCreateOptions("group", [first, second]))));
+
+        Assert.Empty(handler.Requests);
+    }
+
+    private static string RegisterPayload(string permission, string groups) => $$"""
+        {
+          "queue_id":"queue-1",
+          "last_event_id":9,
+          "event_queue_longpoll_timeout_seconds":90,
+          "max_message_length":10000,
+          "max_topic_length":60,
+          "subscriptions":[],
+          "realm_users":[{"user_id":7,"full_name":"Ada","email":"ada@example.test"}],
+          "realm_can_create_private_channel_group":{{permission}},
+          "realm_user_groups":{{groups}}
+        }
+        """;
 
     private static HttpResponseMessage Json(string json, HttpStatusCode status = HttpStatusCode.OK, TimeSpan? retryAfter = null)
     {

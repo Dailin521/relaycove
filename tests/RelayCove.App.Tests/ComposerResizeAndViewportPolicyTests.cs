@@ -35,6 +35,21 @@ public sealed class ComposerResizeAndViewportPolicyTests
     }
 
     [Theory]
+    [InlineData(999.9d, 500d, false)]
+    [InlineData(1000d, 500d, false)]
+    [InlineData(1000.1d, 500d, true)]
+    [InlineData(1000.1d, 0d, false)]
+    public void ShouldShowJumpToLatest_WhenBottomDistanceExceedsTwoViewports_UsesStrictBoundary(
+        double bottomDistanceDip,
+        double viewportHeightDip,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            MessageViewportPolicy.ShouldShowJumpToLatest(bottomDistanceDip, viewportHeightDip));
+    }
+
+    [Theory]
     [InlineData(true, 1000d, 900d, true)]
     [InlineData(true, 1000d, 998d, false)]
     [InlineData(false, 1000d, 900d, false)]

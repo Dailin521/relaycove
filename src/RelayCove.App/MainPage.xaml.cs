@@ -120,7 +120,7 @@ public partial class MainPage : ContentPage
                 }
                 else if (!_viewModel.IsDetailsOpen)
                 {
-                    Dispatcher.Dispatch(ChatHeader.FocusDetailsButton);
+                    Dispatcher.Dispatch(ChatHeader.FocusSettingsButton);
                 }
                 break;
             case nameof(ShellViewModel.IsSearchOpen) when _viewModel.IsSearchOpen:
@@ -133,17 +133,7 @@ public partial class MainPage : ContentPage
                 Dispatcher.Dispatch(() => FirstAccountMenuButton.Focus());
                 break;
             case nameof(ShellViewModel.IsNewConversationOpen) when _viewModel.IsNewConversationOpen:
-                Dispatcher.Dispatch(() =>
-                {
-                    if (_viewModel.IsLockedChannelTopicComposer) LockedChannelTopicEntry.Focus();
-                    else NewConversationSearchEntry.Focus();
-                });
-                break;
-            case nameof(ShellViewModel.IsChannelBrowserOpen) when _viewModel.IsChannelBrowserOpen:
-                Dispatcher.Dispatch(() => ChannelBrowserCloseButton.Focus());
-                break;
-            case nameof(ShellViewModel.IsChannelBrowserOpen):
-                Dispatcher.Dispatch(ConversationPane.FocusConversationFilter);
+                Dispatcher.Dispatch(() => NewConversationSearchEntry.Focus());
                 break;
             case nameof(ShellViewModel.ChannelSettings) when _viewModel.ChannelSettings.IsOpen:
                 Dispatcher.Dispatch(ChannelSettingsOverlay.FocusCloseButton);
@@ -171,9 +161,6 @@ public partial class MainPage : ContentPage
                 break;
             case nameof(ShellViewModel.TopicMenuFocusRequest):
                 Dispatcher.Dispatch(ConversationPane.FocusTopicMenuButton);
-                break;
-            case nameof(ShellViewModel.HeaderTopicMenuFocusRequest):
-                Dispatcher.Dispatch(ChatHeader.FocusTopicMenuButton);
                 break;
             case nameof(ShellViewModel.IsEditDialogOpen) when _viewModel.IsEditDialogOpen:
                 Dispatcher.Dispatch(() => EditMessageEditor.Focus());
@@ -226,7 +213,6 @@ public partial class MainPage : ContentPage
         else if (_viewModel.IsTopicMoveDialogOpen) _viewModel.CancelTopicMoveDialogCommand.Execute(null);
         else if (_viewModel.IsTopicResolutionConfirmationOpen) _viewModel.CancelTopicResolutionCommand.Execute(null);
         else if (_viewModel.IsTopicDeleteConfirmationOpen) _viewModel.CancelTopicDeleteCommand.Execute(null);
-        else if (_viewModel.IsChannelBrowserOpen) _viewModel.CloseChannelBrowserCommand.Execute(null);
         else if (_viewModel.IsNewConversationOpen) _viewModel.CloseNewConversationCommand.Execute(null);
         else if (_viewModel.IsImageViewerOpen) _viewModel.CloseImageViewerCommand.Execute(null);
         else if (_viewModel.IsChannelUnsubscribeConfirmationOpen) _viewModel.CancelChannelUnsubscribeCommand.Execute(null);
@@ -239,7 +225,6 @@ public partial class MainPage : ContentPage
         else if (_viewModel.IsAccountMenuOpen)
         {
             _viewModel.CloseAccountMenuCommand.Execute(null);
-            NavigationRail.FocusAccountButton();
         }
         else if (_viewModel.IsComposerEmojiPickerOpen) _viewModel.ToggleComposerEmojiPickerCommand.Execute(null);
         else if (_viewModel.IsSearchOpen) _viewModel.CloseSearchCommand.Execute(null);
@@ -348,7 +333,6 @@ public partial class MainPage : ContentPage
         if (key == VirtualKey.Tab)
         {
             _viewModel.CloseAccountMenuCommand.Execute(null);
-            NavigationRail.FocusAccountButton();
             return true;
         }
         if (key == VirtualKey.Home)

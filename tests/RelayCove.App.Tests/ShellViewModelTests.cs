@@ -121,13 +121,13 @@ public sealed class ShellViewModelTests
     public void SessionStateChanged_WhenSubscribedAndRecentDirectMessage_ProjectsNavigationAndRawMessage()
     {
         var direct = new DirectMessage([8]);
-        var channel = new ChannelTopic(4, "release");
+        var channel = new ChannelTopic(4, string.Empty);
         var state = new ClientState(
             messages: new Dictionary<long, ChatMessage>
             {
                 [11] = new ChatMessage(11, channel, 7, "**raw markdown**", DateTimeOffset.UnixEpoch, senderDisplayName: "Ada")
             },
-            subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering") },
+            subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription(4, "engineering") },
             users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
             connection: new ConnectionState(RelayCove.Core.ConnectionStatus.Connected));
         var session = new FakeSession { StateValue = state, Recent = [direct], Selected = channel };
@@ -147,10 +147,13 @@ public sealed class ShellViewModelTests
     [Fact]
     public void SessionStateChanged_WhenUnreadIsAuthoritative_ProjectsConversationAndNavigationBadges()
     {
-        var channel = new ChannelTopic(4, "release");
+        var channel = new ChannelTopic(4, string.Empty);
         var direct = new DirectMessage([8]);
         var state = new ClientState(
-            subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering", isMuted: true, isPinned: true) },
+            subscriptions: new Dictionary<long, Subscription>
+            {
+                [4] = PrivateGroupSubscription(4, "engineering") with { IsMuted = true, IsPinned = true }
+            },
             users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
             unread: new UnreadState(
                 new Dictionary<string, int>
@@ -169,17 +172,16 @@ public sealed class ShellViewModelTests
         Assert.Equal("99+", viewModel.NavigationUnreadLabel);
         Assert.True(viewModel.HasNavigationUnread);
         Assert.True(viewModel.ShowChannelDetails);
-        Assert.Equal("频道话题", viewModel.DetailsKindLabel);
-        Assert.Contains("频道 ID：4", viewModel.DetailsIdentifierLabel, StringComparison.Ordinal);
+        Assert.Equal("私有群聊", viewModel.DetailsKindLabel);
+        Assert.Contains("私有群聊", viewModel.DetailsIdentifierLabel, StringComparison.Ordinal);
         Assert.Contains("未读 5 条", viewModel.DetailsStateLabel, StringComparison.Ordinal);
-        Assert.Contains("频道已静音", viewModel.DetailsStateLabel, StringComparison.Ordinal);
-        Assert.Contains("已置顶", viewModel.DetailsStateLabel, StringComparison.Ordinal);
-        Assert.Contains("此详情面板不加载", viewModel.DetailsUnavailableMessage, StringComparison.Ordinal);
-        Assert.Contains("频道设置", viewModel.DetailsUnavailableMessage, StringComparison.Ordinal);
+        Assert.True(viewModel.IsSelectedChannelMuted);
+        Assert.True(viewModel.IsSelectedChannelPinned);
+        Assert.Empty(viewModel.DetailsUnavailableMessage);
     }
 
     [Fact]
-    public void Projection_WhenDirectMessageIsSelected_ShowsReliableParticipantsAndExplicitBoundary()
+    public void Projection_WhenOneToOneDirectMessageIsSelected_ShowsUserFacingIdentityOnly()
     {
         var direct = new DirectMessage([8]);
         var state = new ClientState(
@@ -197,11 +199,70 @@ public sealed class ShellViewModelTests
 
         Assert.False(viewModel.ShowChannelDetails);
         Assert.Equal("私信", viewModel.DetailsKindLabel);
+        Assert.Equal("Bea", viewModel.DetailsTitle);
+        Assert.Equal("与 Bea 的私信", viewModel.DetailsBody);
         Assert.Equal("一对一私信 · 2 位参与者", viewModel.DetailsIdentifierLabel);
-        Assert.Contains("未读 3 条", viewModel.DetailsStateLabel, StringComparison.Ordinal);
-        Assert.Contains("Bea", viewModel.DetailsBody, StringComparison.Ordinal);
-        Assert.Contains("presence", viewModel.DetailsUnavailableMessage, StringComparison.Ordinal);
-        Assert.Contains("不从缓存推断身份", viewModel.DetailsUnavailableMessage, StringComparison.Ordinal);
+        Assert.Empty(viewModel.DetailsStateLabel);
+        Assert.Empty(viewModel.DetailsAvailableMessage);
+        Assert.Empty(viewModel.DetailsUnavailableMessage);
+        AssertDirectMessageDetailsAreUserFacing(viewModel);
+    }
+
+    [Fact]
+    public void Projection_WhenSelfDirectMessageIsSelected_ShowsSelfIdentityOnly()
+    {
+        var direct = new DirectMessage([]);
+        var state = new ClientState(
+            users: new Dictionary<long, UserProfile> { [7] = new UserProfile(7, "Dal") },
+            connection: new ConnectionState(RelayCove.Core.ConnectionStatus.Connected));
+        var session = new FakeSession { StateValue = state, Recent = [direct], Selected = direct, CurrentUserId = 7 };
+        using var viewModel = CreateViewModel(session);
+
+        session.Publish();
+
+        Assert.False(viewModel.ShowChannelDetails);
+        Assert.Equal("给自己", viewModel.DetailsKindLabel);
+        Assert.Equal("Dal（自己）", viewModel.DetailsTitle);
+        Assert.Equal("仅你自己可见", viewModel.DetailsBody);
+        Assert.Equal("给自己的私信", viewModel.DetailsIdentifierLabel);
+        Assert.Empty(viewModel.DetailsStateLabel);
+        Assert.Empty(viewModel.DetailsAvailableMessage);
+        Assert.Empty(viewModel.DetailsUnavailableMessage);
+        AssertDirectMessageDetailsAreUserFacing(viewModel);
+    }
+
+    [Fact]
+    public void Projection_WhenGroupDirectMessageIsSelected_HidesUnsupportedConversation()
+    {
+        var direct = new DirectMessage([8, 9]);
+        var state = new ClientState(
+            users: new Dictionary<long, UserProfile>
+            {
+                [7] = new UserProfile(7, "Dal"),
+                [8] = new UserProfile(8, "Bea, Jr."),
+                [9] = new UserProfile(9, "Cai")
+            },
+            connection: new ConnectionState(RelayCove.Core.ConnectionStatus.Connected));
+        var session = new FakeSession { StateValue = state, Recent = [direct], Selected = direct, CurrentUserId = 7 };
+        using var viewModel = CreateViewModel(session);
+
+        session.Publish();
+
+        Assert.False(viewModel.HasSelectedConversation);
+        Assert.False(viewModel.ShowChannelDetails);
+        Assert.Equal("会话", viewModel.DetailsKindLabel);
+        Assert.Equal("会话详情", viewModel.DetailsTitle);
+        Assert.DoesNotContain(viewModel.Conversations, item => item.Conversation == direct);
+    }
+
+    private static void AssertDirectMessageDetailsAreUserFacing(ShellViewModel viewModel)
+    {
+        var visibleDetails = $"{viewModel.DetailsKindLabel}\n{viewModel.DetailsTitle}\n{viewModel.DetailsBody}";
+
+        foreach (var technicalTerm in new[] { "可靠参与者", "已接通", "能力边界", "presence", "Realm" })
+        {
+            Assert.DoesNotContain(technicalTerm, visibleDetails, StringComparison.OrdinalIgnoreCase);
+        }
     }
 
     [Fact]
@@ -585,12 +646,26 @@ public sealed class ShellViewModelTests
     [Fact]
     public async Task ChannelUnsubscribe_WhenConfirmed_UsesSelectedChannelAndClosesDetails()
     {
-        var channel = new ChannelTopic(4, "release");
+        var channel = new ChannelTopic(4, string.Empty);
         var state = new ClientState(
-            subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering") },
+            subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription() },
+            users: new Dictionary<long, UserProfile>
+            {
+                [7] = new UserProfile(7, "Ada"),
+                [8] = new UserProfile(8, "Bea")
+            },
             connection: new ConnectionState(RelayCove.Core.ConnectionStatus.Connected));
         var requested = new List<long>();
-        var session = new FakeSession { StateValue = state, Selected = channel };
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            StateValue = state,
+            Selected = channel,
+            LoadChannelDetailsAction = (_, _) => Task.FromResult(PrivateGroupDetails(4, "engineering", string.Empty, 8)),
+            ChannelMemberIdsAction = (_, _) => Task.FromResult<IReadOnlyList<long>>([7, 8]),
+            RealmUsersAction = _ => Task.FromResult<IReadOnlyList<UserProfile>>([new UserProfile(7, "Ada"), new UserProfile(8, "Bea")])
+        };
         session.UnsubscribeChannelAction = (channelId, _) =>
         {
             requested.Add(channelId);
@@ -602,7 +677,7 @@ public sealed class ShellViewModelTests
             return Task.CompletedTask;
         };
         using var viewModel = CreateViewModel(session);
-        viewModel.IsDetailsOpen = true;
+        await ((IAsyncRelayCommand)viewModel.ToggleDetailsCommand).ExecuteAsync(null);
 
         viewModel.RequestChannelUnsubscribeCommand.Execute(null);
 
@@ -668,7 +743,7 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public async Task ActivateTopic_WhenChannelHasMultipleTopics_KeepsItsChannelExpanded()
+    public async Task ActivateTopic_WhenNamedTopicIsSelected_FailsClosedForStage25ConversationContent()
     {
         var session = new FakeSession
         {
@@ -690,8 +765,9 @@ public sealed class ShellViewModelTests
         viewModel.ActivateTopic(topic);
         await WaitUntilAsync(() => session.SelectedConversation is ChannelTopic { ChannelId: 5, Topic: "design" });
 
-        Assert.True(channel.IsExpanded);
-        Assert.Same(topic, viewModel.SelectedTopic);
+        Assert.Null(viewModel.SelectedTopic);
+        Assert.False(viewModel.HasSelectedConversation);
+        Assert.False(viewModel.CanCompose);
     }
 
     [Fact]
@@ -774,57 +850,68 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public void OpenNewChannelTopicForChannel_WhenInvokedFromRow_LocksThatChannelWithoutSelectingConversation()
+    public void ShowNewChannelConversation_WhenRegisterPermissionIsMissing_StaysDisabledWithReason()
     {
-        var selected = new ChannelTopic(4, "current");
         var session = new FakeSession
         {
-            Selected = selected,
             StateValue = new ClientState(
-                subscriptions: new Dictionary<long, Subscription>
-                {
-                    [4] = new Subscription(4, "engineering"),
-                    [5] = new Subscription(5, "product-design")
-                },
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
                 connection: new ConnectionState(ConnectionStatus.Connected))
         };
         using var viewModel = CreateViewModel(session);
-        var target = viewModel.Channels.Single(channel => channel.ChannelId == 5);
 
-        viewModel.OpenNewChannelTopicForChannelCommand.Execute(target);
+        viewModel.OpenNewConversationCommand.Execute(null);
+        viewModel.ShowNewChannelConversationCommand.Execute(null);
 
         Assert.True(viewModel.IsNewConversationOpen);
-        Assert.True(viewModel.IsNewChannelConversationMode);
-        Assert.True(viewModel.IsNewConversationChannelLocked);
-        Assert.True(viewModel.IsLockedChannelTopicComposer);
-        Assert.False(viewModel.IsNewConversationModeSwitcherVisible);
-        Assert.Same(target, viewModel.NewConversationChannel);
-        Assert.Equal(selected, session.SelectedConversation);
-
-        viewModel.CloseNewConversationCommand.Execute(null);
-
-        Assert.Equal(selected, session.SelectedConversation);
-        Assert.Empty(session.SentContents);
+        Assert.False(viewModel.IsNewChannelConversationMode);
+        Assert.False(viewModel.CanCreatePrivateGroup);
+        Assert.True(viewModel.ShowPrivateGroupCreateDisabledReason);
+        Assert.Contains("未授权", viewModel.NewConversationError);
     }
 
     [Fact]
-    public async Task StartNewChannelConversation_WhenLockedToRow_OpensLocalTopicWithoutSending()
+    public async Task StartNewChannelConversation_WhenAuthorized_CreatesPrivateGroupAndOpensEmptyTopic()
     {
+        PrivateGroupCreateOptions? requested = null;
         var session = new FakeSession
         {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            CanCreatePrivateGroup = true,
             StateValue = new ClientState(
-                subscriptions: new Dictionary<long, Subscription> { [5] = new Subscription(5, "product-design") },
+                users: new Dictionary<long, UserProfile>
+                {
+                    [7] = new UserProfile(7, "Ada"),
+                    [8] = new UserProfile(8, "Bea"),
+                    [9] = new UserProfile(9, "Chen")
+                },
                 connection: new ConnectionState(ConnectionStatus.Connected))
         };
+        session.CreatePrivateGroupAction = (options, _) =>
+        {
+            requested = options;
+            session.StateValue = session.StateValue with
+            {
+                Subscriptions = new Dictionary<long, Subscription>
+                {
+                    [55] = new Subscription(55, options.Name, isPrivate: true, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false)
+                }
+            };
+            return Task.FromResult(new PrivateGroupCreated(55, options.Name, new ChannelTopic(55, string.Empty), 3));
+        };
         using var viewModel = CreateViewModel(session);
-        var target = Assert.Single(viewModel.Channels);
 
-        viewModel.OpenNewChannelTopicForChannelCommand.Execute(target);
-        viewModel.NewConversationTopic = "new-topic";
+        viewModel.OpenNewConversationCommand.Execute(null);
+        viewModel.ShowNewChannelConversationCommand.Execute(null);
+        foreach (var choice in viewModel.NewConversationChoices) choice.IsSelected = true;
+        viewModel.NewPrivateGroupName = "产品设计群";
         await ((IAsyncRelayCommand)viewModel.StartNewChannelConversationCommand).ExecuteAsync(null);
 
-        Assert.Equal(new ChannelTopic(5, "new-topic"), session.SelectedConversation);
-        Assert.Empty(session.SentContents);
+        Assert.Equal("产品设计群", requested!.Name);
+        Assert.Equal([8L, 9L], requested.OtherMemberIds);
+        Assert.Equal(new ChannelTopic(55, string.Empty), session.SelectedConversation);
+        Assert.Contains(viewModel.Conversations, item => item.Title == "产品设计群" && item.IsPrivateGroup);
         Assert.False(viewModel.IsNewConversationOpen);
     }
 
@@ -994,10 +1081,10 @@ public sealed class ShellViewModelTests
         viewModel.ActivateChannel(viewModel.Channels.Single(item => item.ChannelId == 5));
         await WaitUntilAsync(() => session.Selected is ChannelTopic { ChannelId: 5 });
 
-        Assert.Equal(5, Assert.IsType<ChannelItem>(viewModel.SelectedChannel).ChannelId);
+        Assert.Null(viewModel.SelectedChannel);
         Assert.Equal("native-ui", Assert.Single(viewModel.Topics).Topic);
         Assert.Equal(new ChannelTopic(5, "native-ui"), session.SelectedConversation);
-        Assert.True(viewModel.ShowTopicPicker);
+        Assert.False(viewModel.HasSelectedConversation);
     }
 
     [Fact]
@@ -1047,8 +1134,7 @@ public sealed class ShellViewModelTests
             Current = new UiPreferences(
                 UiDensityMode.Compact,
                 UiFontScaleMode.Large,
-                UiConversationWidthMode.Wide,
-                true)
+                UiConversationWidthMode.Wide)
         };
         using var viewModel = CreateViewModel(
             new FakeSession(),
@@ -1058,7 +1144,6 @@ public sealed class ShellViewModelTests
         Assert.True(viewModel.IsLargeFont);
         Assert.True(viewModel.IsWideConversationWidth);
         Assert.Equal(352d, viewModel.ConversationPaneWidth.Value);
-        Assert.True(viewModel.OpenDetailsByDefault);
 
         viewModel.SetNarrowConversationWidthCommand.Execute(null);
         Assert.Equal(UiConversationWidthMode.Narrow, preferences.Current.ConversationWidth);
@@ -1069,7 +1154,6 @@ public sealed class ShellViewModelTests
         Assert.True(viewModel.IsDefaultFont);
         Assert.True(viewModel.IsStandardConversationWidth);
         Assert.Equal(310d, viewModel.ConversationPaneWidth.Value);
-        Assert.False(viewModel.OpenDetailsByDefault);
     }
 
     [Fact]
@@ -1109,10 +1193,10 @@ public sealed class ShellViewModelTests
         Assert.Equal(690d, viewModel.MessageRowMaximumWidth, 3);
 
         viewModel.UpdateViewport(1024);
-        Assert.Equal(466.64d, viewModel.MessageRowMaximumWidth, 2);
+        Assert.Equal(512.24d, viewModel.MessageRowMaximumWidth, 2);
 
         viewModel.UpdateViewport(640);
-        Assert.Equal(486d, viewModel.MessageRowMaximumWidth, 3);
+        Assert.Equal(540d, viewModel.MessageRowMaximumWidth, 3);
     }
 
     [Fact]
@@ -1123,7 +1207,7 @@ public sealed class ShellViewModelTests
 
         viewModel.IsDetailsOpen = true;
 
-        Assert.Equal(566.96d, viewModel.MessageRowMaximumWidth, 2);
+        Assert.Equal(612.56d, viewModel.MessageRowMaximumWidth, 2);
     }
 
     [Fact]
@@ -1155,6 +1239,21 @@ public sealed class ShellViewModelTests
         Assert.False(viewModel.IsAccountMenuOpen);
         Assert.True(viewModel.IsSettingsSection);
         Assert.True(viewModel.IsAppearanceSettings);
+    }
+
+    [Fact]
+    public void ToggleSettings_WhenInvokedFromProductBar_TogglesBetweenSettingsAndMessages()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        viewModel.ToggleSettingsCommand.Execute(null);
+
+        Assert.True(viewModel.IsSettingsSection);
+        Assert.True(viewModel.IsAppearanceSettings);
+
+        viewModel.ToggleSettingsCommand.Execute(null);
+
+        Assert.True(viewModel.IsMessagesSection);
     }
 
     [Fact]
@@ -1226,7 +1325,7 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public async Task InitializeAsync_WhenNativePreviewIsUsed_ProjectsTheWebAcceptanceFixture()
+    public async Task InitializeAsync_WhenNativePreviewIsUsed_ProjectsUnifiedPrivateGroupFixture()
     {
         using var viewModel = CreateViewModel(new NativeShellPreviewSession());
 
@@ -1235,12 +1334,12 @@ public sealed class ShellViewModelTests
         Assert.Equal("Acme Workspace", viewModel.WorkspaceDisplayName);
         Assert.True(viewModel.IsNativePreview);
         Assert.False(viewModel.ShowLoadOlderButton);
-        Assert.Equal(
-            ["UI 设计讨论", "Windows 客户端", "产品路线图", "版本发布"],
-            viewModel.Channels.Select(channel => channel.DisplayTitle));
-        Assert.Equal(
-            ["Maya Chen", "Alex Wu", "Daniel Okafor", "Sarah Li", "林远（自己）"],
-            viewModel.DirectMessages.Select(message => message.Title));
+        Assert.Equal(7, viewModel.Conversations.Count);
+        Assert.Contains(viewModel.Conversations, item => item.Title == "产品设计群" && item.IsPrivateGroup);
+        Assert.Contains(viewModel.Conversations, item => item.Title == "Windows 客户端群" && item.IsPrivateGroup);
+        Assert.DoesNotContain(viewModel.Conversations, item => item.Title is "product" or "release");
+        Assert.Contains(viewModel.Conversations, item => item.Title == "Maya Chen" && !item.IsPrivateGroup);
+        await WaitUntilAsync(() => viewModel.Conversations.Where(item => item.IsPrivateGroup).All(item => item.AvatarTiles.Count >= 3));
         Assert.Equal(4, viewModel.Messages.Count);
 #if DEBUG
         Assert.Equal("4 条未读消息", viewModel.Messages[2].UnreadDividerLabel);
@@ -1249,6 +1348,20 @@ public sealed class ShellViewModelTests
         Assert.Equal("未读消息", viewModel.Messages[2].UnreadDividerLabel);
         Assert.False(viewModel.Messages[2].ShowUnreadDivider);
 #endif
+    }
+
+    [Fact]
+    public async Task ApplyNativePreviewScene_WhenDetailsRequested_LoadsPrivateGroupSettingsFixture()
+    {
+        using var viewModel = CreateViewModel(new NativeShellPreviewSession());
+        await viewModel.InitializeAsync();
+
+        viewModel.ApplyNativePreviewScene("details");
+
+        await WaitUntilAsync(() => viewModel.DetailsMembers.Count == 4);
+        Assert.Equal("产品设计群", viewModel.DetailsChannelName);
+        Assert.Equal(6, viewModel.DetailsPrivateGroupOwnerId);
+        Assert.True(viewModel.CanManagePrivateGroup);
     }
 
     [Theory]
@@ -1588,6 +1701,90 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task MessageViewport_WhenMoreThanTwoPagesFromLatest_ShowsJumpButtonUntilAcknowledged()
+    {
+        var conversation = new DirectMessage([8]);
+        var messages = Enumerable.Range(1, 6).ToDictionary(
+            id => (long)id,
+            id => new ChatMessage(id, conversation, 8, $"message {id}", DateTimeOffset.UnixEpoch.AddMinutes(id), senderDisplayName: "Bea"));
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            HistoryState = new ConversationHistoryState(conversation, 1, false, true, false, 1, null),
+            StateValue = new ClientState(messages: messages, connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.AcknowledgeMessageScrollRequest(
+            Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest));
+
+        await viewModel.ReportMessageViewportAsync(
+            firstVisibleItemIndex: 5,
+            lastVisibleItemIndex: 5,
+            verticalOffset: 1000d,
+            timestampMilliseconds: 1_000,
+            bottomDistanceDip: 1000.1d,
+            viewportHeightDip: 500d);
+
+        Assert.Equal(0, viewModel.NewMessageCount);
+        Assert.True(viewModel.ShowNewMessagesButton);
+        Assert.Equal("跳转到最新消息", viewModel.NewMessagesButtonText);
+
+        viewModel.ScrollToLatestCommand.Execute(null);
+        var jumpRequest = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(MessageScrollReason.ManualJumpToLatest, jumpRequest.Reason);
+
+        viewModel.AcknowledgeMessageScrollRequest(jumpRequest);
+
+        Assert.False(viewModel.ShowNewMessagesButton);
+    }
+
+    [Fact]
+    public async Task MessageViewport_WhenOldConversationReportsAfterSwitch_DoesNotShowJumpButton()
+    {
+        var first = new DirectMessage([8]);
+        var second = new DirectMessage([9]);
+        var firstMessage = new ChatMessage(1, first, 8, "first", DateTimeOffset.UnixEpoch, senderDisplayName: "Bea");
+        var session = new FakeSession
+        {
+            Selected = first,
+            HistoryState = new ConversationHistoryState(first, 1, false, true, false, 1, null),
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage> { [1] = firstMessage },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.AcknowledgeMessageScrollRequest(
+            Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest));
+
+        await viewModel.ReportMessageViewportAsync(
+            0,
+            0,
+            1000d,
+            bottomDistanceDip: 1000.1d,
+            viewportHeightDip: 500d,
+            expectedConversationKey: first.CanonicalKey,
+            expectedHistoryGeneration: 1);
+        Assert.True(viewModel.ShowNewMessagesButton);
+
+        session.Selected = second;
+        session.HistoryState = new ConversationHistoryState(second, 2, false, true, false, null, null);
+        session.StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected));
+        session.Publish();
+        Assert.False(viewModel.ShowNewMessagesButton);
+
+        await viewModel.ReportMessageViewportAsync(
+            0,
+            0,
+            1000d,
+            bottomDistanceDip: 1000.1d,
+            viewportHeightDip: 500d,
+            expectedConversationKey: first.CanonicalKey,
+            expectedHistoryGeneration: 1);
+
+        Assert.False(viewModel.ShowNewMessagesButton);
+    }
+
+    [Fact]
     public async Task LoginCommand_WhenAlreadyExecuting_RejectsConcurrentExecution()
     {
         var blocker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1753,30 +1950,178 @@ public sealed class ShellViewModelTests
     [Fact]
     public void SearchQuery_WhenStateIsLoaded_ReturnsRealLocalSourcesWithoutInventingPresence()
     {
-        var conversation = new ChannelTopic(4, "release");
+        var conversation = new ChannelTopic(4, string.Empty);
         var session = new FakeSession
         {
             CurrentUserId = 7,
             StateValue = new ClientState(
-                subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering") },
+                subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription() },
                 users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
-                topics: new Dictionary<string, TopicSummary> { [conversation.CanonicalKey] = new TopicSummary(4, "release", 5) },
+                topics: new Dictionary<string, TopicSummary> { [conversation.CanonicalKey] = new TopicSummary(4, string.Empty, 5) },
                 messages: new Dictionary<long, ChatMessage> { [5] = new ChatMessage(5, conversation, 8, "native search", DateTimeOffset.UnixEpoch, senderDisplayName: "Bea") },
                 connection: new ConnectionState(ConnectionStatus.Connected))
         };
         using var viewModel = CreateViewModel(session);
         session.Publish();
 
-        viewModel.SearchQuery = "release";
+        viewModel.SearchQuery = "native search";
 
-        var result = Assert.Single(viewModel.SearchResults);
-        Assert.Equal("话题", result.Kind);
-        Assert.Equal(conversation, result.Conversation);
+        Assert.Collection(
+            viewModel.SearchResults,
+            conversationResult =>
+            {
+                Assert.Equal("群聊", conversationResult.Kind);
+                Assert.Equal(conversation, conversationResult.Conversation);
+            },
+            messageResult =>
+            {
+                Assert.Equal("已加载消息", messageResult.Kind);
+                Assert.Equal(conversation, messageResult.Conversation);
+            });
         Assert.DoesNotContain(viewModel.SearchResults, item => item.Subtitle.Contains("在线", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task StartNewConversationCommand_WhenKnownUsersAreSelected_UsesCanonicalGroupDirectMessage()
+    public void UnifiedConversations_WhenMixedZulipConversationsExist_FiltersAndSortsOnlySupportedRows()
+    {
+        var account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7);
+        var group = new ChannelTopic(4, string.Empty);
+        var publicChannel = new ChannelTopic(5, string.Empty);
+        var webPublic = new ChannelTopic(6, string.Empty);
+        var legacyTopic = new ChannelTopic(7, "release");
+        var direct = new DirectMessage([8]);
+        var self = new DirectMessage([]);
+        var groupDirect = new DirectMessage([8, 9]);
+        var preferences = new InMemoryConversationPreferencesStore();
+        var session = new FakeSession
+        {
+            Account = account,
+            CurrentUserId = 7,
+            Recent = [direct, self, groupDirect],
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage>
+                {
+                    [1] = new ChatMessage(1, group, 8, "visible group", DateTimeOffset.UnixEpoch.AddSeconds(10)),
+                    [2] = new ChatMessage(2, direct, 8, "visible direct", DateTimeOffset.UnixEpoch.AddSeconds(30)),
+                    [3] = new ChatMessage(3, self, 7, "visible self", DateTimeOffset.UnixEpoch.AddSeconds(20)),
+                    [4] = new ChatMessage(4, publicChannel, 8, "hidden public", DateTimeOffset.UnixEpoch.AddSeconds(40)),
+                    [5] = new ChatMessage(5, webPublic, 8, "hidden web", DateTimeOffset.UnixEpoch.AddSeconds(50)),
+                    [6] = new ChatMessage(6, legacyTopic, 8, "hidden topic", DateTimeOffset.UnixEpoch.AddSeconds(60)),
+                    [7] = new ChatMessage(7, groupDirect, 8, "hidden group dm", DateTimeOffset.UnixEpoch.AddSeconds(70))
+                },
+                subscriptions: new Dictionary<long, Subscription>
+                {
+                    [4] = PrivateGroupSubscription(4, "产品设计群") with { IsPinned = true },
+                    [5] = new Subscription(5, "public", isPrivate: false, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false),
+                    [6] = new Subscription(6, "web", isPrivate: true, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: true),
+                    [7] = new Subscription(7, "legacy", isPrivate: true, topicsPolicy: ChannelTopicsPolicy.Inherit, isWebPublic: false)
+                },
+                users: new Dictionary<long, UserProfile>
+                {
+                    [7] = new UserProfile(7, "Ada"),
+                    [8] = new UserProfile(8, "Bea"),
+                    [9] = new UserProfile(9, "Chen")
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session, conversationPreferencesStore: preferences);
+        session.Publish();
+
+        Assert.Equal(
+            [group.CanonicalKey, direct.CanonicalKey, self.CanonicalKey],
+            viewModel.Conversations.Select(item => item.Conversation.CanonicalKey));
+        Assert.DoesNotContain(viewModel.Conversations, item => item.Conversation == groupDirect);
+        viewModel.ConversationFilterQuery = "产品设计";
+        Assert.Equal(group, Assert.Single(viewModel.FilteredConversations).Conversation);
+        viewModel.SearchQuery = "hidden";
+        Assert.Empty(viewModel.SearchResults);
+    }
+
+    [Fact]
+    public async Task SessionStateChanged_WhenSelectedGroupLosesEligibility_ClearsMessagesAndDisablesComposer()
+    {
+        var group = new ChannelTopic(4, string.Empty);
+        var message = new ChatMessage(1, group, 8, "visible", DateTimeOffset.UnixEpoch, isRead: true);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage> { [message.Id] = message },
+                subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription() },
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        viewModel.ActivateConversation(Assert.Single(viewModel.Conversations));
+        await WaitUntilAsync(() => viewModel.CanCompose);
+        Assert.Single(viewModel.Messages);
+
+        session.StateValue = session.StateValue with
+        {
+            Subscriptions = new Dictionary<long, Subscription>
+            {
+                [4] = PrivateGroupSubscription() with { TopicsPolicy = ChannelTopicsPolicy.Inherit }
+            }
+        };
+        session.Publish();
+
+        Assert.False(viewModel.HasSelectedConversation);
+        Assert.False(viewModel.IsConversationContentVisible);
+        Assert.False(viewModel.CanCompose);
+        Assert.Empty(viewModel.Messages);
+        Assert.Empty(viewModel.Conversations);
+    }
+
+    [Fact]
+    public async Task ServerSearchAndSaved_WhenResultsContainHiddenConversations_FilterAndRejectDirectOpen()
+    {
+        var group = new ChannelTopic(4, string.Empty);
+        var publicChannel = new ChannelTopic(5, string.Empty);
+        var direct = new DirectMessage([8]);
+        var groupDirect = new DirectMessage([8, 9]);
+        var messages = new[]
+        {
+            new ChatMessage(1, group, 8, "group", DateTimeOffset.UnixEpoch),
+            new ChatMessage(2, direct, 8, "direct", DateTimeOffset.UnixEpoch),
+            new ChatMessage(3, publicChannel, 8, "public", DateTimeOffset.UnixEpoch),
+            new ChatMessage(4, groupDirect, 8, "group dm", DateTimeOffset.UnixEpoch)
+        };
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription>
+                {
+                    [4] = PrivateGroupSubscription(),
+                    [5] = new Subscription(5, "public", isPrivate: false, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false)
+                },
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea"), [9] = new UserProfile(9, "Chen") },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            SearchMessagesAction = (_, _, _, _) => Task.FromResult(new MessageQueryPage(messages, true, true, true)),
+            SavedMessagesAction = (_, _, _) => Task.FromResult(new MessageQueryPage(messages, true, true, true))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        viewModel.OpenSearchCommand.Execute(null);
+        viewModel.SearchQuery = "server";
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
+        Assert.Equal([direct, group], viewModel.SearchResults.Select(item => item.Conversation));
+
+        await ((IAsyncRelayCommand)viewModel.RefreshSavedCommand).ExecuteAsync(null);
+        Assert.Equal([direct, group], viewModel.SavedMessages.Select(item => item.Conversation));
+
+        await ((IAsyncRelayCommand<SearchResultItem?>)viewModel.SelectSearchResultCommand).ExecuteAsync(
+            new SearchResultItem("hidden", "消息", "hidden", "hidden", publicChannel, 3));
+        await ((IAsyncRelayCommand<SavedMessageItem?>)viewModel.OpenSavedMessageCommand).ExecuteAsync(
+            new SavedMessageItem(4, groupDirect, "Bea", "hidden", string.Empty));
+        Assert.Empty(session.OpenedMessages);
+    }
+
+    [Fact]
+    public async Task StartNewConversationCommand_WhenMultipleContactsAreClicked_KeepsOnlyOneDirectRecipient()
     {
         var session = new FakeSession
         {
@@ -1800,7 +2145,7 @@ public sealed class ShellViewModelTests
         await ((IAsyncRelayCommand)viewModel.StartNewConversationCommand).ExecuteAsync(null);
 
         var direct = Assert.IsType<DirectMessage>(session.Selected);
-        Assert.Equal([8L, 9L], direct.OtherUserIds);
+        Assert.Equal([9L], direct.OtherUserIds);
         Assert.False(viewModel.IsNewConversationOpen);
     }
 
@@ -1961,6 +2306,241 @@ public sealed class ShellViewModelTests
         Assert.Equal("已保存 guide.pdf。", viewModel.MediaActionStatus);
     }
 
+    [Fact]
+    public async Task ToggleDetails_WhenChannelSelected_LoadsAuthoritativeNameAnnouncementAndAllMembers()
+    {
+        var selected = new ChannelTopic(4, string.Empty);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            Selected = selected,
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription() },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            LoadChannelDetailsAction = (channelId, _) => Task.FromResult(
+                PrivateGroupDetails(channelId, "product", "本周五发布", 7)),
+            ChannelMemberIdsAction = (_, _) => Task.FromResult<IReadOnlyList<long>>([8, 7]),
+            RealmUsersAction = _ => Task.FromResult<IReadOnlyList<UserProfile>>([
+                new UserProfile(7, "Ada", avatarUrl: "https://zulip.example/avatar/7"),
+                new UserProfile(8, "Bea", avatarUrl: "https://zulip.example/avatar/8")
+            ])
+        };
+        using var viewModel = CreateViewModel(session);
+
+        Assert.False(viewModel.IsDetailsOpen);
+        await ((IAsyncRelayCommand)viewModel.ToggleDetailsCommand).ExecuteAsync(null);
+
+        Assert.True(viewModel.IsDetailsOpen);
+        Assert.True(viewModel.ShowChannelDetails);
+        Assert.False(viewModel.ShowDirectMessageSettings);
+        Assert.Equal("product", viewModel.DetailsChannelName);
+        Assert.Equal("本周五发布", viewModel.DetailsChannelAnnouncement);
+        Assert.Equal(["Ada", "Bea"], viewModel.DetailsMembers.Select(member => member.Name));
+        Assert.Equal("2 位成员", viewModel.DetailsMemberCountLabel);
+        Assert.True(viewModel.IsCurrentUserPrivateGroupOwner);
+    }
+
+    [Fact]
+    public async Task DirectMessageSettings_WhenChanged_PersistLocallyAndPinNavigationItem()
+    {
+        var accountId = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7);
+        var selected = new DirectMessage([8]);
+        var other = new DirectMessage([9]);
+        var preferences = new InMemoryConversationPreferencesStore();
+        var session = new FakeSession
+        {
+            Account = accountId,
+            CurrentUserId = 7,
+            Selected = selected,
+            Recent = [other, selected],
+            StateValue = new ClientState(users: new Dictionary<long, UserProfile>
+            {
+                [8] = new UserProfile(8, "Bea", avatarUrl: "https://zulip.example/avatar/8"),
+                [9] = new UserProfile(9, "Cy")
+            })
+        };
+        using var viewModel = CreateViewModel(session, conversationPreferencesStore: preferences);
+
+        await ((IAsyncRelayCommand)viewModel.ToggleDetailsCommand).ExecuteAsync(null);
+        viewModel.ToggleDirectMessageMutedCommand.Execute(null);
+        viewModel.ToggleDirectMessagePinnedCommand.Execute(null);
+
+        Assert.True(viewModel.ShowDirectMessageSettings);
+        Assert.False(viewModel.ShowChannelDetails);
+        Assert.Equal("https://zulip.example/avatar/8", viewModel.DetailsAvatarUrl);
+        Assert.True(viewModel.IsSelectedDirectMessageMuted);
+        Assert.True(viewModel.IsSelectedDirectMessagePinned);
+        Assert.Equal(selected.CanonicalKey, viewModel.DirectMessages.First().Conversation.CanonicalKey);
+        Assert.True(viewModel.DirectMessages.First().IsMuted);
+        Assert.True(preferences.Get(accountId, selected.CanonicalKey).IsPinned);
+    }
+
+    [Fact]
+    public async Task ClearConversationCache_WhenConfirmed_ClearsOnlySelectedCanonicalConversation()
+    {
+        var selected = new ChannelTopic(4, string.Empty);
+        ConversationKey? cleared = null;
+        var session = new FakeSession
+        {
+            Selected = selected,
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription() },
+                connection: new ConnectionState(RelayCove.Core.ConnectionStatus.Connected)),
+            ClearConversationCacheAction = (conversation, _) =>
+            {
+                cleared = conversation;
+                return Task.CompletedTask;
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+
+        viewModel.RequestClearConversationCacheCommand.Execute(null);
+        await ((IAsyncRelayCommand)viewModel.ConfirmClearConversationCacheCommand).ExecuteAsync(null);
+
+        Assert.Equal(selected, cleared);
+        Assert.False(viewModel.ClearConversationCacheConfirmationVisible);
+        Assert.Contains("当前账号下此群聊", viewModel.ClearConversationCacheDescription);
+        Assert.Contains("不删除服务器消息", viewModel.ClearConversationCacheDescription);
+    }
+
+    [Fact]
+    public async Task ToggleDetails_WhenConversationIsNotOneToOneOrChannel_DoesNotOpenEmptySettings()
+    {
+        var groupDirectMessage = new DirectMessage([8, 9]);
+        var session = new FakeSession
+        {
+            Selected = groupDirectMessage,
+            StateValue = new ClientState(users: new Dictionary<long, UserProfile>
+            {
+                [8] = new UserProfile(8, "Bea"),
+                [9] = new UserProfile(9, "Cy")
+            })
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await ((IAsyncRelayCommand)viewModel.ToggleDetailsCommand).ExecuteAsync(null);
+
+        Assert.False(viewModel.CanOpenConversationSettings);
+        Assert.False(viewModel.IsDetailsOpen);
+        Assert.False(viewModel.ShowDirectMessageSettings);
+        Assert.False(viewModel.ShowChannelDetails);
+    }
+
+    [Fact]
+    public async Task ToggleDetails_WhenChannelMemberMappingIsIncomplete_FailsClosedWithoutStaleAnnouncement()
+    {
+        var selected = new ChannelTopic(4, string.Empty);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            Selected = selected,
+            StateValue = new ClientState(subscriptions: new Dictionary<long, Subscription>
+            {
+                [4] = PrivateGroupSubscription()
+            }),
+            LoadChannelDetailsAction = (channelId, _) => Task.FromResult(
+                PrivateGroupDetails(channelId, "product", "本周五发布", 7)),
+            ChannelMemberIdsAction = (_, _) => Task.FromResult<IReadOnlyList<long>>([7, 8]),
+            RealmUsersAction = _ => Task.FromResult<IReadOnlyList<UserProfile>>([new UserProfile(7, "Ada")])
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await ((IAsyncRelayCommand)viewModel.ToggleDetailsCommand).ExecuteAsync(null);
+
+        Assert.True(viewModel.HasDetailsLoadError);
+        Assert.Empty(viewModel.DetailsMembers);
+        Assert.Equal("本周五发布", viewModel.DetailsChannelAnnouncement);
+        Assert.True(viewModel.IsPrivateGroupAuthorityLoaded);
+    }
+
+    [Fact]
+    public async Task ToggleDetails_WhenMemberRosterFails_AllowsConfirmedOrdinaryMemberToExit()
+    {
+        var selected = new ChannelTopic(4, string.Empty);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            Selected = selected,
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription() },
+                connection: new ConnectionState(RelayCove.Core.ConnectionStatus.Connected)),
+            LoadChannelDetailsAction = (channelId, _) => Task.FromResult(
+                PrivateGroupDetails(channelId, "product", "公告", 8)),
+            ChannelMemberIdsAction = (_, _) => Task.FromException<IReadOnlyList<long>>(
+                new InvalidOperationException("temporary roster failure"))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await ((IAsyncRelayCommand)viewModel.ToggleDetailsCommand).ExecuteAsync(null);
+
+        Assert.True(viewModel.IsPrivateGroupAuthorityLoaded);
+        Assert.False(viewModel.IsCurrentUserPrivateGroupOwner);
+        Assert.True(viewModel.HasDetailsLoadError);
+        Assert.True(viewModel.CanExitPrivateGroup);
+    }
+
+    [Fact]
+    public async Task ToggleDetails_WhenAuthorityCannotBeLoaded_DisablesExit()
+    {
+        var selected = new ChannelTopic(4, string.Empty);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            Selected = selected,
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription() },
+                connection: new ConnectionState(RelayCove.Core.ConnectionStatus.Connected)),
+            LoadChannelDetailsAction = (_, _) => Task.FromException<ChannelDetails>(
+                new InvalidOperationException("temporary details failure"))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await ((IAsyncRelayCommand)viewModel.ToggleDetailsCommand).ExecuteAsync(null);
+
+        Assert.False(viewModel.IsPrivateGroupAuthorityLoaded);
+        Assert.True(viewModel.HasDetailsLoadError);
+        Assert.False(viewModel.CanExitPrivateGroup);
+    }
+
+    [Fact]
+    public async Task ChannelSettingsLoad_WhenConversationChanges_DoesNotReopenOrProjectLateMembers()
+    {
+        var channel = new ChannelTopic(4, string.Empty);
+        var directMessage = new DirectMessage([8]);
+        var detailsGate = new TaskCompletionSource<ChannelDetails>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            Selected = channel,
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription() },
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") }),
+            LoadChannelDetailsAction = (_, _) => detailsGate.Task,
+            ChannelMemberIdsAction = (_, _) => Task.FromResult<IReadOnlyList<long>>([7, 8]),
+            RealmUsersAction = _ => Task.FromResult<IReadOnlyList<UserProfile>>([
+                new UserProfile(7, "Ada"),
+                new UserProfile(8, "Bea")
+            ])
+        };
+        using var viewModel = CreateViewModel(session);
+
+        var open = ((IAsyncRelayCommand)viewModel.ToggleDetailsCommand).ExecuteAsync(null);
+        await WaitUntilAsync(() => viewModel.IsDetailsLoading);
+        viewModel.ActivateDirectMessage(new NavigationItem(directMessage, "Bea"));
+        await WaitUntilAsync(() => session.SelectedConversation == directMessage);
+        detailsGate.SetResult(PrivateGroupDetails(4, "late-product", "late-announcement", 7));
+        await open;
+
+        Assert.False(viewModel.IsDetailsOpen);
+        Assert.True(viewModel.ShowDirectMessageSettings);
+        Assert.Empty(viewModel.DetailsMembers);
+        Assert.NotEqual("late-product", viewModel.DetailsChannelName);
+    }
+
     private static ShellViewModel CreateViewModel(
         IClientSession session,
         FakeLastRealmStore? lastRealmStore = null,
@@ -1969,7 +2549,8 @@ public sealed class ShellViewModelTests
         FakePlatformInteractionService? platformInteractions = null,
         FakeFileSelectionService? fileSelectionService = null,
         FakeRealmMediaService? realmMediaService = null,
-        FakeFileSaveService? fileSaveService = null) =>
+        FakeFileSaveService? fileSaveService = null,
+        IConversationPreferencesStore? conversationPreferencesStore = null) =>
         new(
             session,
             lastRealmStore ?? new FakeLastRealmStore(),
@@ -1979,7 +2560,8 @@ public sealed class ShellViewModelTests
             platformInteractions ?? new FakePlatformInteractionService(),
             fileSelectionService ?? new FakeFileSelectionService(),
             realmMediaService ?? new FakeRealmMediaService(),
-            fileSaveService ?? new FakeFileSaveService());
+            fileSaveService ?? new FakeFileSaveService(),
+            conversationPreferencesStore);
 
     private sealed class FakeUiPreferencesService : IUiPreferencesService
     {
@@ -2150,7 +2732,7 @@ public sealed class ShellViewModelTests
     {
         ChannelTopic? readTarget = null;
         var state = new ClientState(
-            subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering") },
+            subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription(4, "engineering") },
             connection: new ConnectionState(ConnectionStatus.Connected));
         var session = new FakeSession
         {
@@ -2167,19 +2749,17 @@ public sealed class ShellViewModelTests
         var topic = viewModel.Topics.Single();
         viewModel.ActivateTopic(topic);
         await WaitUntilAsync(() => session.SelectedConversation is ChannelTopic selected && selected.CanonicalKey == topic.CanonicalKey);
-        Assert.True(viewModel.HasSelectedTopic);
+        Assert.False(viewModel.HasSelectedTopic);
         var selectedBeforeMenu = session.SelectedConversation;
         var rowFocusRequestBeforeMenu = viewModel.TopicMenuFocusRequest;
-        var headerFocusRequestBeforeMenu = viewModel.HeaderTopicMenuFocusRequest;
-        viewModel.OpenTopicMenuAtCommand.Execute(new TopicMenuRequest(topic, 20, 20, RestoreFocusToHeader: true));
+        viewModel.OpenTopicMenuAtCommand.Execute(new TopicMenuRequest(topic, 20, 20));
 
         await ((IAsyncRelayCommand)viewModel.MarkActiveTopicReadCommand).ExecuteAsync(null);
 
         Assert.Equal(new ChannelTopic(4, "review"), readTarget);
         Assert.Equal(selectedBeforeMenu, session.SelectedConversation);
         Assert.False(viewModel.IsTopicMenuOpen);
-        Assert.Equal(rowFocusRequestBeforeMenu, viewModel.TopicMenuFocusRequest);
-        Assert.Equal(headerFocusRequestBeforeMenu + 1, viewModel.HeaderTopicMenuFocusRequest);
+        Assert.Equal(rowFocusRequestBeforeMenu + 1, viewModel.TopicMenuFocusRequest);
     }
 
     [Fact]
@@ -2187,7 +2767,7 @@ public sealed class ShellViewModelTests
     {
         var calls = 0;
         var state = new ClientState(
-            subscriptions: new Dictionary<long, Subscription> { [4] = new Subscription(4, "engineering") },
+            subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription(4, "engineering") },
             connection: new ConnectionState(ConnectionStatus.Connected));
         var session = new FakeSession
         {
@@ -2346,6 +2926,35 @@ public sealed class ShellViewModelTests
         Assert.Equal(TopicVisibilityPolicy.Followed, original.VisibilityPolicy);
     }
 
+    private static Subscription PrivateGroupSubscription(long channelId = 4, string name = "engineering") =>
+        new(channelId, name, isPrivate: true, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false);
+
+    private static ChannelDetails PrivateGroupDetails(
+        long channelId,
+        string name,
+        string description,
+        long ownerId)
+    {
+        var owner = PrivateGroupPolicy.OwnerGroup(ownerId);
+        return new ChannelDetails(
+            channelId,
+            name,
+            description,
+            false,
+            true,
+            false,
+            null,
+            null,
+            null,
+            ownerId,
+            null,
+            owner,
+            owner,
+            HistoryPublicToSubscribers: true,
+            TopicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly,
+            CanRemoveSubscribersGroup: owner);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow.AddSeconds(5);
@@ -2372,7 +2981,18 @@ public sealed class ShellViewModelTests
         public Func<CancellationToken, Task>? LoadOlderAction { get; set; }
         public Func<long?, int, CancellationToken, Task<MessageQueryPage>>? SavedMessagesAction { get; set; }
         public Func<string, long?, int, CancellationToken, Task<MessageQueryPage>>? SearchMessagesAction { get; set; }
+        public Func<ConversationKey, long, CancellationToken, Task>? OpenMessageAction { get; set; }
         public Func<CancellationToken, Task<IReadOnlyList<ChannelSummary>>>? AvailableChannelsAction { get; set; }
+        public Func<long, CancellationToken, Task<ChannelDetails>>? LoadChannelDetailsAction { get; set; }
+        public Func<long, CancellationToken, Task<IReadOnlyList<long>>>? ChannelMemberIdsAction { get; set; }
+        public Func<CancellationToken, Task<IReadOnlyList<UserProfile>>>? RealmUsersAction { get; set; }
+        public Func<PrivateGroupCreateOptions, CancellationToken, Task<PrivateGroupCreated>>? CreatePrivateGroupAction { get; set; }
+        public Func<long, long, CancellationToken, Task<PrivateGroupTransferResult>>? TransferPrivateGroupAction { get; set; }
+        public Func<long, CancellationToken, Task<PrivateGroupDissolveResult>>? DissolvePrivateGroupAction { get; set; }
+        public Func<long, IReadOnlyList<long>, bool, CancellationToken, Task>? AddChannelMembersAction { get; set; }
+        public Func<long, IReadOnlyList<long>, CancellationToken, Task>? RemoveChannelMembersAction { get; set; }
+        public Func<long, string?, string?, long?, CancellationToken, Task>? UpdateChannelAction { get; set; }
+        public Func<ConversationKey, CancellationToken, Task>? ClearConversationCacheAction { get; set; }
         public Func<ConversationKey, CancellationToken, Task>? MarkDisplayedReadAction { get; set; }
         public Func<ChannelTopic, TopicVisibilityPolicy, CancellationToken, Task>? SetTopicVisibilityAction { get; set; }
         public Func<ChannelTopic, CancellationToken, Task>? MarkTopicReadAction { get; set; }
@@ -2384,11 +3004,13 @@ public sealed class ShellViewModelTests
         public int UploadCalls { get; private set; }
         public int LoadOlderCalls { get; private set; }
         public List<ConversationKey> ExpectedMarkReadConversations { get; } = [];
+        public List<(ConversationKey Conversation, long MessageId)> OpenedMessages { get; } = [];
 
         public AccountId? AccountId => Account;
         public RealmEndpoint? ActiveRealm { get; set; }
         public long? CurrentUserId { get; set; }
         public bool IsOrganizationAdministrator { get; set; }
+        public bool CanCreatePrivateGroup { get; set; }
         public long MaxFileUploadBytes { get; set; } = 10L * 1024 * 1024;
         public ClientState State => StateValue;
         public ConversationKey? SelectedConversation => Selected;
@@ -2441,8 +3063,31 @@ public sealed class ShellViewModelTests
             SavedMessagesAction?.Invoke(beforeMessageId, limit, cancellationToken) ?? Task.FromResult(new MessageQueryPage([], false, true, true));
         public Task<MessageQueryPage> SearchMessagesAsync(string query, long? beforeMessageId, int limit, CancellationToken cancellationToken = default) =>
             SearchMessagesAction?.Invoke(query, beforeMessageId, limit, cancellationToken) ?? Task.FromResult(new MessageQueryPage([], false, true, true));
+        public Task OpenMessageAsync(ConversationKey conversation, long messageId, CancellationToken cancellationToken = default)
+        {
+            OpenedMessages.Add((conversation, messageId));
+            return OpenMessageAction?.Invoke(conversation, messageId, cancellationToken) ?? Task.CompletedTask;
+        }
         public Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(CancellationToken cancellationToken = default) =>
             AvailableChannelsAction?.Invoke(cancellationToken) ?? Task.FromResult<IReadOnlyList<ChannelSummary>>([]);
+        public Task<ChannelDetails> LoadChannelDetailsAsync(long channelId, CancellationToken cancellationToken = default) =>
+            LoadChannelDetailsAction?.Invoke(channelId, cancellationToken) ?? Task.FromException<ChannelDetails>(new NotSupportedException());
+        public Task<IReadOnlyList<long>> GetChannelMemberIdsAsync(long channelId, CancellationToken cancellationToken = default) =>
+            ChannelMemberIdsAction?.Invoke(channelId, cancellationToken) ?? Task.FromResult<IReadOnlyList<long>>([]);
+        public Task<IReadOnlyList<UserProfile>> GetRealmUsersAsync(CancellationToken cancellationToken = default) =>
+            RealmUsersAction?.Invoke(cancellationToken) ?? Task.FromResult<IReadOnlyList<UserProfile>>([]);
+        public Task<PrivateGroupCreated> CreatePrivateGroupAsync(PrivateGroupCreateOptions options, CancellationToken cancellationToken = default) =>
+            CreatePrivateGroupAction?.Invoke(options, cancellationToken) ?? Task.FromException<PrivateGroupCreated>(new NotSupportedException());
+        public Task<PrivateGroupTransferResult> TransferPrivateGroupOwnershipAsync(long channelId, long newOwnerId, CancellationToken cancellationToken = default) =>
+            TransferPrivateGroupAction?.Invoke(channelId, newOwnerId, cancellationToken) ?? Task.FromException<PrivateGroupTransferResult>(new NotSupportedException());
+        public Task<PrivateGroupDissolveResult> DissolvePrivateGroupAsync(long channelId, CancellationToken cancellationToken = default) =>
+            DissolvePrivateGroupAction?.Invoke(channelId, cancellationToken) ?? Task.FromException<PrivateGroupDissolveResult>(new NotSupportedException());
+        public Task AddChannelMembersAsync(long channelId, IReadOnlyList<long> principalIds, bool sendNewSubscriptionMessages, CancellationToken cancellationToken = default) =>
+            AddChannelMembersAction?.Invoke(channelId, principalIds, sendNewSubscriptionMessages, cancellationToken) ?? Task.CompletedTask;
+        public Task RemoveChannelMembersAsync(long channelId, IReadOnlyList<long> principalIds, CancellationToken cancellationToken = default) =>
+            RemoveChannelMembersAction?.Invoke(channelId, principalIds, cancellationToken) ?? Task.CompletedTask;
+        public Task UpdateChannelAsync(long channelId, string? name, string? description, long? folderId, bool clearFolder = false, CancellationToken cancellationToken = default) =>
+            UpdateChannelAction?.Invoke(channelId, name, description, folderId, cancellationToken) ?? Task.CompletedTask;
 
         public Task SendAsync(string content, CancellationToken cancellationToken = default)
         {
@@ -2470,6 +3115,8 @@ public sealed class ShellViewModelTests
             return MarkDisplayedReadAction?.Invoke(expectedConversation, cancellationToken) ?? Task.CompletedTask;
         }
         public Task ClearLocalCacheAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task ClearConversationCacheAsync(ConversationKey expectedConversation, CancellationToken cancellationToken = default) =>
+            ClearConversationCacheAction?.Invoke(expectedConversation, cancellationToken) ?? Task.CompletedTask;
         public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public void Publish() => StateChanged?.Invoke(this, new ClientStateChangedEventArgs(StateValue));

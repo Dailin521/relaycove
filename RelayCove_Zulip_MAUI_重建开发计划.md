@@ -1,6 +1,6 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M、Stage 23、Stage 24/24.1 已合并为原生基线；Stage 24.2 已修正实时可见消息标读与 Composer 键盘语义并整合到 `main@4b8dd64`。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
+文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M、Stage 23、Stage 24 已形成原生基线；Stage 25 已在本地 `main` 形成 MAUI-first 微信式统一会话与私有群聊候选并通过相关确定性验证，尚未提交、推送或通过用户 Visual Studio 人工验收。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
@@ -18,6 +18,8 @@ RelayCove 放弃自研聊天服务端、ASP.NET Core/SignalR 协议、旧 Shared
 - Web 与 MAUI 都直接连接同一个 Zulip Realm；不新增 RelayCove server、BFF、代理协议或第二套消息后端。
 - 两端共享视觉 Token、交互规格、功能矩阵和验收场景，不共享 UI 运行时代码。
 - Web 面向私域使用便利，默认“记住登录”，允许将 API Key 保存在当前浏览器本地；注销必须清除。
+
+2026-08-21 用户将后续产品方向改为 MAUI-only：`RelayCove.App` 是唯一继续开发和交付的客户端，Web 与冻结基线只保留历史证据，不再要求功能对齐。是否物理删除 `RelayCove.Web` 工程另行决定。同日用户明确授权清理旧频道；Zulip 只提供可恢复的频道归档，因此在当日已校验备份之后，将目标 Realm 的 17 个活动公开/私有频道全部归档，连同此前已归档的“运维”形成 `active=0 / archived=18 / defaults=0` 的新起点，未永久删除消息历史。
 
 Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-08-12 用户另行授权提交、推送、合并和固定入口部署，形成 `main@53a4f1a`；2026-08-13 又明确授权当前消息交互分支使用指定账号做限定真实写验证。本轮授权不包含新的提交、推送、部署、标签或修改目标 Zulip 主机。旧 Git 历史和 `v1.0.0-rc.25` 标签保留为回滚点。删除使用普通 Git 变更，不使用 orphan、`reset --hard`、force-push。
 
@@ -122,6 +124,12 @@ Slice 3 完成首批完整交互能力，而不是只添加视觉按钮：
 - 频道详情支持当前用户按真实订阅名调用 `DELETE /users/me/subscriptions` 退订；确认成功或已退订都复用既有 `subscriptionRemoved` 清理，结果未知不自动重试。
 
 所有仓库普通自动门禁继续只使用 mock/fake HTTP；Live 始终是显式授权的独立模式。2026-08-13 的 Web/早期 MAUI 证据曾只覆盖有限消息链路。2026-08-14 Stage 23 进一步以 DAL/zhang 隔离频道完成服务器搜索、saved、按锚点打开、个人频道偏好、退订恢复和自助重加的真实 Live。mention 候选、presence、通知、完整成员关系和管理员频道管理仍是独立能力门。
+
+### 3.4 Stage 25 MAUI-first 产品例外
+
+从 Stage 25 起，MAUI 主界面不再继承上文第 3.1 条的频道树、命名话题和群组私信导航；该历史范围只作为旧 Web/官方 Zulip 行为记录，不再是 RelayCove 产品兼容目标。本阶段 MAUI 只投影一对一/self-DM，以及已订阅、活动、非 Web 公开且 `topics_policy=empty_topic_only` 的私有频道群聊。旧活动频道已按用户授权全部归档；代码仍保留失败关闭的协议边界，防止未来外部客户端或管理员创建不符合规则的频道，但不为旧频道提供 UI 或迁移路径。
+
+群聊内部继续使用 `ChannelTopic(channelId, "")`，界面不显示 `#`、话题名、话题树或公开频道浏览。新建群聊要求创建者填写群名并选择至少两名其他活跃成员；创建权限由 register 的 Realm 用户组快照失败关闭。群主只在 administer/add/remove-subscriber 三个权限组明确为同一直接成员时成立；转让和解散按阶段读取权威状态，不确定写入不自动重试。清聊天记录只清当前账号、当前规范会话的本机消息、话题摘要与未读缓存，不删除服务器历史、订阅或凭据。
 
 ## 4. 架构和依赖边界
 
@@ -320,16 +328,16 @@ unread_state
 
 ## 9. 双前端 UI 路线
 
-Stage 21 的 MAUI Shell 是历史功能基线；Stage 22M 已在其上完成当前原生壳和消息交互，但外部门禁仍未关闭：
+Stage 21 的 MAUI Shell 是历史功能基线；Stage 22M 至 Stage 24 已在其上完成原生壳和消息交互。Stage 25 对 MAUI 导航作显式产品例外，但外部门禁仍未关闭：
 
 ```text
 LoginPage
   Realm / Email / Password / Login / categorized error
 
-MainPage
+MainPage (Stage 25 MAUI)
   Connection status
-  Channel list -> Topic list
-  Direct-message list
+  Unified one-to-one/self/private-group conversation list
+  Private groups use hidden empty-topic keys
   Virtualized CollectionView messages
   Raw Markdown text labels
   Composer + Send
@@ -340,7 +348,7 @@ ViewModel 使用 CommunityToolkit.Mvvm，只调用 `IClientSession`。code-behin
 
 登录错误分类：不兼容 Realm、认证失败、限流、离线、凭据存储失败。最后 Realm 可用 Preferences 保存为非敏感配置；密码字段完成登录后立即清空。
 
-用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/`。该目录继续保持不可变，只作为初始视觉/交互基线和哈希证据，不是日常运行时资产。正式 RelayCove.Web 的已验收行为是当前交互事实基准；Stage 22M/23/24 使用原生 XAML/ViewModel 复刻，不得以 WebView 承载 Web。Web 已实现任意附件、当前用户退订和完整消息操作；MAUI 已覆盖 reaction/edit/delete/star、图片/文件附件、服务器搜索、saved、已知用户新会话，以及普通用户频道发现/加入/退订/静音/置顶。Stage 24 进一步统一本人消息已读、重复激活最新页、自动标读、稳定摘要/头像、频道话题和 Composer/滚动行为。完整成员目录、`@` 候选、管理员频道管理及最终原生 UI/clean-VM 验收仍是独立门禁。
+用户已于 2026-08-12 确认并冻结 `docs/ui/baselines/chat-ui-v1/`。该目录继续保持不可变，只作为初始视觉/交互基线和哈希证据，不是日常运行时资产。正式 RelayCove.Web 的已验收行为仍是 Web 当前事实；Stage 25 是明确记录的 MAUI-first 例外，不反向修改 Web，也不把冻结基线改写成新设计。MAUI 继续使用原生 XAML/ViewModel，不得以 WebView 承载 Web。
 
 ## 10. 实施切片与完成定义
 
@@ -376,6 +384,12 @@ Stage 24 已通过 PR #1/#2 合并到 `origin/main@67fcab4`，以正式 Web 的�
 Stage 24.1 的历史定向验证与复核记录保留在 dated task。Stage 24.2 在最新 main 上补齐：当前激活窗口、当前可见会话且消息列表在事件到达前已位于底部时，对实时他人新消息调用带 expected conversation 的标读；realtime follow-scroll 的后续 WinUI 确认不得阻塞该请求。只有服务器成功并由 Core 发布 flags 后才清未读。Composer 使用 Enter 发送、Ctrl+Enter 换行，IME 组合输入不发送。当前验证结果只写入 STATUS/active task，不复用历史计数。
 
 Stage 24.5 继续收敛 MAUI 会话激活与虚拟列表：同一缓存会话每次进入都建立新的 latest-scroll 意图，不能用相同会话/generation/target 抑制后续访问；激活列表在目标容器实现且底部 extent 分时稳定后再显示。该路径与保持可见的 realtime/send follow-scroll、保护首个可见消息的 older-page prepend anchor 相互独立，禁止重新引入全局 `LayoutUpdated` 保底滚动。正式非预览客户端已在真实会话上完成首次加载、连续私信往返和分页后往返验证；结果与边界记录在 STATUS 和 `docs/ai/tasks/2026-08-17-stage-24-5-message-viewport-stability.md`。
+
+### Stage 25：微信式统一会话与私有群聊
+
+Stage 25 直接在本地 `main` 实施，不修改 Web。协议、Core 和 Data 只持久化并投影一对一/self-DM 与合格私有空话题群聊；SQLite schema v6 保存频道私有性、Web-public 与话题策略，旧未知行失败关闭。MAUI 左栏为置顶优先、其余按最新消息倒序的单一会话时间线；`+` 只分流一人私聊和至少三人群聊。群设置提供成员、名称、公告、本机备注、搜索、静音、置顶、本机清缓存和退出；确认单群主额外拥有改名、公告、邀请、移人、转让和解散。
+
+创建、邀请、移人、转让、解散和发送均不自动重试。创建或成员变更结果不确定时只读取一次权威状态并要求用户核对；转让先原子更新并确认三个权限组再退出旧群主，解散先移除并确认其他成员再退出群主。当前确定性测试、内部副屏预览、授权的 Realm 频道归档和用户 Visual Studio 人工结果只记录在 Stage 25 dated task 与 STATUS；批量归档授权不扩展为群创建、成员或消息 Live 写授权。
 
 ### Stage 21 历史实施切片
 
@@ -529,6 +543,10 @@ Stage 22W Slice 1/2/3 已由提交 `53a4f1a` 合并并推送至 `main`。2026-08
 - [获取实时事件](https://docs.zulip.com/api/get-events)
 - [获取历史消息](https://docs.zulip.com/api/get-messages)
 - [发送消息](https://docs.zulip.com/api/send-message)
+- [创建频道](https://zulip.com/api/create-channel)
+- [配置谁可创建频道](https://zulip.com/help/configure-who-can-create-channels)
+- [更新频道](https://zulip.com/api/update-stream)
+- [退订成员](https://zulip.com/api/unsubscribe)
 - [按 narrow 更新 flags](https://docs.zulip.com/api/update-message-flags-for-narrow)
 - [MAUI SecureStorage](https://learn.microsoft.com/dotnet/maui/platform-integration/storage/secure-storage?view=net-maui-10.0)
 - [.NET 10 MAUI Windows unpackaged 发布](https://learn.microsoft.com/dotnet/maui/windows/deployment/publish-unpackaged-cli?view=net-maui-10.0)

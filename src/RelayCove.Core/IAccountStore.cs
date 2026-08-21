@@ -44,6 +44,11 @@ public interface IAccountStore
         AccountId accountId,
         long channelId,
         CancellationToken cancellationToken = default);
+    Task PurgeConversationAsync(
+        AccountId accountId,
+        ConversationKey conversation,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException(new NotSupportedException("Conversation cache clearing is not available."));
     Task<bool> IsCacheUnlockedAsync(
         AccountId accountId,
         CancellationToken cancellationToken = default);

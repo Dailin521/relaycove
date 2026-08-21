@@ -25,10 +25,10 @@ public sealed class SqliteAccountStoreCacheTests
     {
         await using var context = StoreTestContext.Create();
         var account = StoreTestData.Account();
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new ChannelTopic(1, string.Empty);
         await context.Store.InitializeAsync(account);
         await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register(
-            [new Subscription(1, "General")],
+            [PrivateGroupSubscription(1, "General")],
             [new MessageUpsertEvent(StoreTestData.Message(1, conversation), Source: DomainEventSource.Register)]));
 
         await context.Store.SetCacheUnlockedAsync(account.AccountId, false);
@@ -51,14 +51,14 @@ public sealed class SqliteAccountStoreCacheTests
     {
         await using var context = StoreTestContext.Create();
         var account = StoreTestData.Account();
-        var removed = new ChannelTopic(1, "old");
-        var retained = new ChannelTopic(2, "keep");
+        var removed = new ChannelTopic(1, string.Empty);
+        var retained = new ChannelTopic(2, string.Empty);
         await context.Store.InitializeAsync(account);
         await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register(
-            [new Subscription(1, "Old"), new Subscription(2, "Keep")],
+            [PrivateGroupSubscription(1, "Old"), PrivateGroupSubscription(2, "Keep")],
             [
-                new TopicUpsertEvent(new TopicSummary(1, "old"), Source: DomainEventSource.Register),
-                new TopicUpsertEvent(new TopicSummary(2, "keep"), Source: DomainEventSource.Register),
+                new TopicUpsertEvent(new TopicSummary(1, string.Empty), Source: DomainEventSource.Register),
+                new TopicUpsertEvent(new TopicSummary(2, string.Empty), Source: DomainEventSource.Register),
                 new MessageUpsertEvent(StoreTestData.Message(1, removed), Source: DomainEventSource.Register),
                 new MessageUpsertEvent(StoreTestData.Message(2, retained), Source: DomainEventSource.Register)
             ],
@@ -69,7 +69,7 @@ public sealed class SqliteAccountStoreCacheTests
             }, 2)));
 
         await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register(
-            [new Subscription(2, "Keep")],
+            [PrivateGroupSubscription(2, "Keep")],
             unread: new UnreadState(new Dictionary<string, int> { [retained.CanonicalKey] = 1 }, 1)));
 
         var state = (await context.Store.LoadAsync(account.AccountId))!.State;
@@ -85,11 +85,11 @@ public sealed class SqliteAccountStoreCacheTests
     {
         await using var context = StoreTestContext.Create();
         var account = StoreTestData.Account();
-        var source = new ChannelTopic(1, "source");
-        var destination = new ChannelTopic(2, "destination");
+        var source = new ChannelTopic(1, string.Empty);
+        var destination = new ChannelTopic(2, string.Empty);
         await context.Store.InitializeAsync(account);
         await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register(
-            [new Subscription(1, "One"), new Subscription(2, "Two")],
+            [PrivateGroupSubscription(1, "One"), PrivateGroupSubscription(2, "Two")],
             [
                 new MessageUpsertEvent(StoreTestData.Message(1, source), Source: DomainEventSource.Register),
                 new MessageUpsertEvent(StoreTestData.Message(2, source), Source: DomainEventSource.Register),
@@ -116,6 +116,117 @@ public sealed class SqliteAccountStoreCacheTests
         Assert.False(state.Subscriptions[2].IsActive);
         Assert.Equal("New Sender", state.Users[10].FullName);
         Assert.Equal(0, state.Unread.Total);
+    }
+
+    [Fact]
+    public async Task PrivateGroupEligibility_WhenStoredPatchedAndCleared_RoundTripsFailClosed()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        await context.Store.InitializeAsync(account);
+        await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register(
+        [
+            new Subscription(
+                42,
+                "产品设计群",
+                isPrivate: true,
+                topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly,
+                isWebPublic: false)
+        ]));
+
+        var restored = (await context.Store.LoadAsync(account.AccountId))!.State.Subscriptions[42];
+        Assert.True(PrivateGroupPolicy.IsEligible(restored));
+
+        await context.Store.ApplyBatchAsync(account.AccountId,
+            [new SubscriptionPatchedEvent(42, null, null, IsWebPublic: true)]);
+        restored = (await context.Store.LoadAsync(account.AccountId))!.State.Subscriptions[42];
+        Assert.True(restored.IsWebPublic);
+        Assert.False(PrivateGroupPolicy.IsEligible(restored));
+
+        await context.Store.ApplyBatchAsync(account.AccountId,
+            [new SubscriptionPatchedEvent(42, null, null, ClearEligibility: true)]);
+        restored = (await context.Store.LoadAsync(account.AccountId))!.State.Subscriptions[42];
+        Assert.Null(restored.IsPrivate);
+        Assert.Null(restored.IsWebPublic);
+        Assert.Null(restored.TopicsPolicy);
+    }
+
+    [Fact]
+    public async Task PrivateGroupEligibility_WhenStoreIsRecreated_RestoresAllEligibilityFields()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        await context.Store.InitializeAsync(account);
+        await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register(
+            [PrivateGroupSubscription(42, "产品设计群")]));
+
+        await using var restarted = new SqliteAccountStore(context.Root);
+        await restarted.InitializeAsync(account);
+        var restored = Assert.Single((await restarted.LoadAsync(account.AccountId))!.State.Subscriptions.Values);
+
+        Assert.True(restored.IsPrivate);
+        Assert.False(restored.IsWebPublic);
+        Assert.Equal(ChannelTopicsPolicy.EmptyTopicOnly, restored.TopicsPolicy);
+        Assert.True(PrivateGroupPolicy.IsEligible(restored));
+    }
+
+    [Fact]
+    public async Task PrivateGroupEligibility_WhenAccountsShareChannelId_RemainsAccountIsolated()
+    {
+        await using var context = StoreTestContext.Create();
+        var first = StoreTestData.Account("https://one.example/", 10);
+        var second = StoreTestData.Account("https://two.example/", 20);
+        await context.Store.InitializeAsync(first);
+        await context.Store.InitializeAsync(second);
+        await context.Store.ReplaceRegisterSnapshotAsync(first.AccountId, StoreTestData.Register(
+            [new Subscription(42, "first", isPrivate: true, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false)]));
+        await context.Store.ReplaceRegisterSnapshotAsync(second.AccountId, StoreTestData.Register(
+            [new Subscription(42, "second", isPrivate: true, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: true)]));
+
+        Assert.True(PrivateGroupPolicy.IsEligible((await context.Store.LoadAsync(first.AccountId))!.State.Subscriptions[42]));
+        Assert.False(PrivateGroupPolicy.IsEligible((await context.Store.LoadAsync(second.AccountId))!.State.Subscriptions[42]));
+    }
+
+    [Fact]
+    public async Task ReplaceRegisterSnapshotAsync_WhenMessagesSpanUnsupportedConversations_PersistsOnlyRelayCoveConversations()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var supportedGroup = new ChannelTopic(42, string.Empty);
+        var supportedDirect = new DirectMessage([20]);
+        var publicChannel = new ChannelTopic(43, string.Empty);
+        var webPublic = new ChannelTopic(44, string.Empty);
+        var legacyTopic = new ChannelTopic(45, "legacy");
+        var groupDirect = new DirectMessage([20, 30]);
+        await context.Store.InitializeAsync(account);
+
+        await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register(
+        [
+            PrivateGroupSubscription(42, "Group"),
+            new Subscription(43, "Public", isPrivate: false, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false),
+            new Subscription(44, "Web", isPrivate: true, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: true),
+            new Subscription(45, "Legacy", isPrivate: true, topicsPolicy: ChannelTopicsPolicy.Inherit, isWebPublic: false)
+        ],
+        [
+            new MessageUpsertEvent(StoreTestData.Message(1, supportedGroup), Source: DomainEventSource.Register),
+            new MessageUpsertEvent(StoreTestData.Message(2, supportedDirect), Source: DomainEventSource.Register),
+            new MessageUpsertEvent(StoreTestData.Message(3, publicChannel), Source: DomainEventSource.Register),
+            new MessageUpsertEvent(StoreTestData.Message(4, webPublic), Source: DomainEventSource.Register),
+            new MessageUpsertEvent(StoreTestData.Message(5, legacyTopic), Source: DomainEventSource.Register),
+            new MessageUpsertEvent(StoreTestData.Message(6, groupDirect), Source: DomainEventSource.Register)
+        ],
+        [supportedDirect, groupDirect]));
+
+        var snapshot = await context.Store.LoadAsync(account.AccountId);
+        Assert.NotNull(snapshot);
+
+        Assert.Equal(1, Assert.Single(await context.Store.QueryMessagesAsync(account.AccountId, supportedGroup, null, 20)).Id);
+        Assert.Equal(2, Assert.Single(await context.Store.QueryMessagesAsync(account.AccountId, supportedDirect, null, 20)).Id);
+        Assert.Equal(supportedDirect, Assert.Single(snapshot.RecentDirectMessages));
+        Assert.Empty(await context.Store.QueryMessagesAsync(account.AccountId, publicChannel, null, 20));
+        Assert.Empty(await context.Store.QueryMessagesAsync(account.AccountId, webPublic, null, 20));
+        Assert.Empty(await context.Store.QueryMessagesAsync(account.AccountId, legacyTopic, null, 20));
+        Assert.Empty(await context.Store.QueryMessagesAsync(account.AccountId, groupDirect, null, 20));
     }
 
     [Fact]
@@ -210,15 +321,72 @@ public sealed class SqliteAccountStoreCacheTests
     }
 
     [Fact]
+    public async Task PurgeConversationAsync_WhenChannelTopicSelected_DeletesOnlyThatCanonicalCache()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var selected = new ChannelTopic(1, string.Empty);
+        var siblingTopic = new ChannelTopic(2, string.Empty);
+        var direct = new DirectMessage([20]);
+        await context.Store.InitializeAsync(account);
+        await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register(
+            [PrivateGroupSubscription(1, "Engineering"), PrivateGroupSubscription(2, "Planning")],
+            [
+                new MessageUpsertEvent(StoreTestData.Message(1, selected)),
+                new MessageUpsertEvent(StoreTestData.Message(2, siblingTopic)),
+                new MessageUpsertEvent(StoreTestData.Message(3, direct))
+            ],
+            [direct],
+            new UnreadState(new Dictionary<string, int>
+            {
+                [selected.CanonicalKey] = 1,
+                [siblingTopic.CanonicalKey] = 1,
+                [direct.CanonicalKey] = 1
+            }, 3)));
+
+        await context.Store.PurgeConversationAsync(account.AccountId, selected);
+
+        Assert.Empty(await context.Store.QueryMessagesAsync(account.AccountId, selected, null, 20));
+        Assert.Equal(2, Assert.Single(await context.Store.QueryMessagesAsync(account.AccountId, siblingTopic, null, 20)).Id);
+        Assert.Equal(3, Assert.Single(await context.Store.QueryMessagesAsync(account.AccountId, direct, null, 20)).Id);
+        var state = (await context.Store.LoadAsync(account.AccountId))!.State;
+        Assert.Equal(2, state.Unread.Total);
+        Assert.DoesNotContain(selected.CanonicalKey, state.Unread.Counts.Keys);
+        Assert.DoesNotContain(selected.CanonicalKey, state.Topics.Keys);
+        Assert.Contains(siblingTopic.CanonicalKey, state.Topics.Keys);
+        Assert.Contains(1, state.Subscriptions.Keys);
+    }
+
+    [Fact]
+    public async Task PurgeConversationAsync_WhenTwoAccountsShareCanonicalKey_KeepsOtherAccountCache()
+    {
+        await using var context = StoreTestContext.Create();
+        var one = StoreTestData.Account("https://one.example/", 10);
+        var two = StoreTestData.Account("https://two.example/", 20);
+        var conversation = new DirectMessage([30]);
+        await context.Store.InitializeAsync(one);
+        await context.Store.InitializeAsync(two);
+        await context.Store.ReplaceRegisterSnapshotAsync(one.AccountId, StoreTestData.Register(
+            [], [new MessageUpsertEvent(StoreTestData.Message(1, conversation))]));
+        await context.Store.ReplaceRegisterSnapshotAsync(two.AccountId, StoreTestData.Register(
+            [], [new MessageUpsertEvent(StoreTestData.Message(2, conversation))]));
+
+        await context.Store.PurgeConversationAsync(one.AccountId, conversation);
+
+        Assert.Empty(await context.Store.QueryMessagesAsync(one.AccountId, conversation, null, 20));
+        Assert.Equal(2, Assert.Single(await context.Store.QueryMessagesAsync(two.AccountId, conversation, null, 20)).Id);
+    }
+
+    [Fact]
     public async Task QueryMessagesAsync_WhenHistoryContainsMarkdownAndDirectMessages_ReturnsConversationPageAndPreservesUnreadMetadata()
     {
         await using var context = StoreTestContext.Create();
         var account = StoreTestData.Account();
-        var channel = new ChannelTopic(1, "topic");
-        var direct = new DirectMessage([20, 30]);
+        var channel = new ChannelTopic(1, string.Empty);
+        var direct = new DirectMessage([20]);
         await context.Store.InitializeAsync(account);
         await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register(
-            [new Subscription(1, "One")],
+            [PrivateGroupSubscription(1, "One")],
             [
                 new MessageUpsertEvent(StoreTestData.Message(1, channel, content: "**raw** [link](https://example.test)"), Source: DomainEventSource.Register),
                 new MessageUpsertEvent(StoreTestData.Message(2, channel), Source: DomainEventSource.Register),
@@ -329,12 +497,13 @@ public sealed class SqliteAccountStoreCacheTests
     {
         await using var context = StoreTestContext.Create();
         var account = StoreTestData.Account();
-        var source = new ChannelTopic(7, "old");
-        var destination = new ChannelTopic(7, "new");
+        var source = new ChannelTopic(7, string.Empty);
+        var destination = new ChannelTopic(8, string.Empty);
         await context.Store.InitializeAsync(account);
         await context.Store.ApplyBatchAsync(account.AccountId,
         [
-            new SubscriptionChangedEvent(new Subscription(7, "Build"), false),
+            new SubscriptionChangedEvent(PrivateGroupSubscription(7, "Build"), false),
+            new SubscriptionChangedEvent(PrivateGroupSubscription(8, "Release"), false),
             new MessageUpsertEvent(StoreTestData.Message(50, source)),
             new MessageUpsertEvent(StoreTestData.Message(100, source))
         ]);
@@ -342,11 +511,39 @@ public sealed class SqliteAccountStoreCacheTests
         await context.Store.ApplyBatchAsync(account.AccountId, [new MessageMovedEvent([100], destination)]);
         var moved = await context.Store.QueryTopicSummariesAsync(account.AccountId, [source, destination]);
 
-        Assert.Equal(50, Assert.Single(moved, topic => topic.Topic == source.Topic).MaxMessageId);
-        Assert.Equal(100, Assert.Single(moved, topic => topic.Topic == destination.Topic).MaxMessageId);
+        Assert.Equal(50, Assert.Single(moved, topic => topic.ChannelId == source.ChannelId).MaxMessageId);
+        Assert.Equal(100, Assert.Single(moved, topic => topic.ChannelId == destination.ChannelId).MaxMessageId);
 
         await context.Store.ApplyBatchAsync(account.AccountId, [new MessageDeletedEvent([50])]);
         Assert.Empty(await context.Store.QueryTopicSummariesAsync(account.AccountId, [source]));
+    }
+
+    [Fact]
+    public async Task ApplyBatchAsync_WhenMessageMovesToUnsupportedConversation_RemovesSourceWithoutDestinationUnread()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var source = new ChannelTopic(7, string.Empty);
+        var unsupportedDestination = new ChannelTopic(8, string.Empty);
+        await context.Store.InitializeAsync(account);
+        await context.Store.ApplyBatchAsync(account.AccountId,
+        [
+            new SubscriptionChangedEvent(PrivateGroupSubscription(7, "Build"), false),
+            new SubscriptionChangedEvent(
+                new Subscription(8, "Public", isPrivate: false, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false),
+                false),
+            new MessageUpsertEvent(StoreTestData.Message(50, source, isRead: false))
+        ]);
+
+        await context.Store.ApplyBatchAsync(account.AccountId,
+            [new MessageMovedEvent([50], unsupportedDestination)]);
+
+        Assert.Empty(await context.Store.QueryMessagesAsync(account.AccountId, source, null, 20));
+        Assert.Empty(await context.Store.QueryMessagesAsync(account.AccountId, unsupportedDestination, null, 20));
+        var state = (await context.Store.LoadAsync(account.AccountId))!.State;
+        Assert.DoesNotContain(source.CanonicalKey, state.Unread.Counts.Keys);
+        Assert.DoesNotContain(unsupportedDestination.CanonicalKey, state.Unread.Counts.Keys);
+        Assert.Equal(0, state.Unread.Total);
     }
 
     [Fact]
@@ -354,14 +551,14 @@ public sealed class SqliteAccountStoreCacheTests
     {
         await using var context = StoreTestContext.Create();
         var account = StoreTestData.Account();
-        var conversation = new ChannelTopic(7, "build");
+        var conversation = new ChannelTopic(7, string.Empty);
         await context.Store.InitializeAsync(account);
 
         await context.Store.ApplyBatchAsync(account.AccountId,
         [
-            new SubscriptionChangedEvent(new Subscription(7, "Build"), false),
+            new SubscriptionChangedEvent(PrivateGroupSubscription(7, "Build"), false),
             new UserUpsertEvent(new UserProfile(70, "Builder")),
-            new TopicUpsertEvent(new TopicSummary(7, "build", 50)),
+            new TopicUpsertEvent(new TopicSummary(7, string.Empty, 50)),
             new MessageUpsertEvent(StoreTestData.Message(50, conversation)),
             new MessagesUpdatedEvent([StoreTestData.Message(50, conversation, content: "updated")]),
             new OutboxQueuedEvent(new OutboxEntry("123", conversation, "ephemeral", DateTimeOffset.UnixEpoch))
@@ -509,6 +706,9 @@ public sealed class SqliteAccountStoreCacheTests
             return source.Task;
         }
     }
+
+    private static Subscription PrivateGroupSubscription(long channelId, string name) =>
+        new(channelId, name, isPrivate: true, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false);
 
     private sealed record UnsupportedConversation : ConversationKey
     {

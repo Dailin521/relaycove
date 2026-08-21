@@ -28,7 +28,7 @@ public sealed class ClientSessionTests
         var gateway = new FakeGateway(log);
         var store = new FakeAccountStore(log);
         var vault = new FakeCredentialVault(log);
-        var recent = new DirectMessage([20, 30]);
+        var recent = new DirectMessage([20]);
         gateway.RegisterHandler = (_, _) => Task.FromResult(Register(recent: [recent]));
         await using var session = new ClientSession(gateway, store, vault);
 
@@ -510,7 +510,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task SelectConversationAsync_WhenCacheExists_PublishesCacheBeforeNewestHistoryAndOlderUsesOriginalAnchor()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var newestGate = new TaskCompletionSource<HistoryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var gateway = new FakeGateway();
         gateway.RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(1, "General")]));
@@ -548,7 +548,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task SelectConversationAsync_WhenNewestHistoryMatchesCache_DoesNotPublishDuplicateMessageWindow()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var cachedMessages = Enumerable.Range(51, 50).Select(id => Message(id, conversation)).ToArray();
         var gateway = new FakeGateway
         {
@@ -580,7 +580,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task LoadOlderAsync_WhenCalledConcurrently_SharesOneRequestAndDeduplicatesOverlap()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var olderGate = new TaskCompletionSource<HistoryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var gateway = new FakeGateway
         {
@@ -611,7 +611,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task LoadOlderAsync_WhenCacheHasAGap_UsesTheOriginalNetworkAnchor()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(1, "General")])),
@@ -642,16 +642,15 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
-    public async Task SelectConversationAsync_WhenOldResponseCompletesAfterSwitch_StoresButDoesNotProjectIt()
+    public async Task SelectConversationAsync_WhenOldResponseCompletesAfterSwitch_DoesNotStoreOrProjectIt()
     {
-        var firstConversation = new ChannelTopic(1, "first");
-        var secondConversation = new ChannelTopic(2, "second");
+        var firstConversation = new DirectMessage([20]);
+        var secondConversation = new DirectMessage([30]);
         var firstGate = new TaskCompletionSource<HistoryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var store = new FakeAccountStore();
         var gateway = new FakeGateway
         {
-            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions:
-                [new Subscription(1, "First"), new Subscription(2, "Second")])),
+            RegisterHandler = (_, _) => Task.FromResult(Register()),
             HistoryHandler = (request, _) => request.Conversation == firstConversation
                 ? firstGate.Task
                 : Task.FromResult(new HistoryResult([Message(200, secondConversation)], true, true))
@@ -670,7 +669,7 @@ public sealed class ClientSessionTests
         Assert.Equal(secondConversation, session.HistoryState.Conversation);
         Assert.Contains(200, session.State.Messages.Keys);
         Assert.DoesNotContain(100, session.State.Messages.Keys);
-        Assert.Contains(store.StoredPages, page => page.Any(message => message.Id == 100));
+        Assert.DoesNotContain(store.StoredPages, page => page.Any(message => message.Id == 100));
         await session.StopAsync();
     }
 
@@ -761,7 +760,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task LoadOlderAsync_WhenSixPagesAreLoaded_KeepsFiftyPageSizeAndTwoHundredFiftyMessageWindow()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(1, "General")])),
@@ -794,7 +793,7 @@ public sealed class ClientSessionTests
     public async Task SendAsync_WhenNoEchoArrives_TransitionsOutboxWithoutResend()
     {
         var delays = new ControlledDelay();
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(1, "General")])),
@@ -819,7 +818,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task LogoutAsync_WhenSendIsInFlight_WaitsBeforeRemovingCredentialsOrLockingCache()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var sendSource = new TaskCompletionSource<SendResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var gateway = new FakeGateway
         {
@@ -856,7 +855,7 @@ public sealed class ClientSessionTests
     public async Task LogoutAsync_WhenSendDeadlineExpires_WaitsForDeadlineThenCompletesTeardown()
     {
         var deadline = new ControlledDelay();
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(1, "General")])),
@@ -893,7 +892,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task StopAsync_WhenSendIsInFlight_WaitsUntilSendSettles()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var sendSource = new TaskCompletionSource<SendResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var gateway = new FakeGateway
         {
@@ -921,7 +920,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task DisposeAsync_WhenSendIsInFlight_WaitsUntilSendSettles()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var sendSource = new TaskCompletionSource<SendResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var gateway = new FakeGateway
         {
@@ -949,7 +948,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task SendAsync_WhenStopOwnsCommandGate_DoesNotStartPostAfterTeardown()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var stoppingEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var eventSource = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
         var gateway = new FakeGateway
@@ -987,7 +986,7 @@ public sealed class ClientSessionTests
     public async Task SendAsync_WhenHistoryReconciliationExceedsDeadline_ReturnsAndKeepsOutboxForRealtime()
     {
         var deadline = new ControlledDelay();
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(1, "General")])),
@@ -1031,7 +1030,7 @@ public sealed class ClientSessionTests
     public async Task SendAsync_WhenPostExceedsDeadline_EndsCommandAsWaitExpiredWithoutResend()
     {
         var deadline = new ControlledDelay();
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(1, "General")])),
@@ -1064,7 +1063,7 @@ public sealed class ClientSessionTests
     public async Task SendAsync_WhenUserCancels_DoesNotReportDeadlineExpiry()
     {
         var deadline = new ControlledDelay();
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(1, "General")])),
@@ -1092,7 +1091,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task SendAsync_WhenRealtimeEchoBeatsHttpResponse_ReconcilesByLocalIdAndNeverResends()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var sendSource = new TaskCompletionSource<SendResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var eventSource = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
         var gateway = new FakeGateway
@@ -1128,7 +1127,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task SendAsync_WhenPostFailsExplicitly_MarksFailedAndDoesNotRetry()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(1, "General")])),
@@ -1152,7 +1151,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task SendAsync_WhenPostHasExplicitNetworkFailure_MarksFailedAndSessionOffline()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(1, "General")])),
@@ -1176,7 +1175,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task MarkDisplayedReadAsync_WhenServiceHasNotSucceeded_DoesNotMutateThenMarksOnlyNewestFifty()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var markSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var messages = Enumerable.Range(1, 60)
             .Select(id => (DomainEvent)new MessageUpsertEvent(
@@ -1212,7 +1211,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task MarkDisplayedReadAsync_WhenOnlyOlderPageIsUnread_DoesNotMarkOutsideNewestWindow()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var messages = Enumerable.Range(1, 100)
             .Select(id => (DomainEvent)new MessageUpsertEvent(
                 Message(id, conversation) with { IsRead = id > 50 },
@@ -1238,7 +1237,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task MarkDisplayedReadAsync_WhenNewestWindowHasMixedFlags_UpdatesOnlyUnreadInThatWindow()
     {
-        var conversation = new ChannelTopic(1, "general");
+        var conversation = new DirectMessage([20]);
         var messages = Enumerable.Range(1, 100)
             .Select(id => (DomainEvent)new MessageUpsertEvent(
                 Message(id, conversation) with { SenderId = 8, IsRead = id > 50 && id % 2 == 0 },
@@ -1336,25 +1335,27 @@ public sealed class ClientSessionTests
     {
         var gateway = new FakeGateway
         {
-            TopicsHandler = (_, _) => Task.FromResult<TopicsResult>(new TopicsResult([new TopicSummary(8, "release", 80)]))
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [PrivateGroupSubscription(8)])),
+            TopicsHandler = (_, _) => Task.FromResult<TopicsResult>(new TopicsResult([new TopicSummary(8, string.Empty, 80)]))
         };
         await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
 
         var topics = await session.LoadTopicsAsync(8);
 
-        Assert.Equal("release", Assert.Single(topics).Topic);
-        Assert.Contains(new ChannelTopic(8, "release").CanonicalKey, session.State.Topics.Keys);
+        Assert.Equal(string.Empty, Assert.Single(topics).Topic);
+        Assert.Contains(new ChannelTopic(8, string.Empty).CanonicalKey, session.State.Topics.Keys);
         await session.StopAsync();
     }
 
     [Fact]
     public async Task LoadTopicsAsync_WhenOffline_ReturnsCachedTopicsWithoutNetwork()
     {
-        var topic = new TopicSummary(8, "cached", 80);
+        var topic = new TopicSummary(8, string.Empty, 80);
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register(
+                subscriptions: [PrivateGroupSubscription(8)],
                 events: [new TopicUpsertEvent(topic, Source: DomainEventSource.Register)]))
         };
         await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
@@ -1363,7 +1364,7 @@ public sealed class ClientSessionTests
 
         var topics = await session.LoadTopicsAsync(8);
 
-        Assert.Equal("cached", Assert.Single(topics).Topic);
+        Assert.Equal(string.Empty, Assert.Single(topics).Topic);
         Assert.Equal(0, gateway.TopicsCalls);
     }
 
@@ -1628,6 +1629,81 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task ClearConversationCacheAsync_WhenHistoryIsActive_PurgesOnlyExpectedConversationAndInvalidatesLateResponse()
+    {
+        var selected = new DirectMessage([20]);
+        var retained = new DirectMessage([30]);
+        var historyGate = new TaskCompletionSource<HistoryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new FakeAccountStore();
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                events:
+                [
+                    new MessageUpsertEvent(Message(1, selected), Source: DomainEventSource.Register),
+                    new MessageUpsertEvent(Message(2, retained), Source: DomainEventSource.Register)
+                ])),
+            HistoryHandler = (_, _) => historyGate.Task
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var selection = session.SelectConversationAsync(selected);
+        await WaitUntilAsync(() => gateway.HistoryRequests.Count == 1);
+        await session.ClearConversationCacheAsync(selected);
+        historyGate.SetResult(new HistoryResult([Message(100, selected)], true, true));
+        await selection;
+
+        Assert.Equal(selected, Assert.Single(store.PurgedConversations));
+        Assert.DoesNotContain(store.StoredPages, page => page.Any(message => message.Id == 100));
+        Assert.Empty(session.State.Messages);
+        Assert.Equal(selected, session.HistoryState.Conversation);
+        Assert.False(session.HistoryState.IsLoading);
+        Assert.DoesNotContain(1, store.SnapshotState.Messages.Keys);
+        Assert.Contains(2, store.SnapshotState.Messages.Keys);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task ClearConversationCacheAsync_WhenHistoryWriteAlreadyPassedGenerationCheck_PurgesAfterWrite()
+    {
+        var selected = new DirectMessage([20]);
+        var writeEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new FakeAccountStore
+        {
+            StorePageAction = async (_, messages, _) =>
+            {
+                if (messages.Any(message => message.Id == 100))
+                {
+                    writeEntered.TrySetResult();
+                    await releaseWrite.Task;
+                }
+            }
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register()),
+            HistoryHandler = (_, _) => Task.FromResult(new HistoryResult([Message(100, selected)], true, true))
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var selection = session.SelectConversationAsync(selected);
+        await writeEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var clear = session.ClearConversationCacheAsync(selected);
+        Assert.False(clear.IsCompleted);
+        releaseWrite.TrySetResult();
+        await Task.WhenAll(selection, clear);
+
+        Assert.Contains(store.StoredPages, page => page.Any(message => message.Id == 100));
+        Assert.Equal(selected, Assert.Single(store.PurgedConversations));
+        Assert.DoesNotContain(100, store.SnapshotState.Messages.Keys);
+        Assert.Empty(session.State.Messages);
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task GetRealmUsersAsync_WhenConnected_ReturnsGatewaySnapshotWithoutMutatingState()
     {
         var users = new UserProfile[]
@@ -1694,8 +1770,10 @@ public sealed class ClientSessionTests
     {
         var gateway = new FakeGateway
         {
-            RegisterHandler = (_, _) => Task.FromResult(Register(userTopics: [new UserTopicVisibility(8, "release", TopicVisibilityPolicy.Followed)])),
-            TopicsHandler = (_, _) => Task.FromResult<TopicsResult>(new TopicsResult([new TopicSummary(8, "release", 80)]))
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                subscriptions: [PrivateGroupSubscription(8)],
+                userTopics: [new UserTopicVisibility(8, string.Empty, TopicVisibilityPolicy.Followed)])),
+            TopicsHandler = (_, _) => Task.FromResult<TopicsResult>(new TopicsResult([new TopicSummary(8, string.Empty, 80)]))
         };
         await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
@@ -1703,7 +1781,7 @@ public sealed class ClientSessionTests
         var topic = Assert.Single(await session.LoadTopicsAsync(8));
 
         Assert.Equal(TopicVisibilityPolicy.Followed, topic.VisibilityPolicy);
-        Assert.Equal(TopicVisibilityPolicy.None, session.State.Topics[new ChannelTopic(8, "release").CanonicalKey].VisibilityPolicy);
+        Assert.Equal(TopicVisibilityPolicy.None, session.State.Topics[new ChannelTopic(8, string.Empty).CanonicalKey].VisibilityPolicy);
         await session.StopAsync();
     }
 
@@ -1822,6 +1900,430 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task CreatePrivateGroupAsync_WhenRegisterAuthorizes_CreatesOnceAndProjectsEligibleEmptyTopicGroup()
+    {
+        var users = new[]
+        {
+            new UserProfile(10, "Me", "me@example.test"),
+            new UserProfile(20, "Ada"),
+            new UserProfile(30, "Grace")
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(canCreatePrivateChannel: true, users: users)),
+            CreatePrivateGroupHandler = (_, _) => Task.FromResult(77L)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var created = await session.CreatePrivateGroupAsync(new PrivateGroupCreateOptions("  产品设计群  ", [30, 20]));
+
+        Assert.True(session.CanCreatePrivateGroup);
+        Assert.Equal(77, created.ChannelId);
+        Assert.Equal("产品设计群", created.Name);
+        Assert.Equal(new ChannelTopic(77, string.Empty), created.Conversation);
+        Assert.Equal(3, created.MemberCount);
+        Assert.Equal([20L, 30L], Assert.Single(gateway.PrivateGroupCreateRequests).Options.OtherMemberIds);
+        Assert.True(PrivateGroupPolicy.IsEligible(session.State.Subscriptions[77]));
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task CreatePrivateGroupAsync_WhenPermissionOrMembersAreInvalid_FailsBeforeNetwork()
+    {
+        var users = new[]
+        {
+            new UserProfile(10, "Me", "me@example.test"),
+            new UserProfile(20, "Ada"),
+            new UserProfile(30, "Grace", isActive: false)
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(users: users))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => session.CreatePrivateGroupAsync(
+            new PrivateGroupCreateOptions("group", [20, 30])));
+        Assert.Empty(gateway.PrivateGroupCreateRequests);
+
+        gateway.RegisterHandler = (_, _) => Task.FromResult(Register(canCreatePrivateChannel: true, users: users));
+        await session.StopAsync();
+        await using var authorized = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await authorized.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => authorized.CreatePrivateGroupAsync(
+            new PrivateGroupCreateOptions("group", [20, 30])));
+        await Assert.ThrowsAsync<ArgumentException>(() => authorized.CreatePrivateGroupAsync(
+            new PrivateGroupCreateOptions("group", [20, 20])));
+        Assert.Empty(gateway.PrivateGroupCreateRequests);
+        await authorized.StopAsync();
+    }
+
+    [Fact]
+    public async Task CreatePrivateGroupAsync_WhenResultIsUncertain_RefreshesAuthorityAndDoesNotRetry()
+    {
+        var registerCalls = 0;
+        var users = new[]
+        {
+            new UserProfile(10, "Me", "me@example.test"),
+            new UserProfile(20, "Ada"),
+            new UserProfile(30, "Grace")
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(
+                Interlocked.Increment(ref registerCalls) == 1
+                    ? Register(canCreatePrivateChannel: true, users: users)
+                    : Register(
+                        queue: "queue-refreshed",
+                        subscriptions: [PrivateGroupSubscription(77, "group")],
+                        canCreatePrivateChannel: true,
+                        users: users)),
+            CreatePrivateGroupHandler = (_, _) => Task.FromException<long>(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => session.CreatePrivateGroupAsync(
+            new PrivateGroupCreateOptions("group", [20, 30])));
+
+        Assert.Contains("结果无法确认", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("勿直接重试", exception.Message, StringComparison.Ordinal);
+        Assert.Single(gateway.PrivateGroupCreateRequests);
+        Assert.Equal(2, Volatile.Read(ref registerCalls));
+        Assert.True(PrivateGroupPolicy.IsEligible(session.State.Subscriptions[77]));
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task CreatePrivateGroupAsync_WhenConcurrentUnauthorizedInvalidatesCredentials_DiscardsLateRegister()
+    {
+        var registerCalls = 0;
+        var refreshRegister = new TaskCompletionSource<RegisterResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var users = new[]
+        {
+            new UserProfile(10, "Me", "me@example.test"),
+            new UserProfile(20, "Ada"),
+            new UserProfile(30, "Grace")
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Interlocked.Increment(ref registerCalls) == 1
+                ? Task.FromResult(Register(canCreatePrivateChannel: true, users: users))
+                : refreshRegister.Task,
+            CreatePrivateGroupHandler = (_, _) => Task.FromException<long>(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError)),
+            ChannelDetailsHandler = (_, _) => Task.FromException<ChannelDetails>(
+                new GatewayException(GatewayErrorKind.ReauthRequired, GatewayErrorCode.Unauthorized, 401))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var create = session.CreatePrivateGroupAsync(new PrivateGroupCreateOptions("group", [20, 30]));
+        await WaitUntilAsync(() => Volatile.Read(ref registerCalls) == 2);
+        await Assert.ThrowsAsync<GatewayException>(() => session.LoadChannelDetailsAsync(7));
+        refreshRegister.SetResult(Register(
+            queue: "stale-queue",
+            subscriptions: [PrivateGroupSubscription(77, "group")],
+            canCreatePrivateChannel: true,
+            users: users));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => create);
+        Assert.Equal(ConnectionStatus.ReauthRequired, session.State.Connection.Status);
+        Assert.DoesNotContain(77, session.State.Subscriptions.Keys);
+        Assert.Equal(2, Volatile.Read(ref registerCalls));
+    }
+
+    [Fact]
+    public async Task RegisterAndRealtime_WhenMessagesAreUnsupported_DoNotPersistConversationPayloads()
+    {
+        var events = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var eventCalls = 0;
+        var supported = new ChannelTopic(7, string.Empty);
+        var unsupported = new ChannelTopic(8, string.Empty);
+        var store = new FakeAccountStore();
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                subscriptions:
+                [
+                    PrivateGroupSubscription(),
+                    new Subscription(8, "Public", isPrivate: false, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false)
+                ],
+                events:
+                [
+                    new MessageUpsertEvent(Message(1, supported), 1, DomainEventSource.Register),
+                    new MessageUpsertEvent(Message(2, unsupported), 1, DomainEventSource.Register),
+                    new MessageUpsertEvent(Message(3, new DirectMessage([20, 30])), 1, DomainEventSource.Register)
+                ])),
+            GetEventsHandler = (_, cancellationToken) => Interlocked.Increment(ref eventCalls) == 1
+                ? events.Task
+                : Never<EventBatch>(cancellationToken)
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        Assert.Equal([1L], store.SnapshotState.Messages.Keys);
+
+        events.SetResult(new EventBatch(
+        [
+            new MessageUpsertEvent(Message(4, unsupported), 2),
+            new MessageUpsertEvent(Message(5, supported), 3)
+        ], 3));
+        await WaitUntilAsync(() => store.AppliedBatches.Count > 0);
+
+        var batch = Assert.Single(store.AppliedBatches);
+        Assert.Contains(5, store.SnapshotState.Messages.Keys);
+        Assert.Contains(batch, item => item is IgnoredDomainEvent { ReasonCode: "unsupported_conversation" });
+        Assert.Contains(batch, item => item is MessageUpsertEvent { Message.Id: 5 });
+        Assert.DoesNotContain(batch, item => item is MessageUpsertEvent { Message.Id: 4 });
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task ConversationEntryPoints_WhenConversationIsUnsupported_FailBeforeHistoryOrSend()
+    {
+        var publicChannel = new ChannelTopic(8, string.Empty);
+        var namedPrivateTopic = new ChannelTopic(7, "legacy");
+        var groupDirectMessage = new DirectMessage([20, 30]);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions:
+            [
+                PrivateGroupSubscription(7),
+                new Subscription(8, "Public", isPrivate: false, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false)
+            ]))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        foreach (var conversation in new ConversationKey[] { publicChannel, namedPrivateTopic, groupDirectMessage })
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => session.SelectConversationAsync(conversation));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => session.OpenMessageAsync(conversation, 99));
+        }
+
+        Assert.Empty(gateway.HistoryRequests);
+        Assert.Empty(gateway.AroundRequests);
+        Assert.Equal(0, gateway.SendCalls);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task EventLoop_WhenSelectedPrivateGroupLosesEligibility_ClosesConversationAndBlocksSend()
+    {
+        var events = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var eventCalls = 0;
+        var conversation = new ChannelTopic(7, string.Empty);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [PrivateGroupSubscription()])),
+            GetEventsHandler = (_, cancellationToken) => Interlocked.Increment(ref eventCalls) == 1
+                ? events.Task
+                : Never<EventBatch>(cancellationToken)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(conversation);
+
+        events.SetResult(new EventBatch(
+            [new SubscriptionPatchedEvent(7, null, null, 2, TopicsPolicy: ChannelTopicsPolicy.Inherit)],
+            2));
+        await WaitUntilAsync(() => session.SelectedConversation is null);
+
+        Assert.Equal(ChannelTopicsPolicy.Inherit, session.State.Subscriptions[7].TopicsPolicy);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => session.SendAsync(conversation, "blocked"));
+        Assert.Equal(0, gateway.SendCalls);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task MessageQueries_WhenServerReturnsUnsupportedConversations_ProjectOnlySupportedRows()
+    {
+        var supportedGroup = new ChannelTopic(7, string.Empty);
+        var supportedDirect = new DirectMessage([20]);
+        var results = new[]
+        {
+            Message(1, supportedGroup),
+            Message(2, supportedDirect),
+            Message(3, new ChannelTopic(8, string.Empty)),
+            Message(4, new ChannelTopic(7, "legacy")),
+            Message(5, new DirectMessage([20, 30]))
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions:
+            [
+                PrivateGroupSubscription(),
+                new Subscription(8, "Public", isPrivate: false, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false)
+            ])),
+            SearchHandler = (_, _) => Task.FromResult(new MessageQueryPage(results, true, true, true)),
+            SavedHandler = (_, _) => Task.FromResult(new MessageQueryPage(results, true, true, true))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var search = await session.SearchMessagesAsync("message", null, 20);
+        var saved = await session.LoadSavedMessagesAsync(null, 20);
+
+        Assert.Equal([1L, 2L], search.Messages.Select(message => message.Id));
+        Assert.Equal([1L, 2L], saved.Messages.Select(message => message.Id));
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task UnsubscribeChannelAsync_WhenCurrentUserIsConfirmedOwner_RejectsBeforeWrite()
+    {
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [PrivateGroupSubscription()])),
+            ChannelDetailsHandler = (_, _) => Task.FromResult(PrivateGroupDetails(10))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => session.UnsubscribeChannelAsync(7));
+
+        Assert.Empty(gateway.UnsubscribeRequests);
+        Assert.Contains(7, session.State.Subscriptions.Keys);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task AddChannelMembersAsync_WhenResultIsUncertain_RefreshesMembersAndDoesNotRetry()
+    {
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                subscriptions: [PrivateGroupSubscription()],
+                users: [new UserProfile(10, "Me"), new UserProfile(20, "Ada")])),
+            ChannelDetailsHandler = (_, _) => Task.FromResult(PrivateGroupDetails(10)),
+            ModifyChannelMembersHandler = (_, _) => Task.FromException(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError)),
+            ChannelMembersHandler = (_, _) => Task.FromResult<IReadOnlyList<long>>([10, 20])
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            session.AddChannelMembersAsync(7, [20], false));
+
+        Assert.Contains("权威成员列表确认", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("勿重复操作", exception.Message, StringComparison.Ordinal);
+        Assert.Single(gateway.MemberModificationRequests);
+        Assert.Single(gateway.ChannelMemberRequests);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task TransferPrivateGroupOwnershipAsync_WhenAuthorityConfirms_UpdatesThreeGroupsThenExits()
+    {
+        var detailsCalls = 0;
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                subscriptions: [PrivateGroupSubscription()],
+                users: [new UserProfile(10, "Me"), new UserProfile(20, "Ada")])),
+            ChannelDetailsHandler = (_, _) => Task.FromResult(
+                PrivateGroupDetails(Interlocked.Increment(ref detailsCalls) == 1 ? 10 : 20)),
+            ChannelMembersHandler = (_, _) => Task.FromResult<IReadOnlyList<long>>([10, 20])
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var result = await session.TransferPrivateGroupOwnershipAsync(7, 20);
+
+        Assert.True(result.OwnershipTransferred);
+        Assert.True(result.PreviousOwnerExited);
+        var change = Assert.Single(gateway.AdvancedSettingsRequests).Change;
+        var updates = Assert.IsAssignableFrom<IReadOnlyList<ChannelGroupSettingUpdate>>(change.GroupSettings);
+        Assert.Equal(3, updates.Count);
+        Assert.All(updates, update => Assert.Equal(20, Assert.Single(Assert.IsType<AnonymousChannelGroupSetting>(update.NewGroup).DirectMembers)));
+        Assert.Single(gateway.UnsubscribeRequests);
+        Assert.DoesNotContain(7, session.State.Subscriptions.Keys);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task TransferPrivateGroupOwnershipAsync_WhenPatchIsUncertainButOwnerChanged_DoesNotAutoExitOrRetry()
+    {
+        var detailsCalls = 0;
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                subscriptions: [PrivateGroupSubscription()],
+                users: [new UserProfile(10, "Me"), new UserProfile(20, "Ada")])),
+            ChannelDetailsHandler = (_, _) => Task.FromResult(
+                PrivateGroupDetails(Interlocked.Increment(ref detailsCalls) == 1 ? 10 : 20)),
+            ChannelMembersHandler = (_, _) => Task.FromResult<IReadOnlyList<long>>([10, 20]),
+            UpdateChannelAdvancedHandler = (_, _) => Task.FromException(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var result = await session.TransferPrivateGroupOwnershipAsync(7, 20);
+
+        Assert.True(result.OwnershipTransferred);
+        Assert.False(result.PreviousOwnerExited);
+        Assert.Single(gateway.AdvancedSettingsRequests);
+        Assert.Empty(gateway.UnsubscribeRequests);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task DissolvePrivateGroupAsync_WhenRemovalIsConfirmed_RemovesOthersThenOwner()
+    {
+        var memberCalls = 0;
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                subscriptions: [PrivateGroupSubscription()],
+                users: [new UserProfile(10, "Me"), new UserProfile(20, "Ada"), new UserProfile(30, "Grace")])),
+            ChannelDetailsHandler = (_, _) => Task.FromResult(PrivateGroupDetails(10)),
+            ChannelMembersHandler = (_, _) => Task.FromResult<IReadOnlyList<long>>(
+                Interlocked.Increment(ref memberCalls) == 1 ? [10, 20, 30] : [10])
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var result = await session.DissolvePrivateGroupAsync(7);
+
+        Assert.True(result.OtherMembersRemoved);
+        Assert.True(result.OwnerExited);
+        var removal = Assert.Single(gateway.MemberModificationRequests);
+        Assert.False(removal.Add);
+        Assert.Equal([20L, 30L], removal.PrincipalIds);
+        Assert.Single(gateway.UnsubscribeRequests);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task DissolvePrivateGroupAsync_WhenConcurrentMemberRemains_StopsBeforeOwnerExit()
+    {
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                subscriptions: [PrivateGroupSubscription()],
+                users: [new UserProfile(10, "Me"), new UserProfile(20, "Ada")])),
+            ChannelDetailsHandler = (_, _) => Task.FromResult(PrivateGroupDetails(10)),
+            ChannelMembersHandler = (_, _) => Task.FromResult<IReadOnlyList<long>>([10, 20])
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var result = await session.DissolvePrivateGroupAsync(7);
+
+        Assert.False(result.OtherMembersRemoved);
+        Assert.False(result.OwnerExited);
+        Assert.Single(gateway.MemberModificationRequests);
+        Assert.Empty(gateway.UnsubscribeRequests);
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task SetChannelPersonalSettingAsync_WhenColorIsConfirmed_UpdatesLocalSubscriptionAndPublishesState()
     {
         var gateway = new FakeGateway
@@ -1866,12 +2368,13 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task UnsubscribeChannelAsync_WhenServerConfirms_RemovesChannelAndSelection()
     {
-        var channel = new Subscription(7, "Engineering");
+        var channel = PrivateGroupSubscription(7, "Engineering");
         var store = new FakeAccountStore();
         var requestedNames = new List<string>();
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [channel])),
+            ChannelDetailsHandler = (_, _) => Task.FromResult(PrivateGroupDetails(20, channel.ChannelId, channel.Name)),
             UnsubscribeChannelHandler = (request, _) =>
             {
                 requestedNames.Add(request.ChannelName);
@@ -1880,7 +2383,7 @@ public sealed class ClientSessionTests
         };
         await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
-        await session.SelectConversationAsync(new ChannelTopic(channel.ChannelId, "topic"));
+        await session.SelectConversationAsync(new ChannelTopic(channel.ChannelId, string.Empty));
 
         await session.UnsubscribeChannelAsync(channel.ChannelId);
 
@@ -1913,7 +2416,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task UnsubscribeChannelAsync_WhenCachePurgeFails_KeepsConfirmedRemovalInMemory()
     {
-        var channel = new Subscription(11, "Confirmed remotely");
+        var channel = PrivateGroupSubscription(11, "Confirmed remotely");
         var store = new FakeAccountStore
         {
             PurgeFailure = new InvalidOperationException("database unavailable")
@@ -1921,12 +2424,13 @@ public sealed class ClientSessionTests
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [channel])),
+            ChannelDetailsHandler = (_, _) => Task.FromResult(PrivateGroupDetails(20, channel.ChannelId, channel.Name)),
             UnsubscribeChannelHandler = (request, _) =>
                 Task.FromResult(new UnsubscribeChannelResult([request.ChannelName], []))
         };
         await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
-        await session.SelectConversationAsync(new ChannelTopic(channel.ChannelId, "topic"));
+        await session.SelectConversationAsync(new ChannelTopic(channel.ChannelId, string.Empty));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             session.UnsubscribeChannelAsync(channel.ChannelId));
@@ -1968,7 +2472,7 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task EventLoop_WhenSubscriptionIsRemoved_ClearsSelectedChannel()
     {
-        var channel = new Subscription(10, "External removal");
+        var channel = PrivateGroupSubscription(10, "External removal");
         var removal = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
         var eventCalls = 0;
         var gateway = new FakeGateway
@@ -1980,7 +2484,7 @@ public sealed class ClientSessionTests
         };
         await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
-        await session.SelectConversationAsync(new ChannelTopic(channel.ChannelId, "topic"));
+        await session.SelectConversationAsync(new ChannelTopic(channel.ChannelId, string.Empty));
 
         removal.SetResult(new EventBatch([new SubscriptionRemovedEvent(channel.ChannelId, 2)], 2));
         await WaitUntilAsync(() => session.SelectedConversation is null);
@@ -1992,15 +2496,15 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task EventLoop_WhenMessageOutsideWindowMoves_RefreshesAffectedTopicsFromCache()
     {
-        var source = new ChannelTopic(1, "old");
-        var destination = new ChannelTopic(2, "new");
+        var source = new ChannelTopic(1, string.Empty);
+        var destination = new ChannelTopic(2, string.Empty);
         var message = new ChatMessage(100, source, 20, "moved", DateTimeOffset.UnixEpoch.AddSeconds(100), isRead: true);
         var move = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
         var eventCalls = 0;
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register(
-                subscriptions: [new Subscription(1, "Source"), new Subscription(2, "Destination")],
+                subscriptions: [PrivateGroupSubscription(1, "Source"), PrivateGroupSubscription(2, "Destination")],
                 events: [new MessageUpsertEvent(message, Source: DomainEventSource.Register)])),
             GetEventsHandler = (_, cancellationToken) => Interlocked.Increment(ref eventCalls) == 1
                 ? move.Task
@@ -2034,6 +2538,31 @@ public sealed class ClientSessionTests
     private static ChannelDetails Details(long channelId, string name, bool isArchived = false) =>
         new(channelId, name, null, isArchived, false, false, null, null, null, null, null, null);
 
+    private static Subscription PrivateGroupSubscription(long channelId = 7, string name = "Group") =>
+        new(channelId, name, isPrivate: true, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false);
+
+    private static ChannelDetails PrivateGroupDetails(long ownerId, long channelId = 7, string name = "Group")
+    {
+        var owner = PrivateGroupPolicy.OwnerGroup(ownerId);
+        return new ChannelDetails(
+            channelId,
+            name,
+            string.Empty,
+            false,
+            true,
+            false,
+            null,
+            null,
+            null,
+            ownerId,
+            null,
+            owner,
+            owner,
+            HistoryPublicToSubscribers: true,
+            TopicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly,
+            CanRemoveSubscribersGroup: owner);
+    }
+
     private static StoredAccount Stored(CredentialEnvelope credential) =>
         new(AccountId.Create(credential.Realm, credential.UserId), credential.Realm, credential.Email, credential.UserId);
 
@@ -2048,10 +2577,12 @@ public sealed class ClientSessionTests
         UnreadState? unread = null,
         int? maxFileUploadSizeMiB = null,
         IReadOnlyList<UserTopicVisibility>? userTopics = null,
-        bool isOrganizationAdministrator = false) =>
+        bool isOrganizationAdministrator = false,
+        bool canCreatePrivateChannel = false,
+        IReadOnlyList<UserProfile>? users = null) =>
         new(queue, 1, TimeSpan.FromSeconds(25), 1_000, 100, subscriptions ?? [],
-            [new UserProfile(10, "Me", "me@example.test")], recent ?? [], unread ?? new UnreadState(), events ?? [], maxFileUploadSizeMiB,
-            UserTopics: userTopics, IsOrganizationAdministrator: isOrganizationAdministrator);
+            users ?? [new UserProfile(10, "Me", "me@example.test")], recent ?? [], unread ?? new UnreadState(), events ?? [], maxFileUploadSizeMiB,
+            UserTopics: userTopics, IsOrganizationAdministrator: isOrganizationAdministrator, CanCreatePrivateChannel: canCreatePrivateChannel);
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
@@ -2138,8 +2669,10 @@ public sealed class ClientSessionTests
         public List<IReadOnlyCollection<DomainEvent>> AppliedBatches { get; } = [];
         public List<IReadOnlyCollection<ChatMessage>> StoredPages { get; } = [];
         public List<long> PurgedChannels { get; } = [];
+        public List<ConversationKey> PurgedConversations { get; } = [];
         public Func<AccountId, ConversationKey, long?, int, CancellationToken, Task<IReadOnlyList<ChatMessage>>>? QueryHandler { get; set; }
         public Func<AccountId, IReadOnlyCollection<ChannelTopic>, CancellationToken, Task<IReadOnlyList<TopicSummary>>>? QueryTopicsHandler { get; set; }
+        public Func<AccountId, IReadOnlyCollection<ChatMessage>, CancellationToken, Task>? StorePageAction { get; set; }
 
         public Task<IReadOnlyList<StoredAccount>> ListAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<StoredAccount>>(Account is null ? [] : [Account]);
@@ -2188,15 +2721,18 @@ public sealed class ClientSessionTests
                 messages.Count > limit);
         }
 
-        public Task StoreMessagePageAsync(
+        public async Task StoreMessagePageAsync(
             AccountId accountId, IReadOnlyCollection<ChatMessage> messages,
             CancellationToken cancellationToken = default)
         {
+            if (StorePageAction is not null)
+            {
+                await StorePageAction(accountId, messages, cancellationToken);
+            }
             StoredPages.Add(messages.ToArray());
             SnapshotState = DomainReducer.Apply(
                 SnapshotState,
                 messages.Select(message => new MessageUpsertEvent(message, Source: DomainEventSource.History)));
-            return Task.CompletedTask;
         }
 
         public Task<IReadOnlyList<TopicSummary>> QueryTopicSummariesAsync(
@@ -2238,6 +2774,21 @@ public sealed class ClientSessionTests
             SnapshotState = DomainReducer.Apply(
                 SnapshotState,
                 new SubscriptionRemovedEvent(channelId, Source: DomainEventSource.Local));
+            return Task.CompletedTask;
+        }
+
+        public Task PurgeConversationAsync(
+            AccountId accountId,
+            ConversationKey conversation,
+            CancellationToken cancellationToken = default)
+        {
+            PurgedConversations.Add(conversation);
+            SnapshotState = SnapshotState with
+            {
+                Messages = SnapshotState.Messages
+                    .Where(pair => pair.Value.Conversation != conversation)
+                    .ToDictionary(pair => pair.Key, pair => pair.Value)
+            };
             return Task.CompletedTask;
         }
 
@@ -2294,6 +2845,10 @@ public sealed class ClientSessionTests
         public List<ModifyChannelMembersRequest> MemberModificationRequests { get; } = [];
         public List<SetChannelPersonalSettingRequest> PersonalSettingRequests { get; } = [];
         public List<CreateChannelRequest> CreateChannelRequests { get; } = [];
+        public List<PrivateGroupCreateRequest> PrivateGroupCreateRequests { get; } = [];
+        public List<ChannelMembersRequest> ChannelMemberRequests { get; } = [];
+        public List<UpdateChannelAdvancedRequest> AdvancedSettingsRequests { get; } = [];
+        public List<UnsubscribeChannelRequest> UnsubscribeRequests { get; } = [];
         public int AvailableChannelsCalls { get; private set; }
         public int MoveTopicCalls { get; private set; }
         public Func<RegisterRequest, CancellationToken, Task<RegisterResult>> RegisterHandler { get; set; } = (_, _) => Task.FromResult(Register());
@@ -2323,6 +2878,9 @@ public sealed class ClientSessionTests
         public Func<UpdateChannelRequest, CancellationToken, Task>? UpdateChannelHandler { get; set; }
         public Func<SetChannelPersonalSettingRequest, CancellationToken, Task>? SetChannelPersonalSettingHandler { get; set; }
         public Func<CreateChannelRequest, CancellationToken, Task<long>>? CreateChannelHandler { get; set; }
+        public Func<PrivateGroupCreateRequest, CancellationToken, Task<long>>? CreatePrivateGroupHandler { get; set; }
+        public Func<ChannelMembersRequest, CancellationToken, Task<IReadOnlyList<long>>>? ChannelMembersHandler { get; set; }
+        public Func<UpdateChannelAdvancedRequest, CancellationToken, Task>? UpdateChannelAdvancedHandler { get; set; }
         public Func<DeleteQueueRequest, CancellationToken, Task>? DeleteQueueHandler { get; set; }
         public Func<TopicsRequest, CancellationToken, Task<TopicsResult>> TopicsHandler { get; set; } = (_, _) => Task.FromResult(new TopicsResult([]));
 
@@ -2438,9 +2996,12 @@ public sealed class ClientSessionTests
 
         public Task<UnsubscribeChannelResult> UnsubscribeChannelAsync(
             UnsubscribeChannelRequest request,
-            CancellationToken cancellationToken = default) =>
-            UnsubscribeChannelHandler?.Invoke(request, cancellationToken) ??
-            Task.FromResult(new UnsubscribeChannelResult([request.ChannelName], []));
+            CancellationToken cancellationToken = default)
+        {
+            UnsubscribeRequests.Add(request);
+            return UnsubscribeChannelHandler?.Invoke(request, cancellationToken) ??
+                Task.FromResult(new UnsubscribeChannelResult([request.ChannelName], []));
+        }
 
         public Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(AvailableChannelsRequest request, CancellationToken cancellationToken = default)
         {
@@ -2502,6 +3063,24 @@ public sealed class ClientSessionTests
         {
             CreateChannelRequests.Add(request);
             return CreateChannelHandler?.Invoke(request, cancellationToken) ?? Task.FromResult(44L);
+        }
+
+        public Task<long> CreatePrivateGroupAsync(PrivateGroupCreateRequest request, CancellationToken cancellationToken = default)
+        {
+            PrivateGroupCreateRequests.Add(request);
+            return CreatePrivateGroupHandler?.Invoke(request, cancellationToken) ?? Task.FromResult(45L);
+        }
+
+        public Task<IReadOnlyList<long>> GetChannelMemberIdsAsync(ChannelMembersRequest request, CancellationToken cancellationToken = default)
+        {
+            ChannelMemberRequests.Add(request);
+            return ChannelMembersHandler?.Invoke(request, cancellationToken) ?? Task.FromResult<IReadOnlyList<long>>([10]);
+        }
+
+        public Task UpdateChannelAdvancedSettingsAsync(UpdateChannelAdvancedRequest request, CancellationToken cancellationToken = default)
+        {
+            AdvancedSettingsRequests.Add(request);
+            return UpdateChannelAdvancedHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
         }
 
         public Task UpdateChannelAsync(UpdateChannelRequest request, CancellationToken cancellationToken = default) =>

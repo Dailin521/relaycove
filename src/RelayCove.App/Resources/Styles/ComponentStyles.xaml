@@ -54,6 +54,21 @@
         <Setter Property="FontAttributes" Value="Bold" />
     </Style>
 
+    <Style x:Key="JumpToLatestButtonStyle" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
+        <Setter Property="HeightRequest" Value="42" />
+        <Setter Property="MinimumHeightRequest" Value="42" />
+        <Setter Property="Padding" Value="16,0" />
+        <Setter Property="CornerRadius" Value="21" />
+        <Setter Property="BorderColor"
+                Value="{AppThemeBinding Light={StaticResource LightStrongBorderColor}, Dark={StaticResource DarkStrongBorderColor}}" />
+        <Setter Property="BackgroundColor"
+                Value="{AppThemeBinding Light={StaticResource LightSurfaceRaisedColor}, Dark={StaticResource DarkSurfaceRaisedColor}}" />
+        <Setter Property="TextColor" Value="{StaticResource SuccessColor}" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="FontAttributes" Value="Bold" />
+        <Setter Property="ContentLayout" Value="Left,8" />
+    </Style>
+
     <Style x:Key="IconButtonStyle" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
         <Setter Property="WidthRequest" Value="36" />
         <Setter Property="MinimumWidthRequest" Value="36" />

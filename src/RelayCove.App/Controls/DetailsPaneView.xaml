@@ -10,7 +10,7 @@
              Background="{StaticResource SurfaceSoftBrush}">
     <Grid RowDefinitions="59,1,*">
         <Grid Grid.Row="0" ColumnDefinitions="*,39" Padding="15,0,10,0">
-            <Label Text="详情"
+            <Label Text="聊天设置"
                    Style="{StaticResource BaseLabelStyle}"
                    FontSize="15"
                    FontAttributes="Bold"
@@ -23,7 +23,7 @@
                     WidthRequest="39"
                     HeightRequest="39"
                     Command="{Binding ToggleDetailsCommand}"
-                    SemanticProperties.Description="收起详情">
+                    SemanticProperties.Description="收起聊天设置">
                 <Button.Behaviors>
                     <windowsBehaviors:EscapeCommandBehavior
                         Command="{Binding ViewModel.ToggleDetailsCommand, Source={x:Reference Root}, x:DataType=controls:DetailsPaneView}"
@@ -33,77 +33,275 @@
         </Grid>
         <BoxView Grid.Row="1" Background="{StaticResource BorderBrush}" />
 
-        <ScrollView Grid.Row="2">
+        <ScrollView Grid.Row="2" VerticalScrollBarVisibility="Default">
             <VerticalStackLayout Spacing="0">
-                <VerticalStackLayout Padding="16,15" Spacing="7">
-                    <Label Text="{Binding DetailsKindLabel}" Style="{StaticResource SectionHeaderStyle}" />
-                    <Label Text="{Binding DetailsTitle}"
-                           Style="{StaticResource BaseLabelStyle}"
-                           FontSize="18"
-                           FontAttributes="Bold" />
-                    <Label Text="{Binding DetailsBody}"
-                           Style="{StaticResource MutedLabelStyle}"
-                           LineBreakMode="WordWrap" />
-                </VerticalStackLayout>
+                <ActivityIndicator Margin="16,12"
+                                   IsRunning="{Binding IsDetailsLoading}"
+                                   IsVisible="{Binding IsDetailsLoading}" />
+                <Label Margin="16,10"
+                       Text="{Binding DetailsLoadError}"
+                       IsVisible="{Binding HasDetailsLoadError}"
+                       Style="{StaticResource DangerLabelStyle}"
+                       LineBreakMode="WordWrap" />
 
-                <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
-
-                <VerticalStackLayout Padding="16,15" Spacing="8">
-                    <Label Text="会话状态" Style="{StaticResource SectionHeaderStyle}" />
-                    <Grid ColumnDefinitions="32,*" ColumnSpacing="10">
-                        <Border WidthRequest="32" HeightRequest="32" Padding="0" Background="{StaticResource SurfaceSelectedBrush}" StrokeThickness="0">
-                            <Border.StrokeShape><RoundRectangle CornerRadius="8" /></Border.StrokeShape>
-                            <Label Text="{Binding DetailsGlyph}" Style="{StaticResource MutedLabelStyle}" FontAttributes="Bold"
-                                   HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
+                <VerticalStackLayout x:Name="DirectMessageSettingsSection"
+                                     Padding="16,18"
+                                     Spacing="14"
+                                     IsVisible="{Binding ShowDirectMessageSettings}">
+                    <VerticalStackLayout HorizontalOptions="Center" Spacing="7">
+                        <Border WidthRequest="68" HeightRequest="68" Padding="0"
+                                Background="{StaticResource AccentBrush}" StrokeThickness="0">
+                            <Border.StrokeShape><RoundRectangle CornerRadius="34" /></Border.StrokeShape>
+                            <Grid>
+                                <Label Text="{Binding DetailsAvatarInitial}"
+                                       TextColor="White"
+                                       FontSize="18"
+                                       FontAttributes="Bold"
+                                       HorizontalTextAlignment="Center"
+                                       VerticalTextAlignment="Center" />
+                                <controls:RealmMediaImageView SourceUrl="{Binding DetailsAvatarUrl}"
+                                                              MediaKind="Avatar"
+                                                              Aspect="AspectFill"
+                                                              ShowFailureText="False" />
+                            </Grid>
                         </Border>
-                        <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
-                            <Label Text="{Binding DetailsIdentifierLabel}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" LineBreakMode="WordWrap" />
-                            <Label Text="{Binding DetailsStateLabel}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                        <Label Text="{Binding DetailsTitle}" Style="{StaticResource BaseLabelStyle}"
+                               FontSize="18" FontAttributes="Bold" HorizontalTextAlignment="Center" />
+                        <Label Text="{Binding DetailsBody}" Style="{StaticResource MutedLabelStyle}"
+                               HorizontalTextAlignment="Center" />
+                    </VerticalStackLayout>
+
+                    <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                    <Grid Padding="0,7" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <VerticalStackLayout Spacing="2" VerticalOptions="Center">
+                            <Label Text="消息免打扰" Style="{StaticResource BaseLabelStyle}" />
+                            <Label Text="仅保存在本机" Style="{StaticResource MutedLabelStyle}" />
                         </VerticalStackLayout>
+                        <Switch Grid.Column="1" IsToggled="{Binding IsSelectedDirectMessageMuted, Mode=OneWay}"
+                                Toggled="OnDirectMessageMutedToggled"
+                                VerticalOptions="Center" />
+                    </Grid>
+                    <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                    <Grid Padding="0,7" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <VerticalStackLayout Spacing="2" VerticalOptions="Center">
+                            <Label Text="置顶聊天" Style="{StaticResource BaseLabelStyle}" />
+                            <Label Text="置顶到本机私信列表顶部" Style="{StaticResource MutedLabelStyle}" />
+                        </VerticalStackLayout>
+                        <Switch Grid.Column="1" IsToggled="{Binding IsSelectedDirectMessagePinned, Mode=OneWay}"
+                                Toggled="OnDirectMessagePinnedToggled"
+                                VerticalOptions="Center" />
                     </Grid>
                 </VerticalStackLayout>
 
-                <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                <VerticalStackLayout x:Name="ChannelConversationSettingsSection"
+                                     IsVisible="{Binding ShowChannelDetails}"
+                                     Spacing="0">
+                    <VerticalStackLayout Padding="16,16,16,12" Spacing="10">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <Label Text="群成员" Style="{StaticResource SectionHeaderStyle}" />
+                            <Label Grid.Column="1" Text="{Binding DetailsMemberCountLabel}"
+                                   Style="{StaticResource MutedLabelStyle}" />
+                        </Grid>
+                        <FlexLayout Direction="Row" Wrap="Wrap" AlignItems="Start"
+                                    BindableLayout.ItemsSource="{Binding DetailsMembers}">
+                            <BindableLayout.ItemTemplate>
+                                <DataTemplate x:DataType="viewModels:ConversationSettingsMemberItem">
+                                    <VerticalStackLayout WidthRequest="58" Margin="0,2,5,8" Spacing="4">
+                                        <Border WidthRequest="44" HeightRequest="44" Padding="0"
+                                                HorizontalOptions="Center"
+                                                Background="{StaticResource AccentBrush}" StrokeThickness="0">
+                                            <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                                            <Grid>
+                                                <Label Text="{Binding Initial}" TextColor="White" FontSize="11" FontAttributes="Bold"
+                                                       HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
+                                                <controls:RealmMediaImageView SourceUrl="{Binding AvatarUrl}"
+                                                                              MediaKind="Avatar"
+                                                                              Aspect="AspectFill"
+                                                                              ShowFailureText="False" />
+                                            </Grid>
+                                        </Border>
+                                        <Label Text="{Binding Name}" Style="{StaticResource MutedLabelStyle}"
+                                               FontSize="10" HorizontalTextAlignment="Center"
+                                               LineBreakMode="TailTruncation" MaxLines="1" />
+                                        <Label Text="{Binding RoleLabel}" IsVisible="{Binding IsOwner}"
+                                               Style="{StaticResource MutedLabelStyle}" FontSize="9"
+                                               TextColor="{StaticResource AccentColor}"
+                                               HorizontalTextAlignment="Center" />
+                                    </VerticalStackLayout>
+                                </DataTemplate>
+                            </BindableLayout.ItemTemplate>
+                        </FlexLayout>
+                        <Label Text="成员资料暂不可用"
+                               IsVisible="{Binding ShowDetailsMembersEmptyState}"
+                               Style="{StaticResource MutedLabelStyle}" />
+                    </VerticalStackLayout>
 
-                <VerticalStackLayout Padding="16,15" Spacing="7">
-                    <Label Text="已接通能力" Style="{StaticResource SectionHeaderStyle}" />
-                    <Label Text="{Binding DetailsAvailableMessage}"
-                           Style="{StaticResource BaseLabelStyle}"
-                           LineBreakMode="WordWrap" />
-                </VerticalStackLayout>
-
-                <VerticalStackLayout Padding="16,15" Spacing="7">
-                    <Label Text="能力边界" Style="{StaticResource SectionHeaderStyle}" />
-                    <Label Text="{Binding DetailsUnavailableMessage}"
-                           Style="{StaticResource MutedLabelStyle}"
-                           LineBreakMode="WordWrap" />
-                </VerticalStackLayout>
-
-                <VerticalStackLayout Padding="16,4,16,18"
-                                     Spacing="8"
-                                     IsVisible="{Binding ShowChannelDetails}">
                     <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
-                    <Label Text="连接 Zulip 并确认频道订阅状态后可使用下列写操作。"
-                           IsVisible="{Binding ShowChannelActionBoundary}"
-                           Style="{StaticResource MutedLabelStyle}"
-                           LineBreakMode="WordWrap" />
-                    <Button Text="{Binding SelectedChannelMuteLabel}"
-                            Style="{StaticResource BaseButtonStyle}"
-                            Command="{Binding ToggleSelectedChannelMutedCommand}"
-                            IsEnabled="{Binding CanManageSelectedChannel}"
-                            SemanticProperties.Description="切换当前频道静音" />
-                    <Button Text="{Binding SelectedChannelPinLabel}"
-                            Style="{StaticResource BaseButtonStyle}"
-                            Command="{Binding ToggleSelectedChannelPinnedCommand}"
-                            IsEnabled="{Binding CanManageSelectedChannel}"
-                            SemanticProperties.Description="切换当前频道置顶" />
-                    <Button x:Name="UnsubscribeButton"
-                            Text="退出频道"
-                            Style="{StaticResource BaseButtonStyle}"
-                            TextColor="{StaticResource DangerColor}"
-                            Command="{Binding RequestChannelUnsubscribeCommand}"
-                            IsEnabled="{Binding CanUnsubscribeSelectedChannel}"
-                            SemanticProperties.Description="退出当前频道" />
+                    <VerticalStackLayout Padding="16,14" Spacing="5">
+                        <Label Text="群聊名称" Style="{StaticResource SectionHeaderStyle}" />
+                        <Label Text="{Binding DetailsChannelName}" Style="{StaticResource BaseLabelStyle}"
+                               FontAttributes="Bold" LineBreakMode="WordWrap" />
+                        <Grid IsVisible="{Binding IsCurrentUserPrivateGroupOwner}" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <Entry Text="{Binding EditablePrivateGroupName, Mode=TwoWay}"
+                                   Placeholder="群聊名称" Style="{StaticResource BaseEntryStyle}" />
+                            <Button Grid.Column="1" Text="保存" Style="{StaticResource BaseButtonStyle}"
+                                    Command="{Binding SavePrivateGroupNameCommand}"
+                                    IsEnabled="{Binding CanManagePrivateGroup}" />
+                        </Grid>
+                    </VerticalStackLayout>
+                    <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                    <VerticalStackLayout Padding="16,14" Spacing="5">
+                        <Label Text="群公告" Style="{StaticResource SectionHeaderStyle}" />
+                        <Label Text="{Binding DetailsChannelAnnouncement}" Style="{StaticResource MutedLabelStyle}"
+                               LineBreakMode="WordWrap" />
+                        <VerticalStackLayout IsVisible="{Binding IsCurrentUserPrivateGroupOwner}" Spacing="7">
+                            <Editor Text="{Binding EditablePrivateGroupAnnouncement, Mode=TwoWay}"
+                                    AutoSize="TextChanges" Placeholder="填写群公告"
+                                    MinimumHeightRequest="72" />
+                            <Button Text="保存群公告" Style="{StaticResource BaseButtonStyle}"
+                                    Command="{Binding SavePrivateGroupAnnouncementCommand}"
+                                    IsEnabled="{Binding CanManagePrivateGroup}" />
+                        </VerticalStackLayout>
+                    </VerticalStackLayout>
+                    <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                    <VerticalStackLayout Padding="16,14" Spacing="7">
+                        <Label Text="备注" Style="{StaticResource SectionHeaderStyle}" />
+                        <Entry Text="{Binding DetailsRemark, Mode=TwoWay}"
+                               Placeholder="仅自己在本机可见"
+                               Style="{StaticResource BaseEntryStyle}" />
+                        <Button Text="保存备注" Command="{Binding SaveDetailsRemarkCommand}"
+                                Style="{StaticResource BaseButtonStyle}" />
+                    </VerticalStackLayout>
+
+                    <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                    <VerticalStackLayout Padding="16,10" Spacing="0">
+                        <Button Text="查找聊天内容"
+                                Style="{StaticResource BaseButtonStyle}"
+                                Command="{Binding OpenSearchCommand}" />
+                        <BoxView HeightRequest="1" Margin="0,7,0,0" Background="{StaticResource BorderBrush}" />
+                        <Grid Padding="0,7" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                            <Label Text="消息免打扰" Style="{StaticResource BaseLabelStyle}" VerticalTextAlignment="Center" />
+                            <Switch Grid.Column="1" IsToggled="{Binding IsSelectedChannelMuted, Mode=OneWay}"
+                                    Toggled="OnChannelMutedToggled"
+                                    IsEnabled="{Binding CanManageSelectedChannel}" />
+                        </Grid>
+                        <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                        <Grid Padding="0,7" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                            <Label Text="置顶聊天" Style="{StaticResource BaseLabelStyle}" VerticalTextAlignment="Center" />
+                            <Switch Grid.Column="1" IsToggled="{Binding IsSelectedChannelPinned, Mode=OneWay}"
+                                    Toggled="OnChannelPinnedToggled"
+                                    IsEnabled="{Binding CanManageSelectedChannel}" />
+                        </Grid>
+                    </VerticalStackLayout>
+
+                    <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                    <VerticalStackLayout Padding="16,14" Spacing="9">
+                        <Label Text="{Binding PrivateGroupManagementBoundary}"
+                               IsVisible="{Binding ShowPrivateGroupManagementBoundary}"
+                               Style="{StaticResource MutedLabelStyle}"
+                               LineBreakMode="WordWrap" />
+                        <Label Text="{Binding PrivateGroupActionStatus}"
+                               IsVisible="{Binding HasPrivateGroupActionStatus}"
+                               Style="{StaticResource MutedLabelStyle}"
+                               LineBreakMode="WordWrap" />
+
+                        <VerticalStackLayout IsVisible="{Binding IsCurrentUserPrivateGroupOwner}" Spacing="9">
+                            <Label Text="群主管理" Style="{StaticResource SectionHeaderStyle}" />
+
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <Picker ItemsSource="{Binding GroupInviteCandidates}"
+                                        ItemDisplayBinding="{Binding Name}"
+                                        SelectedItem="{Binding SelectedGroupInviteCandidate, Mode=TwoWay}"
+                                        Title="选择要邀请的成员" />
+                                <Button Grid.Column="1" Text="邀请" Style="{StaticResource BaseButtonStyle}"
+                                        Command="{Binding InvitePrivateGroupMemberCommand}"
+                                        IsEnabled="{Binding CanInvitePrivateGroupMember}" />
+                            </Grid>
+
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <Picker ItemsSource="{Binding GroupMemberActionCandidates}"
+                                        ItemDisplayBinding="{Binding Name}"
+                                        SelectedItem="{Binding SelectedGroupRemoveCandidate, Mode=TwoWay}"
+                                        Title="选择要移除的成员" />
+                                <Button Grid.Column="1" Text="移除" Style="{StaticResource BaseButtonStyle}"
+                                        Command="{Binding RequestRemovePrivateGroupMemberCommand}"
+                                        IsEnabled="{Binding CanRemovePrivateGroupMember}" />
+                            </Grid>
+                            <VerticalStackLayout IsVisible="{Binding IsGroupRemoveConfirmationVisible}" Spacing="7">
+                                <Label Text="{Binding SelectedGroupRemoveCandidate.Name, StringFormat='确认将 {0} 移出群聊？'}"
+                                       Style="{StaticResource DangerLabelStyle}" />
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                                    <Button Text="取消" Style="{StaticResource BaseButtonStyle}"
+                                            Command="{Binding CancelPrivateGroupConfirmationCommand}" />
+                                    <Button Grid.Column="1" Text="确认移除" Style="{StaticResource PrimaryButtonStyle}"
+                                            Command="{Binding ConfirmRemovePrivateGroupMemberCommand}" />
+                                </Grid>
+                            </VerticalStackLayout>
+
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <Picker ItemsSource="{Binding GroupMemberActionCandidates}"
+                                        ItemDisplayBinding="{Binding Name}"
+                                        SelectedItem="{Binding SelectedGroupTransferCandidate, Mode=TwoWay}"
+                                        Title="选择新群主" />
+                                <Button Grid.Column="1" Text="转让" Style="{StaticResource BaseButtonStyle}"
+                                        Command="{Binding RequestTransferPrivateGroupOwnershipCommand}"
+                                        IsEnabled="{Binding CanTransferPrivateGroupOwnership}" />
+                            </Grid>
+                            <VerticalStackLayout IsVisible="{Binding IsGroupTransferConfirmationVisible}" Spacing="7">
+                                <Label Text="{Binding SelectedGroupTransferCandidate.Name, StringFormat='确认转让给 {0}？服务器确认后你将退出群聊。'}"
+                                       Style="{StaticResource DangerLabelStyle}" LineBreakMode="WordWrap" />
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                                    <Button Text="取消" Style="{StaticResource BaseButtonStyle}"
+                                            Command="{Binding CancelPrivateGroupConfirmationCommand}" />
+                                    <Button Grid.Column="1" Text="确认转让" Style="{StaticResource PrimaryButtonStyle}"
+                                            Command="{Binding ConfirmTransferPrivateGroupOwnershipCommand}" />
+                                </Grid>
+                            </VerticalStackLayout>
+
+                            <Button Text="解散群聊" Style="{StaticResource BaseButtonStyle}"
+                                    TextColor="{StaticResource DangerColor}"
+                                    Command="{Binding RequestDissolvePrivateGroupCommand}"
+                                    IsEnabled="{Binding CanManagePrivateGroup}" />
+                            <VerticalStackLayout IsVisible="{Binding IsGroupDissolveConfirmationVisible}" Spacing="7">
+                                <Label Text="将先移除并确认所有其他成员，再由群主退出。服务器私有历史不会删除。"
+                                       Style="{StaticResource DangerLabelStyle}" LineBreakMode="WordWrap" />
+                                <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                                    <Button Text="取消" Style="{StaticResource BaseButtonStyle}"
+                                            Command="{Binding CancelPrivateGroupConfirmationCommand}" />
+                                    <Button Grid.Column="1" Text="确认解散" Style="{StaticResource PrimaryButtonStyle}"
+                                            Command="{Binding ConfirmDissolvePrivateGroupCommand}" />
+                                </Grid>
+                            </VerticalStackLayout>
+                        </VerticalStackLayout>
+                    </VerticalStackLayout>
+
+                    <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                    <VerticalStackLayout Padding="16,14,16,20" Spacing="8">
+                        <Button x:Name="UnsubscribeButton"
+                                Text="退出群聊"
+                                Style="{StaticResource BaseButtonStyle}"
+                                TextColor="{StaticResource DangerColor}"
+                                Command="{Binding RequestChannelUnsubscribeCommand}"
+                                IsEnabled="{Binding CanExitPrivateGroup}"
+                                SemanticProperties.Description="退出当前群聊" />
+                        <Button Text="清聊天记录"
+                                Style="{StaticResource BaseButtonStyle}"
+                                TextColor="{StaticResource DangerColor}"
+                                Command="{Binding RequestClearConversationCacheCommand}"
+                                IsEnabled="{Binding CanClearConversationCache}" />
+                        <VerticalStackLayout IsVisible="{Binding ClearConversationCacheConfirmationVisible}" Spacing="7">
+                            <Label Text="{Binding ClearConversationCacheDescription}"
+                                   Style="{StaticResource DangerLabelStyle}" LineBreakMode="WordWrap" />
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                                <Button Text="取消" Style="{StaticResource BaseButtonStyle}"
+                                        Command="{Binding CancelClearConversationCacheCommand}" />
+                                <Button Grid.Column="1" Text="确认清除本机缓存"
+                                        Style="{StaticResource PrimaryButtonStyle}"
+                                        Command="{Binding ConfirmClearConversationCacheCommand}"
+                                        IsEnabled="{Binding CanClearConversationCache}" />
+                            </Grid>
+                        </VerticalStackLayout>
+                    </VerticalStackLayout>
                 </VerticalStackLayout>
             </VerticalStackLayout>
         </ScrollView>

@@ -8,7 +8,7 @@ namespace RelayCove.Data;
 
 public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
 {
-    public const int CurrentSchemaVersion = 5;
+    public const int CurrentSchemaVersion = 6;
 
     private readonly string _accountsRoot;
     private readonly Channel<IWorkItem> _mutations;
@@ -124,6 +124,15 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
     {
         if (channelId <= 0) throw new ArgumentOutOfRangeException(nameof(channelId));
         return EnqueueAsync(token => PurgeSubscriptionCoreAsync(accountId, channelId, token), cancellationToken);
+    }
+
+    public Task PurgeConversationAsync(
+        AccountId accountId,
+        ConversationKey conversation,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(conversation);
+        return EnqueueAsync(token => PurgeConversationCoreAsync(accountId, conversation, token), cancellationToken);
     }
 
     public Task<bool> IsCacheUnlockedAsync(
@@ -432,6 +441,40 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    private async Task PurgeConversationCoreAsync(
+        AccountId accountId,
+        ConversationKey conversation,
+        CancellationToken cancellationToken)
+    {
+        var databasePath = RequireDatabasePath(accountId);
+        await using var connection = await OpenAsync(databasePath, create: false, cancellationToken).ConfigureAwait(false);
+        await EnsureUnlockedAsync(connection, cancellationToken).ConfigureAwait(false);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var unread = await ReadUnreadAsync(connection, transaction, cancellationToken).ConfigureAwait(false);
+        await ExecuteAsync(
+            connection,
+            transaction,
+            "DELETE FROM messages WHERE conversation_key = $conversation;",
+            cancellationToken,
+            ("$conversation", conversation.CanonicalKey)).ConfigureAwait(false);
+        if (conversation is ChannelTopic channel)
+        {
+            await ExecuteAsync(
+                connection,
+                transaction,
+                "DELETE FROM topics WHERE channel_id = $channel AND topic = $topic;",
+                cancellationToken,
+                ("$channel", channel.ChannelId),
+                ("$topic", channel.Topic)).ConfigureAwait(false);
+        }
+        await ReplaceUnreadAsync(
+            connection,
+            transaction,
+            unread.RemoveConversation(conversation.CanonicalKey),
+            cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task SetCacheUnlockedCoreAsync(AccountId accountId, bool isUnlocked, CancellationToken cancellationToken)
     {
         var databasePath = RequireDatabasePath(accountId);
@@ -591,6 +634,21 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
             var hasColor = await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'color';", transaction, cancellationToken).ConfigureAwait(false) > 0;
             if (!hasColor) await ExecuteNonQueryAsync(connection, "ALTER TABLE subscriptions ADD COLUMN color TEXT NULL;", transaction, cancellationToken).ConfigureAwait(false);
             await ExecuteNonQueryAsync(connection, "UPDATE schema_info SET version = 5; PRAGMA user_version = 5;", transaction, cancellationToken).ConfigureAwait(false);
+            version = 5;
+        }
+        if (version <= 6)
+        {
+            var hasPrivate = await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'is_private';", transaction, cancellationToken).ConfigureAwait(false) > 0;
+            var hasTopicsPolicy = await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'topics_policy';", transaction, cancellationToken).ConfigureAwait(false) > 0;
+            var hasWebPublic = await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'is_web_public';", transaction, cancellationToken).ConfigureAwait(false) > 0;
+            if (!hasPrivate) await ExecuteNonQueryAsync(connection, "ALTER TABLE subscriptions ADD COLUMN is_private INTEGER NULL CHECK(is_private IS NULL OR is_private IN (0, 1));", transaction, cancellationToken).ConfigureAwait(false);
+            if (!hasTopicsPolicy) await ExecuteNonQueryAsync(connection, "ALTER TABLE subscriptions ADD COLUMN topics_policy TEXT NULL;", transaction, cancellationToken).ConfigureAwait(false);
+            if (!hasWebPublic) await ExecuteNonQueryAsync(connection, "ALTER TABLE subscriptions ADD COLUMN is_web_public INTEGER NULL CHECK(is_web_public IS NULL OR is_web_public IN (0, 1));", transaction, cancellationToken).ConfigureAwait(false);
+            if (version < 6)
+            {
+                await ExecuteNonQueryAsync(connection, "UPDATE schema_info SET version = 6; PRAGMA user_version = 6;", transaction, cancellationToken).ConfigureAwait(false);
+                version = 6;
+            }
         }
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -684,19 +742,29 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                         .ToArray();
                     foreach (var message in movedMessages)
                     {
+                        var replacement = message with { Conversation = moved.Destination };
+                        var canStoreDestination = await CanStoreMessageAsync(
+                            connection,
+                            transaction,
+                            replacement,
+                            cancellationToken).ConfigureAwait(false);
                         if (updateUnread && !message.IsRead && message.Conversation != moved.Destination)
                         {
-                            unread = unread.Adjust(message.Conversation.CanonicalKey, -1)
-                                .Adjust(moved.Destination.CanonicalKey, 1);
+                            unread = unread.Adjust(message.Conversation.CanonicalKey, -1);
+                            if (canStoreDestination)
+                            {
+                                unread = unread.Adjust(moved.Destination.CanonicalKey, 1);
+                            }
                             unreadChanged = true;
                         }
-                        var replacement = message with { Conversation = moved.Destination };
-                        if (await CanStoreMessageAsync(connection, transaction, replacement, cancellationToken).ConfigureAwait(false))
+                        if (canStoreDestination)
                         {
                             await UpsertMessageAsync(connection, transaction, replacement, cancellationToken).ConfigureAwait(false);
                         }
                         else
                         {
+                            // An authoritative move out of the supported conversation set removes the
+                            // source projection without inventing a hidden destination unread count.
                             await DeleteMessagesAsync(connection, transaction, [message.Id], cancellationToken).ConfigureAwait(false);
                         }
                     }
@@ -768,11 +836,30 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                     await ExecuteAsync(connection, transaction, """
                         UPDATE subscriptions SET
                             name = COALESCE($name, name),
-                            is_active = COALESCE($active, is_active)
+                            is_active = COALESCE($active, is_active),
+                            is_private = CASE
+                                WHEN $clear_eligibility = 1 THEN NULL
+                                WHEN $private IS NULL THEN is_private
+                                ELSE $private
+                            END,
+                            is_web_public = CASE
+                                WHEN $clear_eligibility = 1 THEN NULL
+                                WHEN $web_public IS NULL THEN is_web_public
+                                ELSE $web_public
+                            END,
+                            topics_policy = CASE
+                                WHEN $clear_eligibility = 1 THEN NULL
+                                WHEN $topics_policy IS NULL THEN topics_policy
+                                ELSE $topics_policy
+                            END
                         WHERE channel_id = $id;
                         """, cancellationToken,
                         ("$name", patched.Name),
                         ("$active", patched.IsActive is null ? null : patched.IsActive.Value ? 1 : 0),
+                        ("$private", patched.IsPrivate is null ? null : patched.IsPrivate.Value ? 1 : 0),
+                        ("$web_public", patched.IsWebPublic is null ? null : patched.IsWebPublic.Value ? 1 : 0),
+                        ("$topics_policy", ToStoredTopicsPolicy(patched.TopicsPolicy)),
+                        ("$clear_eligibility", patched.ClearEligibility ? 1 : 0),
                         ("$id", patched.ChannelId)).ConfigureAwait(false);
                     break;
                 case SubscriptionPreferenceChangedEvent preference:
@@ -859,12 +946,21 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         var messages = new Dictionary<long, ChatMessage>();
 
         var subscriptions = new Dictionary<long, Subscription>();
-        await using (var command = CreateCommand(connection, transaction, "SELECT channel_id, name, is_active, is_muted, is_pinned, color FROM subscriptions;"))
+        await using (var command = CreateCommand(connection, transaction, "SELECT channel_id, name, is_active, is_muted, is_pinned, color, is_private, topics_policy, is_web_public FROM subscriptions;"))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                var subscription = new Subscription(reader.GetInt64(0), reader.GetString(1), reader.GetInt64(2) != 0, reader.GetInt64(3) != 0, reader.GetInt64(4) != 0, reader.IsDBNull(5) ? null : reader.GetString(5));
+                var subscription = new Subscription(
+                    reader.GetInt64(0),
+                    reader.GetString(1),
+                    reader.GetInt64(2) != 0,
+                    reader.GetInt64(3) != 0,
+                    reader.GetInt64(4) != 0,
+                    reader.IsDBNull(5) ? null : reader.GetString(5),
+                    reader.IsDBNull(6) ? null : reader.GetInt64(6) != 0,
+                    reader.IsDBNull(7) ? null : ParseStoredTopicsPolicy(reader.GetString(7)),
+                    reader.IsDBNull(8) ? null : reader.GetInt64(8) != 0);
                 subscriptions[subscription.ChannelId] = subscription;
             }
         }
@@ -967,10 +1063,39 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         Subscription subscription,
         CancellationToken cancellationToken) =>
         ExecuteAsync(connection, transaction, """
-            INSERT INTO subscriptions(channel_id, name, is_active, is_muted, is_pinned, color) VALUES($id, $name, $active, $muted, $pinned, $color)
-            ON CONFLICT(channel_id) DO UPDATE SET name = excluded.name, is_active = excluded.is_active, is_muted = excluded.is_muted, is_pinned = excluded.is_pinned, color = excluded.color;
+            INSERT INTO subscriptions(channel_id, name, is_active, is_muted, is_pinned, color, is_private, topics_policy, is_web_public)
+            VALUES($id, $name, $active, $muted, $pinned, $color, $private, $topics_policy, $web_public)
+            ON CONFLICT(channel_id) DO UPDATE SET
+                name = excluded.name,
+                is_active = excluded.is_active,
+                is_muted = excluded.is_muted,
+                is_pinned = excluded.is_pinned,
+                color = excluded.color,
+                is_private = excluded.is_private,
+                topics_policy = excluded.topics_policy,
+                is_web_public = excluded.is_web_public;
             """, cancellationToken,
-            ("$id", subscription.ChannelId), ("$name", subscription.Name), ("$active", subscription.IsActive ? 1 : 0), ("$muted", subscription.IsMuted ? 1 : 0), ("$pinned", subscription.IsPinned ? 1 : 0), ("$color", subscription.Color));
+            ("$id", subscription.ChannelId), ("$name", subscription.Name), ("$active", subscription.IsActive ? 1 : 0), ("$muted", subscription.IsMuted ? 1 : 0), ("$pinned", subscription.IsPinned ? 1 : 0), ("$color", subscription.Color),
+            ("$private", subscription.IsPrivate is null ? null : subscription.IsPrivate.Value ? 1 : 0), ("$topics_policy", ToStoredTopicsPolicy(subscription.TopicsPolicy)),
+            ("$web_public", subscription.IsWebPublic is null ? null : subscription.IsWebPublic.Value ? 1 : 0));
+
+    private static string? ToStoredTopicsPolicy(ChannelTopicsPolicy? policy) => policy switch
+    {
+        ChannelTopicsPolicy.Inherit => "inherit",
+        ChannelTopicsPolicy.AllowEmptyTopic => "allow_empty_topic",
+        ChannelTopicsPolicy.DisableEmptyTopic => "disable_empty_topic",
+        ChannelTopicsPolicy.EmptyTopicOnly => "empty_topic_only",
+        _ => null
+    };
+
+    private static ChannelTopicsPolicy? ParseStoredTopicsPolicy(string? policy) => policy switch
+    {
+        "inherit" => ChannelTopicsPolicy.Inherit,
+        "allow_empty_topic" => ChannelTopicsPolicy.AllowEmptyTopic,
+        "disable_empty_topic" => ChannelTopicsPolicy.DisableEmptyTopic,
+        "empty_topic_only" => ChannelTopicsPolicy.EmptyTopicOnly,
+        _ => null
+    };
 
     private static Task UpsertUserAsync(
         SqliteConnection connection,
@@ -1005,9 +1130,21 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         ChatMessage message,
         CancellationToken cancellationToken)
     {
-        if (message.Conversation is not ChannelTopic channel) return true;
+        if (message.Conversation is DirectMessage direct) return direct.OtherUserIds.Count <= 1;
+        if (message.Conversation is not ChannelTopic channel)
+            throw new InvalidOperationException("Unsupported conversation type.");
+        if (channel.Topic.Length != 0) return false;
         await using var command = CreateCommand(connection, transaction,
-            "SELECT EXISTS(SELECT 1 FROM subscriptions WHERE channel_id = $channel);");
+            """
+            SELECT EXISTS(
+                SELECT 1 FROM subscriptions
+                WHERE channel_id = $channel
+                  AND is_active = 1
+                  AND is_private = 1
+                  AND is_web_public = 0
+                  AND topics_policy = 'empty_topic_only'
+            );
+            """);
         command.Parameters.AddWithValue("$channel", channel.ChannelId);
         return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), CultureInfo.InvariantCulture) != 0;
     }
@@ -1335,7 +1472,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         CancellationToken cancellationToken)
     {
         await ExecuteNonQueryAsync(connection, "DELETE FROM recent_dm;", transaction, cancellationToken).ConfigureAwait(false);
-        foreach (var direct in conversations.OfType<DirectMessage>())
+        foreach (var direct in conversations.OfType<DirectMessage>().Where(static item => item.OtherUserIds.Count <= 1))
         {
             await ExecuteAsync(connection, transaction,
                 "INSERT INTO recent_dm(canonical_key, participant_ids) VALUES($key, $ids);",

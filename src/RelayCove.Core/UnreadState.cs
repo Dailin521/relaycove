@@ -42,4 +42,15 @@ public sealed record UnreadState
         int? total = ReportedTotal is { } reported ? Math.Max(0, reported - removed) : null;
         return new UnreadState(counts, total, IsTruncated);
     }
+
+    public UnreadState RemoveConversation(string conversationKey)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(conversationKey);
+        Counts.TryGetValue(conversationKey, out var removed);
+        var counts = Counts
+            .Where(pair => !string.Equals(pair.Key, conversationKey, StringComparison.Ordinal))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        int? total = ReportedTotal is { } reported ? Math.Max(0, reported - removed) : null;
+        return new UnreadState(counts, total, IsTruncated);
+    }
 }

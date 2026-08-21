@@ -7,29 +7,30 @@
              x:Name="Root"
              x:DataType="viewModels:ShellViewModel"
              Background="{StaticResource GroundBrush}">
-    <Grid RowDefinitions="76,29,Auto,29,*" Padding="0,0,0,8">
+    <Grid RowDefinitions="76,*" Padding="0,0,0,8">
         <Grid Grid.Row="0" RowDefinitions="47,18" Padding="11,7,11,4">
             <Grid Grid.Row="0" ColumnDefinitions="*,36" ColumnSpacing="8">
                 <Grid Grid.Column="0">
-                <Entry x:Name="ConversationFilterEntry"
-                       Style="{StaticResource BaseEntryStyle}"
-                       Text="{Binding ConversationFilterQuery, Mode=TwoWay}"
-                       Placeholder="筛选会话"
-                       SemanticProperties.Description="筛选当前频道和私信；向下键打开首项，Escape 清除" />
+                    <Entry x:Name="ConversationFilterEntry"
+                           Style="{StaticResource BaseEntryStyle}"
+                           Text="{Binding ConversationFilterQuery, Mode=TwoWay}"
+                           Placeholder="搜索聊天"
+                           SemanticProperties.Description="筛选当前聊天列表；向下键打开首项，Escape 清除" />
                     <Image Source="icon_search.png"
-                       WidthRequest="17"
-                       HeightRequest="17"
-                       Margin="0,0,10,0"
-                       HorizontalOptions="End"
-                       VerticalOptions="Center"
-                       InputTransparent="True" />
+                           WidthRequest="17"
+                           HeightRequest="17"
+                           Margin="0,0,10,0"
+                           HorizontalOptions="End"
+                           VerticalOptions="Center"
+                           InputTransparent="True" />
                 </Grid>
-                <ImageButton Grid.Column="1"
-                         Source="icon_plus.png"
-                         Style="{StaticResource ImageIconButtonStyle}"
-                         BackgroundColor="{AppThemeBinding Light={StaticResource LightSurfaceHoverColor}, Dark={StaticResource DarkSurfaceHoverColor}}"
-                         Command="{Binding OpenNewConversationCommand}"
-                         SemanticProperties.Description="使用当前已知联系人新建私信" />
+                <ImageButton x:Name="NewConversationButton"
+                             Grid.Column="1"
+                             Source="icon_plus.png"
+                             Style="{StaticResource ImageIconButtonStyle}"
+                             BackgroundColor="{AppThemeBinding Light={StaticResource LightSurfaceHoverColor}, Dark={StaticResource DarkSurfaceHoverColor}}"
+                             Command="{Binding OpenNewConversationCommand}"
+                             SemanticProperties.Description="发起私聊或新建群聊" />
             </Grid>
             <Label Grid.Row="1"
                    Text="{Binding NativePreviewStatus}"
@@ -39,121 +40,22 @@
                    VerticalTextAlignment="Center" />
         </Grid>
 
-        <Grid Grid.Row="1" Padding="10,0,12,0" ColumnDefinitions="18,*,Auto,26" ColumnSpacing="3" HeightRequest="29">
-            <Grid.GestureRecognizers><TapGestureRecognizer Command="{Binding ToggleChannelsCommand}" /></Grid.GestureRecognizers>
-            <Image Source="icon_chevron.png" WidthRequest="14" HeightRequest="14" Rotation="-90" VerticalOptions="Center">
-                <Image.Triggers>
-                    <DataTrigger TargetType="Image" Binding="{Binding AreChannelsExpanded}" Value="True">
-                        <Setter Property="Rotation" Value="0" />
-                    </DataTrigger>
-                </Image.Triggers>
-            </Image>
-            <Label Grid.Column="1" Text="频道" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" />
-            <Label Grid.Column="2" Text="{Binding ChannelGroupCountLabel}" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" />
-            <ImageButton x:Name="CreateChannelButton" Grid.Column="3" Source="icon_plus.png"
-                         Style="{StaticResource MessageQuickImageButtonStyle}" Clicked="OnCreateChannelClicked"
-                         SemanticProperties.Description="创建频道" />
-        </Grid>
-
-        <ScrollView Grid.Row="2"
-                    HeightRequest="{Binding ChannelListHeight}"
-                    IsVisible="{Binding AreChannelsExpanded}">
-            <VerticalStackLayout Spacing="0" BindableLayout.ItemsSource="{Binding FilteredChannels}">
-                <BindableLayout.ItemTemplate>
-                <DataTemplate x:DataType="viewModels:ChannelItem">
-                    <VerticalStackLayout Spacing="0" HeightRequest="{Binding TreeRowHeight}">
-                    <Border HeightRequest="38" Margin="8,0,8,0" Padding="4,0" StrokeThickness="0" Opacity="{Binding ItemOpacity}">
-                        <Border.GestureRecognizers>
-                            <TapGestureRecognizer Tapped="OnChannelTapped" CommandParameter="{Binding .}" />
-                            <PointerGestureRecognizer PointerEntered="OnChannelPointerEntered" PointerExited="OnChannelPointerExited" />
-                        </Border.GestureRecognizers>
-                        <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
-                        <Border.Triggers>
-                            <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
-                                <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
-                            </DataTrigger>
-                            <DataTrigger TargetType="Border" Binding="{Binding IsPointerOver}" Value="True">
-                                <Setter Property="Background" Value="{AppThemeBinding Light={StaticResource LightSurfaceHoverColor}, Dark={StaticResource DarkSurfaceHoverColor}}" />
-                            </DataTrigger>
-                        </Border.Triggers>
-                        <Grid ColumnDefinitions="22,*,Auto,26,26" ColumnSpacing="3">
-                            <Label Text="#" TextColor="{Binding ToneColor}" FontSize="20" FontAttributes="Bold"
-                                   HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
-                            <Label Grid.Column="1" Text="{Binding Name}" Style="{StaticResource BaseLabelStyle}"
-                                   FontSize="15" VerticalTextAlignment="Center" LineBreakMode="TailTruncation" />
-                            <Border Grid.Column="2" Padding="5,1" VerticalOptions="Center"
-                                     HorizontalOptions="End" IsVisible="{Binding HasUnread}"
-                                     Background="{StaticResource DangerBrush}" StrokeThickness="0">
-                                 <Border.StrokeShape><RoundRectangle CornerRadius="9" /></Border.StrokeShape>
-                                 <Label Text="{Binding UnreadLabel}" FontSize="9" TextColor="White" />
-                            </Border>
-                            <ImageButton Grid.Column="3" Source="icon_plus.png" Style="{StaticResource MessageQuickImageButtonStyle}"
-                                         IsVisible="{Binding ShowActions}" Clicked="OnNewChannelTopicClicked"
-                                         SemanticProperties.Description="在此频道创建话题" />
-                            <ImageButton Grid.Column="4" Source="icon_more.png" Style="{StaticResource MessageQuickImageButtonStyle}"
-                                         IsVisible="{Binding ShowActions}" Clicked="OnChannelMenuClicked"
-                                         SemanticProperties.Description="打开频道操作菜单" />
-                        </Grid>
-                    </Border>
-                    <VerticalStackLayout IsVisible="{Binding IsExpanded}"
-                                         BindableLayout.ItemsSource="{Binding TreeTopics}">
-                        <BindableLayout.ItemTemplate>
-                            <DataTemplate x:DataType="viewModels:TopicItem">
-                                <Border HeightRequest="34" Margin="31,0,8,0" Padding="5,0" StrokeThickness="0">
-                                    <Border.GestureRecognizers>
-                                        <TapGestureRecognizer Tapped="OnTopicTapped" CommandParameter="{Binding .}" />
-                                        <PointerGestureRecognizer PointerEntered="OnTopicPointerEntered" PointerExited="OnTopicPointerExited" />
-                                    </Border.GestureRecognizers>
-                                    <Border.StrokeShape><RoundRectangle CornerRadius="6" /></Border.StrokeShape>
-                                    <Border.Triggers>
-                                        <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
-                                            <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
-                                        </DataTrigger>
-                                    </Border.Triggers>
-                                    <Grid ColumnDefinitions="18,*,Auto,24,24" ColumnSpacing="4">
-                                        <Label Text="✓" IsVisible="{Binding IsSelected}" Style="{StaticResource BaseLabelStyle}"
-                                               FontAttributes="Bold" VerticalTextAlignment="Center" />
-                                        <Label Grid.Column="1" Text="{Binding DisplayName}" Style="{StaticResource BaseLabelStyle}"
-                                               FontSize="14" VerticalTextAlignment="Center" LineBreakMode="TailTruncation" />
-                                        <Label Grid.Column="2" Text="{Binding UnreadLabel}" IsVisible="{Binding HasUnread}"
-                                               Style="{StaticResource MutedLabelStyle}" TextColor="{StaticResource DangerColor}" VerticalTextAlignment="Center" />
-                                        <Label Grid.Column="3" Text="{Binding VisibilityGlyph}" FontSize="11" TextColor="{AppThemeBinding Light={StaticResource LightMutedColor}, Dark={StaticResource DarkMutedColor}}" IsVisible="{Binding ShowActions}" VerticalTextAlignment="Center" HorizontalTextAlignment="Center" SemanticProperties.Description="{Binding VisibilityLabel}" />
-                                        <ImageButton Grid.Column="4" Source="icon_more.png" Style="{StaticResource MessageQuickImageButtonStyle}"
-                                                     IsVisible="{Binding ShowActions}" Clicked="OnTopicMenuClicked"
-                                                     SemanticProperties.Description="打开话题操作菜单" />
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </BindableLayout.ItemTemplate>
-                    </VerticalStackLayout>
-                    </VerticalStackLayout>
-                </DataTemplate>
-                </BindableLayout.ItemTemplate>
-            </VerticalStackLayout>
-        </ScrollView>
-
-        <Grid Grid.Row="3" Padding="10,0,12,0" ColumnDefinitions="18,*,Auto" HeightRequest="29">
-            <Grid.GestureRecognizers><TapGestureRecognizer Command="{Binding ToggleDirectMessagesCommand}" /></Grid.GestureRecognizers>
-            <Image Source="icon_chevron.png" WidthRequest="14" HeightRequest="14" Rotation="-90" VerticalOptions="Center">
-                <Image.Triggers>
-                    <DataTrigger TargetType="Image" Binding="{Binding AreDirectMessagesExpanded}" Value="True"><Setter Property="Rotation" Value="0" /></DataTrigger>
-                </Image.Triggers>
-            </Image>
-            <Label Grid.Column="1" Text="私信" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" />
-            <Label Grid.Column="2" Text="{Binding DirectMessageGroupCountLabel}" Style="{StaticResource MutedLabelStyle}" VerticalTextAlignment="Center" />
-        </Grid>
-
-        <CollectionView Grid.Row="4"
-                        IsVisible="{Binding AreDirectMessagesExpanded}"
-                        ItemsSource="{Binding FilteredDirectMessages}"
+        <CollectionView Grid.Row="1"
+                        ItemsSource="{Binding FilteredConversations}"
                         SelectionMode="None"
                         ItemsUpdatingScrollMode="KeepItemsInView">
-            <CollectionView.EmptyView><Label Text="暂无最近私信" Style="{StaticResource MutedLabelStyle}" Padding="18,12" /></CollectionView.EmptyView>
+            <CollectionView.EmptyView>
+                <Label Text="暂无聊天" Style="{StaticResource MutedLabelStyle}" Padding="18,12" />
+            </CollectionView.EmptyView>
             <CollectionView.ItemTemplate>
-                <DataTemplate x:DataType="viewModels:NavigationItem">
-                    <Border HeightRequest="67" Margin="8,0,8,1" Padding="8" StrokeThickness="0">
+                <DataTemplate x:DataType="viewModels:ConversationListItem">
+                    <Border HeightRequest="67"
+                            Margin="8,0,8,1"
+                            Padding="8"
+                            StrokeThickness="0"
+                            Opacity="{Binding ItemOpacity}">
                         <Border.GestureRecognizers>
-                            <TapGestureRecognizer Tapped="OnDirectMessageTapped" CommandParameter="{Binding .}" />
+                            <TapGestureRecognizer Tapped="OnConversationTapped" CommandParameter="{Binding .}" />
                         </Border.GestureRecognizers>
                         <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
                         <Border.Triggers>
@@ -162,24 +64,98 @@
                             </DataTrigger>
                         </Border.Triggers>
                         <Grid ColumnDefinitions="40,*,38" RowDefinitions="Auto,Auto" ColumnSpacing="11">
-                            <Border Grid.RowSpan="2" WidthRequest="40" HeightRequest="40" Padding="0" VerticalOptions="Center"
-                                    Background="{Binding ToneBrush}" StrokeThickness="0">
-                                <Border.StrokeShape><RoundRectangle CornerRadius="20" /></Border.StrokeShape>
+                            <Border Grid.RowSpan="2"
+                                    WidthRequest="40"
+                                    HeightRequest="40"
+                                    Padding="0"
+                                    VerticalOptions="Center"
+                                    Background="{Binding ToneBrush}"
+                                    StrokeThickness="0">
+                                <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
                                 <Grid>
-                                    <Label Text="{Binding Initial}" TextColor="White" FontSize="11" FontAttributes="Bold"
-                                           HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
-                                    <controls:RealmMediaImageView SourceUrl="{Binding AvatarUrl}" MediaKind="Avatar" Aspect="AspectFill" ShowFailureText="False" />
+                                    <Grid IsVisible="{Binding ShowSingleAvatar}">
+                                        <Label Text="{Binding Initial}"
+                                               TextColor="White"
+                                               FontSize="11"
+                                               FontAttributes="Bold"
+                                               HorizontalTextAlignment="Center"
+                                               VerticalTextAlignment="Center" />
+                                        <controls:RealmMediaImageView SourceUrl="{Binding AvatarUrl}"
+                                                                      MediaKind="Avatar"
+                                                                      Aspect="AspectFill"
+                                                                      ShowFailureText="False" />
+                                    </Grid>
+                                    <Label Text="{Binding Initial}"
+                                           IsVisible="{Binding ShowGroupFallback}"
+                                           TextColor="White"
+                                           FontSize="11"
+                                           FontAttributes="Bold"
+                                           HorizontalTextAlignment="Center"
+                                           VerticalTextAlignment="Center" />
+                                    <Grid IsVisible="{Binding HasAvatarTiles}"
+                                          RowDefinitions="*,*"
+                                          ColumnDefinitions="*,*"
+                                          RowSpacing="1"
+                                          ColumnSpacing="1"
+                                          Padding="1"
+                                          BindableLayout.ItemsSource="{Binding AvatarTiles}">
+                                        <BindableLayout.ItemTemplate>
+                                            <DataTemplate x:DataType="viewModels:ConversationAvatarTile">
+                                                <Border Grid.Row="{Binding Row}"
+                                                        Grid.Column="{Binding Column}"
+                                                        Padding="0"
+                                                        Background="{Binding ToneBrush}"
+                                                        StrokeThickness="0">
+                                                    <Border.StrokeShape><RoundRectangle CornerRadius="4" /></Border.StrokeShape>
+                                                    <Grid>
+                                                        <Label Text="{Binding Initial}"
+                                                               TextColor="White"
+                                                               FontSize="7"
+                                                               FontAttributes="Bold"
+                                                               HorizontalTextAlignment="Center"
+                                                               VerticalTextAlignment="Center" />
+                                                        <controls:RealmMediaImageView SourceUrl="{Binding AvatarUrl}"
+                                                                                      MediaKind="Avatar"
+                                                                                      Aspect="AspectFill"
+                                                                                      ShowFailureText="False" />
+                                                    </Grid>
+                                                </Border>
+                                            </DataTemplate>
+                                        </BindableLayout.ItemTemplate>
+                                    </Grid>
                                 </Grid>
                             </Border>
-                            <Grid Grid.Column="1" ColumnDefinitions="*,Auto">
-                                <Label Text="{Binding Title}" Style="{StaticResource BaseLabelStyle}" FontSize="14" FontAttributes="Bold" VerticalTextAlignment="End" />
-                                <Label Grid.Column="1" Text="{Binding Timestamp}" IsVisible="{Binding HasTimestamp}"
-                                       Style="{StaticResource MutedLabelStyle}" FontSize="10" VerticalTextAlignment="End" />
+                            <Grid Grid.Column="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="5">
+                                <Label Text="📌" IsVisible="{Binding IsPinned}" FontSize="10" VerticalTextAlignment="End" />
+                                <Label Grid.Column="1"
+                                       Text="{Binding Title}"
+                                       Style="{StaticResource BaseLabelStyle}"
+                                       FontSize="14"
+                                       FontAttributes="Bold"
+                                       VerticalTextAlignment="End"
+                                       LineBreakMode="TailTruncation" />
+                                <Label Grid.Column="2"
+                                       Text="{Binding Timestamp}"
+                                       IsVisible="{Binding HasTimestamp}"
+                                       Style="{StaticResource MutedLabelStyle}"
+                                       FontSize="10"
+                                       VerticalTextAlignment="End" />
                             </Grid>
-                            <Label Grid.Row="1" Grid.Column="1" Text="{Binding Detail}" Style="{StaticResource MutedLabelStyle}"
-                                   FontSize="12" VerticalTextAlignment="Start" LineBreakMode="TailTruncation" />
-                            <Border Grid.Column="2" Grid.RowSpan="2" Padding="5,1" VerticalOptions="Center" HorizontalOptions="End"
-                                    IsVisible="{Binding HasUnread}" Background="{StaticResource DangerBrush}" StrokeThickness="0">
+                            <Label Grid.Row="1"
+                                   Grid.Column="1"
+                                   Text="{Binding Detail}"
+                                   Style="{StaticResource MutedLabelStyle}"
+                                   FontSize="12"
+                                   VerticalTextAlignment="Start"
+                                   LineBreakMode="TailTruncation" />
+                            <Border Grid.Column="2"
+                                    Grid.RowSpan="2"
+                                    Padding="5,1"
+                                    VerticalOptions="Center"
+                                    HorizontalOptions="End"
+                                    IsVisible="{Binding HasUnread}"
+                                    Background="{StaticResource DangerBrush}"
+                                    StrokeThickness="0">
                                 <Border.StrokeShape><RoundRectangle CornerRadius="9" /></Border.StrokeShape>
                                 <Label Text="{Binding UnreadLabel}" FontSize="9" TextColor="White" />
                             </Border>

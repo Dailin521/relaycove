@@ -353,25 +353,8 @@
                        HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
             </Border>
             <Label Text="{Binding MessageEmptyTitle}" Style="{StaticResource BaseLabelStyle}" FontSize="15" HorizontalTextAlignment="Center" />
-            <Label Text="频道话题与私信会从当前 Zulip Realm 加载。"
+            <Label Text="私聊与受支持的私有群聊会从当前 Zulip Realm 加载。"
                    Style="{StaticResource MutedLabelStyle}" HorizontalTextAlignment="Center" />
-        </VerticalStackLayout>
-
-        <VerticalStackLayout Grid.Row="2"
-                             Padding="28"
-                             Spacing="10"
-                             HorizontalOptions="Center"
-                             VerticalOptions="Center"
-                             IsVisible="{Binding ShowEmptyChannelTopicState}">
-            <Image Source="icon_messages.png" WidthRequest="34" HeightRequest="34" HorizontalOptions="Center" />
-            <Label Text="这个频道还没有可显示的话题。"
-                   Style="{StaticResource BaseLabelStyle}"
-                   FontSize="15"
-                   HorizontalTextAlignment="Center" />
-            <Button Text="新建话题"
-                    HorizontalOptions="Center"
-                    Style="{StaticResource PrimaryButtonStyle}"
-                    Command="{Binding OpenNewChannelTopicCommand}" />
         </VerticalStackLayout>
 
         <ActivityIndicator Grid.Row="2"
@@ -385,16 +368,14 @@
 
         <Button Grid.Row="2"
                 ZIndex="2"
-                Margin="0,0,0,12"
-                Padding="14,7"
-                HeightRequest="36"
-                MinimumHeightRequest="36"
+                Margin="0,0,0,14"
                 HorizontalOptions="Center"
                 VerticalOptions="End"
                 Text="{Binding NewMessagesButtonText}"
-                Style="{StaticResource PrimaryButtonStyle}"
+                ImageSource="icon_jump_to_latest.png"
+                Style="{StaticResource JumpToLatestButtonStyle}"
                 IsVisible="{Binding ShowNewMessagesButton}"
                 Command="{Binding ScrollToLatestCommand}"
-                SemanticProperties.Description="跳到最新消息" />
+                SemanticProperties.Description="跳转到最新消息" />
     </Grid>
 </ContentView>

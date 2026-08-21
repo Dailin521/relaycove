@@ -12,19 +12,46 @@
           BackgroundColor="{AppThemeBinding Light={StaticResource LightGroundColor}, Dark={StaticResource DarkGroundColor}}"
           ForegroundColor="{AppThemeBinding Light={StaticResource LightTextColor}, Dark={StaticResource DarkTextColor}}">
     <TitleBar.LeadingContent>
-        <Border WidthRequest="24"
-                HeightRequest="24"
+        <Border x:Name="AccountButtonBorder"
+                WidthRequest="30"
+                HeightRequest="30"
                 Padding="0"
-                Margin="3,0,0,0"
+                Margin="8,1,0,1"
+                IsVisible="{Binding MainVisible}"
                 Background="{StaticResource AccentBrush}"
-                StrokeThickness="0">
-            <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
-            <Label Text="R"
-                   TextColor="White"
-                   FontSize="12"
-                   FontAttributes="Bold"
-                   HorizontalTextAlignment="Center"
-                   VerticalTextAlignment="Center" />
+                Stroke="Transparent"
+                StrokeThickness="0"
+                SemanticProperties.Description="{Binding CurrentUserDisplayName, StringFormat='账户 {0}'}">
+            <Border.StrokeShape><RoundRectangle CornerRadius="15" /></Border.StrokeShape>
+            <Grid>
+                <Label x:Name="AccountInitialLabel"
+                       Text="{Binding CurrentUserInitial}"
+                       Style="{StaticResource BaseLabelStyle}"
+                       FontSize="12"
+                       FontAttributes="Bold"
+                       TextColor="White"
+                       HorizontalTextAlignment="Center"
+                       VerticalTextAlignment="Center" />
+                <controls:RealmMediaImageView x:Name="AccountAvatar"
+                                              SourceUrl="{Binding CurrentUserAvatarUrl}"
+                                              MediaKind="Avatar"
+                                              Aspect="AspectFill"
+                                              ShowFailureText="False" />
+                <Button x:Name="AccountButton"
+                        BackgroundColor="Transparent"
+                        BorderWidth="0"
+                        Padding="0"
+                        Command="{Binding ToggleAccountMenuCommand}"
+                        SemanticProperties.Description="打开账户菜单" />
+            </Grid>
+            <Border.Triggers>
+                <DataTrigger TargetType="Border"
+                             Binding="{Binding IsAccountMenuOpen, Source={x:Reference Root}, x:DataType=controls:ProductBarView}"
+                             Value="True">
+                    <Setter Property="Stroke" Value="{StaticResource AccentStrongColor}" />
+                    <Setter Property="StrokeThickness" Value="2" />
+                </DataTrigger>
+            </Border.Triggers>
         </Border>
     </TitleBar.LeadingContent>
 
@@ -47,6 +74,22 @@
 
     <TitleBar.TrailingContent>
         <HorizontalStackLayout Spacing="2">
+            <ImageButton x:Name="SettingsButton"
+                         Source="icon_settings.png"
+                         Style="{StaticResource ImageIconButtonStyle}"
+                         WidthRequest="32"
+                         HeightRequest="32"
+                         Padding="8"
+                         IsVisible="{Binding MainVisible}"
+                         SemanticProperties.Description="打开或关闭设置">
+                <ImageButton.Triggers>
+                    <DataTrigger TargetType="ImageButton"
+                                 Binding="{Binding IsSettingsSection, Source={x:Reference Root}, x:DataType=controls:ProductBarView}"
+                                 Value="True">
+                        <Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
+                    </DataTrigger>
+                </ImageButton.Triggers>
+            </ImageButton>
             <ImageButton x:Name="ThemeButton"
                          Source="icon_moon.png"
                          Style="{StaticResource ImageIconButtonStyle}"

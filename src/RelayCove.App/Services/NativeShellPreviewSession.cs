@@ -16,8 +16,8 @@ internal sealed class NativeShellPreviewSession : IClientSession
 
     public NativeShellPreviewSession()
     {
-        var uiDesign = new ChannelTopic(6, "UI 设计讨论");
-        var windowsClient = new ChannelTopic(12, "Windows 客户端");
+        var uiDesign = new ChannelTopic(6, string.Empty);
+        var windowsClient = new ChannelTopic(12, string.Empty);
         var productRoadmap = new ChannelTopic(3, "产品路线图");
         var release = new ChannelTopic(1, "版本发布");
         var mayaDirect = new DirectMessage([9]);
@@ -38,7 +38,7 @@ internal sealed class NativeShellPreviewSession : IClientSession
                     101,
                     uiDesign,
                     9,
-                    "顶部按微信逻辑收敛，只保留置顶、最小化、最大化和关闭。",
+                    "群聊已经收敛成微信式单一时间线，不再暴露频道和话题层级。",
                     timestamp,
                     isRead: true,
                     senderDisplayName: "Maya Chen"),
@@ -46,7 +46,7 @@ internal sealed class NativeShellPreviewSession : IClientSession
                     102,
                     uiDesign,
                     9,
-                    "中栏不要再加额外工具区，只要搜索、新建，以及清楚区分的频道和私信列表。",
+                    "左侧只保留搜索、新建和统一会话列表，群聊与私聊使用相同的行结构。",
                     timestamp.AddMinutes(1),
                     isRead: true,
                     senderDisplayName: "Maya Chen",
@@ -60,7 +60,7 @@ internal sealed class NativeShellPreviewSession : IClientSession
                     103,
                     uiDesign,
                     CurrentUser,
-                    "@_**Maya Chen|9** [said](https://preview.invalid/#narrow/near/102):\n```quote\n只要搜索、新建，以及频道和私信列表\n```\n\n可以。私信区直接列出当前工作区可靠获知的成员，频道仍保留话题上下文。",
+                    "@_**Maya Chen|9** [said](https://preview.invalid/#narrow/near/102):\n```quote\n只要搜索、新建和统一会话列表\n```\n\n可以。公开频道和旧多话题频道都不会出现在 RelayCove 会话列表。",
                     timestamp.AddMinutes(13),
                     isRead: true,
                     senderDisplayName: "林远"),
@@ -83,10 +83,10 @@ internal sealed class NativeShellPreviewSession : IClientSession
             },
             subscriptions: new Dictionary<long, Subscription>
             {
-                [6] = new Subscription(6, "design"),
-                [12] = new Subscription(12, "engineering"),
-                [3] = new Subscription(3, "product"),
-                [1] = new Subscription(1, "release")
+                [6] = new Subscription(6, "产品设计群", isPrivate: true, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false),
+                [12] = new Subscription(12, "Windows 客户端群", isPrivate: true, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false),
+                [3] = new Subscription(3, "product", isPrivate: false, topicsPolicy: ChannelTopicsPolicy.Inherit, isWebPublic: false),
+                [1] = new Subscription(1, "release", isPrivate: false, topicsPolicy: ChannelTopicsPolicy.Inherit, isWebPublic: false)
             },
             users: new Dictionary<long, UserProfile>
             {
@@ -98,8 +98,8 @@ internal sealed class NativeShellPreviewSession : IClientSession
             },
             topics: new Dictionary<string, TopicSummary>
             {
-                [uiDesign.CanonicalKey] = new TopicSummary(6, "UI 设计讨论", 104),
-                [windowsClient.CanonicalKey] = new TopicSummary(12, "Windows 客户端", 202),
+                [uiDesign.CanonicalKey] = new TopicSummary(6, string.Empty, 104),
+                [windowsClient.CanonicalKey] = new TopicSummary(12, string.Empty, 202),
                 [productRoadmap.CanonicalKey] = new TopicSummary(3, "产品路线图", 301),
                 [release.CanonicalKey] = new TopicSummary(1, "版本发布", 401)
             },
@@ -147,6 +147,7 @@ internal sealed class NativeShellPreviewSession : IClientSession
 
     public RealmEndpoint? ActiveRealm { get; } = RealmEndpoint.Parse("https://preview.invalid");
     public long? CurrentUserId => CurrentUser;
+    public bool CanCreatePrivateGroup => true;
     public long MaxFileUploadBytes => 10L * 1024 * 1024;
 
     public ClientState State => _state;
@@ -293,6 +294,67 @@ internal sealed class NativeShellPreviewSession : IClientSession
         }
         Publish();
         return Task.CompletedTask;
+    }
+
+    public Task<ChannelDetails> LoadChannelDetailsAsync(long channelId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var ownerGroup = new AnonymousChannelGroupSetting([CurrentUser], []);
+        return channelId switch
+        {
+            6 => Task.FromResult(new ChannelDetails(
+                6,
+                "产品设计群",
+                "这里讨论统一会话、群聊设置与 Windows 原生交互。",
+                false,
+                true,
+                false,
+                4,
+                null,
+                null,
+                CurrentUser,
+                null,
+                ownerGroup,
+                ownerGroup,
+                HistoryPublicToSubscribers: true,
+                TopicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly,
+                CanRemoveSubscribersGroup: ownerGroup)),
+            12 => Task.FromResult(new ChannelDetails(
+                12,
+                "Windows 客户端群",
+                "发布前只保留确定性证据，真实窗口由用户在 Visual Studio 验证。",
+                false,
+                true,
+                false,
+                3,
+                null,
+                null,
+                CurrentUser,
+                null,
+                ownerGroup,
+                ownerGroup,
+                HistoryPublicToSubscribers: true,
+                TopicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly,
+                CanRemoveSubscribersGroup: ownerGroup)),
+            _ => Task.FromException<ChannelDetails>(new InvalidOperationException("The preview channel is not a RelayCove private group."))
+        };
+    }
+
+    public Task<IReadOnlyList<UserProfile>> GetRealmUsersAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult<IReadOnlyList<UserProfile>>(_state.Users.Values.OrderBy(user => user.UserId).ToArray());
+    }
+
+    public Task<IReadOnlyList<long>> GetChannelMemberIdsAsync(long channelId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return channelId switch
+        {
+            6 => Task.FromResult<IReadOnlyList<long>>([6, 7, 8, 9]),
+            12 => Task.FromResult<IReadOnlyList<long>>([6, 8, 11]),
+            _ => Task.FromException<IReadOnlyList<long>>(new InvalidOperationException("The preview channel is not a RelayCove private group."))
+        };
     }
 
     public Task MarkDisplayedReadAsync(CancellationToken cancellationToken = default) =>

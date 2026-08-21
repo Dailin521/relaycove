@@ -79,6 +79,12 @@ public sealed class SqliteAccountStoreSchemaTests
         await using (var connection = context.Open(account.AccountId))
         {
             await ExecuteAsync(connection, """
+                ALTER TABLE subscriptions DROP COLUMN is_web_public;
+                ALTER TABLE subscriptions DROP COLUMN topics_policy;
+                ALTER TABLE subscriptions DROP COLUMN is_private;
+                ALTER TABLE subscriptions DROP COLUMN color;
+                ALTER TABLE subscriptions DROP COLUMN is_pinned;
+                ALTER TABLE subscriptions DROP COLUMN is_muted;
                 DROP TABLE message_reactions;
                 ALTER TABLE messages DROP COLUMN is_starred;
                 ALTER TABLE messages DROP COLUMN sender_avatar_url;
@@ -117,6 +123,12 @@ public sealed class SqliteAccountStoreSchemaTests
         await using (var connection = context.Open(account.AccountId))
         {
             await ExecuteAsync(connection, """
+                ALTER TABLE subscriptions DROP COLUMN is_web_public;
+                ALTER TABLE subscriptions DROP COLUMN topics_policy;
+                ALTER TABLE subscriptions DROP COLUMN is_private;
+                ALTER TABLE subscriptions DROP COLUMN color;
+                ALTER TABLE subscriptions DROP COLUMN is_pinned;
+                ALTER TABLE subscriptions DROP COLUMN is_muted;
                 DROP INDEX ix_message_reactions_message_id;
                 UPDATE schema_info SET version = 2;
                 PRAGMA user_version = 2;
@@ -132,6 +144,81 @@ public sealed class SqliteAccountStoreSchemaTests
         Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(verify, "PRAGMA user_version;"));
         Assert.Equal(1, await ScalarLongAsync(verify, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'is_muted';"));
         Assert.Equal(1, await ScalarLongAsync(verify, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'is_pinned';"));
+    }
+
+    [Theory]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(5)]
+    public async Task MigrateAsync_WhenSchemaIsVersionThreeThroughFive_AddsPrivateGroupEligibilityAsUnknown(int sourceVersion)
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        await context.Store.InitializeAsync(account);
+        await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register(
+        [
+            new Subscription(
+                42,
+                "legacy",
+                isMuted: true,
+                isPinned: true,
+                color: "#123456",
+                isPrivate: true,
+                topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly,
+                isWebPublic: false)
+        ]));
+        await using (var connection = context.Open(account.AccountId))
+        {
+            await ExecuteAsync(connection, """
+                ALTER TABLE subscriptions DROP COLUMN is_web_public;
+                ALTER TABLE subscriptions DROP COLUMN topics_policy;
+                ALTER TABLE subscriptions DROP COLUMN is_private;
+                """);
+            if (sourceVersion < 5)
+            {
+                await ExecuteAsync(connection, "ALTER TABLE subscriptions DROP COLUMN color;");
+            }
+            if (sourceVersion < 4)
+            {
+                await ExecuteAsync(connection, "ALTER TABLE subscriptions DROP COLUMN is_pinned; ALTER TABLE subscriptions DROP COLUMN is_muted;");
+            }
+            await ExecuteAsync(connection, $"UPDATE schema_info SET version = {sourceVersion}; PRAGMA user_version = {sourceVersion};");
+        }
+
+        await context.Store.MigrateAsync(account.AccountId);
+
+        var subscription = Assert.Single((await context.Store.LoadAsync(account.AccountId))!.State.Subscriptions.Values);
+        Assert.Null(subscription.IsPrivate);
+        Assert.Null(subscription.IsWebPublic);
+        Assert.Null(subscription.TopicsPolicy);
+        Assert.False(PrivateGroupPolicy.IsEligible(subscription));
+        await using var verify = context.Open(account.AccountId);
+        Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(verify, "PRAGMA user_version;"));
+        Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(verify, "SELECT version FROM schema_info;"));
+        Assert.Equal(3, await ScalarLongAsync(verify,
+            "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name IN ('is_private', 'is_web_public', 'topics_policy');"));
+    }
+
+    [Fact]
+    public async Task MigrateAsync_WhenVersionSixIsMissingEligibilityColumn_RepairsIdempotently()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        await context.Store.InitializeAsync(account);
+        await using (var connection = context.Open(account.AccountId))
+        {
+            await ExecuteAsync(connection, "ALTER TABLE subscriptions DROP COLUMN is_web_public;");
+            Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(connection, "PRAGMA user_version;"));
+        }
+
+        await context.Store.MigrateAsync(account.AccountId);
+        await context.Store.MigrateAsync(account.AccountId);
+
+        await using var verify = context.Open(account.AccountId);
+        Assert.Equal(3, await ScalarLongAsync(verify,
+            "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name IN ('is_private', 'is_web_public', 'topics_policy');"));
+        Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(verify, "PRAGMA user_version;"));
+        Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(verify, "SELECT version FROM schema_info;"));
     }
 
     [Fact]

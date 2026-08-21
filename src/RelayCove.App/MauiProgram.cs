@@ -34,6 +34,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<IUiDispatcher, MauiUiDispatcher>();
         builder.Services.AddSingleton<IAppearanceService, MauiAppearanceService>();
         builder.Services.AddSingleton<IUiPreferencesService, MauiUiPreferencesService>();
+        builder.Services.AddSingleton<IConversationPreferencesStore, MauiConversationPreferencesStore>();
         builder.Services.AddSingleton<IPlatformInteractionService, MauiPlatformInteractionService>();
         builder.Services.AddSingleton<IFileSelectionService, MauiFileSelectionService>();
         builder.Services.AddSingleton<IRealmMediaService, RealmMediaService>();

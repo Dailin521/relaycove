@@ -5,20 +5,25 @@ namespace RelayCove.App.Tests;
 public sealed class ConversationPaneViewTests
 {
     [Fact]
-    public void ChannelHeader_WhenRendered_ExposesCreateChannelInsteadOfBrowse()
+    public void ConversationPane_WhenRendered_UsesOneWechatStyleTimelineWithoutChannelOrDirectGroups()
     {
         var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "ConversationPaneView.xaml"));
         XNamespace x = "http://schemas.microsoft.com/winfx/2009/xaml";
-        var browseButton = source.Descendants()
-            .SingleOrDefault(element => element.Attribute(x + "Name")?.Value == "BrowseChannelsButton");
         var createButton = source.Descendants()
-            .Single(element => element.Attribute(x + "Name")?.Value == "CreateChannelButton");
-        var channelLabel = source.Descendants()
-            .Single(element => element.Name.LocalName == "Label" && element.Attribute("Text")?.Value == "频道");
+            .Single(element => element.Attribute(x + "Name")?.Value == "NewConversationButton");
+        var conversationList = source.Descendants()
+            .Single(element => element.Name.LocalName == "CollectionView" &&
+                               element.Attribute("ItemsSource")?.Value == "{Binding FilteredConversations}");
+        var labels = source.Descendants()
+            .Where(element => element.Name.LocalName == "Label")
+            .Select(element => element.Attribute("Text")?.Value)
+            .ToArray();
 
-        Assert.Null(browseButton);
-        Assert.Equal("18,*,Auto,26", channelLabel.Parent?.Attribute("ColumnDefinitions")?.Value);
-        Assert.Equal("OnCreateChannelClicked", createButton.Attribute("Clicked")?.Value);
+        Assert.NotNull(conversationList);
+        Assert.Equal("{Binding OpenNewConversationCommand}", createButton.Attribute("Command")?.Value);
+        Assert.DoesNotContain("频道", labels);
+        Assert.DoesNotContain("私信", labels);
+        Assert.DoesNotContain(source.Descendants(), element => element.Attribute("ItemsSource")?.Value is "{Binding FilteredChannels}" or "{Binding FilteredDirectMessages}");
     }
 
     private static string FindWorkspaceFile(params string[] parts)

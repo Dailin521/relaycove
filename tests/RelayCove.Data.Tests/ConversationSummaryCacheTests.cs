@@ -9,11 +9,14 @@ public sealed class ConversationSummaryCacheTests
     {
         await using var context = StoreTestContext.Create();
         var account = StoreTestData.Account();
-        var source = new ChannelTopic(1, "source");
-        var destination = new ChannelTopic(2, "destination");
+        var source = new ChannelTopic(1, string.Empty);
+        var destination = new ChannelTopic(2, string.Empty);
         await context.Store.InitializeAsync(account);
         await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register(
-            [new Subscription(1, "Source"), new Subscription(2, "Destination")]));
+            [
+                new Subscription(1, "Source", isPrivate: true, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false),
+                new Subscription(2, "Destination", isPrivate: true, topicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly, isWebPublic: false)
+            ]));
 
         await context.Store.ApplyBatchAsync(account.AccountId,
         [

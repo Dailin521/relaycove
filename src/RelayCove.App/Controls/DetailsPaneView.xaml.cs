@@ -31,4 +31,28 @@ public partial class DetailsPaneView : ContentView
     internal void FocusCloseButton() => CloseButton.Focus();
 
     internal void FocusUnsubscribeButton() => UnsubscribeButton.Focus();
+
+    private void OnDirectMessageMutedToggled(object? sender, ToggledEventArgs eventArgs)
+    {
+        if (ViewModel is { } viewModel && eventArgs.Value != viewModel.IsSelectedDirectMessageMuted)
+            viewModel.ToggleDirectMessageMutedCommand.Execute(null);
+    }
+
+    private void OnDirectMessagePinnedToggled(object? sender, ToggledEventArgs eventArgs)
+    {
+        if (ViewModel is { } viewModel && eventArgs.Value != viewModel.IsSelectedDirectMessagePinned)
+            viewModel.ToggleDirectMessagePinnedCommand.Execute(null);
+    }
+
+    private void OnChannelMutedToggled(object? sender, ToggledEventArgs eventArgs)
+    {
+        if (ViewModel is { } viewModel && eventArgs.Value != viewModel.IsSelectedChannelMuted)
+            viewModel.ToggleSelectedChannelMutedCommand.Execute(null);
+    }
+
+    private void OnChannelPinnedToggled(object? sender, ToggledEventArgs eventArgs)
+    {
+        if (ViewModel is { } viewModel && eventArgs.Value != viewModel.IsSelectedChannelPinned)
+            viewModel.ToggleSelectedChannelPinnedCommand.Execute(null);
+    }
 }

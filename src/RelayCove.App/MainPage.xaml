@@ -70,19 +70,7 @@
         </Grid>
 
         <Grid IsVisible="{Binding MainVisible}">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="{Binding NavigationRailWidth}" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <controls:NavigationRailView x:Name="NavigationRail"
-                                         Grid.Column="0"
-                                         IsEnabled="{Binding IsPrimaryShellEnabled}" />
-            <BoxView Grid.Column="0"
-                     WidthRequest="1"
-                     HorizontalOptions="End"
-                     Background="{StaticResource BorderBrush}" />
-
-            <Grid Grid.Column="1">
+            <Grid>
                 <Grid IsVisible="{Binding IsMessagesSection}">
                     <Grid IsEnabled="{Binding IsPrimaryShellEnabled}">
                         <Grid.ColumnDefinitions>
@@ -134,44 +122,6 @@
                     </Grid>
                 </Grid>
 
-                <controls:ContactsPageView IsVisible="{Binding IsContactsSection}" />
-                <Grid IsVisible="{Binding IsSavedSection}" Padding="28" RowDefinitions="Auto,Auto,*" RowSpacing="14">
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-                        <VerticalStackLayout Spacing="3">
-                            <Label Text="已保存消息" Style="{StaticResource BaseLabelStyle}" FontSize="22" FontAttributes="Bold" />
-                            <Label Text="来自当前账号的服务器 starred 消息；不会写入本地搜索缓存。" Style="{StaticResource MutedLabelStyle}" />
-                        </VerticalStackLayout>
-                        <Button Grid.Column="1" Text="刷新" Style="{StaticResource BaseButtonStyle}" Command="{Binding RefreshSavedCommand}" />
-                    </Grid>
-                    <VerticalStackLayout Grid.Row="1" Spacing="3">
-                        <Label Text="其他设备的新收藏可刷新查看。" IsVisible="{Binding SavedRefreshSuggested}" Style="{StaticResource MutedLabelStyle}" />
-                        <Label Text="正在读取已保存消息…" IsVisible="{Binding IsSavedLoading}" Style="{StaticResource MutedLabelStyle}" />
-                        <Label Text="{Binding SavedError}" IsVisible="{Binding HasSavedError}" Style="{StaticResource MutedLabelStyle}" />
-                    </VerticalStackLayout>
-                    <Grid Grid.Row="2">
-                        <CollectionView ItemsSource="{Binding SavedMessages}" SelectionMode="None">
-                            <CollectionView.ItemTemplate>
-                                <DataTemplate x:DataType="viewModels:SavedMessageItem">
-                                    <Border Padding="12" Margin="0,0,0,8" Style="{StaticResource CardBorderStyle}">
-                                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10">
-                                            <Label Text="{Binding Sender}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
-                                            <Label Grid.Column="1" Text="{Binding Timestamp}" Style="{StaticResource MutedLabelStyle}" />
-                                            <Label Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Content}" Style="{StaticResource BaseLabelStyle}" LineBreakMode="TailTruncation" MaxLines="2" />
-                                            <HorizontalStackLayout Grid.Row="2" Grid.ColumnSpan="2" Spacing="8" Margin="0,8,0,0">
-                                                <Button Text="跳转" Style="{StaticResource BaseButtonStyle}" Command="{Binding ViewModel.OpenSavedMessageCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}" CommandParameter="{Binding .}" />
-                                                <Button Text="取消收藏" Style="{StaticResource BaseButtonStyle}" Command="{Binding ViewModel.UnstarSavedMessageCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}" CommandParameter="{Binding .}" />
-                                            </HorizontalStackLayout>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </CollectionView.ItemTemplate>
-                            <CollectionView.Footer>
-                                <Button Text="加载更早消息" IsVisible="{Binding ViewModel.HasMoreSavedMessages, Source={x:Reference RootPage}, x:DataType=local:MainPage}" Command="{Binding ViewModel.LoadOlderSavedCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}" Style="{StaticResource BaseButtonStyle}" />
-                            </CollectionView.Footer>
-                        </CollectionView>
-                        <Label Text="尚无已保存消息。" IsVisible="{Binding IsSavedEmpty}" Style="{StaticResource MutedLabelStyle}" HorizontalOptions="Center" VerticalOptions="Center" />
-                    </Grid>
-                </Grid>
                 <controls:SettingsPageView IsVisible="{Binding IsSettingsSection}" />
 
                 <Grid IsVisible="{Binding IsAccountMenuOpen}">
@@ -179,7 +129,7 @@
                         <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseAccountMenuCommand}" /></BoxView.GestureRecognizers>
                     </BoxView>
                     <Border WidthRequest="220"
-                            Margin="0,8,0,0"
+                            Margin="8,8,0,0"
                             Style="{StaticResource PopoverBorderStyle}"
                             HorizontalOptions="Start"
                             VerticalOptions="Start">
@@ -226,7 +176,7 @@
                             <Grid ColumnDefinitions="*,Auto">
                                 <VerticalStackLayout>
                                     <Label Text="搜索" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
-                                    <Label Text="频道、话题、真实姓名与当前已加载消息" Style="{StaticResource MutedLabelStyle}" />
+                                    <Label Text="当前会话、联系人和已加载消息" Style="{StaticResource MutedLabelStyle}" />
                                 </VerticalStackLayout>
                                 <Button Grid.Column="1" Text="×" Style="{StaticResource IconButtonStyle}" Command="{Binding CloseSearchCommand}" />
                             </Grid>
@@ -236,7 +186,7 @@
                                    Text="{Binding SearchQuery, Mode=TwoWay}"
                                    Completed="OnSearchCompleted"
                                    Placeholder="键入以搜索"
-                                   SemanticProperties.Description="搜索频道、话题、联系人和已加载消息" />
+                                   SemanticProperties.Description="搜索当前会话、联系人和已加载消息" />
                             <Grid Grid.Row="2">
                                 <CollectionView ItemsSource="{Binding SearchResults}"
                                                 SelectedItem="{Binding SelectedSearchResult, Mode=TwoWay}"
@@ -288,22 +238,18 @@
                         <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="10">
                             <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
                                 <VerticalStackLayout>
-                                    <Label Text="新建私信" IsVisible="{Binding IsNewDirectConversationMode}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
-                                    <Label Text="新建频道话题" IsVisible="{Binding IsNewUnlockedChannelTopicComposer}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
-                                    <Label Text="新建话题" IsVisible="{Binding IsLockedChannelTopicComposer}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                                    <Label Text="发起私聊" IsVisible="{Binding IsNewDirectConversationMode}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
+                                    <Label Text="新建群聊" IsVisible="{Binding IsNewChannelConversationMode}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
                                     <Label Text="仅列出 IClientSession 当前可靠获知的活跃用户；不代表完整成员目录或 presence。"
                                            IsVisible="{Binding IsNewDirectConversationMode}"
                                            Style="{StaticResource MutedLabelStyle}"
                                            LineBreakMode="WordWrap" />
-                                    <Label Text="选择已订阅频道并输入话题。不会创建或修改频道。"
-                                           IsVisible="{Binding IsNewUnlockedChannelTopicComposer}"
-                                           Style="{StaticResource MutedLabelStyle}" />
-                                    <Label Text="{Binding NewConversationChannel.Name, StringFormat='#{0}'}"
-                                           IsVisible="{Binding IsLockedChannelTopicComposer}"
+                                    <Label Text="填写群名并至少选择两名其他成员。群聊始终是私有且不显示话题。"
+                                           IsVisible="{Binding IsNewChannelConversationMode}"
                                            Style="{StaticResource MutedLabelStyle}" />
                                     <HorizontalStackLayout Spacing="7" Margin="0,7,0,0" IsVisible="{Binding IsNewConversationModeSwitcherVisible}">
-                                        <Button Text="私信" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowNewDirectConversationCommand}" />
-                                        <Button Text="频道话题" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowNewChannelConversationCommand}" />
+                                        <Button Text="发起私聊" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowNewDirectConversationCommand}" />
+                                        <Button Text="新建群聊" Style="{StaticResource BaseButtonStyle}" Command="{Binding ShowNewChannelConversationCommand}" IsEnabled="{Binding CanCreatePrivateGroup}" />
                                     </HorizontalStackLayout>
                                 </VerticalStackLayout>
                                 <Button Grid.Column="1"
@@ -311,27 +257,19 @@
                                         Style="{StaticResource IconButtonStyle}"
                                         Command="{Binding CloseNewConversationCommand}" />
                             </Grid>
-                            <Grid Grid.Row="1">
+                            <Grid Grid.Row="1"
+                                  RowDefinitions="Auto,Auto"
+                                  RowSpacing="8">
                                 <Entry x:Name="NewConversationSearchEntry"
+                                       Grid.Row="0"
                                        Text="{Binding NewConversationQuery, Mode=TwoWay}"
-                                       IsVisible="{Binding IsNewDirectConversationMode}"
                                        Placeholder="筛选已知联系人"
                                        Style="{StaticResource BaseEntryStyle}" />
-                                <Grid IsVisible="{Binding IsNewUnlockedChannelTopicComposer}" ColumnDefinitions="*,*" ColumnSpacing="8">
-                                    <Picker ItemsSource="{Binding Channels}"
-                                            ItemDisplayBinding="{Binding Name}"
-                                            SelectedItem="{Binding NewConversationChannel, Mode=TwoWay}"
-                                            IsEnabled="{Binding CanChooseNewConversationChannel}"
-                                            Title="选择频道" />
-                                    <Entry Grid.Column="1"
-                                           Text="{Binding NewConversationTopic, Mode=TwoWay}"
-                                           Placeholder="输入新话题"
-                                           Style="{StaticResource BaseEntryStyle}" />
-                                </Grid>
-                                <Entry x:Name="LockedChannelTopicEntry"
-                                       IsVisible="{Binding IsLockedChannelTopicComposer}"
-                                       Text="{Binding NewConversationTopic, Mode=TwoWay}"
-                                       Placeholder="输入新话题"
+                                <Entry x:Name="NewPrivateGroupNameEntry"
+                                       Grid.Row="1"
+                                       IsVisible="{Binding IsNewChannelConversationMode}"
+                                       Text="{Binding NewPrivateGroupName, Mode=TwoWay}"
+                                       Placeholder="群聊名称"
                                        Style="{StaticResource BaseEntryStyle}" />
                             </Grid>
                             <Grid Grid.Row="2"
@@ -381,11 +319,17 @@
                                        Style="{StaticResource MutedLabelStyle}"
                                        HorizontalOptions="Center"
                                        VerticalOptions="Center" />
-                                <Label Text="频道话题会在输入后打开；空频道也可直接创建第一个话题。"
-                                       IsVisible="{Binding IsNewUnlockedChannelTopicComposer}"
+                                <Label Text="{Binding PrivateGroupCreateDisabledReason}"
+                                       IsVisible="{Binding ShowPrivateGroupCreateDisabledReason}"
                                        Style="{StaticResource MutedLabelStyle}"
                                        HorizontalOptions="Center"
-                                       VerticalOptions="Center" />
+                                       VerticalOptions="End" />
+                                <Label Text="{Binding NewConversationError}"
+                                       IsVisible="{Binding HasNewConversationError}"
+                                       Style="{StaticResource DangerLabelStyle}"
+                                       HorizontalOptions="Center"
+                                       VerticalOptions="Start"
+                                       LineBreakMode="WordWrap" />
                             </Grid>
                             <Grid Grid.Row="3" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
                                 <Button Text="给自己发私信"
@@ -397,13 +341,13 @@
                                         Style="{StaticResource BaseButtonStyle}"
                                         Command="{Binding CloseNewConversationCommand}" />
                                 <Button Grid.Column="3"
-                                        Text="打开私信"
+                                        Text="开始私聊"
                                         IsVisible="{Binding IsNewDirectConversationMode}"
                                         Style="{StaticResource PrimaryButtonStyle}"
                                         IsEnabled="{Binding CanStartNewConversation}"
                                         Command="{Binding StartNewConversationCommand}" />
                                 <Button Grid.Column="3"
-                                        Text="打开频道话题"
+                                        Text="创建群聊"
                                         IsVisible="{Binding IsNewChannelConversationMode}"
                                         Style="{StaticResource PrimaryButtonStyle}"
                                         IsEnabled="{Binding CanStartNewChannelConversation}"
@@ -848,7 +792,7 @@
                         <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
                         <VerticalStackLayout Spacing="12">
                             <Label Text="退出频道？" Style="{StaticResource DangerLabelStyle}" FontSize="18" FontAttributes="Bold" />
-                            <Label Text="{Binding ChannelUnsubscribeTargetName, StringFormat='将退出 #{0}。私有频道退出后可能需要再次获邀。'}"
+                            <Label Text="{Binding ChannelUnsubscribeTargetName, StringFormat='将退出群聊“{0}”。之后需要再次获邀才能加入。'}"
                                    Style="{StaticResource BaseLabelStyle}"
                                    LineBreakMode="WordWrap" />
                             <Label Text="网络结果未知时不会自动重试，也不会提前从本地移除频道。"
@@ -872,51 +816,6 @@
                                         IsEnabled="{Binding CanCloseChannelUnsubscribe}" />
                             </Grid>
                         </VerticalStackLayout>
-                    </Border>
-                </Grid>
-
-                <Grid IsVisible="{Binding IsChannelBrowserOpen}">
-                    <BoxView Background="{StaticResource OverlayBrush}">
-                        <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseChannelBrowserCommand}" /></BoxView.GestureRecognizers>
-                    </BoxView>
-                    <Border Style="{StaticResource DialogBorderStyle}" MaximumWidthRequest="680" MaximumHeightRequest="680">
-                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
-                        <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="10">
-                            <Grid ColumnDefinitions="*,Auto">
-                                <Label Text="浏览频道" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
-                                <Button x:Name="ChannelBrowserCloseButton" Grid.Column="1" Text="×" Style="{StaticResource IconButtonStyle}"
-                                        Command="{Binding CloseChannelBrowserCommand}" SemanticProperties.Description="关闭频道浏览" />
-                            </Grid>
-                            <Label Grid.Row="1" Text="仅显示服务器当前目录中的可加入频道；加入前会重新验证频道 ID 和名称。"
-                                   Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
-                            <Grid Grid.Row="2">
-                                <CollectionView ItemsSource="{Binding AvailableChannels}" SelectionMode="None">
-                                    <CollectionView.EmptyView><Label Text="没有可加入频道" Style="{StaticResource MutedLabelStyle}" Padding="6,18" /></CollectionView.EmptyView>
-                                    <CollectionView.ItemTemplate>
-                                        <DataTemplate x:DataType="viewModels:AvailableChannelItem">
-                                            <Border Padding="8" Margin="0,2" Stroke="{StaticResource BorderBrush}" StrokeThickness="1">
-                                                <Border.StrokeShape><RoundRectangle CornerRadius="8" /></Border.StrokeShape>
-                                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                                    <VerticalStackLayout Spacing="2">
-                                                        <Label Text="{Binding Name, StringFormat='#{0}'}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
-                                                        <Label Text="{Binding DescriptionLabel}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="TailTruncation" />
-                                                        <Label Text="{Binding SubscriberCountLabel}" Style="{StaticResource MutedLabelStyle}" FontSize="11" />
-                                                    </VerticalStackLayout>
-                                                    <Button Grid.Column="1" Text="加入" Style="{StaticResource PrimaryButtonStyle}"
-                                                            Command="{Binding ViewModel.JoinAvailableChannelCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
-                                                            CommandParameter="{Binding .}" SemanticProperties.Description="加入此频道" />
-                                                </Grid>
-                                            </Border>
-                                        </DataTemplate>
-                                    </CollectionView.ItemTemplate>
-                                </CollectionView>
-                                <ActivityIndicator IsVisible="{Binding IsChannelBrowserLoading}" IsRunning="{Binding IsChannelBrowserLoading}" />
-                            </Grid>
-                            <VerticalStackLayout Grid.Row="3" Spacing="6">
-                                <Label Text="{Binding ChannelBrowserError}" IsVisible="{Binding HasChannelBrowserError}" Style="{StaticResource DangerLabelStyle}" LineBreakMode="WordWrap" />
-                                <Button Text="重试" Style="{StaticResource BaseButtonStyle}" Command="{Binding OpenChannelBrowserCommand}" IsVisible="{Binding HasChannelBrowserError}" />
-                            </VerticalStackLayout>
-                        </Grid>
                     </Border>
                 </Grid>
 

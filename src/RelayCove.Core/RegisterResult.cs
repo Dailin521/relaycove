@@ -17,4 +17,5 @@ public sealed record RegisterResult(
     int? MaxChannelFolderNameLength = null,
     int? MaxChannelFolderDescriptionLength = null,
     IReadOnlyList<UserTopicVisibility>? UserTopics = null,
-    bool IsOrganizationAdministrator = false);
+    bool IsOrganizationAdministrator = false,
+    bool CanCreatePrivateChannel = false);
