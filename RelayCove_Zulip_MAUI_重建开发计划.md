@@ -1,6 +1,6 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M、Stage 23、Stage 24、Stage 25、Stage 26、Stage 27 与 Stage 28 已进入 `main`；Stage 29 完整 Unicode 表情目录为待人工验证的本地候选。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
+文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M、Stage 23、Stage 24、Stage 25、Stage 26、Stage 27、Stage 28 与 Stage 29 已进入 `main`；Stage 30 消息气泡与搜索分页尾部修正已获 Visual Studio 人工确认并进入当前交付。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
@@ -404,6 +404,10 @@ MAUI 左侧搜索以统一会话列表为展示面，但不再只筛选当前行
 ### Stage 29：完整 Unicode 表情目录
 
 MAUI Composer 和 reaction 选择器继续共用同一份本机目录，但不再限制为 24 个手写常用项。目录固定匹配当前目标 Zulip 12.1 的 1883 个 Unicode 表情；选择器默认只绑定常用项，并通过可横向滚动、鼠标按住拖动且不裁切的“常用 + 9 个官方类别”单行分类条切换当前集合，禁止一次实例化全部模板。显示字符从 Zulip 的 dash-separated Unicode code 构造，reaction 仍提交对应的规范 `emoji_name`、`emoji_code` 与 `unicode_emoji` 类型。消息显示层将 3339 个已知官方短码/别名投影成 Unicode，但 raw Markdown 仍用于复制、编辑、引用和服务器状态。打开选择器不发网络请求；Realm 自定义表情和未来 Zulip 版本新增表情不在本轮范围，实际验证只记录在 Stage 29 dated task 与 STATUS。
+
+### Stage 30：短消息气泡与搜索分页尾部
+
+MAUI 消息气泡保留现有响应式最大宽度和长消息换行，但短正文、单个表情等按内容宽度收缩；他人消息左对齐、本人消息右对齐，消息头操作区不得把气泡强制拉宽。左侧“加载更多搜索结果”不再放在可能保留旧视觉状态的 `CollectionView.Footer` 中，改由会话面板根布局直接绑定当前非空查询、已确认下一页和空闲状态；清空查询或打开结果后必须立即消失。实际验证只记录在 Stage 30 dated task 与 STATUS。
 
 ### Stage 21 历史实施切片
 

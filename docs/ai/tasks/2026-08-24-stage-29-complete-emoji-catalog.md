@@ -1,6 +1,6 @@
 # Stage 29 — complete Zulip Unicode emoji catalog
 
-Status: local implementation candidate; waiting for user Visual Studio validation
+Status: delivered to `main@a56e8e9`; user Visual Studio validation passed
 
 ## Scope
 
@@ -40,4 +40,4 @@ Not run: Fast, Full, Live, packaging, app startup, screenshot, Realm write, comm
 5. Confirm category switching and scrolling remain responsive and closing/reopening does not retain a stale keyboard selection.
 6. Confirm the redundant “选择后插入光标位置” and “再次选择可移除” text no longer appears.
 
-Manual result: pending.
+Manual result: passed. The user confirmed the final category scrolling/dragging, picker presentation and shortcode display, then authorized commit and push.

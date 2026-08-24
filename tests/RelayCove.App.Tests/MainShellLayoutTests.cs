@@ -108,6 +108,46 @@ public sealed class MainShellLayoutTests
         Assert.DoesNotContain("再次选择可移除", raw, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void MessageBubble_WhenContentIsShort_SizesToContentAndKeepsOwnMessageAlignment()
+    {
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "MessageListView.xaml"));
+        XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2009/xaml";
+
+        var bubble = source
+            .Descendants(maui + "Border")
+            .Single(element => element.Attribute(x + "Name")?.Value == "Bubble");
+        var ownMessageTrigger = bubble
+            .Descendants(maui + "DataTrigger")
+            .Single(element =>
+                element.Attribute("Binding")?.Value == "{Binding IsOwn}" &&
+                element.Attribute("Value")?.Value == "True");
+
+        Assert.Equal("Start", bubble.Attribute("HorizontalOptions")?.Value);
+        Assert.Contains(
+            ownMessageTrigger.Elements(maui + "Setter"),
+            setter =>
+                setter.Attribute("Property")?.Value == "HorizontalOptions" &&
+                setter.Attribute("Value")?.Value == "End");
+    }
+
+    [Fact]
+    public void ConversationFilterLoadMore_WhenSearchEnds_UsesDirectVisibilityBindingOutsideCollectionFooter()
+    {
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "ConversationPaneView.xaml"));
+        XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2009/xaml";
+
+        var button = source
+            .Descendants(maui + "Button")
+            .Single(element => element.Attribute(x + "Name")?.Value == "ConversationFilterLoadMoreButton");
+
+        Assert.Equal("{Binding ShowMoreConversationFilterResults}", button.Attribute("IsVisible")?.Value);
+        Assert.Equal("{Binding LoadMoreConversationFilterCommand}", button.Attribute("Command")?.Value);
+        Assert.Empty(source.Descendants(maui + "CollectionView.Footer"));
+    }
+
     private static string FindWorkspaceFile(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

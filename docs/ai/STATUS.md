@@ -1,9 +1,15 @@
-# RelayCove Status — Stage 21 / 22W / 22M / 23 / 25 / 26 / 27 / 28 / 29
+# RelayCove Status — Stage 21 / 22W / 22M / 23 / 25 / 26 / 27 / 28 / 29 / 30
 
 Updated: 2026-08-24
-Integration basis: `main@6e62166`; Stage 27 and Stage 28 are delivered, and Stage 29 is a local Visual Studio candidate
+Integration basis: Stage 29 delivery `main@a56e8e9`; Stage 30 is the current accepted delivery slice
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W/22M, Stage 23, Stage 24, Stage 25, Stage 26, Stage 27 and Stage 28 are preserved in `main`; the latest delivered commit is `main@6e62166`. Stage 29 only replaces the local MAUI Unicode emoji catalog. Stage 25 alone performed authorized production Realm writes to archive every existing active channel; Stage 29 used only the public static Zulip 12.1 catalog and performed no authenticated read or Realm write. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+Current delivery: Stage 22W/22M, Stage 23, Stage 24, Stage 25, Stage 26, Stage 27, Stage 28 and Stage 29 are preserved in `main`, with Stage 29 anchored at `main@a56e8e9`; Stage 30 is the current accepted message/list layout delivery. Stage 25 alone performed authorized production Realm writes to archive every existing active channel; Stage 29 used only the public static Zulip 12.1 catalog, and Stage 30 performed no authenticated read or Realm write. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+
+## Stage 30 message bubble and search footer — 2026-08-24
+
+- A message bubble previously filled the width established by its sender/action header, so short text and a single emoji appeared as a fixed wide card. The bubble now measures to its own content while retaining the existing responsive maximum and wrapping; other-user bubbles remain left-aligned and own bubbles remain right-aligned.
+- The conversation search pagination state already cleared correctly in the ViewModel, but the button inside `CollectionView.Footer` could retain a stale visible native footer after the query returned to the ordinary list. The button now lives in the panel root's auto row and binds directly to `ShowMoreConversationFilterResults`; it is present only for a nonempty query with a confirmed next page while idle.
+- Deterministic evidence: the focused bubble layout regression passed 1/1; the footer layout plus existing search-state regressions passed 2/2; the final App Debug build passed with 0 warnings/errors. The user confirmed both corrections in Visual Studio. Fast, Full, Live, package, Agent app startup, screenshot and Realm access were not run.
 
 ## Stage 29 complete Unicode emoji catalog — 2026-08-24
 
@@ -11,7 +17,7 @@ Current delivery: Stage 22W/22M, Stage 23, Stage 24, Stage 25, Stage 26, Stage 2
 - The local catalog now contains all 1883 unique Unicode entries published by the target Realm's Zulip 12.1 `emoji_codes.json`. The initial all-at-once grid was visibly slow and was rejected. Both pickers now open on the original 24 localized common choices and use one horizontally scrollable common-plus-nine-category strip, so hidden categories do not instantiate picker templates. The strip reserves explicit vertical space to prevent the pill bottoms from being clipped under Windows DPI scaling and supports native left-button hold-and-drag without breaking short category clicks. Redundant right-side header instructions were removed.
 - Display text is reconstructed from the official dash-separated Unicode sequence. Reactions keep the canonical server `emoji_name`, `emoji_code` and `unicode_emoji` type; Composer insertion remains plain Unicode text. Picker opening performs no runtime network request and does not add custom Realm emoji.
 - Message bodies and quote cards now display all 3339 known Zulip canonical shortcodes/aliases as Unicode while preserving unknown names, escaped values and code spans. The raw `MessageItem.Content` remains unchanged for copy, edit, quote and server authority.
-- Deterministic evidence: App 266/266 passed; App Debug build passed with 0 warnings/errors. Fast, Full, Live, package, app startup, screenshot, Realm write, commit and push were not run. User Visual Studio validation is pending.
+- Deterministic evidence before delivery: App 266/266 passed; App Debug build passed with 0 warnings/errors. The user confirmed the category scrolling, shortcode rendering and picker behavior in Visual Studio, then authorized the minimal commit/push delivered as `main@a56e8e9`. Fast, Full, Live, package, Agent app startup, screenshot and Realm write were not run.
 
 ## Stage 28 unified conversation search — 2026-08-24
 

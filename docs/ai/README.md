@@ -7,7 +7,7 @@ Updated: 2026-08-24
 1. 根目录 `RelayCove_Zulip_MAUI_重建开发计划.md`：产品、架构、安全与验收边界。
 2. `docs/ai/STATUS.md`：当前提交、当前验证证据和仍未关闭的门禁。
 3. `docs/ai/WORKFLOW.md`：开发、测试、复核和外部副作用规则。
-4. 当前活动记录是 `tasks/2026-08-24-stage-29-complete-emoji-catalog.md`；此前带日期的 Stage 记录只作历史证据。
+4. 当前活动记录是 `tasks/2026-08-24-stage-30-message-bubble-and-search-footer.md`；此前带日期的 Stage 记录只作历史证据。
 5. UI 工作再读 `docs/ui/README.md`、`INTERACTION_SPEC.md` 和 `DEVELOPMENT_WORKFLOW.md`。
 
 仓库代码、测试和本轮实际命令证据优先于文档。文档中的历史测试数、分支、包哈希和截图只适用于其明确记录的提交，不能当成当前树证据。

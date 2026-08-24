@@ -217,11 +217,13 @@
 
                                     <Border x:Name="Bubble"
                                             Padding="12,10"
+                                            HorizontalOptions="Start"
                                             Background="{StaticResource BubbleBrush}"
                                             Stroke="{StaticResource BorderBrush}"
                                             StrokeThickness="1">
                                         <Border.Triggers>
                                             <DataTrigger TargetType="Border" Binding="{Binding IsOwn}" Value="True">
+                                                <Setter Property="HorizontalOptions" Value="End" />
                                                 <Setter Property="Background" Value="{StaticResource OwnBubbleBrush}" />
                                                 <Setter Property="Stroke" Value="{StaticResource OwnBubbleBorderBrush}" />
                                                 <Setter Property="StrokeShape">
