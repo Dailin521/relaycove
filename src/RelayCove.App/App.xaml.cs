@@ -10,12 +10,17 @@ public partial class App : Application
 {
     private readonly IServiceProvider _services;
     private readonly IWindowShellAdapter _windowShellAdapter;
+    private readonly IAppNotificationService _appNotificationService;
     private int _shutdownStarted;
 
-    public App(IServiceProvider services, IWindowShellAdapter windowShellAdapter)
+    public App(
+        IServiceProvider services,
+        IWindowShellAdapter windowShellAdapter,
+        IAppNotificationService appNotificationService)
     {
         _services = services ?? throw new ArgumentNullException(nameof(services));
         _windowShellAdapter = windowShellAdapter ?? throw new ArgumentNullException(nameof(windowShellAdapter));
+        _appNotificationService = appNotificationService ?? throw new ArgumentNullException(nameof(appNotificationService));
         InitializeComponent();
     }
 
@@ -29,6 +34,7 @@ public partial class App : Application
             TitleBar = titleBar
         };
         _windowShellAdapter.Attach(window);
+        _appNotificationService.Attach(window);
         window.Destroying += (_, _) => Shutdown();
         return window;
     }
@@ -48,6 +54,7 @@ public partial class App : Application
 
     private async Task StopAndDisposeServicesAsync()
     {
+        _appNotificationService.Dispose();
         var session = _services.GetRequiredService<IClientSession>();
         try
         {

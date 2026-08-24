@@ -162,7 +162,58 @@
                         <Label Text="通知" Style="{StaticResource BaseLabelStyle}" FontSize="24" FontAttributes="Bold" />
                         <Label Text="系统通知与免打扰" Style="{StaticResource MutedLabelStyle}" />
                     </VerticalStackLayout>
-                    <Border Style="{StaticResource CardBorderStyle}"><Label Text="通知、presence 与在线状态尚未进入当前原生能力门。" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" /></Border>
+                    <Border Style="{StaticResource CardBorderStyle}" Padding="0">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                        <VerticalStackLayout Spacing="0">
+                            <Grid Padding="16,13" ColumnDefinitions="*,Auto" MinimumHeightRequest="76">
+                                <VerticalStackLayout VerticalOptions="Center" Spacing="2">
+                                    <Label Text="免打扰" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                    <Label Text="暂停系统横幅和任务栏闪烁，未读红点仍会保留" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
+                                <Switch Grid.Column="1" IsToggled="{Binding DoNotDisturb, Mode=TwoWay}" OnColor="{StaticResource AccentColor}" />
+                            </Grid>
+                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                            <Grid Padding="16,13" ColumnDefinitions="*,Auto" MinimumHeightRequest="76">
+                                <VerticalStackLayout VerticalOptions="Center" Spacing="2">
+                                    <Label Text="Windows 系统通知" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                    <Label Text="应用运行时收到其他人的新消息后显示系统横幅" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
+                                <Switch Grid.Column="1" IsToggled="{Binding SystemNotificationsEnabled, Mode=TwoWay}" OnColor="{StaticResource AccentColor}" />
+                            </Grid>
+                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                            <Grid Padding="16,13" ColumnDefinitions="*,Auto" MinimumHeightRequest="76">
+                                <VerticalStackLayout VerticalOptions="Center" Spacing="2">
+                                    <Label Text="显示消息内容" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                    <Label Text="关闭后，系统通知只显示收到一条新消息" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
+                                <Switch Grid.Column="1" IsToggled="{Binding ShowMessagePreview, Mode=TwoWay}" IsEnabled="{Binding SystemNotificationsEnabled}" OnColor="{StaticResource AccentColor}" />
+                            </Grid>
+                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                            <Grid Padding="16,13" ColumnDefinitions="*,Auto" MinimumHeightRequest="76">
+                                <VerticalStackLayout VerticalOptions="Center" Spacing="2">
+                                    <Label Text="任务栏图标闪烁" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                    <Label Text="消息不在当前可见会话时提醒关注" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
+                                <Switch Grid.Column="1" IsToggled="{Binding TaskbarFlashEnabled, Mode=TwoWay}" OnColor="{StaticResource AccentColor}" />
+                            </Grid>
+                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                            <Grid Padding="16,13" ColumnDefinitions="*,Auto" MinimumHeightRequest="76">
+                                <VerticalStackLayout VerticalOptions="Center" Spacing="2">
+                                    <Label Text="任务栏未读红点" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                    <Label Text="显示已知未读数量；只有数量未知时显示新消息标记" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
+                                <Switch Grid.Column="1" IsToggled="{Binding TaskbarBadgeEnabled, Mode=TwoWay}" OnColor="{StaticResource AccentColor}" />
+                            </Grid>
+                        </VerticalStackLayout>
+                    </Border>
+                    <Border Style="{StaticResource CardBorderStyle}">
+                        <VerticalStackLayout Spacing="4">
+                            <Label Text="Windows 状态" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                            <Label Text="{Binding SystemNotificationStatus}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                            <Label Text="{Binding TaskbarBadgeStatus}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                            <Label Text="离线或应用未运行时不会后台接收 Zulip 消息；本功能不是推送服务。" Style="{StaticResource MutedLabelStyle}" FontSize="12" LineBreakMode="WordWrap" />
+                        </VerticalStackLayout>
+                    </Border>
                 </VerticalStackLayout>
 
                 <VerticalStackLayout IsVisible="{Binding IsStorageSettings}" Spacing="20">

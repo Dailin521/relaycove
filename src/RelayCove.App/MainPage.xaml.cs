@@ -12,6 +12,7 @@ public partial class MainPage : ContentPage
     private readonly ShellViewModel _viewModel;
     private FrameworkElement? _platformRoot;
     private Microsoft.Maui.Controls.Window? _activationWindow;
+    private int _windowActivationRevision;
 
     public MainPage(ShellViewModel viewModel)
     {
@@ -41,7 +42,7 @@ public partial class MainPage : ContentPage
     {
         base.OnAppearing();
         AttachWindowActivation();
-        _viewModel.SetWindowActive(true);
+        RecheckWindowActivation();
         UpdateViewport();
         await _viewModel.InitializeAsync();
 #if DEBUG
@@ -59,6 +60,7 @@ public partial class MainPage : ContentPage
 
     protected override void OnDisappearing()
     {
+        _windowActivationRevision++;
         _viewModel.SetWindowActive(false);
         DetachWindowActivation();
         base.OnDisappearing();
@@ -83,9 +85,23 @@ public partial class MainPage : ContentPage
         _activationWindow = null;
     }
 
-    private void OnWindowActivated(object? sender, EventArgs eventArgs) => _viewModel.SetWindowActive(true);
+    private void OnWindowActivated(object? sender, EventArgs eventArgs) => RecheckWindowActivation();
 
-    private void OnWindowDeactivated(object? sender, EventArgs eventArgs) => _viewModel.SetWindowActive(false);
+    private void OnWindowDeactivated(object? sender, EventArgs eventArgs)
+    {
+        _windowActivationRevision++;
+        _viewModel.SetWindowActive(false);
+    }
+
+    private void RecheckWindowActivation()
+    {
+        var revision = ++_windowActivationRevision;
+        _viewModel.SetWindowActive(false);
+        Dispatcher.DispatchDelayed(TimeSpan.FromMilliseconds(100), () =>
+        {
+            if (revision == _windowActivationRevision) _viewModel.SetWindowActive(true);
+        });
+    }
 
     protected override void OnHandlerChanged()
     {

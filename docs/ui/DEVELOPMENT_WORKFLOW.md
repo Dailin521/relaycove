@@ -1,9 +1,9 @@
 # RelayCove UI 开发工作流
 
 状态：Active
-最后更新：2026-08-17
+最后更新：2026-08-24
 
-后续 UI 工作固定采用：**先实现并验收正式 RelayCove.Web，再冻结版本化交互合同，最后由 RelayCove.App 原生复刻**。现有 Zulip 官方 Web 保留不动。这个顺序不会绕过产品范围、协议、安全、浏览器部署条件或真实 Windows 验收。
+自 Stage 25 起，RelayCove.App MAUI 是唯一继续开发和交付的产品客户端；正式 RelayCove.Web、下文 Web-first 流水线和冻结 `chat-ui-v1` 只保留历史证据，不再构成当前对齐门禁。当前 MAUI UI 工作采用：明确单一问题 → 更新交互合同 → 原生 XAML/ViewModel/Windows adapter 实现 → 最小确定性验证 → 用户 Visual Studio 人工验收 → 文档收尾 → 最小提交推送。现有 Zulip 官方 Web 保留不动。
 
 ## 1. 标准流水线
 
@@ -136,8 +136,10 @@
 ### 6.4 投影与更新
 
 - 使用 `ConversationKey`、message ID 和 user ID 做 keyed reconcile，避免每次 `Clear + Add` 导致选择、滚动和焦点丢失。
+- 会话搜索先投影本机连续部分匹配，再以 300 ms debounce 调用只读服务器搜索；所有响应必须携带查询 generation 与账号边界，分页按 message ID 合并且不得把同一会话的不同命中压成一行，旧查询/旧账号/取消响应失败关闭。历史命中只携带瞬时 message ID，不写入领域或缓存。
 - 未读数只从 Core `UnreadState` 投影；服务器确认成功前不乐观清零。
-- 当前会话的实时新消息只有在 Windows 窗口激活、聊天面板可见、无模态遮罩、history generation 仍匹配且原生列表确认到达底部后才自动标读；请求携带 expected conversation，切换会话后必须 fail closed。
+- Core 历史加载不得自动标读。当前会话只有在 RelayCove HWND 是真实非最小化前台窗口、聊天面板可见、无模态遮罩、history generation 仍匹配且原生列表确认到达底部后，App 才能自动标读；生命周期激活需要延后复核真实前台，任务栏悬停必须两次失败关闭。请求携带 expected conversation，切换会话后必须 fail closed。
+- Windows 通知头像不得直接使用需要认证的 Realm URL；先走同 Realm 受控媒体读取，以不透明账号目录和账号/URL 哈希命名本机 PNG/JPEG 缓存，再把 file URI 交给通知 Builder；成功注销和清本机缓存必须删除该账号目录。任务栏数字在未打包窗口上必须以当前 HWND 可见结果为准，WinAppSDK identity badge 不可见时使用 `ITaskbarList3` overlay 投影同一权威数量。
 - Composer 的当前 Windows 产品规则是 Enter 发送、Ctrl+Enter 换行；Windows adapter/handler 必须保护 IME 组合输入，并与可见提示和无障碍说明保持一致。
 - Windows Composer 要求插入光标在焦点保持期间持续按系统周期闪烁，但不得修改系统全局 caret timeout、注册表或用户闪烁速率。优先保留平台控件自己的 caret；不得叠加第二条自绘光标或用背景遮罩覆盖系统光标。只有在复现的平台缺陷无法用原生控件修复时，才另立任务评估自绘替代。
 - 光标变更必须分别验证首次点击空文本、CJK 文本开头/中间/末尾、换行、选区、切换会话后再次聚焦、发送清空后继续输入、IME 组合和超过系统 timeout 的持续闪烁。编译或初始两三次闪烁不能替代真实窗口验收。

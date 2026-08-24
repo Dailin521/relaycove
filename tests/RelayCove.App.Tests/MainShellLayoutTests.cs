@@ -17,6 +17,17 @@ public sealed class MainShellLayoutTests
     }
 
     [Fact]
+    public void MainPage_WhenWindowActivates_RechecksForegroundAfterNativeActivationSettles()
+    {
+        var source = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml.cs"));
+
+        Assert.Contains("RecheckWindowActivation();", source);
+        Assert.Contains("_viewModel.SetWindowActive(false);", source);
+        Assert.Contains("Dispatcher.DispatchDelayed(TimeSpan.FromMilliseconds(100)", source);
+        Assert.Contains("revision == _windowActivationRevision", source);
+    }
+
+    [Fact]
     public void ProductBar_WhenRendered_ProvidesLeadingAccountAvatarAndTrailingSettings()
     {
         var source = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "Controls", "ProductBarView.xaml"));

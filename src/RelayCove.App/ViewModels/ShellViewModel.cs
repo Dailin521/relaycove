@@ -26,6 +26,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private readonly IUiDispatcher _dispatcher;
     private readonly IAppearanceService _appearanceService;
     private readonly IUiPreferencesService _uiPreferencesService;
+    private readonly INotificationPreferencesService _notificationPreferencesService;
+    private readonly IAppNotificationService _appNotificationService;
+    private readonly INotificationAvatarFileStore? _notificationAvatarFileStore;
+    private readonly IWindowShellAdapter? _windowShellAdapter;
     private readonly IPlatformInteractionService _platformInteractions;
     private readonly IFileSelectionService _fileSelectionService;
     private readonly IRealmMediaService _realmMediaService;
@@ -48,6 +52,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private ClientState? _pendingProjectionState;
     private bool _projectionDispatchScheduled;
     private IReadOnlyList<SearchResultItem> _serverSearchResults = [];
+    private IReadOnlyDictionary<long, ChatMessage> _conversationFilterServerMatches =
+        new Dictionary<long, ChatMessage>();
     private CancellationTokenSource? _navigationCancellation;
     private CancellationTokenSource? _autoMarkReadCancellation;
     private string? _autoMarkReadAttemptKey;
@@ -69,6 +75,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private long _searchInputGeneration;
     private long? _searchBeforeMessageId;
     private AccountId? _searchAccountId;
+    private CancellationTokenSource? _conversationFilterCancellation;
+    private long _conversationFilterGeneration;
+    private AccountId? _conversationFilterAccountId;
+    private string? _conversationFilterServerQuery;
+    private long? _conversationFilterBeforeMessageId;
     private long? _savedBeforeMessageId;
     private CancellationTokenSource? _savedLoadCancellation;
     private long _savedLoadGeneration;
@@ -100,6 +111,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private int _loginInFlight;
     private bool _suppressDraftTracking;
     private bool _suppressUiPreferenceSave = true;
+    private bool _suppressNotificationPreferenceSave = true;
     private bool _preserveContinuousPreference;
     private bool _nativePreviewCacheSwitchStarted;
     private double _fontSize = 14d;
@@ -116,7 +128,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IFileSelectionService fileSelectionService,
         IRealmMediaService realmMediaService,
         IFileSaveService fileSaveService,
-        IConversationPreferencesStore? conversationPreferencesStore = null)
+        IConversationPreferencesStore? conversationPreferencesStore = null,
+        INotificationPreferencesService? notificationPreferencesService = null,
+        IAppNotificationService? appNotificationService = null,
+        IWindowShellAdapter? windowShellAdapter = null,
+        INotificationAvatarFileStore? notificationAvatarFileStore = null)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _lastRealmStore = lastRealmStore ?? throw new ArgumentNullException(nameof(lastRealmStore));
@@ -128,12 +144,21 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _realmMediaService = realmMediaService ?? throw new ArgumentNullException(nameof(realmMediaService));
         _fileSaveService = fileSaveService ?? throw new ArgumentNullException(nameof(fileSaveService));
         _conversationPreferencesStore = conversationPreferencesStore ?? new InMemoryConversationPreferencesStore();
+        _notificationPreferencesService = notificationPreferencesService ?? new InMemoryNotificationPreferencesService();
+        _appNotificationService = appNotificationService ?? new NullAppNotificationService();
+        _windowShellAdapter = windowShellAdapter;
+        _notificationAvatarFileStore = notificationAvatarFileStore;
         Realm = _lastRealmStore.Get();
         AppearanceMode = _appearanceService.Current;
         ApplyUiPreferences(_uiPreferencesService.Current);
+        ApplyNotificationPreferences(_notificationPreferencesService.Current);
         _suppressUiPreferenceSave = false;
+        _suppressNotificationPreferenceSave = false;
         _session.StateChanged += OnStateChanged;
         if (_session is IMessageMutationObserver observer) observer.MessageMutationObserved += OnMessageMutationObserved;
+        if (_session is IRealtimeMessageObserver realtimeObserver) realtimeObserver.RealtimeMessageReceived += OnRealtimeMessageReceived;
+        _appNotificationService.StateChanged += OnAppNotificationStateChanged;
+        _appNotificationService.NotificationActivated += OnAppNotificationActivated;
         ChannelSettings = new ChannelSettingsViewModel(_session, _platformInteractions, OpenChannelFromSettingsAsync);
         ChannelSettings.PropertyChanged += OnChannelSettingsPropertyChanged;
         Project(_session.State);
@@ -205,6 +230,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial string ConversationFilterQuery { get; set; } = string.Empty;
+
+    [ObservableProperty]
+    public partial bool IsConversationFilterBusy { get; set; }
+
+    [ObservableProperty]
+    public partial string? ConversationFilterError { get; set; }
 
     [ObservableProperty]
     public partial bool IsNewConversationOpen { get; set; }
@@ -468,6 +499,21 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial bool AreDirectMessagesExpanded { get; set; } = true;
 
     [ObservableProperty]
+    public partial bool SystemNotificationsEnabled { get; set; } = true;
+
+    [ObservableProperty]
+    public partial bool TaskbarFlashEnabled { get; set; } = true;
+
+    [ObservableProperty]
+    public partial bool TaskbarBadgeEnabled { get; set; } = true;
+
+    [ObservableProperty]
+    public partial bool ShowMessagePreview { get; set; } = true;
+
+    [ObservableProperty]
+    public partial bool DoNotDisturb { get; set; }
+
+    [ObservableProperty]
     public partial string? UnavailableFeatureMessage { get; set; }
 
     [ObservableProperty]
@@ -686,6 +732,21 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool HasSearchResults => SearchResults.Count > 0;
     public bool IsSearchEmpty => !HasSearchResults;
     public bool HasSearchError => !string.IsNullOrWhiteSpace(SearchError);
+    public bool HasConversationFilterStatus =>
+        IsConversationFilterBusy || !string.IsNullOrWhiteSpace(ConversationFilterError);
+    public string ConversationFilterStatus => !string.IsNullOrWhiteSpace(ConversationFilterError)
+        ? ConversationFilterError
+        : IsConversationFilterBusy ? "正在搜索历史消息…" : string.Empty;
+    public string ConversationFilterEmptyText => IsConversationFilterBusy
+        ? "正在搜索历史消息…"
+        : !string.IsNullOrWhiteSpace(ConversationFilterError)
+            ? ConversationFilterError
+            : string.IsNullOrWhiteSpace(ConversationFilterQuery) ? "暂无聊天" : "没有匹配聊天";
+    public bool HasMoreConversationFilterResults => _conversationFilterBeforeMessageId is not null;
+    public bool ShowMoreConversationFilterResults =>
+        HasMoreConversationFilterResults &&
+        !IsConversationFilterBusy &&
+        !string.IsNullOrWhiteSpace(ConversationFilterQuery);
     public bool HasMoreSearchResults => _searchBeforeMessageId is not null;
     public bool HasMoreSavedMessages => _savedBeforeMessageId is not null;
     public bool HasSavedMessages => SavedMessages.Count > 0;
@@ -796,6 +857,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool IsNotificationSettings => SelectedSettingsCategory == SettingsCategory.Notifications;
     public bool IsStorageSettings => SelectedSettingsCategory == SettingsCategory.Storage;
     public bool IsAccountSettings => SelectedSettingsCategory == SettingsCategory.Account;
+    public bool IsSystemNotificationSupported => _appNotificationService.IsSystemNotificationSupported;
+    public string SystemNotificationStatus => _appNotificationService.SystemNotificationStatus;
+    public string TaskbarBadgeStatus => _appNotificationService.TaskbarBadgeStatus;
     public double FontScaleSliderValue
     {
         get => _fontSize;
@@ -1079,7 +1143,19 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     internal void SetWindowActive(bool isActive)
     {
-        if (_disposed || _isWindowActive == isActive) return;
+        if (_disposed) return;
+        if (_isWindowActive == isActive)
+        {
+            if (!isActive) return;
+            if (!IsApplicationWindowForeground)
+            {
+                CancelAutoMarkReadOperation(allowRetry: true);
+                return;
+            }
+            _appNotificationService.StopTaskbarFlash();
+            RequestAutoMarkDisplayedRead(_projectedState);
+            return;
+        }
         _isWindowActive = isActive;
         if (!isActive)
         {
@@ -1087,6 +1163,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             return;
         }
 
+        if (!IsApplicationWindowForeground)
+        {
+            CancelAutoMarkReadOperation(allowRetry: true);
+            return;
+        }
+        _appNotificationService.StopTaskbarFlash();
         RequestAutoMarkDisplayedRead(_projectedState);
     }
 
@@ -1397,10 +1479,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private async Task ConfirmLogoutAsync()
     {
         if (!LogoutConfirmationVisible) return;
+        var accountId = _session.AccountId;
         if (await ExecuteSessionActionAsync(
                 () => _session.LogoutAsync(),
                 "注销未完全完成，请重试以安全删除凭据并锁定本地缓存。"))
         {
+            if (accountId is { } loggedOutAccount && _notificationAvatarFileStore is not null)
+            {
+                await _notificationAvatarFileStore.ClearAccountAsync(loggedOutAccount);
+            }
             LogoutConfirmationVisible = false;
         }
     }
@@ -1424,7 +1511,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private async Task ConfirmClearCacheAsync(CancellationToken cancellationToken)
     {
         if (!ClearCacheConfirmationVisible) return;
-        await ExecuteSessionActionAsync(() => _session.ClearLocalCacheAsync(cancellationToken));
+        var accountId = _session.AccountId;
+        if (await ExecuteSessionActionAsync(() => _session.ClearLocalCacheAsync(cancellationToken)) &&
+            accountId is { } clearedAccount &&
+            _notificationAvatarFileStore is not null)
+        {
+            await _notificationAvatarFileStore.ClearAccountAsync(clearedAccount, cancellationToken);
+        }
         ClearCacheConfirmationVisible = false;
     }
 
@@ -3448,6 +3541,28 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     partial void OnAreDirectMessagesExpandedChanged(bool value) => SaveUiPreferences();
 
+    partial void OnSystemNotificationsEnabledChanged(bool value) => SaveNotificationPreferences();
+
+    partial void OnTaskbarFlashEnabledChanged(bool value)
+    {
+        SaveNotificationPreferences();
+        if (!value) _appNotificationService.StopTaskbarFlash();
+    }
+
+    partial void OnTaskbarBadgeEnabledChanged(bool value)
+    {
+        SaveNotificationPreferences();
+        SynchronizeTaskbarBadge(_projectedState.Unread);
+    }
+
+    partial void OnShowMessagePreviewChanged(bool value) => SaveNotificationPreferences();
+
+    partial void OnDoNotDisturbChanged(bool value)
+    {
+        SaveNotificationPreferences();
+        if (value) _appNotificationService.StopTaskbarFlash();
+    }
+
     partial void OnUnavailableFeatureMessageChanged(string? value) =>
         OnPropertyChanged(nameof(HasUnavailableFeatureMessage));
 
@@ -3517,7 +3632,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     partial void OnSelectedConversationItemChanged(ConversationListItem? value) =>
         RefreshNavigationSelectionProjection();
 
-    partial void OnConversationFilterQueryChanged(string value) => ProjectConversationFilter();
+    partial void OnConversationFilterQueryChanged(string value) => StartConversationFilterSearch(value);
+
+    partial void OnIsConversationFilterBusyChanged(bool value) =>
+        NotifyConversationFilterStatusProperties();
+
+    partial void OnConversationFilterErrorChanged(string? value) =>
+        NotifyConversationFilterStatusProperties();
 
     public void SelectFirstFilteredConversation()
     {
@@ -3578,9 +3699,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             return;
         }
 
+        var searchTargetMessageId = conversation.SearchTargetMessageId;
         ConversationFilterQuery = string.Empty;
         SetExpandedChannel(null);
         SelectedConversationItem = conversation;
+        if (searchTargetMessageId is { } messageId)
+        {
+            _ = OpenConversationFilterMatchAsync(conversation.Conversation, messageId);
+            return;
+        }
         var channel = conversation.Conversation is ChannelTopic channelTopic
             ? Channels.FirstOrDefault(item => item.ChannelId == channelTopic.ChannelId)
             : null;
@@ -3594,6 +3721,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 StringComparison.Ordinal))
             : null;
         _ = ActivateConversationFromNavigationAsync(conversation.Conversation, channel, topic, direct);
+    }
+
+    private async Task OpenConversationFilterMatchAsync(ConversationKey conversation, long messageId)
+    {
+        if (!IsRelayCoveConversation(conversation, _projectedState)) return;
+        if (await ExecuteSessionActionAsync(() => _session.OpenMessageAsync(conversation, messageId)))
+        {
+            SelectedSection = ShellSection.Messages;
+            if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
+        }
     }
 
     partial void OnIsNewChannelConversationModeChanged(bool value) =>
@@ -3966,6 +4103,87 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             {
                 SavedRefreshSuggested = true;
             }
+        });
+
+    private void OnRealtimeMessageReceived(object? sender, RealtimeMessageReceivedEventArgs eventArgs) =>
+        _dispatcher.Dispatch(() => NotifyRealtimeMessage(eventArgs.Message));
+
+    private void NotifyRealtimeMessage(ChatMessage message)
+    {
+        if (_disposed || message.IsRead || _session.CurrentUserId == message.SenderId ||
+            !IsRelayCoveConversation(message.Conversation, _projectedState) ||
+            IsConversationMuted(message.Conversation) || DoNotDisturb ||
+            IsIncomingMessageInActiveChat(message.Conversation))
+        {
+            return;
+        }
+
+        var senderName = message.SenderDisplayName ??
+                         _projectedState.Users.GetValueOrDefault(message.SenderId)?.FullName ??
+                         $"用户 {message.SenderId}";
+        var title = message.Conversation is ChannelTopic channel
+            ? $"{_projectedState.Subscriptions.GetValueOrDefault(channel.ChannelId)?.Name ?? "群聊"} · {senderName}"
+            : senderName;
+        var body = ShowMessagePreview
+            ? CreateNotificationPreview(message)
+            : "收到一条新消息";
+
+        if (SystemNotificationsEnabled)
+        {
+            _appNotificationService.ShowMessageNotification(new AppMessageNotification(
+                message.Conversation.CanonicalKey,
+                title,
+                body,
+                message.SenderAvatarUrl ??
+                _projectedState.Users.GetValueOrDefault(message.SenderId)?.AvatarUrl));
+        }
+        if (TaskbarFlashEnabled) _appNotificationService.FlashTaskbar();
+    }
+
+    private bool IsConversationMuted(ConversationKey conversation) => conversation switch
+    {
+        ChannelTopic channel => _projectedState.Subscriptions.GetValueOrDefault(channel.ChannelId)?.IsMuted == true,
+        DirectMessage when _session.AccountId is { } accountId =>
+            _conversationPreferencesStore.Get(accountId, conversation.CanonicalKey).IsMuted,
+        _ => false
+    };
+
+    private bool IsIncomingMessageInActiveChat(ConversationKey conversation) =>
+        IsApplicationWindowForeground && IsMessagesSection && IsChatPaneVisible &&
+        IsConversationContentVisible && IsMessageCollectionVisible &&
+        !IsModalOverlayVisible && !IsNavigationPending &&
+        string.Equals(_session.SelectedConversation?.CanonicalKey, conversation.CanonicalKey, StringComparison.Ordinal);
+
+    private bool IsApplicationWindowForeground => _windowShellAdapter?.IsForeground ?? true;
+
+    private string CreateNotificationPreview(ChatMessage message)
+    {
+        var presentation = MessageContentPresentation.Parse(message.Content, _session.ActiveRealm);
+        if (!string.IsNullOrWhiteSpace(presentation.Body)) return TruncateForSearch(presentation.Body);
+        if (presentation.Attachments.Count > 0) return "发来一个附件";
+        if (presentation.Quotes.Count > 0) return "引用了一条消息";
+        return "收到一条新消息";
+    }
+
+    private void OnAppNotificationStateChanged(object? sender, EventArgs eventArgs) =>
+        _dispatcher.Dispatch(() =>
+        {
+            OnPropertyChanged(nameof(IsSystemNotificationSupported));
+            OnPropertyChanged(nameof(SystemNotificationStatus));
+            OnPropertyChanged(nameof(TaskbarBadgeStatus));
+        });
+
+    private void OnAppNotificationActivated(object? sender, AppNotificationActivatedEventArgs eventArgs) =>
+        _dispatcher.Dispatch(() =>
+        {
+            var conversation = Conversations.FirstOrDefault(item => string.Equals(
+                item.Conversation.CanonicalKey,
+                eventArgs.ConversationKey,
+                StringComparison.Ordinal));
+            if (conversation is null) return;
+            _appNotificationService.StopTaskbarFlash();
+            ShowMessages();
+            ActivateConversation(conversation);
         });
 
     private void Project(ClientState state)
@@ -4691,9 +4909,272 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             item => item.Conversation.CanonicalKey);
         ReconcileConversationListItems(
             FilteredConversations,
-            Conversations.Where(item => query.Length == 0 || Contains(item.Title, query) || Contains(item.Detail, query)),
-            item => item.Conversation.CanonicalKey);
+            BuildConversationFilterResults(query),
+            item => item.ProjectionKey);
         OnPropertyChanged(nameof(ChannelListHeight));
+        OnPropertyChanged(nameof(ConversationFilterEmptyText));
+    }
+
+    private IReadOnlyList<ConversationListItem> BuildConversationFilterResults(string query)
+    {
+        if (query.Length == 0) return Conversations.ToArray();
+
+        var results = new List<ConversationListItem>();
+        var included = new HashSet<string>(StringComparer.Ordinal);
+        void Add(ConversationListItem item)
+        {
+            if (included.Add(item.ProjectionKey)) results.Add(item);
+        }
+
+        foreach (var conversation in Conversations.Where(item => MatchesConversationIdentity(item, query)))
+        {
+            Add(conversation);
+        }
+
+        foreach (var message in _projectedState.Messages.Values
+                     .Where(message => IsRelayCoveConversation(message.Conversation, _projectedState) &&
+                                       (Contains(message.Content, query) ||
+                                        Contains(message.SenderDisplayName, query) ||
+                                        Contains(_projectedState.Users.GetValueOrDefault(message.SenderId)?.FullName, query)))
+                     .OrderByDescending(message => message.Id))
+        {
+            if (CreateConversationFilterMatch(message) is { } match) Add(match);
+        }
+
+        foreach (var conversation in Conversations.Where(item =>
+                     Contains(item.Detail, query) &&
+                     !results.Any(result => string.Equals(
+                         result.Conversation.CanonicalKey,
+                         item.Conversation.CanonicalKey,
+                         StringComparison.Ordinal))))
+        {
+            Add(conversation);
+        }
+
+        if (string.Equals(_conversationFilterServerQuery, query, StringComparison.Ordinal) &&
+            _conversationFilterAccountId == _session.AccountId)
+        {
+            foreach (var message in _conversationFilterServerMatches.Values.OrderByDescending(message => message.Id))
+            {
+                if (CreateConversationFilterMatch(message) is { } match) Add(match);
+            }
+        }
+
+        return results;
+    }
+
+    private bool MatchesConversationIdentity(ConversationListItem item, string query)
+    {
+        if (Contains(item.Title, query)) return true;
+        return item.Conversation is ChannelTopic channel &&
+               _privateGroupMembers.GetValueOrDefault(channel.ChannelId)?
+                   .Any(member => Contains(member.FullName, query)) == true;
+    }
+
+    private ConversationListItem? CreateConversationFilterMatch(ChatMessage message)
+    {
+        ConversationListItem? conversation = message.Conversation switch
+        {
+            DirectMessage { OtherUserIds.Count: <= 1 } direct =>
+                CreateDirectConversationListItem(_projectedState, direct),
+            ChannelTopic { Topic.Length: 0 } channel
+                when PrivateGroupPolicy.IsEligible(
+                    _projectedState.Subscriptions.GetValueOrDefault(channel.ChannelId)) =>
+                CreatePrivateGroupConversationListItem(
+                    _projectedState,
+                    _projectedState.Subscriptions[channel.ChannelId]),
+            _ => null
+        };
+        if (conversation is null) return null;
+        var sender = message.SenderDisplayName ??
+                     _projectedState.Users.GetValueOrDefault(message.SenderId)?.FullName ??
+                     $"用户 {message.SenderId}";
+        var detail = message.Conversation is ChannelTopic
+            ? $"{sender}: {TruncateForSearch(message.Content)}"
+            : TruncateForSearch(message.Content);
+        return conversation.WithSearchMatch(message.Id, detail, message.Timestamp);
+    }
+
+    private void StartConversationFilterSearch(string value)
+    {
+        CancelConversationFilterSearch();
+        _conversationFilterServerMatches = new Dictionary<long, ChatMessage>();
+        _conversationFilterBeforeMessageId = null;
+        OnPropertyChanged(nameof(HasMoreConversationFilterResults));
+        OnPropertyChanged(nameof(ShowMoreConversationFilterResults));
+        ConversationFilterError = null;
+        ProjectConversationFilter();
+
+        var query = value.Trim();
+        var accountId = _session.AccountId;
+        if (query.Length == 0 || accountId is null) return;
+
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token);
+        _conversationFilterCancellation = cancellation;
+        _conversationFilterAccountId = accountId;
+        _conversationFilterServerQuery = query;
+        var generation = ++_conversationFilterGeneration;
+        IsConversationFilterBusy = true;
+        _ = RunConversationFilterSearchAsync(
+            query,
+            null,
+            append: false,
+            generation,
+            accountId.Value,
+            cancellation);
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task LoadMoreConversationFilterAsync()
+    {
+        var query = ConversationFilterQuery.Trim();
+        var accountId = _session.AccountId;
+        if (_conversationFilterBeforeMessageId is not { } beforeMessageId ||
+            query.Length == 0 || accountId is null || IsConversationFilterBusy)
+        {
+            return Task.CompletedTask;
+        }
+
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token);
+        _conversationFilterCancellation = cancellation;
+        _conversationFilterAccountId = accountId;
+        _conversationFilterServerQuery = query;
+        var generation = ++_conversationFilterGeneration;
+        IsConversationFilterBusy = true;
+        return RunConversationFilterSearchAsync(
+            query,
+            beforeMessageId,
+            append: true,
+            generation,
+            accountId.Value,
+            cancellation);
+    }
+
+    private async Task RunConversationFilterSearchAsync(
+        string query,
+        long? beforeMessageId,
+        bool append,
+        long generation,
+        AccountId accountId,
+        CancellationTokenSource cancellation)
+    {
+        try
+        {
+            if (!append) await Task.Delay(TimeSpan.FromMilliseconds(300), cancellation.Token).ConfigureAwait(false);
+            var page = await _session.SearchMessagesAsync(query, beforeMessageId, 50, cancellation.Token).ConfigureAwait(false);
+            var matches = page.Messages
+                .Where(message => IsRelayCoveConversation(message.Conversation, _projectedState))
+                .GroupBy(message => message.Id)
+                .Select(group => group.First())
+                .ToDictionary(message => message.Id);
+            long? nextBeforeMessageId = !page.FoundOldest && page.Messages.Count > 0
+                ? page.Messages.Min(message => message.Id)
+                : null;
+            _dispatcher.Dispatch(() => CompleteConversationFilterSearch(
+                query,
+                generation,
+                accountId,
+                cancellation,
+                matches,
+                nextBeforeMessageId,
+                append,
+                null));
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+        catch (GatewayException exception)
+        {
+            _dispatcher.Dispatch(() => CompleteConversationFilterSearch(
+                query,
+                generation,
+                accountId,
+                cancellation,
+                null,
+                beforeMessageId,
+                append,
+                DescribeGatewayFailure(exception)));
+        }
+        catch (Exception)
+        {
+            _dispatcher.Dispatch(() => CompleteConversationFilterSearch(
+                query,
+                generation,
+                accountId,
+                cancellation,
+                null,
+                beforeMessageId,
+                append,
+                "服务器搜索失败；已显示本机匹配结果。"));
+        }
+    }
+
+    private void CompleteConversationFilterSearch(
+        string query,
+        long generation,
+        AccountId accountId,
+        CancellationTokenSource cancellation,
+        IReadOnlyDictionary<long, ChatMessage>? matches,
+        long? nextBeforeMessageId,
+        bool append,
+        string? error)
+    {
+        if (!IsConversationFilterSearchCurrent(query, generation, accountId, cancellation)) return;
+        _conversationFilterCancellation = null;
+        if (matches is not null)
+        {
+            if (append)
+            {
+                var merged = new Dictionary<long, ChatMessage>(_conversationFilterServerMatches);
+                foreach (var (key, message) in matches)
+                {
+                    merged[key] = message;
+                }
+                _conversationFilterServerMatches = merged;
+            }
+            else
+            {
+                _conversationFilterServerMatches = matches;
+            }
+            _conversationFilterBeforeMessageId = nextBeforeMessageId;
+            OnPropertyChanged(nameof(HasMoreConversationFilterResults));
+            OnPropertyChanged(nameof(ShowMoreConversationFilterResults));
+        }
+        ConversationFilterError = error;
+        IsConversationFilterBusy = false;
+        ProjectConversationFilter();
+        cancellation.Dispose();
+    }
+
+    private bool IsConversationFilterSearchCurrent(
+        string query,
+        long generation,
+        AccountId accountId,
+        CancellationTokenSource cancellation) =>
+        !_disposed && !cancellation.IsCancellationRequested &&
+        ReferenceEquals(_conversationFilterCancellation, cancellation) &&
+        generation == _conversationFilterGeneration &&
+        _session.AccountId == accountId &&
+        string.Equals(ConversationFilterQuery.Trim(), query, StringComparison.Ordinal);
+
+    private void CancelConversationFilterSearch()
+    {
+        var cancellation = Interlocked.Exchange(ref _conversationFilterCancellation, null);
+        _conversationFilterAccountId = null;
+        _conversationFilterServerQuery = null;
+        _conversationFilterGeneration++;
+        IsConversationFilterBusy = false;
+        if (cancellation is null) return;
+        cancellation.Cancel();
+        cancellation.Dispose();
+    }
+
+    private void NotifyConversationFilterStatusProperties()
+    {
+        OnPropertyChanged(nameof(HasConversationFilterStatus));
+        OnPropertyChanged(nameof(ConversationFilterStatus));
+        OnPropertyChanged(nameof(ConversationFilterEmptyText));
+        OnPropertyChanged(nameof(ShowMoreConversationFilterResults));
     }
 
     private void OnNewConversationChoiceChanged(object? sender, PropertyChangedEventArgs eventArgs)
@@ -5026,13 +5507,20 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             : unread.Total > 99
                 ? "99+"
                 : unread.Total > 0 ? unread.Total.ToString() : string.Empty;
+        SynchronizeTaskbarBadge(unread);
+        if (!HasNavigationUnread) _appNotificationService.StopTaskbarFlash();
     }
+
+    private void SynchronizeTaskbarBadge(UnreadState unread) =>
+        _appNotificationService.UpdateUnreadBadge(
+            TaskbarBadgeEnabled ? unread.Total : 0,
+            TaskbarBadgeEnabled && unread.IsTruncated);
 
     private void RequestAutoMarkDisplayedRead(ClientState state)
     {
         var selected = _session.SelectedConversation;
         var history = _session.HistoryState;
-        if (_disposed || !_isWindowActive || IsNativePreview || selected is null ||
+        if (_disposed || !_isWindowActive || !IsApplicationWindowForeground || IsNativePreview || selected is null ||
             !IsMessagesSection || !IsChatPaneVisible || !IsConversationContentVisible ||
             !IsMessageCollectionVisible || IsModalOverlayVisible || IsNavigationPending ||
             !_isMessageViewportNearBottom ||
@@ -5493,6 +5981,35 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             AreDirectMessagesExpanded,
             FontScaleSliderValue,
             ConversationWidthSliderValue));
+    }
+
+    private void ApplyNotificationPreferences(NotificationPreferences preferences)
+    {
+        var previous = _suppressNotificationPreferenceSave;
+        _suppressNotificationPreferenceSave = true;
+        try
+        {
+            SystemNotificationsEnabled = preferences.SystemNotificationsEnabled;
+            TaskbarFlashEnabled = preferences.TaskbarFlashEnabled;
+            TaskbarBadgeEnabled = preferences.TaskbarBadgeEnabled;
+            ShowMessagePreview = preferences.ShowMessagePreview;
+            DoNotDisturb = preferences.DoNotDisturb;
+        }
+        finally
+        {
+            _suppressNotificationPreferenceSave = previous;
+        }
+    }
+
+    private void SaveNotificationPreferences()
+    {
+        if (_suppressNotificationPreferenceSave) return;
+        _notificationPreferencesService.Save(new NotificationPreferences(
+            SystemNotificationsEnabled,
+            TaskbarFlashEnabled,
+            TaskbarBadgeEnabled,
+            ShowMessagePreview,
+            DoNotDisturb));
     }
 
     private void SetComposerTextWithoutTracking(string value)
@@ -6110,11 +6627,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         CancelNavigation();
         CancelDetailsLoad();
         CancelSearchInput();
+        CancelConversationFilterSearch();
         ClearNewConversationChoices();
         ChannelSettings.PropertyChanged -= OnChannelSettingsPropertyChanged;
         ChannelSettings.Dispose();
         _session.StateChanged -= OnStateChanged;
         if (_session is IMessageMutationObserver observer) observer.MessageMutationObserved -= OnMessageMutationObserved;
+        if (_session is IRealtimeMessageObserver realtimeObserver) realtimeObserver.RealtimeMessageReceived -= OnRealtimeMessageReceived;
+        _appNotificationService.StateChanged -= OnAppNotificationStateChanged;
+        _appNotificationService.NotificationActivated -= OnAppNotificationActivated;
         _lifetimeCancellation.Dispose();
     }
 }

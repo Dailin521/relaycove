@@ -16,6 +16,7 @@ public sealed class ConversationListItem : ObservableObject
     private bool _isSelected;
     private bool _isMuted;
     private bool _isPinned;
+    private long? _searchTargetMessageId;
     private IReadOnlyList<ConversationAvatarTile> _avatarTiles;
 
     public ConversationListItem(
@@ -30,7 +31,8 @@ public sealed class ConversationListItem : ObservableObject
         bool isSelected = false,
         bool isMuted = false,
         bool isPinned = false,
-        IReadOnlyList<ConversationAvatarTile>? avatarTiles = null)
+        IReadOnlyList<ConversationAvatarTile>? avatarTiles = null,
+        long? searchTargetMessageId = null)
     {
         _conversation = conversation ?? throw new ArgumentNullException(nameof(conversation));
         _title = title;
@@ -44,6 +46,7 @@ public sealed class ConversationListItem : ObservableObject
         _isMuted = isMuted;
         _isPinned = isPinned;
         _avatarTiles = avatarTiles ?? [];
+        _searchTargetMessageId = searchTargetMessageId;
     }
 
     public ConversationKey Conversation => _conversation;
@@ -56,6 +59,10 @@ public sealed class ConversationListItem : ObservableObject
     public DateTimeOffset? LatestMessageTimestamp => _latestMessageTimestamp;
     public bool IsMuted => _isMuted;
     public bool IsPinned => _isPinned;
+    public long? SearchTargetMessageId => _searchTargetMessageId;
+    public string ProjectionKey => SearchTargetMessageId is { } messageId
+        ? $"{Conversation.CanonicalKey}|message:{messageId}"
+        : Conversation.CanonicalKey;
     public bool IsPrivateGroup => Conversation is ChannelTopic;
     public IReadOnlyList<ConversationAvatarTile> AvatarTiles => _avatarTiles;
     public bool HasAvatarTiles => IsPrivateGroup && AvatarTiles.Count > 0;
@@ -78,8 +85,8 @@ public sealed class ConversationListItem : ObservableObject
     internal void ApplyFrom(ConversationListItem candidate)
     {
         ArgumentNullException.ThrowIfNull(candidate);
-        if (!string.Equals(Conversation.CanonicalKey, candidate.Conversation.CanonicalKey, StringComparison.Ordinal))
-            throw new InvalidOperationException("Conversation items with different keys cannot be merged.");
+        if (!string.Equals(ProjectionKey, candidate.ProjectionKey, StringComparison.Ordinal))
+            throw new InvalidOperationException("Conversation search items with different keys cannot be merged.");
 
         _conversation = candidate.Conversation;
         if (SetProperty(ref _title, candidate.Title, nameof(Title))) OnPropertyChanged(nameof(Initial));
@@ -95,6 +102,10 @@ public sealed class ConversationListItem : ObservableObject
         SetProperty(ref _latestMessageTimestamp, candidate.LatestMessageTimestamp, nameof(LatestMessageTimestamp));
         if (SetProperty(ref _isMuted, candidate.IsMuted, nameof(IsMuted))) OnPropertyChanged(nameof(ItemOpacity));
         SetProperty(ref _isPinned, candidate.IsPinned, nameof(IsPinned));
+        if (SetProperty(ref _searchTargetMessageId, candidate.SearchTargetMessageId, nameof(SearchTargetMessageId)))
+        {
+            OnPropertyChanged(nameof(ProjectionKey));
+        }
         if (SetProperty(ref _avatarTiles, candidate.AvatarTiles, nameof(AvatarTiles)))
         {
             OnPropertyChanged(nameof(HasAvatarTiles));
@@ -102,6 +113,22 @@ public sealed class ConversationListItem : ObservableObject
         }
         IsSelected = candidate.IsSelected;
     }
+
+    internal ConversationListItem WithSearchMatch(long messageId, string detail, DateTimeOffset timestamp) =>
+        new(
+            Conversation,
+            Title,
+            detail,
+            UnreadCount,
+            AvatarUrl,
+            IsBot,
+            ShellViewModel.FormatConversationTimestamp(timestamp.LocalDateTime),
+            timestamp,
+            IsSelected,
+            IsMuted,
+            IsPinned,
+            AvatarTiles,
+            messageId);
 
     private static readonly string[] TonePalette =
     [

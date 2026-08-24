@@ -34,12 +34,15 @@ public static class MauiProgram
         builder.Services.AddSingleton<IUiDispatcher, MauiUiDispatcher>();
         builder.Services.AddSingleton<IAppearanceService, MauiAppearanceService>();
         builder.Services.AddSingleton<IUiPreferencesService, MauiUiPreferencesService>();
+        builder.Services.AddSingleton<INotificationPreferencesService, MauiNotificationPreferencesService>();
         builder.Services.AddSingleton<IConversationPreferencesStore, MauiConversationPreferencesStore>();
         builder.Services.AddSingleton<IPlatformInteractionService, MauiPlatformInteractionService>();
         builder.Services.AddSingleton<IFileSelectionService, MauiFileSelectionService>();
         builder.Services.AddSingleton<IRealmMediaService, RealmMediaService>();
+        builder.Services.AddSingleton<INotificationAvatarFileStore, NotificationAvatarFileStore>();
         builder.Services.AddSingleton<IFileSaveService, WindowsFileSaveService>();
         builder.Services.AddSingleton<IWindowShellAdapter, WindowsWindowShellAdapter>();
+        builder.Services.AddSingleton<IAppNotificationService, WindowsAppNotificationService>();
         builder.Services.AddSingleton<IAccountStore>(_ => new SqliteAccountStore(FileSystem.AppDataDirectory));
         builder.Services.AddSingleton<IZulipGateway, ZulipGateway>();
 #if DEBUG

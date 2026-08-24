@@ -1,6 +1,6 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M、Stage 23、Stage 24 已形成原生基线；Stage 25 已在本地 `main` 形成 MAUI-first 微信式统一会话与私有群聊候选并通过相关确定性验证，尚未提交、推送或通过用户 Visual Studio 人工验收。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
+文档状态：Stage 21 外部门禁保留；Stage 22W 已部署；Stage 22M、Stage 23、Stage 24、Stage 25 与 Stage 26 已进入 `main`；Stage 27 已通过确定性验证与用户 Visual Studio 人工验收，Stage 28 左侧统一会话搜索为待人工验证的本地候选，均尚未提交或推送。最终 MAUI UI 人工密码登录、安装包和干净 Windows 11 VM 仍未完成
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
@@ -79,7 +79,7 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 
 ### 3.2 当前仍不可用或未完成真实验收的能力
 
-完整成员目录/频道关系、管理员级频道创建/重命名/归档/成员与权限管理、服务器 `@` 候选、typing、presence、通知、push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux 仍不可用或不在当前范围。Stage 23 已为 MAUI 实现普通用户服务器搜索、saved 消息、频道发现/加入/退订及个人静音/置顶；其隔离双账号 Live 已通过。Stage 22W 仍保有任意附件、当前用户退订、reaction、本人消息编辑/删除和收藏。最终 MAUI UI 人工密码登录、真实窗口长列表与干净 VM 仍是独立门禁。
+完整成员目录/频道关系、服务器 `@` 候选、typing、presence、后台 push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux 仍不可用或不在当前范围。Stage 27 为运行中的 MAUI Windows 客户端接入本机系统通知、任务栏闪烁和权威未读徽标，但不提供应用退出后的后台消息接收。Stage 23 已为 MAUI 实现普通用户服务器搜索、saved 消息、频道发现/加入/退订及个人静音/置顶；其隔离双账号 Live 已通过。最终 MAUI UI 人工密码登录、真实窗口长列表与干净 VM 仍是独立门禁。
 
 后续平台可以复用 Core、Zulip.Client 与 Data，但必须另行增加目标框架、图标、签名、后台生命周期和发布验证。本阶段不声称可交付这些平台；Linux 不支持。
 
@@ -123,7 +123,7 @@ Slice 3 完成首批完整交互能力，而不是只添加视觉按钮：
 - 同 Realm 非图片上传使用受控下载卡片：先以 Basic 换取临时 URL，再用无 Authorization、无 referrer 的请求读取有大小上限的 Blob；不内嵌 SVG/HTML/PDF/Office 等主动内容。
 - 频道详情支持当前用户按真实订阅名调用 `DELETE /users/me/subscriptions` 退订；确认成功或已退订都复用既有 `subscriptionRemoved` 清理，结果未知不自动重试。
 
-所有仓库普通自动门禁继续只使用 mock/fake HTTP；Live 始终是显式授权的独立模式。2026-08-13 的 Web/早期 MAUI 证据曾只覆盖有限消息链路。2026-08-14 Stage 23 进一步以 DAL/zhang 隔离频道完成服务器搜索、saved、按锚点打开、个人频道偏好、退订恢复和自助重加的真实 Live。mention 候选、presence、通知、完整成员关系和管理员频道管理仍是独立能力门。
+所有仓库普通自动门禁继续只使用 mock/fake HTTP；Live 始终是显式授权的独立模式。2026-08-13 的 Web/早期 MAUI 证据曾只覆盖有限消息链路。2026-08-14 Stage 23 进一步以 DAL/zhang 隔离频道完成服务器搜索、saved、按锚点打开、个人频道偏好、退订恢复和自助重加的真实 Live。mention 候选、presence、后台 push 与完整成员关系仍是独立能力门。
 
 ### 3.4 Stage 25 MAUI-first 产品例外
 
@@ -390,6 +390,16 @@ Stage 24.5 继续收敛 MAUI 会话激活与虚拟列表：同一缓存会话每
 Stage 25 直接在本地 `main` 实施，不修改 Web。协议、Core 和 Data 只持久化并投影一对一/self-DM 与合格私有空话题群聊；SQLite schema v6 保存频道私有性、Web-public 与话题策略，旧未知行失败关闭。MAUI 左栏为置顶优先、其余按最新消息倒序的单一会话时间线；`+` 只分流一人私聊和至少三人群聊。群设置提供成员、名称、公告、本机备注、搜索、静音、置顶、本机清缓存和退出；确认单群主额外拥有改名、公告、邀请、移人、转让和解散。
 
 创建、邀请、移人、转让、解散和发送均不自动重试。创建或成员变更结果不确定时只读取一次权威状态并要求用户核对；转让先原子更新并确认三个权限组再退出旧群主，解散先移除并确认其他成员再退出群主。当前确定性测试、内部副屏预览、授权的 Realm 频道归档和用户 Visual Studio 人工结果只记录在 Stage 25 dated task 与 STATUS；批量归档授权不扩展为群创建、成员或消息 Live 写授权。
+
+### Stage 27：Windows 原生消息通知
+
+Stage 27 只为运行中的 MAUI Windows 客户端接入本机提醒。Core 在 realtime 消息通过事件游标、支持会话过滤、本地持久化和状态投影后暴露可选观察事件；App 再排除当前用户、已读、静音、全局免打扰和当前真实可见会话。历史加载、缓存恢复、register 快照、发送确认与旧事件重放不得触发通知。
+
+Windows 系统通知使用 AppNotificationManager，任务栏未读徽标使用 BadgeNotificationManager，并为未打包运行窗口用 `ITaskbarList3` 将同一权威数量直接覆盖到当前 HWND，任务栏关注闪烁使用 FlashWindowEx。系统通知头像先走同 Realm 认证媒体读取，只把账号隔离、SHA-256 命名的本机 PNG/JPEG file URI 交给 Windows，并在成功注销/清本机缓存时删除。免打扰和单会话静音只抑制系统横幅与闪烁，不伪装已读。Core 历史加载不得自行标读；窗口生命周期事件先保持非激活，仅在仍属当前激活的 100 ms 延后复核中，确认非最小化 RelayCove HWND 已成为 Windows 真实前台窗口并打开对应会话、且最新位置已确认后，App 才可停止闪烁或自动标读；任务栏缩略图悬停/Aero Peek 不算打开。系统注册/策略或本机 API 失败时必须失败关闭且不影响消息循环。此能力不是 WNS push，应用未运行时不接收新 Zulip 消息；实际验证和人工结果只记录在 Stage 27 dated task 与 STATUS。
+
+### Stage 28：统一会话搜索
+
+MAUI 左侧搜索以统一会话列表为展示面，但不再只筛选当前行。输入后立即对会话名、摘要、权威群成员和本机消息执行连续部分匹配；300 ms 后通过现有只读 Zulip `search` narrow 补充服务器历史并支持继续加载。同一会话的不同消息命中必须分别显示，只按 message ID 去重；普通名称/成员匹配仍是单一会话入口。历史命中携带瞬时 message ID 并通过既有 `OpenMessageAsync` 定位，不迁移消息、不扩大 Stage 25 会话边界。所有请求按账号、查询 generation 和取消令牌失败关闭；实际验证只记录在 Stage 28 dated task 与 STATUS。
 
 ### Stage 21 历史实施切片
 

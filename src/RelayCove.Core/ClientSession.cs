@@ -5,7 +5,7 @@ using System.Text;
 
 namespace RelayCove.Core;
 
-public sealed class ClientSession : IClientSession, IMessageMutationObserver, IAsyncDisposable
+public sealed class ClientSession : IClientSession, IMessageMutationObserver, IRealtimeMessageObserver, IAsyncDisposable
 {
     private static long s_nextLocalId;
     private static readonly TimeSpan ServerRestartRecoveryWindow = TimeSpan.FromMinutes(5);
@@ -137,6 +137,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
 
     public event EventHandler<ClientStateChangedEventArgs>? StateChanged;
     public event EventHandler<MessageMutationObservedEventArgs>? MessageMutationObserved;
+    public event EventHandler<RealtimeMessageReceivedEventArgs>? RealtimeMessageReceived;
 
     public async Task<bool> RestoreAsync(CancellationToken cancellationToken = default)
     {
@@ -2267,6 +2268,13 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 deleted: true,
                 isStarred: null));
         }
+        foreach (var upsert in normalizedEvents
+                     .OfType<MessageUpsertEvent>()
+                     .Where(static item => item.Source == DomainEventSource.Realtime)
+                     .DistinctBy(static item => (item.EventId, item.Message.Id)))
+        {
+            RealtimeMessageReceived?.Invoke(this, new RealtimeMessageReceivedEventArgs(upsert.Message));
+        }
     }
 
     private async Task ExecuteMessageMutationAsync(
@@ -2422,40 +2430,6 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
                 HasOlderInCache = hasOlderInCache,
                 Error = null
             });
-            if (normalizedHistory.Count > 0)
-            {
-                try
-                {
-                    await MarkDisplayedReadForGenerationAsync(accountId, credentials, conversation, generation, cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (GatewayException exception) when (IsUnauthorized(exception))
-                {
-                    if (IsHistoryCurrent(conversation, generation))
-                    {
-                        await HandleUnauthorizedAsync().ConfigureAwait(false);
-                    }
-                }
-                catch (GatewayException)
-                {
-                    // The latest page is already authoritative and visible. A separate
-                    // mark-read failure must leave it loaded and unread for a later
-                    // explicit activation instead of turning history into a failure.
-                }
-                catch
-                {
-                    if (IsHistoryCurrentForAccount(accountId, conversation, generation))
-                    {
-                        Mutate(state => state with
-                        {
-                            Connection = new ConnectionState(ConnectionStatus.Faulted, "mark_read_cache_failed")
-                        });
-                    }
-                }
-            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -2751,33 +2725,6 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IA
 
     private DomainEvent[] ToHistoryEvents(IEnumerable<ChatMessage> messages) =>
         NormalizeOwnMessages(messages.Select(message => (DomainEvent)new MessageUpsertEvent(message, Source: DomainEventSource.History)));
-
-    private async Task MarkDisplayedReadForGenerationAsync(
-        AccountId accountId,
-        CredentialEnvelope credentials,
-        ConversationKey conversation,
-        long generation,
-        CancellationToken cancellationToken)
-    {
-        ChatMessage[] unread;
-        lock (_stateGate)
-        {
-            if (_accountId != accountId || !IsHistoryCurrentLocked(conversation, generation)) return;
-            unread = _state.Messages.Values
-                .Where(message => message.Conversation == conversation && !message.IsRead)
-                .OrderByDescending(message => message.Id)
-                .Take(HistoryPageSize)
-                .ToArray();
-        }
-        if (unread.Length == 0) return;
-        await _gateway.MarkReadAsync(
-            new MarkReadRequest(credentials, conversation, unread.Max(message => message.Id), unread.Length),
-            cancellationToken).ConfigureAwait(false);
-        if (!IsHistoryCurrentForAccount(accountId, conversation, generation)) return;
-        var flags = new MessageFlagsChangedEvent(
-            unread.Select(message => message.Id).ToArray(), false, MessageFlagOperation.Add, "read", Source: DomainEventSource.Local);
-        await StoreThenApplyAsync([flags], cancellationToken).ConfigureAwait(false);
-    }
 
     private DomainEvent[] NormalizeOwnMessages(IEnumerable<DomainEvent> events)
     {

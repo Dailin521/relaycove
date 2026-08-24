@@ -376,6 +376,8 @@ public sealed class ClientSessionTests
         };
         var store = new FakeAccountStore();
         await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        var observed = new List<ChatMessage>();
+        session.RealtimeMessageReceived += (_, eventArgs) => observed.Add(eventArgs.Message);
 
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
         await WaitUntilAsync(() => gateway.GetEventsCalls >= 3);
@@ -385,6 +387,7 @@ public sealed class ClientSessionTests
         Assert.Single(store.AppliedBatches);
         Assert.IsType<MessageDeletedEvent>(Assert.Single(store.AppliedBatches[0]));
         Assert.Empty(store.SnapshotState.Messages);
+        Assert.Empty(observed);
         await session.StopAsync();
     }
 
@@ -397,6 +400,7 @@ public sealed class ClientSessionTests
             ? Task.FromResult(new EventBatch([new MessageUpsertEvent(Message(7, direct), 2)], 2))
             : Never<EventBatch>(cancellationToken);
         var sawNavigationAtPublish = false;
+        var observed = new List<ChatMessage>();
         await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
         session.StateChanged += (_, _) =>
         {
@@ -405,6 +409,7 @@ public sealed class ClientSessionTests
                 sawNavigationAtPublish = true;
             }
         };
+        session.RealtimeMessageReceived += (_, eventArgs) => observed.Add(eventArgs.Message);
 
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
         await WaitUntilAsync(() => session.RecentDirectMessages.Contains(direct));
@@ -412,6 +417,7 @@ public sealed class ClientSessionTests
         Assert.True(sawNavigationAtPublish);
         Assert.Contains(direct, session.RecentDirectMessages);
         Assert.DoesNotContain(7, session.State.Messages.Keys);
+        Assert.Equal(7, Assert.Single(observed).Id);
         await session.StopAsync();
     }
 
@@ -697,7 +703,7 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
-    public async Task SelectConversationAsync_WhenAutomaticMarkReadFails_KeepsLoadedHistoryAndUnreadState()
+    public async Task SelectConversationAsync_WhenHistoryContainsUnread_DoesNotMarkBeforeUiVisibilityConfirmation()
     {
         var conversation = new DirectMessage([20]);
         var unread = new ChatMessage(
@@ -709,9 +715,7 @@ public sealed class ClientSessionTests
         var gateway = new FakeGateway
         {
             RegisterHandler = (_, _) => Task.FromResult(Register()),
-            HistoryHandler = (_, _) => Task.FromResult(new HistoryResult([unread], true, true)),
-            MarkReadHandler = (_, _) => Task.FromException(
-                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError))
+            HistoryHandler = (_, _) => Task.FromResult(new HistoryResult([unread], true, true))
         };
         await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
@@ -722,12 +726,12 @@ public sealed class ClientSessionTests
         Assert.False(session.HistoryState.IsLoading);
         Assert.Equal(ConnectionStatus.Connected, session.State.Connection.Status);
         Assert.False(Assert.Single(session.State.Messages.Values).IsRead);
-        Assert.Single(gateway.MarkReadRequests);
+        Assert.Empty(gateway.MarkReadRequests);
         await session.StopAsync();
     }
 
     [Fact]
-    public async Task SelectConversationAsync_WhenAutomaticMarkReadCacheWriteFails_KeepsLoadedHistoryAndReportsCacheFault()
+    public async Task SelectConversationAsync_WhenReadFlagStoreWouldFail_DoesNotApplyBeforeUiVisibilityConfirmation()
     {
         var conversation = new DirectMessage([20]);
         var unread = new ChatMessage(
@@ -750,10 +754,9 @@ public sealed class ClientSessionTests
 
         Assert.Null(session.HistoryState.Error);
         Assert.False(session.HistoryState.IsLoading);
-        Assert.Equal(ConnectionStatus.Faulted, session.State.Connection.Status);
-        Assert.Equal("mark_read_cache_failed", session.State.Connection.Detail);
+        Assert.Equal(ConnectionStatus.Connected, session.State.Connection.Status);
         Assert.False(Assert.Single(session.State.Messages.Values).IsRead);
-        Assert.Single(gateway.MarkReadRequests);
+        Assert.Empty(gateway.MarkReadRequests);
         await session.StopAsync();
     }
 
@@ -2063,6 +2066,8 @@ public sealed class ClientSessionTests
                 : Never<EventBatch>(cancellationToken)
         };
         await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        var observed = new List<ChatMessage>();
+        session.RealtimeMessageReceived += (_, eventArgs) => observed.Add(eventArgs.Message);
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
 
         Assert.Equal([1L], store.SnapshotState.Messages.Keys);
@@ -2079,6 +2084,7 @@ public sealed class ClientSessionTests
         Assert.Contains(batch, item => item is IgnoredDomainEvent { ReasonCode: "unsupported_conversation" });
         Assert.Contains(batch, item => item is MessageUpsertEvent { Message.Id: 5 });
         Assert.DoesNotContain(batch, item => item is MessageUpsertEvent { Message.Id: 4 });
+        Assert.Equal(5, Assert.Single(observed).Id);
         await session.StopAsync();
     }
 

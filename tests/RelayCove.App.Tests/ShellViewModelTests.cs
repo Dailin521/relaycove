@@ -283,6 +283,196 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public void NotificationBadge_WhenUnreadProjectionChanges_UsesAuthorityWithoutInventingToast()
+    {
+        var conversation = new DirectMessage([8]);
+        var notifications = new FakeAppNotificationService();
+        var session = new FakeSession
+        {
+            Recent = [conversation],
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile>
+                {
+                    [8] = new UserProfile(8, "Bea", avatarUrl: "https://zulip.example/avatar/8")
+                },
+                unread: new UnreadState(
+                    new Dictionary<string, int> { [conversation.CanonicalKey] = 125 },
+                    reportedTotal: 125),
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session, appNotificationService: notifications);
+
+        session.Publish();
+
+        Assert.Equal((125, false), notifications.BadgeUpdates[^1]);
+        Assert.Empty(notifications.Notifications);
+        Assert.Equal(0, notifications.FlashCalls);
+
+        viewModel.TaskbarBadgeEnabled = false;
+        Assert.Equal((0, false), notifications.BadgeUpdates[^1]);
+    }
+
+    [Fact]
+    public void RealtimeMessage_WhenIncomingConversationIsNotVisible_ShowsToastAndFlashes()
+    {
+        var conversation = new DirectMessage([8]);
+        var notifications = new FakeAppNotificationService();
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            Recent = [conversation],
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile>
+                {
+                    [8] = new UserProfile(8, "Bea", avatarUrl: "https://zulip.example/avatar/8")
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session, appNotificationService: notifications);
+
+        session.PublishRealtime(new ChatMessage(
+            11,
+            conversation,
+            8,
+            "你好\n第二行",
+            DateTimeOffset.UnixEpoch,
+            senderDisplayName: "Bea"));
+
+        var notification = Assert.Single(notifications.Notifications);
+        Assert.Equal(conversation.CanonicalKey, notification.ConversationKey);
+        Assert.Equal("Bea", notification.Title);
+        Assert.Equal("你好 第二行", notification.Body);
+        Assert.Equal("https://zulip.example/avatar/8", notification.SenderAvatarUrl);
+        Assert.Equal(1, notifications.FlashCalls);
+
+        session.PublishRealtime(new ChatMessage(12, conversation, 7, "自己发送", DateTimeOffset.UnixEpoch));
+        viewModel.DoNotDisturb = true;
+        session.PublishRealtime(new ChatMessage(13, conversation, 8, "免打扰", DateTimeOffset.UnixEpoch));
+
+        Assert.Single(notifications.Notifications);
+        Assert.Equal(1, notifications.FlashCalls);
+    }
+
+    [Fact]
+    public void RealtimeMessage_WhenConversationIsMutedOrCurrentlyVisible_SuppressesAttention()
+    {
+        var conversation = new DirectMessage([8]);
+        var accountId = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7);
+        var preferences = new InMemoryConversationPreferencesStore();
+        preferences.Save(accountId, conversation.CanonicalKey, new ConversationPreference(IsMuted: true));
+        var notifications = new FakeAppNotificationService();
+        var message = new ChatMessage(11, conversation, 8, "hello", DateTimeOffset.UnixEpoch);
+        var session = new FakeSession
+        {
+            Account = accountId,
+            CurrentUserId = 7,
+            Selected = conversation,
+            Recent = [conversation],
+            HistoryState = new ConversationHistoryState(conversation, 1, false, true, false, 11, null),
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage> { [11] = message },
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
+                unread: new UnreadState(new Dictionary<string, int> { [conversation.CanonicalKey] = 1 }),
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(
+            session,
+            conversationPreferencesStore: preferences,
+            appNotificationService: notifications);
+
+        session.PublishRealtime(message);
+        Assert.Empty(notifications.Notifications);
+        Assert.Equal((1, false), notifications.BadgeUpdates[^1]);
+
+        preferences.Save(accountId, conversation.CanonicalKey, new ConversationPreference());
+        viewModel.SetWindowActive(true);
+        viewModel.ReportMessageBottomDistance(200d);
+        session.PublishRealtime(message with { Id = 12 });
+
+        Assert.Empty(notifications.Notifications);
+        Assert.Equal(0, notifications.FlashCalls);
+    }
+
+    [Fact]
+    public async Task NotificationActivation_WhenConversationExists_OpensThatConversation()
+    {
+        var conversation = new DirectMessage([8]);
+        var notifications = new FakeAppNotificationService();
+        var session = new FakeSession
+        {
+            Recent = [conversation],
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session, appNotificationService: notifications);
+
+        notifications.Activate(conversation.CanonicalKey);
+        await WaitUntilAsync(() => session.SelectedConversation == conversation);
+
+        Assert.True(viewModel.IsMessagesSection);
+        Assert.Equal(conversation, session.SelectedConversation);
+        Assert.True(notifications.StopFlashCalls > 0);
+    }
+
+    [Fact]
+    public void NotificationPreferences_WhenChanged_PersistIndependentlyFromAppearance()
+    {
+        var preferences = new FakeNotificationPreferencesService
+        {
+            Current = new NotificationPreferences(DoNotDisturb: true)
+        };
+        using var viewModel = CreateViewModel(
+            new FakeSession(),
+            notificationPreferencesService: preferences,
+            appNotificationService: new FakeAppNotificationService());
+
+        Assert.True(viewModel.DoNotDisturb);
+        viewModel.DoNotDisturb = false;
+        viewModel.ShowMessagePreview = false;
+
+        Assert.False(preferences.Current.DoNotDisturb);
+        Assert.False(preferences.Current.ShowMessagePreview);
+        Assert.Equal(2, preferences.Saved.Count);
+    }
+
+    [Fact]
+    public async Task AutoMarkRead_WhenTaskbarPreviewIsHovered_WaitsForRealForegroundWindow()
+    {
+        var conversation = new DirectMessage([8]);
+        var unread = new ChatMessage(11, conversation, 8, "new", DateTimeOffset.UnixEpoch);
+        var window = new FakeWindowShellAdapter { IsForeground = false };
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            Selected = conversation,
+            Recent = [conversation],
+            HistoryState = new ConversationHistoryState(conversation, 1, false, true, false, 11, null),
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage> { [11] = unread },
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
+                unread: new UnreadState(new Dictionary<string, int> { [conversation.CanonicalKey] = 1 }),
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session, windowShellAdapter: window);
+        viewModel.AcknowledgeMessageScrollRequest(Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest));
+
+        viewModel.SetWindowActive(true);
+        session.Publish();
+
+        Assert.Empty(session.ExpectedMarkReadConversations);
+        Assert.True(viewModel.HasNavigationUnread);
+
+        window.IsForeground = true;
+        viewModel.SetWindowActive(true);
+        await WaitUntilAsync(() => session.ExpectedMarkReadConversations.Count == 1);
+
+        Assert.Equal(conversation, Assert.Single(session.ExpectedMarkReadConversations));
+    }
+
+    [Fact]
     public async Task RealtimeMessage_WhenCurrentConversationWasAtBottom_MarksWithoutWaitingForScrollAcknowledgement()
     {
         var conversation = new DirectMessage([8]);
@@ -2038,6 +2228,147 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public void ConversationFilter_WhenPartialTextMatchesOlderCachedMessage_ReturnsMatchedConversation()
+    {
+        var direct = new DirectMessage([8]);
+        var firstMatch = new ChatMessage(1, direct, 8, "historical fragment one", DateTimeOffset.UnixEpoch);
+        var secondMatch = new ChatMessage(2, direct, 8, "historical fragment two", DateTimeOffset.UnixEpoch.AddSeconds(1));
+        var latest = new ChatMessage(3, direct, 8, "latest unrelated", DateTimeOffset.UnixEpoch.AddSeconds(2));
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            Recent = [direct],
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage>
+                {
+                    [firstMatch.Id] = firstMatch,
+                    [secondMatch.Id] = secondMatch,
+                    [latest.Id] = latest
+                },
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        viewModel.ConversationFilterQuery = "torical frag";
+
+        Assert.Equal(2, viewModel.FilteredConversations.Count);
+        Assert.All(viewModel.FilteredConversations, result => Assert.Equal(direct, result.Conversation));
+        Assert.Equal([secondMatch.Id, firstMatch.Id], viewModel.FilteredConversations.Select(result => result.SearchTargetMessageId));
+        Assert.Equal(
+            ["historical fragment two", "historical fragment one"],
+            viewModel.FilteredConversations.Select(result => result.Detail));
+    }
+
+    [Fact]
+    public async Task ConversationFilter_WhenServerFindsHistoricalConversation_AddsAndOpensMatchedMessage()
+    {
+        var direct = new DirectMessage([8]);
+        var olderDirect = new DirectMessage([9]);
+        var match = new ChatMessage(41, direct, 8, "remote archive fragment", DateTimeOffset.UnixEpoch);
+        var sameConversationMatch = new ChatMessage(40, direct, 8, "another archive fragment", DateTimeOffset.UnixEpoch);
+        var olderMatch = new ChatMessage(20, olderDirect, 9, "older archive fragment", DateTimeOffset.UnixEpoch);
+        var searchCalls = 0;
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile>
+                {
+                    [8] = new UserProfile(8, "Bea"),
+                    [9] = new UserProfile(9, "Chen")
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            SearchMessagesAction = (query, beforeMessageId, limit, _) =>
+            {
+                Assert.Equal("archive frag", query);
+                Assert.Equal(50, limit);
+                searchCalls++;
+                return beforeMessageId is null
+                    ? Task.FromResult(new MessageQueryPage([match, sameConversationMatch], false, true, true))
+                    : Task.FromResult(new MessageQueryPage([olderMatch], true, true, true));
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+
+        viewModel.ConversationFilterQuery = "archive frag";
+        await WaitUntilAsync(() => !viewModel.IsConversationFilterBusy);
+
+        Assert.Equal(2, viewModel.FilteredConversations.Count);
+        var result = viewModel.FilteredConversations[0];
+        Assert.Equal(direct, result.Conversation);
+        Assert.Equal(match.Id, result.SearchTargetMessageId);
+        Assert.True(viewModel.HasMoreConversationFilterResults);
+        Assert.True(viewModel.ShowMoreConversationFilterResults);
+
+        viewModel.ClearConversationFilter();
+
+        Assert.False(viewModel.HasMoreConversationFilterResults);
+        Assert.False(viewModel.ShowMoreConversationFilterResults);
+
+        viewModel.ConversationFilterQuery = "archive frag";
+        await WaitUntilAsync(() => !viewModel.IsConversationFilterBusy);
+
+        await ((IAsyncRelayCommand)viewModel.LoadMoreConversationFilterCommand).ExecuteAsync(null);
+
+        Assert.Equal(3, viewModel.FilteredConversations.Count);
+        Assert.False(viewModel.HasMoreConversationFilterResults);
+        Assert.False(viewModel.ShowMoreConversationFilterResults);
+        Assert.Equal(3, searchCalls);
+
+        viewModel.ActivateConversation(result);
+        await WaitUntilAsync(() => session.OpenedMessages.Count == 1);
+
+        Assert.Equal((direct, match.Id), Assert.Single(session.OpenedMessages));
+    }
+
+    [Fact]
+    public async Task ConversationFilter_WhenQueryChanges_DiscardsSupersededServerResults()
+    {
+        var firstDirect = new DirectMessage([8]);
+        var secondDirect = new DirectMessage([9]);
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstPage = new TaskCompletionSource<MessageQueryPage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondMessage = new ChatMessage(52, secondDirect, 9, "second result", DateTimeOffset.UnixEpoch);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile>
+                {
+                    [8] = new UserProfile(8, "Bea"),
+                    [9] = new UserProfile(9, "Chen")
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            SearchMessagesAction = async (query, _, _, cancellationToken) =>
+            {
+                if (query == "first")
+                {
+                    firstStarted.SetResult();
+                    return await firstPage.Task.WaitAsync(cancellationToken);
+                }
+                return new MessageQueryPage([secondMessage], true, true, true);
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+
+        viewModel.ConversationFilterQuery = "first";
+        await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        viewModel.ConversationFilterQuery = "second";
+        await WaitUntilAsync(() => !viewModel.IsConversationFilterBusy);
+        firstPage.TrySetResult(new MessageQueryPage(
+            [new ChatMessage(51, firstDirect, 8, "first result", DateTimeOffset.UnixEpoch)],
+            true,
+            true,
+            true));
+        await Task.Delay(50);
+
+        Assert.Equal(secondDirect, Assert.Single(viewModel.FilteredConversations).Conversation);
+    }
+
+    [Fact]
     public async Task SessionStateChanged_WhenSelectedGroupLosesEligibility_ClearsMessagesAndDisablesComposer()
     {
         var group = new ChannelTopic(4, string.Empty);
@@ -2550,7 +2881,10 @@ public sealed class ShellViewModelTests
         FakeFileSelectionService? fileSelectionService = null,
         FakeRealmMediaService? realmMediaService = null,
         FakeFileSaveService? fileSaveService = null,
-        IConversationPreferencesStore? conversationPreferencesStore = null) =>
+        IConversationPreferencesStore? conversationPreferencesStore = null,
+        INotificationPreferencesService? notificationPreferencesService = null,
+        IAppNotificationService? appNotificationService = null,
+        IWindowShellAdapter? windowShellAdapter = null) =>
         new(
             session,
             lastRealmStore ?? new FakeLastRealmStore(),
@@ -2561,7 +2895,10 @@ public sealed class ShellViewModelTests
             fileSelectionService ?? new FakeFileSelectionService(),
             realmMediaService ?? new FakeRealmMediaService(),
             fileSaveService ?? new FakeFileSaveService(),
-            conversationPreferencesStore);
+            conversationPreferencesStore,
+            notificationPreferencesService,
+            appNotificationService,
+            windowShellAdapter);
 
     private sealed class FakeUiPreferencesService : IUiPreferencesService
     {
@@ -2580,6 +2917,51 @@ public sealed class ShellViewModelTests
             Saved.Add(Current);
             return Current;
         }
+    }
+
+    private sealed class FakeNotificationPreferencesService : INotificationPreferencesService
+    {
+        public NotificationPreferences Current { get; set; } = new();
+        public List<NotificationPreferences> Saved { get; } = [];
+
+        public void Save(NotificationPreferences preferences)
+        {
+            Current = preferences;
+            Saved.Add(preferences);
+        }
+    }
+
+    private sealed class FakeAppNotificationService : IAppNotificationService
+    {
+        public event EventHandler? StateChanged;
+        public event EventHandler<AppNotificationActivatedEventArgs>? NotificationActivated;
+        public bool IsSystemNotificationSupported { get; set; } = true;
+        public string SystemNotificationStatus { get; set; } = "ready";
+        public string TaskbarBadgeStatus { get; set; } = "badge ready";
+        public List<AppMessageNotification> Notifications { get; } = [];
+        public List<(int Count, bool IsTruncated)> BadgeUpdates { get; } = [];
+        public int FlashCalls { get; private set; }
+        public int StopFlashCalls { get; private set; }
+
+        public void Attach(Window window) { }
+        public void ShowMessageNotification(AppMessageNotification notification) => Notifications.Add(notification);
+        public void UpdateUnreadBadge(int count, bool isTruncated) => BadgeUpdates.Add((count, isTruncated));
+        public void FlashTaskbar() => FlashCalls++;
+        public void StopTaskbarFlash() => StopFlashCalls++;
+        public void Dispose() { }
+        public void PublishStateChanged() => StateChanged?.Invoke(this, EventArgs.Empty);
+        public void Activate(string conversationKey) =>
+            NotificationActivated?.Invoke(this, new AppNotificationActivatedEventArgs(conversationKey));
+    }
+
+    private sealed class FakeWindowShellAdapter : IWindowShellAdapter
+    {
+        public event EventHandler? StateChanged;
+        public bool IsPinned { get; set; }
+        public bool IsForeground { get; set; }
+        public void Attach(Window window) { }
+        public void TogglePinned() => IsPinned = !IsPinned;
+        public void PublishStateChanged() => StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private sealed class FakeRealmMediaService : IRealmMediaService
@@ -2965,7 +3347,7 @@ public sealed class ShellViewModelTests
         }
     }
 
-    private sealed class FakeSession : IClientSession
+    private sealed class FakeSession : IClientSession, IRealtimeMessageObserver
     {
         public ClientState StateValue { get; set; } = ClientState.Empty;
         public ConversationKey? Selected { get; set; }
@@ -3017,6 +3399,7 @@ public sealed class ShellViewModelTests
         public ConversationHistoryState HistoryState { get; set; } = ConversationHistoryState.Empty;
         public IReadOnlyList<ConversationKey> RecentDirectMessages => Recent;
         public event EventHandler<ClientStateChangedEventArgs>? StateChanged;
+        public event EventHandler<RealtimeMessageReceivedEventArgs>? RealtimeMessageReceived;
 
         public Task<bool> RestoreAsync(CancellationToken cancellationToken = default) => Task.FromResult(false);
 
@@ -3120,5 +3503,8 @@ public sealed class ShellViewModelTests
         public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public void Publish() => StateChanged?.Invoke(this, new ClientStateChangedEventArgs(StateValue));
+
+        public void PublishRealtime(ChatMessage message) =>
+            RealtimeMessageReceived?.Invoke(this, new RealtimeMessageReceivedEventArgs(message));
     }
 }

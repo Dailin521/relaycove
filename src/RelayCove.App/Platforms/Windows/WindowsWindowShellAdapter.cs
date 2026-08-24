@@ -1,6 +1,4 @@
-#if DEBUG
 using System.Runtime.InteropServices;
-#endif
 using Microsoft.UI.Windowing;
 using RelayCove.App.Services;
 using WinRT.Interop;
@@ -11,6 +9,7 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
 {
     private Window? _window;
     private AppWindow? _appWindow;
+    private nint _windowHandle;
     private bool _isPinned;
 #if DEBUG
     private bool _previewPlacementApplied;
@@ -20,6 +19,10 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
     public event EventHandler? StateChanged;
 
     public bool IsPinned => _isPinned;
+    public bool IsForeground => IsForegroundWindow(
+        _windowHandle,
+        GetForegroundWindow(),
+        _windowHandle != 0 && IsIconic(_windowHandle));
 
     public void Attach(Window window)
     {
@@ -64,6 +67,7 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
     {
         if (_window?.Handler?.PlatformView is not Microsoft.UI.Xaml.Window nativeWindow) return;
         var windowHandle = WindowNative.GetWindowHandle(nativeWindow);
+        _windowHandle = windowHandle;
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(windowHandle);
         _appWindow = AppWindow.GetFromWindowId(windowId);
         if (_appWindow.Presenter is OverlappedPresenter presenter)
@@ -252,6 +256,9 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
     internal static int ScaleDipToPixels(int dip, uint dpi) =>
         checked((int)Math.Round(dip * dpi / 96d, MidpointRounding.AwayFromZero));
 
+    internal static bool IsForegroundWindow(nint windowHandle, nint foregroundWindow, bool isMinimized) =>
+        windowHandle != 0 && windowHandle == foregroundWindow && !isMinimized;
+
     private void OnWindowDestroying(object? sender, EventArgs eventArgs)
     {
         if (_window is not null)
@@ -261,6 +268,7 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
         }
 
         _appWindow = null;
+        _windowHandle = 0;
         _window = null;
 #if DEBUG
         _previewPlacementApplied = false;
@@ -268,4 +276,11 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
         _previewPlacementTimer = null;
 #endif
     }
+
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool IsIconic(nint windowHandle);
 }

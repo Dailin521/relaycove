@@ -38,6 +38,13 @@
                    Style="{StaticResource MutedLabelStyle}"
                    FontSize="10"
                    VerticalTextAlignment="Center" />
+            <Label Grid.Row="1"
+                   Text="{Binding ConversationFilterStatus}"
+                   IsVisible="{Binding HasConversationFilterStatus}"
+                   Style="{StaticResource MutedLabelStyle}"
+                   FontSize="10"
+                   HorizontalTextAlignment="End"
+                   VerticalTextAlignment="Center" />
         </Grid>
 
         <CollectionView Grid.Row="1"
@@ -45,8 +52,17 @@
                         SelectionMode="None"
                         ItemsUpdatingScrollMode="KeepItemsInView">
             <CollectionView.EmptyView>
-                <Label Text="暂无聊天" Style="{StaticResource MutedLabelStyle}" Padding="18,12" />
+                <Label Text="{Binding BindingContext.ConversationFilterEmptyText, Source={x:Reference Root}}"
+                       Style="{StaticResource MutedLabelStyle}"
+                       Padding="18,12" />
             </CollectionView.EmptyView>
+            <CollectionView.Footer>
+                <Button Text="加载更多搜索结果"
+                        Margin="18,8"
+                        Style="{StaticResource BaseButtonStyle}"
+                        IsVisible="{Binding BindingContext.ShowMoreConversationFilterResults, Source={x:Reference Root}}"
+                        Command="{Binding BindingContext.LoadMoreConversationFilterCommand, Source={x:Reference Root}}" />
+            </CollectionView.Footer>
             <CollectionView.ItemTemplate>
                 <DataTemplate x:DataType="viewModels:ConversationListItem">
                     <Border HeightRequest="67"

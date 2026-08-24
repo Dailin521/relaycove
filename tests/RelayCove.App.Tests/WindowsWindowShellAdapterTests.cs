@@ -17,4 +17,21 @@ public sealed class WindowsWindowShellAdapterTests
 
         Assert.Equal(expectedPixels, pixels);
     }
+
+    [Theory]
+    [InlineData(0, 0, false, false)]
+    [InlineData(10, 20, false, false)]
+    [InlineData(10, 10, true, false)]
+    [InlineData(10, 10, false, true)]
+    public void IsForegroundWindow_WhenWindowIsHoveredOrMinimized_RequiresRealForeground(
+        long windowHandle,
+        long foregroundWindow,
+        bool isMinimized,
+        bool expected)
+    {
+        Assert.Equal(expected, WindowsWindowShellAdapter.IsForegroundWindow(
+            (nint)windowHandle,
+            (nint)foregroundWindow,
+            isMinimized));
+    }
 }
