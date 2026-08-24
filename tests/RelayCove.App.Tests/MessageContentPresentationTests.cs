@@ -45,4 +45,41 @@ public sealed class MessageContentPresentationTests
         Assert.Equal(4, presentation.Attachments.Count);
         Assert.Contains("image-5", presentation.Body, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Parse_WhenTwoLeadingQuotes_ArrangesBothAsQuoteCards()
+    {
+        const string content =
+            "@_**zhang|9** [said](https://chat.example.test/#narrow/near/559):\n" +
+            "```quote\n中午好\n```\n\n" +
+            "@_**zhang|9** [said](https://chat.example.test/#narrow/near/562):\n" +
+            "```quote\n中午好\n```\n\n好";
+
+        var presentation = MessageContentPresentation.Parse(content, null);
+
+        Assert.Collection(
+            presentation.Quotes,
+            first => Assert.Equal(("zhang", "中午好"), (first.Sender, first.Body)),
+            second => Assert.Equal(("zhang", "中午好"), (second.Sender, second.Body)));
+        Assert.Equal("好", presentation.Body);
+    }
+
+    [Theory]
+    [InlineData("好```", "好")]
+    [InlineData("```今天天气还行", "今天天气还行")]
+    public void Parse_WhenReplyTouchesClosingFence_RecoversQuoteAndReply(
+        string closingLine,
+        string expectedReply)
+    {
+        var content =
+            "@_**zhang|9** [said](https://chat.example.test/#narrow/near/559):\n" +
+            $"```quote\n天气如何\n{closingLine}";
+
+        var presentation = MessageContentPresentation.Parse(content, null);
+
+        var quote = Assert.Single(presentation.Quotes);
+        Assert.Equal("zhang", quote.Sender);
+        Assert.Equal("天气如何", quote.Body);
+        Assert.Equal(expectedReply, presentation.Body);
+    }
 }

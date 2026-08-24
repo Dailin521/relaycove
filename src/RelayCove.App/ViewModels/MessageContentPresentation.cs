@@ -5,8 +5,7 @@ namespace RelayCove.App.ViewModels;
 
 public sealed record MessageContentPresentation(
     string Body,
-    string? QuoteSender,
-    string? QuoteBody,
+    IReadOnlyList<MessageQuote> Quotes,
     IReadOnlyList<MessageAttachmentItem> Attachments)
 {
     private static readonly Regex MarkdownLink = new(
@@ -19,9 +18,8 @@ public sealed record MessageContentPresentation(
 
     public static MessageContentPresentation Parse(string content, RealmEndpoint? realm)
     {
-        var quote = MessageQuote.ParseLeading(content);
-        var source = quote?.Remainder ?? content;
-        if (realm is null) return new MessageContentPresentation(source, quote?.Sender, quote?.Body, []);
+        var quotes = MessageQuote.ParseLeadingSequence(content, out var source);
+        if (realm is null) return new MessageContentPresentation(source, quotes, []);
         var attachments = new List<MessageAttachmentItem>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var imageCount = 0;
@@ -45,7 +43,7 @@ public sealed record MessageContentPresentation(
         });
         body = Regex.Replace(body, "[ \\t]+\\n", "\n", RegexOptions.CultureInvariant);
         body = Regex.Replace(body, "\\n{3,}", "\n\n", RegexOptions.CultureInvariant).Trim();
-        return new MessageContentPresentation(body, quote?.Sender, quote?.Body, attachments);
+        return new MessageContentPresentation(body, quotes, attachments);
     }
 
     private static bool TryResolveUpload(RealmEndpoint realm, string value, out Uri result)

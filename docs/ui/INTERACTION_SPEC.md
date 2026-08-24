@@ -201,7 +201,8 @@ Stage 22W 当前没有正式全局/服务端搜索数据契约；本地 fixture 
 
 ### 8.2 引用、反应和附件
 
-- 引用回复在气泡内显示发送者和完整 raw Markdown 摘录；草稿使用发送者标识、原消息永久链接与 fenced `quote`。正文、图片和其他附件链接都必须保留，不能从已渲染图片占位或 HTML 反推。点击定位属于后续能力。
+- 引用回复在气泡内显示发送者和完整 raw Markdown 摘录；草稿使用发送者标识、原消息永久链接与 fenced `quote`。连续多段引用各自显示为独立引用卡，不能只识别第一段而把后续围栏泄漏成正文。正文、图片和其他附件链接都必须保留，不能从已渲染图片占位或 HTML 反推。点击定位属于后续能力。
+- Windows Composer 插入引用后，光标必须位于结束围栏及保留空行之后；LF/CRLF 转换不得把光标移动到围栏内部。对旧版 RelayCove 已发出的、回复文字紧贴结束围栏两侧的内容，原生投影应恢复引用与普通回复的边界，不修改服务器 raw Markdown。
 - 反应只从历史 `reactions` 和 realtime `reaction` event 投影，按 `reaction_type + emoji_code` 聚合。选择器添加或移除当前用户的 reaction 时必须提交服务器提供/内置的完整 `emoji_name`、`emoji_code`、`reaction_type`，不伪造计数。
 - 图片消息显示受控缩略图和文件名；点击打开遮罩预览，`Escape`、关闭按钮或点击遮罩退出。
 - 同 Realm `/user_uploads/` 的 PNG/JPEG/WebP/GIF/AVIF Markdown 链接可生成图片预览；同 Realm SVG 和其他文件只生成非活动文件卡片。跨 Realm、`data:`、`javascript:` 与异常链接继续按 raw Markdown 文本显示。

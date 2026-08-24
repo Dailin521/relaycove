@@ -30,8 +30,7 @@ public sealed class MessageItem : ObservableObject
     private bool _canRecover;
     private ICommand? _recoverCommand;
     private RealmEndpoint? _realm;
-    private string? _quoteSender;
-    private string? _quoteBody;
+    private IReadOnlyList<MessageQuote> _quotes;
     private IReadOnlyList<MessageAttachmentItem> _attachments;
 
     public MessageItem(
@@ -87,8 +86,7 @@ public sealed class MessageItem : ObservableObject
         _realm = realm;
 
         var presentation = MessageContentPresentation.Parse(content, Realm);
-        _quoteSender = presentation.QuoteSender;
-        _quoteBody = presentation.QuoteBody;
+        _quotes = presentation.Quotes;
         _body = presentation.Body;
         _attachments = presentation.Attachments;
     }
@@ -120,9 +118,8 @@ public sealed class MessageItem : ObservableObject
     public bool CanRecover => _canRecover;
     public ICommand? RecoverCommand => _recoverCommand;
     public RealmEndpoint? Realm => _realm;
-    public string? QuoteSender => _quoteSender;
-    public string? QuoteBody => _quoteBody;
-    public bool HasQuote => QuoteSender is not null;
+    public IReadOnlyList<MessageQuote> Quotes => _quotes;
+    public bool HasQuote => Quotes.Count > 0;
     public bool HasBody => !string.IsNullOrWhiteSpace(Body);
     public IReadOnlyList<MessageAttachmentItem> Attachments => _attachments;
     public bool HasAttachments => Attachments.Count > 0;
@@ -218,8 +215,11 @@ public sealed class MessageItem : ObservableObject
         if (presentationChanged)
         {
             SetProperty(ref _body, candidate.Body, nameof(Body));
-            SetProperty(ref _quoteSender, candidate.QuoteSender, nameof(QuoteSender));
-            SetProperty(ref _quoteBody, candidate.QuoteBody, nameof(QuoteBody));
+            if (!_quotes.SequenceEqual(candidate.Quotes))
+            {
+                _quotes = candidate.Quotes.ToArray();
+                OnPropertyChanged(nameof(Quotes));
+            }
             _attachments = candidate.Attachments.ToArray();
             OnPropertyChanged(nameof(Attachments));
             OnPropertyChanged(nameof(HasBody));

@@ -44,4 +44,15 @@ public sealed class ComposerEditorHandlerTests
             ComposerEditorHandler.TextIndexToDocumentIndex($"上{Environment.NewLine}午{Environment.NewLine}好", textIndex));
     }
 
+    [Fact]
+    public void GetDocumentSelection_WhenQuotedDraftUsesLf_PlacesCaretAfterClosingFence()
+    {
+        const string draft = "header\n```quote\nbody\n```\n\n";
+
+        var selection = ComposerEditorHandler.GetDocumentSelection(draft, draft.Length, 0);
+
+        Assert.Equal(ComposerEditorHandler.ToDocumentText(draft).Length, selection.Start);
+        Assert.Equal(selection.Start, selection.End);
+    }
+
 }

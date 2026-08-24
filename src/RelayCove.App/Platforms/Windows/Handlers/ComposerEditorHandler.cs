@@ -232,12 +232,10 @@ public sealed class ComposerEditorHandler : ViewHandler<ComposerEditor, WinUiGri
     private void ApplySelection(ComposerEditor view)
     {
         if (_updatingPlatform) return;
-        var documentText = GetDocumentText();
-        var text = FromDocumentText(documentText);
-        var startTextIndex = Math.Clamp(view.CursorPosition, 0, text.Length);
-        var endTextIndex = Math.Clamp(startTextIndex + view.SelectionLength, startTextIndex, text.Length);
-        var start = TextIndexToDocumentIndex(text, startTextIndex);
-        var end = TextIndexToDocumentIndex(text, endTextIndex);
+        var (start, end) = GetDocumentSelection(
+            view.Text ?? string.Empty,
+            view.CursorPosition,
+            view.SelectionLength);
 
         _updatingPlatform = true;
         try
@@ -331,6 +329,18 @@ public sealed class ComposerEditorHandler : ViewHandler<ComposerEditor, WinUiGri
         }
 
         return documentIndex;
+    }
+
+    internal static (int Start, int End) GetDocumentSelection(
+        string text,
+        int cursorPosition,
+        int selectionLength)
+    {
+        var startTextIndex = Math.Clamp(cursorPosition, 0, text.Length);
+        var endTextIndex = Math.Clamp(startTextIndex + selectionLength, startTextIndex, text.Length);
+        return (
+            TextIndexToDocumentIndex(text, startTextIndex),
+            TextIndexToDocumentIndex(text, endTextIndex));
     }
 
     private static bool IsControlPressed()

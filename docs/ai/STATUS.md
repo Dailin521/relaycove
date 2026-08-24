@@ -1,9 +1,16 @@
-# RelayCove Status — Stage 21 / 22W / 22M / 23 / 24.17 / 25
+# RelayCove Status — Stage 21 / 22W / 22M / 23 / 25 / 26
 
-Updated: 2026-08-21
-Integration basis: `main@3b6f814`; Stage 24.11 through Stage 24.17 are local candidates; Stage 24.14 and Stage 24.17 are user-confirmed, while the other local candidates retain their recorded acceptance state
+Updated: 2026-08-24
+Integration basis: `main@aa7b46e`; Stage 24.11 through Stage 25 are delivered, while Stage 26 is a local Visual Studio candidate
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
 Current delivery: Stage 22W/22M, Stage 23 and Stage 24 through Stage 24.10 are preserved in `main`; Stage 24.10 was delivered at `main@3b6f814`. Stage 24.11 through Stage 24.17 and Stage 25 form the current integrated MAUI delivery: jump-to-latest, simplified chat settings with local-only cache clearing, the two-column shell and title-bar account/settings navigation, plus the unified private-conversation/group model. After the final new-group layout correction, the user requested commit and push from the Visual Studio-validated state. Stage 25 alone contacted the production Realm under the user's explicit authorization to archive every existing active channel; it did not run Full/Live, deploy, or close the remaining Stage 21 gates. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+
+## Stage 26 native quote display correction — 2026-08-24
+
+- A real Visual Studio capture showed two native defects: only the first leading fenced quote became a quote card, while later quotes leaked as raw Markdown; and an LF/CRLF selection mismatch placed the Composer caret before the quote's closing fence, allowing typed replies to join the fence and making the whole quote unrecognizable.
+- Native presentation now projects every consecutive leading Zulip fenced quote as its own card. The parser also recovers already-sent RelayCove drafts where reply text touches either side of the closing fence, preserving the quoted body and showing the outside reply as normal message text.
+- The Windows Composer now maps selection from the exact ViewModel text rather than a separately reconstructed CRLF string, so a quote command's end caret remains after the closing fence and blank line. Raw Markdown remains the stored/sent authority; no rendered HTML, protocol, cache or Realm behavior changed.
+- Focused quote/Composer tests passed 20/20; the complete App project passed 224/224 and compiled the MAUI XAML. The user then confirmed the corrected quote display in Visual Studio and authorized the minimal commit/push transaction. Fast, Full, Live, package, Agent app startup, screenshot and Realm access were not run.
 
 ## Stage 25 unified private conversations — 2026-08-21
 

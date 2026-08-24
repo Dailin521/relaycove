@@ -233,21 +233,29 @@
                                         </Border.Triggers>
                                         <Border.StrokeShape><RoundRectangle CornerRadius="0,10,10,10" /></Border.StrokeShape>
                                         <VerticalStackLayout Spacing="6">
-                                            <Grid IsVisible="{Binding HasQuote}" ColumnDefinitions="2,*" Background="{StaticResource SurfaceSoftBrush}">
-                                                <BoxView Grid.Column="0" Background="{StaticResource AccentBrush}" />
-                                                <VerticalStackLayout Grid.Column="1" Padding="9,7" Spacing="2">
-                                                    <Label Text="{Binding QuoteSender, StringFormat='↩ {0} 写道'}"
-                                                           Style="{StaticResource MutedLabelStyle}"
-                                                           FontSize="11"
-                                                           FontAttributes="Bold"
-                                                           TextColor="{StaticResource AccentStrongColor}" />
-                                                    <Label Text="{Binding QuoteBody}"
-                                                           Style="{StaticResource BaseLabelStyle}"
-                                                           FontSize="12"
-                                                           MaxLines="4"
-                                                           LineBreakMode="TailTruncation" />
-                                                </VerticalStackLayout>
-                                            </Grid>
+                                            <VerticalStackLayout BindableLayout.ItemsSource="{Binding Quotes}"
+                                                                 IsVisible="{Binding HasQuote}"
+                                                                 Spacing="6">
+                                                <BindableLayout.ItemTemplate>
+                                                    <DataTemplate x:DataType="viewModels:MessageQuote">
+                                                        <Grid ColumnDefinitions="2,*" Background="{StaticResource SurfaceSoftBrush}">
+                                                            <BoxView Grid.Column="0" Background="{StaticResource AccentBrush}" />
+                                                            <VerticalStackLayout Grid.Column="1" Padding="9,7" Spacing="2">
+                                                                <Label Text="{Binding Sender, StringFormat='↩ {0} 写道'}"
+                                                                       Style="{StaticResource MutedLabelStyle}"
+                                                                       FontSize="11"
+                                                                       FontAttributes="Bold"
+                                                                       TextColor="{StaticResource AccentStrongColor}" />
+                                                                <Label Text="{Binding Body}"
+                                                                       Style="{StaticResource BaseLabelStyle}"
+                                                                       FontSize="12"
+                                                                       MaxLines="4"
+                                                                       LineBreakMode="TailTruncation" />
+                                                            </VerticalStackLayout>
+                                                        </Grid>
+                                                    </DataTemplate>
+                                                </BindableLayout.ItemTemplate>
+                                            </VerticalStackLayout>
 
                                             <Label Text="{Binding Body}"
                                                    IsVisible="{Binding HasBody}"
