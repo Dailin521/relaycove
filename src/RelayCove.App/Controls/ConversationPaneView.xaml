@@ -52,7 +52,8 @@
                         SelectionMode="None"
                         ItemsUpdatingScrollMode="KeepItemsInView">
             <CollectionView.EmptyView>
-                <Label Text="{Binding BindingContext.ConversationFilterEmptyText, Source={x:Reference Root}}"
+                <Label x:DataType="viewModels:ShellViewModel"
+                       Text="{Binding ConversationFilterEmptyText}"
                        Style="{StaticResource MutedLabelStyle}"
                        Padding="18,12" />
             </CollectionView.EmptyView>

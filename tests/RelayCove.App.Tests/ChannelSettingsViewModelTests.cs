@@ -670,6 +670,7 @@ public sealed class ChannelSettingsViewModelTests
         Assert.Contains("WildcardMentionsNotify", source);
         Assert.Contains("SendNewSubscriptionMessages", source);
         Assert.Contains("Clicked=\"OnRemoveMemberClicked\"", source);
+        Assert.Contains("<Button x:DataType=\"{x:Null}\" Grid.Column=\"1\" Text=\"移除\"", source);
         Assert.Contains("RequestRemoveMemberCommand.Execute(member)", codeBehind);
         Assert.Contains("DraftIsWebPublic", source);
         Assert.Contains("DraftHistoryPublic", source);

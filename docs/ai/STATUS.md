@@ -1,9 +1,19 @@
-# RelayCove Status — Stage 21 / 22W / 22M / 23 / 25 / 26 / 27 / 28 / 29 / 30
+# RelayCove Status — first MAUI release cycle complete
 
 Updated: 2026-08-24
-Integration basis: Stage 29 delivery `main@a56e8e9`; Stage 30 is the current accepted delivery slice
+Integration basis: Stage 30 delivery `main@57c8145`; release closure and strict Release-XamlC corrections are the current delivery
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W/22M, Stage 23, Stage 24, Stage 25, Stage 26, Stage 27, Stage 28 and Stage 29 are preserved in `main`, with Stage 29 anchored at `main@a56e8e9`; Stage 30 is the current accepted message/list layout delivery. Stage 25 alone performed authorized production Realm writes to archive every existing active channel; Stage 29 used only the public static Zulip 12.1 catalog, and Stage 30 performed no authenticated read or Realm write. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+Current delivery: the first MAUI development cycle through Stage 30 is complete on `main@57c8145`. The release version is `2.0.0-alpha.1` for Windows 11 x64 and will be published as a prerelease because signing, installer and clean-VM acceptance remain open. Stage 25 alone performed authorized production Realm writes to archive every existing active channel; Stage 29 used only the public static Zulip 12.1 catalog, and Stage 30 performed no authenticated read or Realm write. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+
+## First MAUI prerelease — 2026-08-24
+
+- Version/tag: `v2.0.0-alpha.1`; asset: `RelayCove-2.0.0-alpha.1-win-x64.zip` plus its SHA-256 manifest.
+- Product scope is MAUI-only going forward. `RelayCove.Web` remains historical source and is not part of this Windows release asset.
+- The ZIP is self-contained and unpackaged. It is not signed and has no installer or updater; Windows SmartScreen may warn on first launch.
+- The Full wrapper stopped at its pre-existing repository-wide formatting gate; no broad line-ending/import rewrite was added to the release. Its remaining deterministic steps passed explicitly: Debug and Release tests are Core 151/151, Zulip.Client 102/102, Data 34/34 and App 268/268; local Web unit tests are 86/86 and Playwright is 6/6 plus deployment 1/1.
+- The final self-contained ZIP size and SHA-256 will be recorded after it is rebuilt from the committed/tagged release candidate, so package metadata and source revision remain reproducible.
+- The exact verification boundary, Git tag, GitHub Release URL and final remote commit are recorded in `tasks/2026-08-24-v2-alpha1-release.md`.
+- Live was not rerun for this release. The historical isolated Stage 23 Live result remains evidence only; no release operation performs a Realm write.
 
 ## Stage 30 message bubble and search footer — 2026-08-24
 

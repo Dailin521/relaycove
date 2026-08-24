@@ -1,6 +1,6 @@
 # Stage 30 — message bubble autosize and conversation-search footer
 
-Status: user Visual Studio validation passed; delivery authorized
+Status: completed and delivered in `main@57c8145`
 
 ## Scope
 

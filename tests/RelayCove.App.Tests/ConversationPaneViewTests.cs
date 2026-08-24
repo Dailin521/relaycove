@@ -14,12 +14,17 @@ public sealed class ConversationPaneViewTests
         var conversationList = source.Descendants()
             .Single(element => element.Name.LocalName == "CollectionView" &&
                                element.Attribute("ItemsSource")?.Value == "{Binding FilteredConversations}");
+        var emptyLabel = conversationList.Descendants()
+            .Single(element => element.Name.LocalName == "Label" &&
+                               element.Attribute("Text")?.Value == "{Binding ConversationFilterEmptyText}");
         var labels = source.Descendants()
             .Where(element => element.Name.LocalName == "Label")
             .Select(element => element.Attribute("Text")?.Value)
             .ToArray();
 
         Assert.NotNull(conversationList);
+        Assert.Equal("viewModels:ShellViewModel", emptyLabel.Attribute(x + "DataType")?.Value);
+        Assert.DoesNotContain("BindingContext.ConversationFilterEmptyText", source.ToString());
         Assert.Equal("{Binding OpenNewConversationCommand}", createButton.Attribute("Command")?.Value);
         Assert.DoesNotContain("频道", labels);
         Assert.DoesNotContain("私信", labels);
