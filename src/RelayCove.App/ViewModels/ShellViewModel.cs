@@ -43,6 +43,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private readonly HashSet<long> _privateGroupRosterLoadAttempts = [];
     private readonly Dictionary<long, string> _lastSelectedTopicByChannel = [];
     private readonly ResettableObservableCollection<MessageItem> _messages = [];
+    private readonly ResettableObservableCollection<EmojiChoice> _visibleEmojiChoices = [];
     private readonly Dictionary<string, Dictionary<string, MessageItem>> _messageItemsByConversation = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _messageItemConversationLru = [];
     private readonly object _projectionGate = new();
@@ -161,6 +162,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _appNotificationService.NotificationActivated += OnAppNotificationActivated;
         ChannelSettings = new ChannelSettingsViewModel(_session, _platformInteractions, OpenChannelFromSettingsAsync);
         ChannelSettings.PropertyChanged += OnChannelSettingsPropertyChanged;
+        SelectEmojiCategory(EmojiCategories[0]);
         Project(_session.State);
     }
 
@@ -182,21 +184,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public ObservableCollection<ConversationSettingsMemberItem> GroupInviteCandidates { get; } = [];
     public ObservableCollection<ConversationSettingsMemberItem> GroupMemberActionCandidates { get; } = [];
     public ChannelSettingsViewModel ChannelSettings { get; }
-    public IReadOnlyList<EmojiChoice> EmojiChoices { get; } =
-    [
-        new("😀", "开心", "grinning", "1f600"), new("😄", "大笑", "smile", "1f604"),
-        new("😂", "笑哭", "joy", "1f602"), new("🥰", "喜爱", "smiling_face_with_3_hearts", "1f970"),
-        new("😍", "喜欢", "heart_eyes", "1f60d"), new("🤔", "思考", "thinking", "1f914"),
-        new("👍", "赞", "+1", "1f44d"), new("👎", "不赞同", "-1", "1f44e"),
-        new("👏", "鼓掌", "clap", "1f44f"), new("🙌", "庆祝", "raised_hands", "1f64c"),
-        new("🎉", "派对", "tada", "1f389"), new("❤️", "爱心", "heart", "2764"),
-        new("🔥", "火热", "fire", "1f525"), new("✅", "完成", "check", "2705"),
-        new("👀", "关注", "eyes", "1f440"), new("😭", "大哭", "sob", "1f62d"),
-        new("😅", "汗颜", "sweat_smile", "1f605"), new("😮", "惊讶", "open_mouth", "1f62e"),
-        new("🙏", "感谢", "pray", "1f64f"), new("💪", "加油", "muscle", "1f4aa"),
-        new("🚀", "起飞", "rocket", "1f680"), new("💡", "想法", "bulb", "1f4a1"),
-        new("🎯", "目标", "dart", "1f3af"), new("✨", "闪亮", "sparkles", "2728")
-    ];
+    public IReadOnlyList<EmojiChoice> EmojiChoices { get; } = EmojiCatalog.CreateChoices();
+    public IReadOnlyList<EmojiCategoryChoice> EmojiCategories { get; } = EmojiCatalog.CreateCategories();
+    public ObservableCollection<EmojiChoice> VisibleEmojiChoices => _visibleEmojiChoices;
 
     [ObservableProperty]
     public partial string Realm { get; set; } = PreferencesLastRealmStore.DefaultRealm;
@@ -1983,6 +1973,21 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     private void DismissUnavailableFeature() => UnavailableFeatureMessage = null;
+
+    [RelayCommand]
+    private void SelectEmojiCategory(EmojiCategoryChoice? category)
+    {
+        if (category is null) return;
+
+        foreach (var item in EmojiCategories)
+        {
+            item.IsSelected = ReferenceEquals(item, category);
+        }
+
+        SelectedComposerEmoji = null;
+        SelectedReactionEmoji = null;
+        _visibleEmojiChoices.ReplaceAll(EmojiCatalog.FilterChoices(EmojiChoices, category.Key));
+    }
 
     [RelayCommand]
     private void ToggleComposerEmojiPicker()

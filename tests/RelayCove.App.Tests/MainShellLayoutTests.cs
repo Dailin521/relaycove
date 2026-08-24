@@ -79,6 +79,35 @@ public sealed class MainShellLayoutTests
         Assert.Null(groupNameEntry.Attribute("Margin"));
     }
 
+    [Fact]
+    public void EmojiPickers_WhenRendered_UseUnclippedHorizontalCategoryScrollers()
+    {
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
+        XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+
+        var categoryScrollers = source
+            .Descendants(maui + "ScrollView")
+            .Where(element =>
+                element.Attribute("Orientation")?.Value == "Horizontal" &&
+                element.Descendants(maui + "HorizontalStackLayout").Any(layout =>
+                    layout.Attribute("BindableLayout.ItemsSource")?.Value == "{Binding EmojiCategories}"))
+            .ToArray();
+
+        Assert.Equal(2, categoryScrollers.Length);
+        Assert.All(categoryScrollers, scroller =>
+        {
+            Assert.Equal("42", scroller.Attribute("HeightRequest")?.Value);
+            Assert.Equal("Never", scroller.Attribute("HorizontalScrollBarVisibility")?.Value);
+            var layout = Assert.Single(scroller.Descendants(maui + "HorizontalStackLayout"));
+            Assert.Equal("0,3,8,5", layout.Attribute("Padding")?.Value);
+        });
+        Assert.Equal(2, source.Descendants().Count(element =>
+            element.Name.LocalName == "HorizontalDragScrollBehavior"));
+        var raw = source.ToString();
+        Assert.DoesNotContain("选择后插入光标位置", raw, StringComparison.Ordinal);
+        Assert.DoesNotContain("再次选择可移除", raw, StringComparison.Ordinal);
+    }
+
     private static string FindWorkspaceFile(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

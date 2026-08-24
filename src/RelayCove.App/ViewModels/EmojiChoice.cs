@@ -9,6 +9,7 @@ public sealed record EmojiChoice(
     string Label,
     string EmojiName,
     string EmojiCode,
+    string CategoryKey,
     string ReactionType = "unicode_emoji") : INotifyPropertyChanged
 {
     private bool _isComposerSelected;

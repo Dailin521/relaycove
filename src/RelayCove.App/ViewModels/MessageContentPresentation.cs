@@ -18,8 +18,16 @@ public sealed record MessageContentPresentation(
 
     public static MessageContentPresentation Parse(string content, RealmEndpoint? realm)
     {
-        var quotes = MessageQuote.ParseLeadingSequence(content, out var source);
-        if (realm is null) return new MessageContentPresentation(source, quotes, []);
+        var quotes = MessageQuote.ParseLeadingSequence(content, out var source)
+            .Select(quote => quote with { Body = EmojiShortcodeCatalog.ReplaceKnownShortcodes(quote.Body) })
+            .ToArray();
+        if (realm is null)
+        {
+            return new MessageContentPresentation(
+                EmojiShortcodeCatalog.ReplaceKnownShortcodes(source),
+                quotes,
+                []);
+        }
         var attachments = new List<MessageAttachmentItem>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var imageCount = 0;
@@ -43,6 +51,7 @@ public sealed record MessageContentPresentation(
         });
         body = Regex.Replace(body, "[ \\t]+\\n", "\n", RegexOptions.CultureInvariant);
         body = Regex.Replace(body, "\\n{3,}", "\n\n", RegexOptions.CultureInvariant).Trim();
+        body = EmojiShortcodeCatalog.ReplaceKnownShortcodes(body);
         return new MessageContentPresentation(body, quotes, attachments);
     }
 

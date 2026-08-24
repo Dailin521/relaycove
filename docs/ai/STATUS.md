@@ -1,9 +1,17 @@
-# RelayCove Status — Stage 21 / 22W / 22M / 23 / 25 / 26 / 27 / 28
+# RelayCove Status — Stage 21 / 22W / 22M / 23 / 25 / 26 / 27 / 28 / 29
 
 Updated: 2026-08-24
-Integration basis: `main@a22b05b`; Stage 26 is delivered, Stage 27 is user-validated locally, and Stage 28 is a local Visual Studio candidate
+Integration basis: `main@6e62166`; Stage 27 and Stage 28 are delivered, and Stage 29 is a local Visual Studio candidate
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stage 22W/22M, Stage 23, Stage 24, Stage 25 and Stage 26 are preserved in `main`; the latest delivered commit is `main@a22b05b`. Stage 27 adds a local Windows notification candidate without Realm access or server writes. Stage 25 alone contacted the production Realm under the user's explicit authorization to archive every existing active channel; Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+Current delivery: Stage 22W/22M, Stage 23, Stage 24, Stage 25, Stage 26, Stage 27 and Stage 28 are preserved in `main`; the latest delivered commit is `main@6e62166`. Stage 29 only replaces the local MAUI Unicode emoji catalog. Stage 25 alone performed authorized production Realm writes to archive every existing active channel; Stage 29 used only the public static Zulip 12.1 catalog and performed no authenticated read or Realm write. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+
+## Stage 29 complete Unicode emoji catalog — 2026-08-24
+
+- The Composer and reaction pickers were limited by one 24-entry hard-coded collection. Their scrolling and selection behavior was intact; missing emoji had never entered the ViewModel data source.
+- The local catalog now contains all 1883 unique Unicode entries published by the target Realm's Zulip 12.1 `emoji_codes.json`. The initial all-at-once grid was visibly slow and was rejected. Both pickers now open on the original 24 localized common choices and use one horizontally scrollable common-plus-nine-category strip, so hidden categories do not instantiate picker templates. The strip reserves explicit vertical space to prevent the pill bottoms from being clipped under Windows DPI scaling and supports native left-button hold-and-drag without breaking short category clicks. Redundant right-side header instructions were removed.
+- Display text is reconstructed from the official dash-separated Unicode sequence. Reactions keep the canonical server `emoji_name`, `emoji_code` and `unicode_emoji` type; Composer insertion remains plain Unicode text. Picker opening performs no runtime network request and does not add custom Realm emoji.
+- Message bodies and quote cards now display all 3339 known Zulip canonical shortcodes/aliases as Unicode while preserving unknown names, escaped values and code spans. The raw `MessageItem.Content` remains unchanged for copy, edit, quote and server authority.
+- Deterministic evidence: App 266/266 passed; App Debug build passed with 0 warnings/errors. Fast, Full, Live, package, app startup, screenshot, Realm write, commit and push were not run. User Visual Studio validation is pending.
 
 ## Stage 28 unified conversation search — 2026-08-24
 
@@ -11,7 +19,7 @@ Current delivery: Stage 22W/22M, Stage 23, Stage 24, Stage 25 and Stage 26 are p
 - Server matches remain inside the Stage 25 supported-conversation boundary and can load subsequent 50-message pages. Every matched message remains a separate row even when several belong to the same person/conversation; only identical message IDs are deduplicated. Historical rows carry a transient message ID so clicking opens that exact match, while ordinary metadata matches still open normally.
 - Query/account generations and cancellation reject stale completions. Server failure retains local matches and reports the boundary in the compact header.
 - The “加载更多搜索结果” footer is gated by the current nonempty query, a confirmed next page and idle state; clearing/opening a result, beginning another page or exhausting results hides it immediately.
-- Deterministic evidence: App 255/255 passed; App Debug build passed with 0 warnings/errors. Fast, Full, Live, package, app startup, screenshot, Realm write, commit and push were not run. User Visual Studio validation is pending.
+- Deterministic evidence before delivery: App 255/255 passed; App Debug build passed with 0 warnings/errors. The user then authorized the minimal commit/push, delivered as part of `main@6e62166`. Fast, Full, Live, package, app startup, screenshot and Realm write were not run.
 
 ## Stage 27 Windows native message notifications — 2026-08-24
 
@@ -20,7 +28,7 @@ Current delivery: Stage 22W/22M, Stage 23, Stage 24, Stage 25 and Stage 26 are p
 - Notification clicks restore the existing window and select the matching unified conversation. Toasts now resolve the sender avatar through the authenticated same-Realm media path, cache only account-isolated SHA-256-named PNG/JPEG local files and pass that file URI to Windows as a circular logo override; failure falls back to the app icon. Successful logout and clear-local-cache remove the account's avatar cache. The notification page persists system-notification, preview, flash, badge and do-not-disturb choices locally, reports system-notification and taskbar-badge state separately, and explicitly does not claim background push.
 - A taskbar thumbnail hover/Aero Peek lifecycle signal is no longer sufficient to suppress attention or auto-mark the selected chat. The App first keeps the activation inactive, then waits 100 ms and requires its real, non-minimized HWND to equal `GetForegroundWindow`. Core history loading no longer marks read independently; only the App's expected-conversation, visible-latest gate may request it.
 - When the matching chat is already open in the real foreground with no covering modal, RelayCove suppresses its redundant system toast and taskbar flash even if the user has scrolled up. This does not clear unread state; the latest-position and server-confirmed read gate remains separate.
-- Deterministic evidence on the local tree: Core 151/151 and App 252/252 passed; App Debug build passed with 0 warnings/errors. The App commands used `UseAppHost=false` and isolated `.verify` output because the user-owned Visual Studio process held the default Debug executable open; that process was not stopped or operated. The user's real Windows run confirmed the notification presentation and then exposed one redundant toast for the already-open foreground chat; after the final suppression correction, the user confirmed “没问题” in Visual Studio. Fast, Full, Live, package, Agent app startup, Agent screenshot, commit and push were not run.
+- Deterministic evidence before delivery: Core 151/151 and App 252/252 passed; App Debug build passed with 0 warnings/errors. The App commands used `UseAppHost=false` and isolated `.verify` output because the user-owned Visual Studio process held the default Debug executable open; that process was not stopped or operated. The user's real Windows run confirmed the notification presentation and then exposed one redundant toast for the already-open foreground chat; after the final suppression correction, the user confirmed “没问题” in Visual Studio. The user then authorized the minimal commit/push, delivered as part of `main@6e62166`. Fast, Full, Live, package, Agent app startup and Agent screenshot were not run.
 
 ## Stage 26 native quote display correction — 2026-08-24
 

@@ -378,12 +378,41 @@
                                 AnchorY="{Binding ViewModel.ComposerEmojiAnchorY, Source={x:Reference RootPage}, x:DataType=local:MainPage}" />
                         </Border.Behaviors>
                         <VerticalStackLayout Spacing="0">
-                            <Grid Padding="3,2,3,8" ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                            <Grid Padding="3,2,3,8">
                                 <Label Text="表情" Style="{StaticResource BaseLabelStyle}" FontSize="13" FontAttributes="Bold" />
-                                <Label Grid.Column="1" Text="选择后插入光标位置" Style="{StaticResource MutedLabelStyle}" FontSize="10" HorizontalTextAlignment="End" VerticalTextAlignment="Center" />
                             </Grid>
+                            <ScrollView Orientation="Horizontal"
+                                        WidthRequest="284"
+                                        HeightRequest="42"
+                                        Margin="0,0,0,6"
+                                        HorizontalScrollBarVisibility="Never"
+                                        VerticalScrollBarVisibility="Never">
+                                <ScrollView.Behaviors>
+                                    <windowsBehaviors:HorizontalDragScrollBehavior />
+                                </ScrollView.Behaviors>
+                                <HorizontalStackLayout Spacing="5"
+                                                       Padding="0,3,8,5"
+                                                       BindableLayout.ItemsSource="{Binding EmojiCategories}">
+                                    <BindableLayout.ItemTemplate>
+                                    <DataTemplate x:DataType="viewModels:EmojiCategoryChoice">
+                                        <Button Text="{Binding Label}"
+                                                Style="{StaticResource EmojiCategoryButtonStyle}"
+                                                Command="{Binding ViewModel.SelectEmojiCategoryCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                CommandParameter="{Binding .}">
+                                            <Button.Triggers>
+                                                <DataTrigger TargetType="Button" Binding="{Binding IsSelected}" Value="True">
+                                                    <Setter Property="BackgroundColor" Value="{StaticResource AccentColor}" />
+                                                    <Setter Property="BorderColor" Value="{StaticResource AccentStrongColor}" />
+                                                    <Setter Property="TextColor" Value="White" />
+                                                </DataTrigger>
+                                            </Button.Triggers>
+                                        </Button>
+                                    </DataTemplate>
+                                    </BindableLayout.ItemTemplate>
+                                </HorizontalStackLayout>
+                            </ScrollView>
                             <CollectionView x:Name="ComposerEmojiCollection"
-                                            ItemsSource="{Binding EmojiChoices}"
+                                            ItemsSource="{Binding VisibleEmojiChoices}"
                                             SelectionMode="None"
                                             WidthRequest="284"
                                             HeightRequest="205"
@@ -457,12 +486,41 @@
                                 AnchorY="{Binding ViewModel.MessageMenuAnchorY, Source={x:Reference RootPage}, x:DataType=local:MainPage}" />
                         </Border.Behaviors>
                         <VerticalStackLayout Spacing="0">
-                            <Grid Padding="3,2,3,8" ColumnDefinitions="Auto,*" ColumnSpacing="8">
+                            <Grid Padding="3,2,3,8">
                                 <Label Text="添加反应" Style="{StaticResource BaseLabelStyle}" FontSize="13" FontAttributes="Bold" />
-                                <Label Grid.Column="1" Text="再次选择可移除" Style="{StaticResource MutedLabelStyle}" FontSize="10" HorizontalTextAlignment="End" VerticalTextAlignment="Center" />
                             </Grid>
+                            <ScrollView Orientation="Horizontal"
+                                        WidthRequest="284"
+                                        HeightRequest="42"
+                                        Margin="0,0,0,6"
+                                        HorizontalScrollBarVisibility="Never"
+                                        VerticalScrollBarVisibility="Never">
+                                <ScrollView.Behaviors>
+                                    <windowsBehaviors:HorizontalDragScrollBehavior />
+                                </ScrollView.Behaviors>
+                                <HorizontalStackLayout Spacing="5"
+                                                       Padding="0,3,8,5"
+                                                       BindableLayout.ItemsSource="{Binding EmojiCategories}">
+                                    <BindableLayout.ItemTemplate>
+                                    <DataTemplate x:DataType="viewModels:EmojiCategoryChoice">
+                                        <Button Text="{Binding Label}"
+                                                Style="{StaticResource EmojiCategoryButtonStyle}"
+                                                Command="{Binding ViewModel.SelectEmojiCategoryCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                CommandParameter="{Binding .}">
+                                            <Button.Triggers>
+                                                <DataTrigger TargetType="Button" Binding="{Binding IsSelected}" Value="True">
+                                                    <Setter Property="BackgroundColor" Value="{StaticResource AccentColor}" />
+                                                    <Setter Property="BorderColor" Value="{StaticResource AccentStrongColor}" />
+                                                    <Setter Property="TextColor" Value="White" />
+                                                </DataTrigger>
+                                            </Button.Triggers>
+                                        </Button>
+                                    </DataTemplate>
+                                    </BindableLayout.ItemTemplate>
+                                </HorizontalStackLayout>
+                            </ScrollView>
                             <CollectionView x:Name="ReactionEmojiCollection"
-                                            ItemsSource="{Binding EmojiChoices}"
+                                            ItemsSource="{Binding VisibleEmojiChoices}"
                                             SelectionMode="None"
                                             WidthRequest="284"
                                             HeightRequest="205"

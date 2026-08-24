@@ -1,6 +1,6 @@
 # RelayCove Chat UI 交互规格
 
-- 规格版本：1.15
+- 规格版本：1.17
 - 对应基线：`chat-ui-v1`
 - 状态：Current shared interaction contract；`chat-ui-v1` 仅保持冻结初始基线
 - 最后更新：2026-08-24
@@ -216,6 +216,8 @@ Stage 22W 当前没有正式全局/服务端搜索数据契约；本地 fixture 
 - 引用回复在气泡内显示发送者和完整 raw Markdown 摘录；草稿使用发送者标识、原消息永久链接与 fenced `quote`。连续多段引用各自显示为独立引用卡，不能只识别第一段而把后续围栏泄漏成正文。正文、图片和其他附件链接都必须保留，不能从已渲染图片占位或 HTML 反推。点击定位属于后续能力。
 - Windows Composer 插入引用后，光标必须位于结束围栏及保留空行之后；LF/CRLF 转换不得把光标移动到围栏内部。对旧版 RelayCove 已发出的、回复文字紧贴结束围栏两侧的内容，原生投影应恢复引用与普通回复的边界，不修改服务器 raw Markdown。
 - 反应只从历史 `reactions` 和 realtime `reaction` event 投影，按 `reaction_type + emoji_code` 聚合。选择器添加或移除当前用户的 reaction 时必须提交服务器提供/内置的完整 `emoji_name`、`emoji_code`、`reaction_type`，不伪造计数。
+- MAUI Composer 与 reaction 选择器共用 Zulip 12.1 的完整 1883 项 Unicode 目录；默认只绑定 24 个常用项，并通过可横向滚动的“常用 + 9 个官方类别”单行分类条切换当前集合，不得一次实例化全部模板。分类条同时支持键盘与鼠标左键按住拖动，短点击仍选择分类；分类按钮在 Windows DPI 缩放下必须保留完整圆角，不得裁切底部。弹层只保留必要标题，不显示解释选择结果的冗余提示。显示字符按 dash-separated codepoint 还原，reaction 身份不得从显示字形反推。Realm 自定义表情不是该静态目录的一部分。
+- 消息正文和引用卡显示时将已知 Zulip Unicode 短码及别名替换为对应字形；未知、转义、行内代码和 fenced code 保持原样。此转换只属于显示投影，复制、编辑、引用和服务器操作继续使用未修改的 raw Markdown。
 - 图片消息显示受控缩略图和文件名；点击打开遮罩预览，`Escape`、关闭按钮或点击遮罩退出。
 - 同 Realm `/user_uploads/` 的 PNG/JPEG/WebP/GIF/AVIF Markdown 链接可生成图片预览；同 Realm SVG 和其他文件只生成非活动文件卡片。跨 Realm、`data:`、`javascript:` 与异常链接继续按 raw Markdown 文本显示。
 - 私有上传先通过带 Basic 的 `GET /api/v1/user_uploads/{path}` 换取短期 URL，再立即读取为内存 Blob；短期 URL 和 API Key 都不进入图片 DOM。离开会话、注销或撤销最后引用时 abort 请求并 revoke object URL。

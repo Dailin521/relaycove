@@ -276,12 +276,14 @@ public partial class MainPage : ContentPage
 
     private bool HandleEmojiKey(VirtualKey key, bool reaction)
     {
+        if (_viewModel.VisibleEmojiChoices.Count == 0) return false;
+
         var selected = reaction ? _viewModel.SelectedReactionEmoji : _viewModel.SelectedComposerEmoji;
         var current = selected is null ? -1 : IndexOfEmoji(selected);
         if (key == VirtualKey.Enter)
         {
-            if (reaction) _viewModel.SelectReactionEmojiCommand.Execute(selected ?? _viewModel.EmojiChoices[0]);
-            else _viewModel.InsertComposerEmojiCommand.Execute(selected ?? _viewModel.EmojiChoices[0]);
+            if (reaction) _viewModel.SelectReactionEmojiCommand.Execute(selected ?? _viewModel.VisibleEmojiChoices[0]);
+            else _viewModel.InsertComposerEmojiCommand.Execute(selected ?? _viewModel.VisibleEmojiChoices[0]);
             return true;
         }
         var next = selected is null && key is VirtualKey.Left or VirtualKey.Right or VirtualKey.Up or VirtualKey.Down
@@ -289,15 +291,15 @@ public partial class MainPage : ContentPage
             : key switch
             {
                 VirtualKey.Left => Math.Max(0, current - 1),
-                VirtualKey.Right => Math.Min(_viewModel.EmojiChoices.Count - 1, current + 1),
+                VirtualKey.Right => Math.Min(_viewModel.VisibleEmojiChoices.Count - 1, current + 1),
                 VirtualKey.Up => Math.Max(0, current - 6),
-                VirtualKey.Down => Math.Min(_viewModel.EmojiChoices.Count - 1, current + 6),
+                VirtualKey.Down => Math.Min(_viewModel.VisibleEmojiChoices.Count - 1, current + 6),
                 VirtualKey.Home => 0,
-                VirtualKey.End => _viewModel.EmojiChoices.Count - 1,
+                VirtualKey.End => _viewModel.VisibleEmojiChoices.Count - 1,
                 _ => -1
             };
         if (next < 0) return false;
-        var choice = _viewModel.EmojiChoices[next];
+        var choice = _viewModel.VisibleEmojiChoices[next];
         if (reaction)
         {
             _viewModel.SelectedReactionEmoji = choice;
@@ -313,9 +315,9 @@ public partial class MainPage : ContentPage
 
     private int IndexOfEmoji(EmojiChoice selected)
     {
-        for (var index = 0; index < _viewModel.EmojiChoices.Count; index++)
+        for (var index = 0; index < _viewModel.VisibleEmojiChoices.Count; index++)
         {
-            if (Equals(_viewModel.EmojiChoices[index], selected)) return index;
+            if (Equals(_viewModel.VisibleEmojiChoices[index], selected)) return index;
         }
         return 0;
     }

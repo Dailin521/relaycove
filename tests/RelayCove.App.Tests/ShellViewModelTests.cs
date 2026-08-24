@@ -1504,6 +1504,56 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public void EmojiCatalog_WhenLoaded_ContainsTheCompleteZulipUnicodeSet()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        Assert.Equal(1883, viewModel.EmojiChoices.Count);
+        Assert.Equal(10, viewModel.EmojiCategories.Count);
+        Assert.Equal("常用", viewModel.EmojiCategories[0].Label);
+        Assert.True(viewModel.EmojiCategories[0].IsSelected);
+        Assert.Equal(24, viewModel.VisibleEmojiChoices.Count);
+        Assert.Equal(
+            viewModel.EmojiChoices.Count,
+            viewModel.EmojiChoices.Select(choice => choice.EmojiCode).Distinct(StringComparer.Ordinal).Count());
+        Assert.All(viewModel.EmojiChoices, choice => Assert.Equal("unicode_emoji", choice.ReactionType));
+        Assert.Contains(viewModel.EmojiChoices, choice =>
+            choice.Emoji == "❤️" &&
+            choice.EmojiName == "heart" &&
+            choice.EmojiCode == "2764");
+        Assert.Contains(viewModel.EmojiChoices, choice =>
+            choice.Emoji == "🫠" &&
+            choice.EmojiName == "melting_face" &&
+            choice.EmojiCode == "1fae0");
+        Assert.Contains(viewModel.EmojiChoices, choice =>
+            choice.Emoji == "🫡" &&
+            choice.EmojiName == "saluting_face" &&
+            choice.EmojiCode == "1fae1");
+        Assert.Contains(viewModel.EmojiChoices, choice =>
+            choice.Emoji == "🇨🇳" &&
+            choice.EmojiName == "flag_china" &&
+            choice.EmojiCode == "1f1e8-1f1f3");
+        Assert.Contains(viewModel.EmojiChoices, choice =>
+            choice.Emoji == "👩‍💻" &&
+            choice.EmojiName == "woman_technologist" &&
+            choice.EmojiCode == "1f469-200d-1f4bb");
+    }
+
+    [Fact]
+    public void SelectEmojiCategory_WhenChanged_ProjectsOnlyThatCategory()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        var people = viewModel.EmojiCategories.Single(category => category.Key == "people");
+
+        viewModel.SelectEmojiCategoryCommand.Execute(people);
+
+        Assert.True(people.IsSelected);
+        Assert.False(viewModel.EmojiCategories[0].IsSelected);
+        Assert.Equal(386, viewModel.VisibleEmojiChoices.Count);
+        Assert.All(viewModel.VisibleEmojiChoices, choice => Assert.Equal("people", choice.CategoryKey));
+    }
+
+    [Fact]
     public void ApplyNativePreviewScene_WhenSettingsRequested_ProjectsSettingsWithoutInputAutomation()
     {
         using var viewModel = CreateViewModel(new FakeSession());

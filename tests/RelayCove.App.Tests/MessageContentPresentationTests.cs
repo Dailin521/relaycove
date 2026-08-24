@@ -82,4 +82,31 @@ public sealed class MessageContentPresentationTests
         Assert.Equal("天气如何", quote.Body);
         Assert.Equal(expectedReply, presentation.Body);
     }
+
+    [Fact]
+    public void Parse_WhenKnownEmojiShortcodesExist_ProjectsUnicodeWithoutChangingCodeSpans()
+    {
+        const string content =
+            ":melting_face: :+1: :unknown_relaycove_emoji:\n" +
+            "`:melting_face:`\n" +
+            "```text\n:melting_face:\n```";
+
+        var presentation = MessageContentPresentation.Parse(content, null);
+
+        Assert.Equal(
+            "🫠 👍 :unknown_relaycove_emoji:\n`:melting_face:`\n```text\n:melting_face:\n```",
+            presentation.Body.Replace("\r", string.Empty, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MessageItem_WhenEmojiShortcodeIsProjected_KeepsRawContentAuthority()
+    {
+        const string raw = ":melting_face:";
+
+        var message = new MessageItem("message-1", 1, 2, "Ada", raw, "10:00");
+
+        Assert.Equal(raw, message.Content);
+        Assert.Equal("🫠", message.Body);
+        Assert.Contains(raw, message.AccessibleLabel, StringComparison.Ordinal);
+    }
 }
