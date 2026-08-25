@@ -133,6 +133,30 @@ public sealed class MainShellLayoutTests
     }
 
     [Fact]
+    public void MessageBody_WhenRendered_EnablesNativeTextSelectionWithoutSelectingListRows()
+    {
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "MessageListView.xaml"));
+        XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+
+        var messageBody = source
+            .Descendants(maui + "Label")
+            .Single(element =>
+                element.Attribute("Text")?.Value == "{Binding Body}" &&
+                element.Attribute("IsVisible")?.Value == "{Binding HasBody}");
+        var messageCollection = source
+            .Descendants(maui + "CollectionView")
+            .Single(element => element.Attribute("ItemsSource")?.Value == "{Binding Messages}");
+
+        Assert.Single(
+            messageBody.Descendants(),
+            element => element.Name.LocalName == "SelectableTextBehavior");
+        Assert.Single(
+            source.Descendants(),
+            element => element.Name.LocalName == "SelectableTextBehavior");
+        Assert.Equal("None", messageCollection.Attribute("SelectionMode")?.Value);
+    }
+
+    [Fact]
     public void ConversationFilterLoadMore_WhenSearchEnds_UsesDirectVisibilityBindingOutsideCollectionFooter()
     {
         var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "ConversationPaneView.xaml"));

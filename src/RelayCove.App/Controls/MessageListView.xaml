@@ -263,7 +263,11 @@
                                                    IsVisible="{Binding HasBody}"
                                                    Style="{StaticResource BaseLabelStyle}"
                                                    LineBreakMode="WordWrap"
-                                                   FlowDirection="LeftToRight" />
+                                                   FlowDirection="LeftToRight">
+                                                <Label.Behaviors>
+                                                    <windowsBehaviors:SelectableTextBehavior />
+                                                </Label.Behaviors>
+                                            </Label>
 
                                             <VerticalStackLayout BindableLayout.ItemsSource="{Binding Attachments}"
                                                                  IsVisible="{Binding HasAttachments}"

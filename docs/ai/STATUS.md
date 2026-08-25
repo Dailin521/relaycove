@@ -1,9 +1,21 @@
-# RelayCove Status — first MAUI release cycle complete
+# RelayCove Status — V2 optimization planning
 
 Updated: 2026-08-25
-Integration basis: Stage 30 delivery `main@57c8145`; first MAUI release candidate and strict Release-XamlC corrections `v2.0.0-alpha.1@83eccf0`
+Integration basis: Stage 30 functional delivery `main@57c8145`; current V2 planning baseline `main@6e8d0e9`; first MAUI release candidate and strict Release-XamlC corrections `v2.0.0-alpha.1@83eccf0`
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: the first MAUI development cycle through Stage 30 is complete. `v2.0.0-alpha.1` was published from `83eccf04a114defc9fc479f447d30709fb2d3807` as the Latest Windows 11 x64 GitHub Release. It is not a draft or prerelease; signing, installer and clean-VM acceptance remain open. Stage 25 alone performed authorized production Realm writes to archive every existing active channel; Stage 29 used only the public static Zulip 12.1 catalog, and Stage 30 performed no authenticated read or Realm write. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+Current delivery: the first MAUI development cycle through Stage 30 is complete. V2 has an approved MAUI-only optimization plan. The user then inserted one standalone Stage 31 Windows message-body selection correction before the ordered V2 sequence; its code and narrow deterministic checks are complete, and the user confirmed it in Visual Studio. `v2.0.0-alpha.1` was published from `83eccf04a114defc9fc479f447d30709fb2d3807` as the Latest Windows 11 x64 GitHub Release. It is not a draft or prerelease; signing, installer and clean-VM acceptance remain open. Stage 25 alone performed authorized production Realm writes to archive every existing active channel; Stage 29 used only the public static Zulip 12.1 catalog, and Stage 30 performed no authenticated read or Realm write. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+
+## Stage 31 message-body drag selection — 2026-08-25
+
+- Ordinary MAUI message bodies now enable the existing WinUI `TextBlock` native selection path, so a user can hold the left mouse button, drag across a range and copy that selected range with `Ctrl+C`. The message collection remains non-selecting; raw content, quote cards, attachments, message actions and scroll state are unchanged.
+- The Windows behavior clears selection when a virtualized label changes binding context and when it detaches, preventing stale highlights from appearing on a recycled message row.
+- Focused evidence: the XAML selection-boundary regression passed 1/1; the isolated App Debug build passed with 0 warnings/errors. The user confirmed the behavior in Visual Studio and authorized commit/push. Complete App tests, Full, Live, package, Agent app startup, screenshot and Realm access were not run.
+
+## V2 optimization plan — 2026-08-25
+
+- The active plan is `tasks/2026-08-25-v2-optimization-plan.md`: baseline normalization, search correctness, authoritative write confirmation, group-data reliability, Windows desktop experience and targeted performance, in that order.
+- Stage 30 `57c8145` remains the functional baseline. The plan was created on current `main@6e8d0e9`; V2 must continue from current `main` and must not reset back to the older functional point.
+- The first V2 baseline Fast was attempted on `main@6e8d0e9` and stopped at the pre-existing repository-wide format gate (CRLF/whitespace/import-order debt); no bulk format was applied. Stage 31 then used only its focused test and isolated App build. No Live or Realm operation was performed, and every untracked `.verify/` directory remains local.
 
 ## First MAUI release — 2026-08-25
 

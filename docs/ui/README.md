@@ -18,7 +18,7 @@
 - 冻结日期：2026-08-12
 - 目标视口：1440×900；补充检查 1024×768
 - 历史原型（只读）：[RelayCove-UI-Playground.html](baselines/chat-ui-v1/RelayCove-UI-Playground.html)；日常 Web 验收不再使用此入口
-- 当前任务：[Stage 25 微信式统一会话与私有群聊](../ai/tasks/2026-08-21-stage-25-unified-private-groups.md)；Stage 24.11 至 Stage 24.17 是当前工作树中的前序候选，Stage 24.14 与 Stage 24.17 已获用户人工确认。Stage 25 不改写冻结基线，也不声称 Web 已对齐；真实 Realm 群创建/生命周期写与用户 Visual Studio 人工验收仍开放。
+- 当前计划：[第二版（V2）优化计划](../ai/tasks/2026-08-25-v2-optimization-plan.md)；[Stage 31 Windows 消息正文鼠标拖选](../ai/tasks/2026-08-25-stage-31-message-text-selection.md)已通过用户 Visual Studio 人工确认。第一版至 Stage 30 已收口；V2 仍以 MAUI-only 为边界，不改写冻结基线，也不恢复 Web 对齐目标。
 
 ## 重要边界
 
