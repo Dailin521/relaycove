@@ -2,7 +2,7 @@
 
 RelayCove 是一个直接连接既有 Zulip Realm 的 Windows 原生 .NET MAUI 客户端。现有 Zulip 官方 Web 保留不动；RelayCove 不包含自研聊天服务端、代理、BFF 或第二套消息后端。仓库中的早期 `RelayCove.Web` 仅保留为历史实现证据，不再是后续产品交付目标。
 
-首个 MAUI 版本周期已经结束，当前发布候选版本为 `2.1.0`，目标平台为 Windows 11 x64。仓库锁定 .NET SDK `10.0.400`、MAUI `10.0.20` 和 Windows `win-x64`。
+首个 MAUI 版本周期已经结束，当前正式版本为 [`2.1.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.1.0)，目标平台为 Windows 11 x64。仓库锁定 .NET SDK `10.0.400`、MAUI `10.0.20` 和 Windows `win-x64`。
 
 ## 下载
 

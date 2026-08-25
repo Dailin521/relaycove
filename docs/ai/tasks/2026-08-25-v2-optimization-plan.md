@@ -11,7 +11,7 @@ Status: approved planning baseline; ordered optimization sequence not started
 
 2026-08-25 用户在计划序列前单独插入并确认了 Stage 31“Windows 消息正文鼠标拖选”，随后单独提出 Stage 32“MAUI 收藏消息入口”、Stage 33“Windows reaction 按钮裁切”和 Stage 34“reaction 表情面板定位”。这些都是独立确认、独立交付的窄 UI 修正，不改变下文从搜索正确性开始的既定顺序或范围。
 
-2026-08-25 用户授权将已经交付的 Stage 31–36 增量收口并发布为 `v2.1.0`。这是一次发布检查点，不代表下文六部分优化序列已经全部实施或 V2 总计划已经完成；未完成项继续保留。
+2026-08-25 用户授权将已经交付的 Stage 31–36 增量收口并发布为 `v2.1.0`；当日已完成正式 GitHub Release。这是一次发布检查点，不代表下文六部分优化序列已经全部实施或 V2 总计划已经完成；未完成项继续保留。
 
 ## 1. 目标与执行方式
 
