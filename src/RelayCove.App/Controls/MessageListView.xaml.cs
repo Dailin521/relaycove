@@ -655,13 +655,42 @@ public partial class MessageListView : ContentView
             // must exist in WinUI before the native bottom position is valid.
             if (list.ContainerFromIndex(index) is not WinUiFrameworkElement { IsLoaded: true, ActualHeight: > 0d } targetContainer)
             {
+                if (MessageViewportPolicy.ShouldUseNativeOffsetBeforeTargetRealized(request.Reason))
+                {
+                    if (!MessageViewportPolicy.ShouldIssueLatestScroll(request.Reason, _finalScrollIssued) ||
+                        !MessageViewportPolicy.ShouldMaintainLatest(
+                            isBottomPinned: true,
+                            scrollViewer.ScrollableHeight,
+                            scrollViewer.VerticalOffset))
+                    {
+                        return;
+                    }
+
+                    _scrollAttemptCount++;
+                    _finalScrollIssued = true;
+                    scrollViewer.ChangeView(
+                        null,
+                        scrollViewer.ScrollableHeight,
+                        null,
+                        disableAnimation: false);
+                    return;
+                }
+
+                if (!MessageViewportPolicy.ShouldIssueLatestScroll(request.Reason, _finalScrollIssued))
+                {
+                    return;
+                }
                 if (_scrollAttemptCount >= MaximumScrollAttemptsPerLayout)
                 {
                     SuspendScrollRetries(scrollViewer);
                     return;
                 }
                 _scrollAttemptCount++;
-                MessageCollection.ScrollTo(index, position: ScrollToPosition.End, animate: false);
+                _finalScrollIssued = MessageViewportPolicy.ShouldAnimateLatestScroll(request.Reason);
+                MessageCollection.ScrollTo(
+                    index,
+                    position: ScrollToPosition.End,
+                    animate: MessageViewportPolicy.ShouldAnimateLatestScroll(request.Reason));
                 return;
             }
 
@@ -678,12 +707,18 @@ public partial class MessageListView : ContentView
                 return;
             }
 
+            if (!MessageViewportPolicy.ShouldIssueLatestScroll(request.Reason, _finalScrollIssued))
+            {
+                return;
+            }
+
             _scrollAttemptCount++;
+            _finalScrollIssued = MessageViewportPolicy.ShouldAnimateLatestScroll(request.Reason);
             scrollViewer.ChangeView(
                 null,
                 scrollViewer.ScrollableHeight,
                 null,
-                disableAnimation: true);
+                disableAnimation: !MessageViewportPolicy.ShouldAnimateLatestScroll(request.Reason));
             return;
         }
 

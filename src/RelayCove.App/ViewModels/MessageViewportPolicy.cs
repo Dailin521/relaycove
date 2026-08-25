@@ -29,6 +29,17 @@ internal static class MessageViewportPolicy
         double.IsFinite(verticalOffset) &&
         Math.Max(0d, scrollableHeight - verticalOffset) > BottomAlignmentToleranceDip;
 
+    internal static bool ShouldAnimateLatestScroll(MessageScrollReason reason) =>
+        reason == MessageScrollReason.RealtimeFollow;
+
+    internal static bool ShouldIssueLatestScroll(
+        MessageScrollReason reason,
+        bool animatedScrollIssued) =>
+        reason != MessageScrollReason.RealtimeFollow || !animatedScrollIssued;
+
+    internal static bool ShouldUseNativeOffsetBeforeTargetRealized(MessageScrollReason reason) =>
+        reason == MessageScrollReason.RealtimeFollow;
+
     internal static bool ShouldShowJumpToLatest(
         double? bottomDistanceDip,
         double? viewportHeightDip) =>

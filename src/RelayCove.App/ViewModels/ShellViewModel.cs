@@ -101,6 +101,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private long _detailsLoadGeneration;
     private string? _projectedConversationKey;
     private long? _newestProjectedMessageId;
+    private string? _transientUnreadDividerSuppressionConversationKey;
+    private long? _transientUnreadDividerSuppressionAfterMessageId;
     private long _lastAutomaticLoadOlderMilliseconds = long.MinValue;
     private int _automaticLoadOlderInFlight;
     private bool _isMessageViewportNearBottom = true;
@@ -4387,7 +4389,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         var selectedKey = selected?.CanonicalKey;
         var conversationChanged = !string.Equals(_projectedConversationKey, selectedKey, StringComparison.Ordinal);
         var previousNewestMessageId = conversationChanged ? null : _newestProjectedMessageId;
-        var projectedMessages = BuildMessageItems(state, selected);
+        var transientUnreadDividerCutoff = GetTransientUnreadDividerCutoff(
+            state,
+            selected,
+            conversationChanged,
+            previousNewestMessageId);
+        var projectedMessages = BuildMessageItems(state, selected, transientUnreadDividerCutoff);
         var deferInitialMessageProjection = conversationChanged &&
             IsNavigationPending &&
             selectedKey is not null;
@@ -4546,7 +4553,63 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
     }
 
-    private List<MessageItem> BuildMessageItems(ClientState state, ConversationKey? selected)
+    private long? GetTransientUnreadDividerCutoff(
+        ClientState state,
+        ConversationKey? selected,
+        bool conversationChanged,
+        long? previousNewestMessageId)
+    {
+        var history = _session.HistoryState;
+        var canSuppress = !conversationChanged &&
+            selected is not null &&
+            _isWindowActive &&
+            IsApplicationWindowForeground &&
+            IsMessagesSection &&
+            IsChatPaneVisible &&
+            IsConversationContentVisible &&
+            !IsModalOverlayVisible &&
+            !IsNavigationPending &&
+            _isMessageViewportNearBottom &&
+            state.Connection.Status == RelayCove.Core.ConnectionStatus.Connected &&
+            !history.IsLoading &&
+            history.Error is null &&
+            string.Equals(history.Conversation?.CanonicalKey, selected.CanonicalKey, StringComparison.Ordinal);
+        if (!canSuppress)
+        {
+            _transientUnreadDividerSuppressionConversationKey = null;
+            _transientUnreadDividerSuppressionAfterMessageId = null;
+            return null;
+        }
+
+        var selectedKey = selected!.CanonicalKey;
+        var existingCutoff = string.Equals(
+            _transientUnreadDividerSuppressionConversationKey,
+            selectedKey,
+            StringComparison.Ordinal)
+            ? _transientUnreadDividerSuppressionAfterMessageId
+            : null;
+        var cutoff = existingCutoff ?? previousNewestMessageId ?? long.MinValue;
+        var hasSuppressedUnread = state.Messages.Values.Any(message =>
+            message.Conversation == selected &&
+            message.Id > cutoff &&
+            message.SenderId != _session.CurrentUserId &&
+            !message.IsRead);
+        if (!hasSuppressedUnread)
+        {
+            _transientUnreadDividerSuppressionConversationKey = null;
+            _transientUnreadDividerSuppressionAfterMessageId = null;
+            return null;
+        }
+
+        _transientUnreadDividerSuppressionConversationKey = selectedKey;
+        _transientUnreadDividerSuppressionAfterMessageId = cutoff;
+        return cutoff;
+    }
+
+    private List<MessageItem> BuildMessageItems(
+        ClientState state,
+        ConversationKey? selected,
+        long? suppressUnreadDividerAfterMessageId = null)
     {
         var projected = new List<MessageItem>();
         if (selected is null) return projected;
@@ -4573,6 +4636,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             var date = DateOnly.FromDateTime(localTime);
             var isOwn = currentUserId == message.SenderId;
             var isUnread = !isOwn && !message.IsRead;
+            var contributesUnreadDivider = isUnread &&
+                !(suppressUnreadDividerAfterMessageId is { } cutoff && message.Id > cutoff);
             var showPreviewUnreadDivider = previewUnreadAfterMessageId is { } previewAfter &&
                 previousMessageId == previewAfter;
             var mutation = state.MessageMutations.GetValueOrDefault(message.Id);
@@ -4613,7 +4678,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 CreatePermalink(message.Id),
                 previousDate != date,
                 DescribeDate(date, localTime),
-                showPreviewUnreadDivider || isUnread && !unreadDividerAdded,
+                showPreviewUnreadDivider || contributesUnreadDivider && !unreadDividerAdded,
                 showPreviewUnreadDivider ? previewUnreadDividerLabel : null,
                 DescribeMutation(mutation),
                 mutation?.Status is MessageMutationStatus.Submitting or MessageMutationStatus.Uncertain,
@@ -4621,7 +4686,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             projected.Add(ReuseMessageItem(existingById, item));
             previousDate = date;
             previousMessageId = message.Id;
-            if (showPreviewUnreadDivider || isUnread) unreadDividerAdded = true;
+            if (showPreviewUnreadDivider || contributesUnreadDivider) unreadDividerAdded = true;
         }
 
         foreach (var entry in state.Outbox.Values

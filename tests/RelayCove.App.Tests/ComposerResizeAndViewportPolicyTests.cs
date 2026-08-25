@@ -63,4 +63,43 @@ public sealed class ComposerResizeAndViewportPolicyTests
             expected,
             MessageViewportPolicy.ShouldMaintainLatest(isBottomPinned, scrollableHeight, verticalOffset));
     }
+
+    [Theory]
+    [InlineData(MessageScrollReason.RealtimeFollow, true)]
+    [InlineData(MessageScrollReason.ConversationActivated, false)]
+    [InlineData(MessageScrollReason.ConversationReactivated, false)]
+    [InlineData(MessageScrollReason.ManualJumpToLatest, false)]
+    [InlineData(MessageScrollReason.MessageAnchor, false)]
+    public void ShouldAnimateLatestScroll_WhenReasonVaries_AnimatesOnlyRealtimeFollow(
+        MessageScrollReason reason,
+        bool expected)
+    {
+        Assert.Equal(expected, MessageViewportPolicy.ShouldAnimateLatestScroll(reason));
+    }
+
+    [Theory]
+    [InlineData(MessageScrollReason.RealtimeFollow, false, true)]
+    [InlineData(MessageScrollReason.RealtimeFollow, true, false)]
+    [InlineData(MessageScrollReason.ConversationActivated, true, true)]
+    [InlineData(MessageScrollReason.ManualJumpToLatest, true, true)]
+    public void ShouldIssueLatestScroll_WhenAnimationIsInFlight_DeduplicatesOnlyRealtimeFollow(
+        MessageScrollReason reason,
+        bool animatedScrollIssued,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            MessageViewportPolicy.ShouldIssueLatestScroll(reason, animatedScrollIssued));
+    }
+
+    [Theory]
+    [InlineData(MessageScrollReason.RealtimeFollow, true)]
+    [InlineData(MessageScrollReason.ConversationActivated, false)]
+    [InlineData(MessageScrollReason.ConversationReactivated, false)]
+    public void ShouldUseNativeOffsetBeforeTargetRealized_WhenReasonVaries_UsesItOnlyForRealtimeFollow(
+        MessageScrollReason reason,
+        bool expected)
+    {
+        Assert.Equal(expected, MessageViewportPolicy.ShouldUseNativeOffsetBeforeTargetRealized(reason));
+    }
 }

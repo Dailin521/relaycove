@@ -605,7 +605,10 @@ public sealed class ShellViewModelTests
 
         Assert.Equal(conversation, Assert.Single(session.ExpectedMarkReadConversations));
         Assert.True(viewModel.Messages.Single(message => message.MessageId == 11).IsUnread);
+        Assert.False(viewModel.Messages.Single(message => message.MessageId == 11).ShowUnreadDivider);
         Assert.True(Assert.Single(viewModel.DirectMessages).HasUnread);
+        Assert.Equal(0, viewModel.NewMessageCount);
+        Assert.False(viewModel.ShowNewMessagesButton);
 
         viewModel.AcknowledgeMessageScrollRequest(followRequest);
         Assert.Single(session.ExpectedMarkReadConversations);
@@ -616,6 +619,7 @@ public sealed class ShellViewModelTests
         // hand-off. It must not schedule another latest-scroll cycle.
         session.Publish();
         Assert.Null(viewModel.PendingMessageScrollRequest);
+        Assert.False(viewModel.Messages.Single(message => message.MessageId == 11).ShowUnreadDivider);
 
         markGate.SetResult();
         session.StateValue = session.StateValue with
