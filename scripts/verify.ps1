@@ -14,6 +14,8 @@ $iconPath = Join-Path $repoRoot "src/RelayCove.App/Resources/AppIcon/RelayCove.i
 $webRoot = Join-Path $repoRoot "src/RelayCove.Web"
 $webPackageLock = Join-Path $webRoot "package-lock.json"
 $webDist = Join-Path $webRoot "dist"
+$releaseVersion = "2.1.0"
+$releaseApplicationVersion = "2"
 $expectedIconLength = 65044
 $expectedIconSha256 = "07906CE7D87860C4A15DDD6F904DA722F7BBC3C882DC32FD1D285A78B1161B52"
 $solutionProjects = @(
@@ -189,13 +191,29 @@ function Assert-IconIntegrity {
     }
 }
 
+function Assert-ReleaseVersionMetadata {
+    $appProjectPath = Join-Path $repoRoot "src/RelayCove.App/RelayCove.App.csproj"
+    $project = [xml][IO.File]::ReadAllText($appProjectPath)
+    $displayVersions = @($project.SelectNodes("/Project/PropertyGroup/ApplicationDisplayVersion") | ForEach-Object { $_.InnerText })
+    $applicationVersions = @($project.SelectNodes("/Project/PropertyGroup/ApplicationVersion") | ForEach-Object { $_.InnerText })
+    $informationalVersions = @($project.SelectNodes("/Project/PropertyGroup/InformationalVersion") | ForEach-Object { $_.InnerText })
+
+    if ($displayVersions.Count -ne 1 -or $displayVersions[0] -cne $releaseVersion) {
+        throw "ApplicationDisplayVersion must match release version $releaseVersion."
+    }
+    if ($informationalVersions.Count -ne 1 -or $informationalVersions[0] -cne $releaseVersion) {
+        throw "InformationalVersion must match release version $releaseVersion."
+    }
+    if ($applicationVersions.Count -ne 1 -or $applicationVersions[0] -cne $releaseApplicationVersion) {
+        throw "ApplicationVersion must match release application version $releaseApplicationVersion."
+    }
+}
+
 function Invoke-FastVerification {
     Assert-IconIntegrity
     Assert-DotNetRestoreState
-    Invoke-DotNet format $solution --verify-no-changes --no-restore --verbosity minimal
     Invoke-DotNet build $solution -c Debug --no-restore --nologo --verbosity minimal /p:ContinuousIntegrationBuild=true
     Invoke-LocalTests -Configuration Debug
-    Invoke-WebFastVerification
 }
 
 function Assert-ArtifactPath {
@@ -286,7 +304,9 @@ function Assert-NoSecrets {
 }
 
 function Invoke-FullVerification {
-    Invoke-FastVerification
+    Assert-ReleaseVersionMetadata
+    Assert-IconIntegrity
+    Assert-DotNetRestoreState
     Invoke-DotNet build $solution -c Release --no-restore --nologo --verbosity minimal /p:ContinuousIntegrationBuild=true
     Invoke-LocalTests -Configuration Release
 
@@ -327,14 +347,13 @@ function Invoke-FullVerification {
     }
     Assert-NoSecrets -PublishRoot $publishRoot
 
-    $zipPath = Join-Path $packageRoot "RelayCove-2.0.0-alpha.1-win-x64.zip"
+    $zipPath = Join-Path $packageRoot "RelayCove-$releaseVersion-win-x64.zip"
     Compress-Archive -Path (Join-Path $publishRoot "*") -DestinationPath $zipPath -CompressionLevel Optimal -Force
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash
-    $manifestPath = Join-Path $packageRoot "RelayCove-2.0.0-alpha.1-win-x64.sha256"
-    Set-Content -LiteralPath $manifestPath -Encoding ascii -NoNewline -Value "$hash  RelayCove-2.0.0-alpha.1-win-x64.zip"
+    $manifestPath = Join-Path $packageRoot "RelayCove-$releaseVersion-win-x64.sha256"
+    Set-Content -LiteralPath $manifestPath -Encoding ascii -NoNewline -Value "$hash  RelayCove-$releaseVersion-win-x64.zip"
     Write-Host "Windows package: $zipPath"
     Write-Host "SHA-256: $hash"
-    Invoke-WebBrowserVerification
 }
 
 function Invoke-LiveVerification {

@@ -34,7 +34,7 @@ Run the narrowest relevant tests first. Then run:
 pwsh ./scripts/verify.ps1 -Mode Fast
 ```
 
-Fast must be deterministic, offline-safe and exclude `RelayCove.Zulip.LiveTests`. NuGet assets and Web dependencies are explicit bootstrap prerequisites (`dotnet restore` / `npm ci`) and must already exist locally. Fast runs only `--no-restore` .NET commands plus Web typecheck, unit tests and production build; it must not restore/install packages or download a browser.
+Fast must be deterministic, offline-safe and exclude `RelayCove.Zulip.LiveTests`. NuGet assets are an explicit bootstrap prerequisite (`dotnet restore`) and must already exist locally. Fast runs only the Debug solution build and the four ordinary `--no-restore` .NET test projects. Source formatting is kept reviewable with `git diff --check` before commits instead of the unusable repository-wide line-ending gate. Fast does not restore/install packages, run historical Web checks or download a browser.
 
 Before delivery, run:
 
@@ -42,7 +42,7 @@ Before delivery, run:
 pwsh ./scripts/verify.ps1 -Mode Full
 ```
 
-Full performs Release build/tests, app-project-only publish, ZIP creation, content checks and secret scan, then Web Playwright against local fixture and strict production-subpath previews with fake HTTP. It records console errors/warnings, 1440×900 light/dark, 1024×768 light, keyboard, responsive, asset-path, favicon, cache/security-header and missing-asset evidence. A solution-level `dotnet publish` is prohibited.
+Full is the MAUI-only release gate. It does not repeat Fast: it performs the Release solution build, the same four ordinary Release test projects, app-project-only self-contained publish, ZIP creation, required-runtime/content checks and secret scan. It does not run `dotnet format`, historical Web typecheck/unit/build or Playwright. A solution-level `dotnet publish` remains prohibited.
 
 Run Live only with explicit authorization and complete isolated configuration:
 

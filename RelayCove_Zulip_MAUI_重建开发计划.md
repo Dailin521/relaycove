@@ -1,7 +1,7 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：第一版 MAUI 开发周期已于 2026-08-24 结束，Stage 22M 至 Stage 30 均已进入 `main`；首个 Windows x64 交付已按 `2.0.0-alpha.1` 正式发布。第二版进入 MAUI-only 优化规划，活动计划为 `docs/ai/tasks/2026-08-25-v2-optimization-plan.md`。Stage 21 的最终 MAUI UI 人工密码登录、安装器/签名和干净 Windows 11 VM 门禁仍保留，不因正式发布而误报完成
-目标版本：`2.0.0-alpha.1`
+文档状态：第一版 MAUI 开发周期已于 2026-08-24 结束，Stage 22M 至 Stage 30 均已进入 `main`；首个 Windows x64 交付已按 `2.0.0-alpha.1` 正式发布。第二版进入 MAUI-only 优化规划，Stage 31–36 的已交付增量正在收口为 `2.1.0` 正式版本，活动计划为 `docs/ai/tasks/2026-08-25-v2-optimization-plan.md`。Stage 21 的最终 MAUI UI 人工密码登录、安装器/签名和干净 Windows 11 VM 门禁仍保留，不因正式发布而误报完成
+目标版本：`2.1.0`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
 最后更新：2026-08-25
@@ -153,7 +153,7 @@ RelayCove.App
 
 MAUI UI 只依赖 `IClientSession`。所有 register、历史、实时事件、发送对账和 SQLite 写入通过单一 mutation lane；UI 线程不执行数据库 I/O。Web 使用独立的 TypeScript API/session、纯 reducer/store 和 React 投影，不复用 .NET UI runtime；两端只共享书面合同和验收输入。Web 当前不引入 SQLite/IndexedDB/Service Worker，持久化仅限经确认的凭据与非敏感外观偏好。
 
-Windows 应用标识固定为 `com.relaycove.client`。MAUI/Windows 资源元数据只接受数字版 `ApplicationDisplayVersion`，因此资源显示版本使用 `2.0.0`，程序集 `InformationalVersion` 保留完整版本字符串 `2.0.0-alpha.1`；ZIP 文件名也使用该完整版本。
+Windows 应用标识固定为 `com.relaycove.client`。MAUI/Windows 资源元数据只接受数字版 `ApplicationDisplayVersion`，因此资源显示版本和程序集 `InformationalVersion` 统一使用 `2.1.0`；ZIP 文件名也使用该完整版本。
 
 ## 5. 冻结公共契约
 
@@ -478,7 +478,7 @@ Stage 35 将 MAUI 图片附件在消息气泡中的呈现收敛为单一受控�
 pwsh ./scripts/verify.ps1 -Mode Fast
 ```
 
-执行 .NET 格式/静态检查、Debug build、四个普通 xUnit 工程（Core、Zulip.Client、Data、App），以及 Web typecheck、unit 和 production build。NuGet assets、npm 依赖和 Chromium 必须在单独 bootstrap 中显式预置；Fast 只走 `--no-restore` .NET 命令。Web 构建检查无运行时 CDN且不含开发 fixture。Fast 不得恢复/安装依赖、下载浏览器、连接外部网络、使用真实凭据或运行 `RelayCove.Zulip.LiveTests`。
+执行 Debug build 和四个普通 xUnit 工程（Core、Zulip.Client、Data、App）。NuGet assets 必须在单独 bootstrap 中显式预置；Fast 只走 `--no-restore` .NET 命令。格式通过提交前 `git diff --check` 控制，不再运行无法落地的全仓库行尾格式门禁。Fast 不得恢复/安装依赖、运行历史 Web 检查、连接外部网络、使用真实凭据或运行 `RelayCove.Zulip.LiveTests`。
 
 ### 11.2 Full
 
@@ -486,7 +486,7 @@ pwsh ./scripts/verify.ps1 -Mode Fast
 pwsh ./scripts/verify.ps1 -Mode Full
 ```
 
-执行 Fast、Release build、同四个普通 xUnit 工程的 Release 测试、仅 MAUI app 项目 publish、ZIP 内容检查、icon/native runtime 检查和秘密扫描，并在 E2E 专用本地构建上运行 Web Playwright。`RelayCove.Zulip.LiveTests` 不属于 Full。Playwright 只访问 `127.0.0.1` 和被拦截的 fake HTTP；禁止对 solution 执行 `dotnet publish`。
+Full 不重复 Fast；它执行 Release build、同四个普通 xUnit 工程的 Release 测试、仅 MAUI app 项目 publish、ZIP 内容检查、icon/native runtime 检查和秘密扫描。历史 Web typecheck/unit/build/Playwright 不属于当前 MAUI 发布流程，`RelayCove.Zulip.LiveTests` 也不属于 Full。禁止对 solution 执行 `dotnet publish`。
 
 每个交付快照另执行 `dotnet list RelayCove.sln package --vulnerable --include-transitive` 并保存结果；任何已知漏洞都阻断交付。该检查依赖 NuGet 在线公告，不伪装成离线 Fast 门禁。
 
@@ -499,7 +499,7 @@ RuntimeIdentifierOverride=win-x64
 WindowsPackageType=None
 WindowsAppSDKSelfContained=true
 self-contained=true
-artifact: RelayCove-2.0.0-alpha.1-win-x64.zip
+artifact: RelayCove-2.1.0-win-x64.zip
 ```
 
 ### 11.3 Live
@@ -542,7 +542,7 @@ pwsh ./scripts/verify.ps1 -Mode Live
 6. 相同用户重新认证后恢复缓存。
 7. 显式清缓存后账号目录精确删除。
 
-ZIP 不得包含 API key、密码、Live 环境变量、SQLite 数据库、日志、测试夹具秘密或旧产品素材。首版只生成 unsigned 正式发布 ZIP，不创建 MSIX、安装器、签名或自动更新。
+ZIP 不得包含 API key、密码、Live 环境变量、SQLite 数据库、日志、测试夹具秘密或旧产品素材。V2.1 继续只生成 unsigned 正式发布 ZIP，不创建 MSIX、安装器、签名或自动更新。
 
 ## 14. 风险与控制
 
