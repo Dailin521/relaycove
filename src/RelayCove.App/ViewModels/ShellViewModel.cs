@@ -3611,7 +3611,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     partial void OnTaskbarFlashEnabledChanged(bool value)
     {
         SaveNotificationPreferences();
-        if (!value) _appNotificationService.StopTaskbarFlash();
+        if (!value)
+        {
+            _appNotificationService.StopTaskbarFlash();
+            _appNotificationService.StopTrayFlash();
+        }
     }
 
     partial void OnTaskbarBadgeEnabledChanged(bool value)
@@ -3625,7 +3629,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     partial void OnDoNotDisturbChanged(bool value)
     {
         SaveNotificationPreferences();
-        if (value) _appNotificationService.StopTaskbarFlash();
+        if (value)
+        {
+            _appNotificationService.StopTaskbarFlash();
+            _appNotificationService.StopTrayFlash();
+        }
     }
 
     partial void OnUnavailableFeatureMessageChanged(string? value) =>
@@ -4193,14 +4201,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             ? CreateNotificationPreview(message)
             : "收到一条新消息";
 
+        var notification = new AppMessageNotification(
+            message.Conversation.CanonicalKey,
+            title,
+            body,
+            message.SenderAvatarUrl ??
+            _projectedState.Users.GetValueOrDefault(message.SenderId)?.AvatarUrl);
+        _appNotificationService.UpdateTrayPreview(notification);
         if (SystemNotificationsEnabled)
         {
-            _appNotificationService.ShowMessageNotification(new AppMessageNotification(
-                message.Conversation.CanonicalKey,
-                title,
-                body,
-                message.SenderAvatarUrl ??
-                _projectedState.Users.GetValueOrDefault(message.SenderId)?.AvatarUrl));
+            _appNotificationService.ShowMessageNotification(notification);
         }
         if (TaskbarFlashEnabled) _appNotificationService.FlashTaskbar();
     }
@@ -5572,6 +5582,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             : unread.Total > 99
                 ? "99+"
                 : unread.Total > 0 ? unread.Total.ToString() : string.Empty;
+        _appNotificationService.UpdateTrayUnread(unread.Total, unread.IsTruncated);
         SynchronizeTaskbarBadge(unread);
         if (!HasNavigationUnread) _appNotificationService.StopTaskbarFlash();
     }

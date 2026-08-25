@@ -17,11 +17,15 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     private readonly INotificationAvatarFileStore _notificationAvatarFileStore;
     private readonly IUiDispatcher _dispatcher;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private WindowsTrayIconController? _trayIconController;
     private Window? _window;
     private AppNotificationManager? _manager;
     private nint _windowHandle;
     private int _pendingUnreadCount;
     private bool _pendingUnreadIsTruncated;
+    private int _pendingTrayUnreadCount;
+    private bool _pendingTrayUnreadIsTruncated;
+    private long _trayPreviewGeneration;
     private bool _registered;
     private bool _disposed;
     private string _systemNotificationStatus = "等待窗口初始化。";
@@ -65,6 +69,47 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
             _manager.Setting != AppNotificationSetting.Enabled) return;
 
         _ = ShowMessageNotificationAsync(notification);
+    }
+
+    public void UpdateTrayPreview(AppMessageNotification notification)
+    {
+        ArgumentNullException.ThrowIfNull(notification);
+        if (_disposed) return;
+
+        var generation = Interlocked.Increment(ref _trayPreviewGeneration);
+        _trayIconController?.UpdatePreview(notification, null);
+        _ = UpdateTrayPreviewAvatarAsync(notification, generation);
+    }
+
+    private async Task UpdateTrayPreviewAvatarAsync(
+        AppMessageNotification notification,
+        long generation)
+    {
+        Uri? avatarUri = null;
+        if (!string.IsNullOrWhiteSpace(notification.SenderAvatarUrl))
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(3));
+            try
+            {
+                avatarUri = await _notificationAvatarFileStore.GetAvatarUriAsync(
+                    notification.SenderAvatarUrl,
+                    timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+            }
+            catch (Exception)
+            {
+                avatarUri = null;
+            }
+        }
+
+        _dispatcher.Dispatch(() =>
+        {
+            if (_disposed || generation != Interlocked.Read(ref _trayPreviewGeneration)) return;
+            _trayIconController?.UpdatePreview(notification, avatarUri);
+        });
     }
 
     private async Task ShowMessageNotificationAsync(AppMessageNotification notification)
@@ -120,6 +165,19 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     }
 
     internal static bool CanUseAvatarUri(Uri? avatarUri) => avatarUri is { IsFile: true };
+
+    public void UpdateTrayUnread(int count, bool isTruncated)
+    {
+        var previousCount = _pendingTrayUnreadCount;
+        _pendingTrayUnreadCount = Math.Max(0, count);
+        _pendingTrayUnreadIsTruncated = isTruncated;
+        if (_pendingTrayUnreadCount < previousCount ||
+            _pendingTrayUnreadCount == 0 && !_pendingTrayUnreadIsTruncated)
+        {
+            Interlocked.Increment(ref _trayPreviewGeneration);
+        }
+        _trayIconController?.UpdateUnread(_pendingTrayUnreadCount, _pendingTrayUnreadIsTruncated);
+    }
 
     public void UpdateUnreadBadge(int count, bool isTruncated)
     {
@@ -193,6 +251,7 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
             Timeout = 0
         };
         _ = FlashWindowEx(ref info);
+        _trayIconController?.StartFlashing();
     }
 
     public void StopTaskbarFlash()
@@ -209,12 +268,17 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
         _ = FlashWindowEx(ref info);
     }
 
+    public void StopTrayFlash() => _trayIconController?.StopFlashing();
+
     private void OnHandlerChanged(object? sender, EventArgs eventArgs) => TryInitializeNativeWindow();
 
     private void TryInitializeNativeWindow()
     {
         if (_disposed || _window?.Handler?.PlatformView is not Microsoft.UI.Xaml.Window nativeWindow) return;
         _windowHandle = WindowNative.GetWindowHandle(nativeWindow);
+        _trayIconController ??= new WindowsTrayIconController(ActivateTrayIcon);
+        _trayIconController.Attach(_windowHandle);
+        _trayIconController.UpdateUnread(_pendingTrayUnreadCount, _pendingTrayUnreadIsTruncated);
         UpdateUnreadBadge(_pendingUnreadCount, _pendingUnreadIsTruncated);
 #if DEBUG
         if (NativeShellPreviewSession.IsRequested)
@@ -273,6 +337,15 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
         StopTaskbarFlash();
     }
 
+    private void ActivateTrayIcon(string? conversationKey)
+    {
+        ActivateWindow();
+        if (string.IsNullOrWhiteSpace(conversationKey)) return;
+        NotificationActivated?.Invoke(
+            this,
+            new RelayCove.App.Services.AppNotificationActivatedEventArgs(conversationKey));
+    }
+
     private static string DescribeSetting(AppNotificationSetting setting) => setting switch
     {
         AppNotificationSetting.Enabled => "系统通知已接入；实际横幅仍受 Windows 通知设置控制。",
@@ -302,6 +375,8 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     private void DetachWindow()
     {
         StopTaskbarFlash();
+        _trayIconController?.Dispose();
+        _trayIconController = null;
         if (_window is not null)
         {
             _window.HandlerChanged -= OnHandlerChanged;

@@ -365,11 +365,13 @@ public sealed class ShellViewModelTests
         session.Publish();
 
         Assert.Equal((125, false), notifications.BadgeUpdates[^1]);
+        Assert.Equal((125, false), notifications.TrayUnreadUpdates[^1]);
         Assert.Empty(notifications.Notifications);
         Assert.Equal(0, notifications.FlashCalls);
 
         viewModel.TaskbarBadgeEnabled = false;
         Assert.Equal((0, false), notifications.BadgeUpdates[^1]);
+        Assert.Equal((125, false), notifications.TrayUnreadUpdates[^1]);
     }
 
     [Fact]
@@ -400,6 +402,7 @@ public sealed class ShellViewModelTests
             senderDisplayName: "Bea"));
 
         var notification = Assert.Single(notifications.Notifications);
+        Assert.Same(notification, Assert.Single(notifications.TrayPreviews));
         Assert.Equal(conversation.CanonicalKey, notification.ConversationKey);
         Assert.Equal("Bea", notification.Title);
         Assert.Equal("你好 第二行", notification.Body);
@@ -411,6 +414,39 @@ public sealed class ShellViewModelTests
         session.PublishRealtime(new ChatMessage(13, conversation, 8, "免打扰", DateTimeOffset.UnixEpoch));
 
         Assert.Single(notifications.Notifications);
+        Assert.Equal(1, notifications.FlashCalls);
+        Assert.True(notifications.StopTrayFlashCalls > 0);
+    }
+
+    [Fact]
+    public void RealtimeMessage_WhenSystemToastIsDisabled_StillUpdatesTrayPreview()
+    {
+        var conversation = new DirectMessage([8]);
+        var notifications = new FakeAppNotificationService();
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            Recent = [conversation],
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session, appNotificationService: notifications);
+        viewModel.SystemNotificationsEnabled = false;
+
+        session.PublishRealtime(new ChatMessage(
+            11,
+            conversation,
+            8,
+            "托盘摘要",
+            DateTimeOffset.UnixEpoch,
+            senderDisplayName: "Bea"));
+
+        Assert.Empty(notifications.Notifications);
+        var preview = Assert.Single(notifications.TrayPreviews);
+        Assert.Equal("Bea", preview.Title);
+        Assert.Equal("托盘摘要", preview.Body);
         Assert.Equal(1, notifications.FlashCalls);
     }
 
@@ -3129,15 +3165,21 @@ public sealed class ShellViewModelTests
         public string SystemNotificationStatus { get; set; } = "ready";
         public string TaskbarBadgeStatus { get; set; } = "badge ready";
         public List<AppMessageNotification> Notifications { get; } = [];
+        public List<AppMessageNotification> TrayPreviews { get; } = [];
         public List<(int Count, bool IsTruncated)> BadgeUpdates { get; } = [];
+        public List<(int Count, bool IsTruncated)> TrayUnreadUpdates { get; } = [];
         public int FlashCalls { get; private set; }
         public int StopFlashCalls { get; private set; }
+        public int StopTrayFlashCalls { get; private set; }
 
         public void Attach(Window window) { }
         public void ShowMessageNotification(AppMessageNotification notification) => Notifications.Add(notification);
+        public void UpdateTrayPreview(AppMessageNotification notification) => TrayPreviews.Add(notification);
+        public void UpdateTrayUnread(int count, bool isTruncated) => TrayUnreadUpdates.Add((count, isTruncated));
         public void UpdateUnreadBadge(int count, bool isTruncated) => BadgeUpdates.Add((count, isTruncated));
         public void FlashTaskbar() => FlashCalls++;
         public void StopTaskbarFlash() => StopFlashCalls++;
+        public void StopTrayFlash() => StopTrayFlashCalls++;
         public void Dispose() { }
         public void PublishStateChanged() => StateChanged?.Invoke(this, EventArgs.Empty);
         public void Activate(string conversationKey) =>

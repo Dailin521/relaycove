@@ -595,3 +595,5 @@ Stage 22W Slice 1/2/3 已由提交 `53a4f1a` 合并并推送至 `main`。2026-08
 - [MAUI SecureStorage](https://learn.microsoft.com/dotnet/maui/platform-integration/storage/secure-storage?view=net-maui-10.0)
 - [.NET 10 MAUI Windows unpackaged 发布](https://learn.microsoft.com/dotnet/maui/windows/deployment/publish-unpackaged-cli?view=net-maui-10.0)
 - [Zulip Flutter outbox 状态机](https://github.com/zulip/zulip-flutter/blob/main/lib/model/message.dart#L940-L1014)
+- [Windows notification area](https://learn.microsoft.com/windows/win32/shell/notification-area)
+- [`Shell_NotifyIconGetRect`](https://learn.microsoft.com/windows/win32/api/shellapi/nf-shellapi-shell_notifyicongetrect)

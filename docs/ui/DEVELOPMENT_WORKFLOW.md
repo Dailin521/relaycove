@@ -139,7 +139,7 @@
 - 会话搜索先投影本机连续部分匹配，再以 300 ms debounce 调用只读服务器搜索；所有响应必须携带查询 generation 与账号边界，分页按 message ID 合并且不得把同一会话的不同命中压成一行，旧查询/旧账号/取消响应失败关闭。历史命中只携带瞬时 message ID，不写入领域或缓存。
 - 未读数只从 Core `UnreadState` 投影；服务器确认成功前不乐观清零。
 - Core 历史加载不得自动标读。当前会话只有在 RelayCove HWND 是真实非最小化前台窗口、聊天面板可见、无模态遮罩、history generation 仍匹配且原生列表确认到达底部后，App 才能自动标读；生命周期激活需要延后复核真实前台，任务栏悬停必须两次失败关闭。请求携带 expected conversation，切换会话后必须 fail closed。
-- Windows 通知头像不得直接使用需要认证的 Realm URL；先走同 Realm 受控媒体读取，以不透明账号目录和账号/URL 哈希命名本机 PNG/JPEG 缓存，再把 file URI 交给通知 Builder；成功注销和清本机缓存必须删除该账号目录。任务栏数字在未打包窗口上必须以当前 HWND 可见结果为准，WinAppSDK identity badge 不可见时使用 `ITaskbarList3` overlay 投影同一权威数量。
+- Windows 通知头像不得直接使用需要认证的 Realm URL；先走同 Realm 受控媒体读取，以不透明账号目录和账号/URL 哈希命名本机 PNG/JPEG 缓存，再把 file URI 交给通知 Builder 或托盘预览；成功注销和清本机缓存必须删除该账号目录。任务栏数字与托盘预览数字只投影同一 Core 权威未读，不能本机递增；未打包窗口的任务栏数字以当前 HWND 可见结果为准，WinAppSDK identity badge 不可见时使用 `ITaskbarList3` overlay。托盘闪烁必须保留固定 notification-area 槽位，悬浮预览使用 no-activate 窗口并按 `Shell_NotifyIconGetRect` 与 DPI 定位；悬停/恢复不得接入标读路径。原生托盘窗口过程不得直接执行 MAUI/WinUI 激活或让托管异常越过非托管回调边界，恢复主窗口必须投递回 UI dispatcher 并失败关闭。
 - Composer 的当前 Windows 产品规则是 Enter 发送、Ctrl+Enter 换行；Windows adapter/handler 必须保护 IME 组合输入，并与可见提示和无障碍说明保持一致。
 - Windows Composer 要求插入光标在焦点保持期间持续按系统周期闪烁，但不得修改系统全局 caret timeout、注册表或用户闪烁速率。优先保留平台控件自己的 caret；不得叠加第二条自绘光标或用背景遮罩覆盖系统光标。只有在复现的平台缺陷无法用原生控件修复时，才另立任务评估自绘替代。
 - 光标变更必须分别验证首次点击空文本、CJK 文本开头/中间/末尾、换行、选区、切换会话后再次聚焦、发送清空后继续输入、IME 组合和超过系统 timeout 的持续闪烁。编译或初始两三次闪烁不能替代真实窗口验收。

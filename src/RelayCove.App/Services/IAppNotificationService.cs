@@ -9,7 +9,10 @@ public interface IAppNotificationService : IDisposable
     string TaskbarBadgeStatus { get; }
     void Attach(Window window);
     void ShowMessageNotification(AppMessageNotification notification);
+    void UpdateTrayPreview(AppMessageNotification notification);
+    void UpdateTrayUnread(int count, bool isTruncated);
     void UpdateUnreadBadge(int count, bool isTruncated);
     void FlashTaskbar();
     void StopTaskbarFlash();
+    void StopTrayFlash();
 }

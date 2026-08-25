@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Runtime.InteropServices;
 using RelayCove.App.Platforms.Windows;
 using RelayCove.App.Services;
 
@@ -44,5 +46,96 @@ public sealed class WindowsAppNotificationServiceTests
     public void CanUseAvatarUri_WhenUriVaries_AcceptsOnlyControlledLocalFiles(string value, bool expected)
     {
         Assert.Equal(expected, WindowsAppNotificationService.CanUseAvatarUri(new Uri(value)));
+    }
+
+    [Theory]
+    [InlineData(0, false, "RelayCove")]
+    [InlineData(1, false, "RelayCove · 1 条未读消息")]
+    [InlineData(120, false, "RelayCove · 99+ 条未读消息")]
+    [InlineData(0, true, "RelayCove · 有未读消息")]
+    public void TrayTooltip_WhenUnreadVaries_UsesAuthoritativeCount(
+        int count,
+        bool isTruncated,
+        string expected)
+    {
+        Assert.Equal(expected, WindowsTrayIconController.FormatTooltip(count, isTruncated));
+    }
+
+    [Theory]
+    [InlineData(360, 96, 360)]
+    [InlineData(360, 144, 540)]
+    [InlineData(112, 192, 224)]
+    public void TrayPreviewScale_WhenDpiVaries_PreservesDipSize(int dip, uint dpi, int expected) =>
+        Assert.Equal(expected, WindowsTrayIconController.ScaleDipToPixels(dip, dpi));
+
+    [Fact]
+    public void TrayCallback_WhenPlatformActionThrows_DoesNotEscapeNativeBoundary()
+    {
+        var invoked = false;
+
+        var succeeded = WindowsTrayIconController.TryInvokeCallback(() =>
+        {
+            invoked = true;
+            throw new InvalidOperationException("simulated tray activation failure");
+        });
+
+        Assert.True(invoked);
+        Assert.False(succeeded);
+    }
+
+    [Theory]
+    [InlineData(0x0406)]
+    [InlineData(0x0200)]
+    public void TrayHover_WhenShellUsesPopupOrMouseMove_RequestsPreview(uint notification) =>
+        Assert.True(WindowsTrayIconController.IsPreviewOpenCallback(notification));
+
+    [Fact]
+    public void TrayIconRectangleInterop_WhenDeclared_UsesExactShellExportName()
+    {
+        var method = typeof(WindowsTrayIconController).GetMethod(
+            "ShellNotifyIconGetRect",
+            BindingFlags.NonPublic | BindingFlags.Static);
+        var attribute = method?.GetCustomAttribute<DllImportAttribute>();
+
+        Assert.NotNull(attribute);
+        Assert.Equal("Shell_NotifyIconGetRect", attribute.EntryPoint);
+        Assert.True(attribute.ExactSpelling);
+    }
+
+    [Theory]
+    [InlineData(0, false, false)]
+    [InlineData(0, true, true)]
+    [InlineData(1, false, true)]
+    public void TrayPreview_WhenUnreadAuthorityVaries_ShowsOnlyForUnread(
+        int count,
+        bool isTruncated,
+        bool expected) =>
+        Assert.Equal(expected, WindowsTrayIconController.ShouldShowPreview(count, isTruncated));
+
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(false, false, false)]
+    public void TrayPreviewVisibility_WhenMouseMoveRepeats_DoesNotReopenVisibleCard(
+        bool requestedVisible,
+        bool currentlyVisible,
+        bool expected) =>
+        Assert.Equal(
+            expected,
+            WindowsTrayIconController.ShouldApplyPreviewVisibility(requestedVisible, currentlyVisible));
+
+    [Theory]
+    [InlineData(true, "dm:8")]
+    [InlineData(false, null)]
+    public void TrayActivation_WhenClicked_RoutesOnlyUnreadPreviewConversation(
+        bool hasUnread,
+        string? expected)
+    {
+        var notification = new AppMessageNotification("dm:8", "Bea", "hello");
+
+        Assert.Equal(
+            expected,
+            WindowsTrayIconController.ResolveActivationConversation(notification, hasUnread));
     }
 }

@@ -18,7 +18,7 @@
 - 冻结日期：2026-08-12
 - 目标视口：1440×900；补充检查 1024×768
 - 历史原型（只读）：[RelayCove-UI-Playground.html](baselines/chat-ui-v1/RelayCove-UI-Playground.html)；日常 Web 验收不再使用此入口
-- 当前状态：[Stage 35 图片消息纯预览与右键下载](../ai/tasks/2026-08-25-stage-35-image-preview-context-download.md)已通过用户 Visual Studio 人工确认；[Stage 34 reaction 表情面板定位](../ai/tasks/2026-08-25-stage-34-reaction-picker-anchor.md)与[Stage 32 MAUI 收藏消息入口](../ai/tasks/2026-08-25-stage-32-saved-messages-entry.md)的精确锚点修正仍待最终确认。[Stage 33 reaction 按钮裁切](../ai/tasks/2026-08-25-stage-33-reaction-button-clipping.md)已确认修复。父计划为[第二版（V2）优化计划](../ai/tasks/2026-08-25-v2-optimization-plan.md)。
+- 当前状态：[Stage 36 Windows 系统托盘闪烁与悬浮预览](../ai/tasks/2026-08-25-stage-36-windows-system-tray-attention.md)已通过用户 Visual Studio 人工确认并获交付授权；Stage 32–35 已随 `main@7df99da` 交付，其中[Stage 34 reaction 表情面板定位](../ai/tasks/2026-08-25-stage-34-reaction-picker-anchor.md)与[Stage 32 MAUI 收藏消息入口](../ai/tasks/2026-08-25-stage-32-saved-messages-entry.md)的最终精确位置仍待确认。父计划为[第二版（V2）优化计划](../ai/tasks/2026-08-25-v2-optimization-plan.md)。
 
 ## 重要边界
 
