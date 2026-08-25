@@ -16,7 +16,7 @@ Updated: 2026-08-24
 
 - **Active**：无。第一版 MAUI 开发周期已结束，后续需求从新的活动任务开始。
 - **Latest completed**：Stage 29 完整 Unicode 表情目录已随 `main@a56e8e9` 交付；Stage 30 消息气泡与搜索尾部修正已随 `main@57c8145` 交付。
-- **Release closure**：`2026-08-24-v2-alpha1-release.md` 记录 `v2.0.0-alpha.1` Windows x64 预发布包、校验值和仍未关闭的外部门禁。
+- **Release closure**：`2026-08-24-v2-alpha1-release.md` 记录 `v2.0.0-alpha.1` Windows x64 正式 GitHub Release、校验值和仍未关闭的外部门禁。
 - **Earlier completed**：Stage 26 引用显示修复已随 `main@a22b05b` 提交并推送；Stage 25 采用统一私聊/私有群聊模型，其经授权的 Realm 频道归档事实仍只以该任务记录为准。
 - **Earlier completed**：Stage 24.10 已随 `main@3b6f814` 提交并推送；其工作日志仍保留当时实际记录的验证边界，不补写未经记录的人工结果。
 - **Earlier completed**：Stage 24.8 与 Stage 24.9 已随 `main@faa5a5e` 提交并推送。

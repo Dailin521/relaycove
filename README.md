@@ -2,13 +2,13 @@
 
 RelayCove 是一个直接连接既有 Zulip Realm 的 Windows 原生 .NET MAUI 客户端。现有 Zulip 官方 Web 保留不动；RelayCove 不包含自研聊天服务端、代理、BFF 或第二套消息后端。仓库中的早期 `RelayCove.Web` 仅保留为历史实现证据，不再是后续产品交付目标。
 
-首个 MAUI 版本周期已经结束，当前预发布版本为 `2.0.0-alpha.1`，目标平台为 Windows 11 x64。仓库锁定 .NET SDK `10.0.400`、MAUI `10.0.20` 和 Windows `win-x64`。
+首个 MAUI 版本周期已经结束，当前正式 GitHub Release 为 `2.0.0-alpha.1`，目标平台为 Windows 11 x64。仓库锁定 .NET SDK `10.0.400`、MAUI `10.0.20` 和 Windows `win-x64`。
 
 ## 下载
 
 从 [GitHub Releases](https://github.com/Dailin521/relaycove/releases) 下载 `RelayCove-2.0.0-alpha.1-win-x64.zip` 和对应 `.sha256` 文件。校验后解压并运行 `RelayCove.App.exe`。
 
-这是未签名、无安装器的预发布 ZIP；Windows 可能显示 SmartScreen 提示。它不包含后台推送、自动更新、MSIX 或代码签名，干净 Windows 11 VM 验收仍是独立门禁。
+这是未签名、无安装器的正式发布 ZIP；Windows 可能显示 SmartScreen 提示。它不包含后台推送、自动更新、MSIX 或代码签名，干净 Windows 11 VM 验收仍是独立门禁。
 
 ## 冻结范围
 

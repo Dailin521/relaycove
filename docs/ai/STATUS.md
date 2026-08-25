@@ -1,11 +1,11 @@
 # RelayCove Status — first MAUI release cycle complete
 
 Updated: 2026-08-25
-Integration basis: Stage 30 delivery `main@57c8145`; first MAUI prerelease candidate and strict Release-XamlC corrections `v2.0.0-alpha.1@83eccf0`
+Integration basis: Stage 30 delivery `main@57c8145`; first MAUI release candidate and strict Release-XamlC corrections `v2.0.0-alpha.1@83eccf0`
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: the first MAUI development cycle through Stage 30 is complete. `v2.0.0-alpha.1` was published from `83eccf04a114defc9fc479f447d30709fb2d3807` as a Windows 11 x64 GitHub prerelease because signing, installer and clean-VM acceptance remain open. Stage 25 alone performed authorized production Realm writes to archive every existing active channel; Stage 29 used only the public static Zulip 12.1 catalog, and Stage 30 performed no authenticated read or Realm write. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
+Current delivery: the first MAUI development cycle through Stage 30 is complete. `v2.0.0-alpha.1` was published from `83eccf04a114defc9fc479f447d30709fb2d3807` as the Latest Windows 11 x64 GitHub Release. It is not a draft or prerelease; signing, installer and clean-VM acceptance remain open. Stage 25 alone performed authorized production Realm writes to archive every existing active channel; Stage 29 used only the public static Zulip 12.1 catalog, and Stage 30 performed no authenticated read or Realm write. Stage 23's isolated three-scenario Live gate remains historical evidence and was not rerun.
 
-## First MAUI prerelease — 2026-08-25
+## First MAUI release — 2026-08-25
 
 - Version/tag: [`v2.0.0-alpha.1`](https://github.com/Dailin521/relaycove/releases/tag/v2.0.0-alpha.1), published from `83eccf04a114defc9fc479f447d30709fb2d3807`; asset: `RelayCove-2.0.0-alpha.1-win-x64.zip` plus its SHA-256 manifest.
 - Product scope is MAUI-only going forward. `RelayCove.Web` remains historical source and is not part of this Windows release asset.

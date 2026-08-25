@@ -1,11 +1,11 @@
-# RelayCove 2.0.0-alpha.1 — first MAUI prerelease
+# RelayCove 2.0.0-alpha.1 — first MAUI release
 
-Status: completed; GitHub prerelease published 2026-08-25
+Status: completed; formal GitHub Release published 2026-08-25
 
 ## Purpose
 
 - Close the first MAUI development cycle after Stage 30.
-- Publish the repository's existing `2.0.0-alpha.1` version as a Windows 11 x64 GitHub prerelease.
+- Publish the repository's existing `2.0.0-alpha.1` version as a formal Windows 11 x64 GitHub Release.
 - Keep the historical `v1.0.0-rc.25` release/tag intact.
 
 ## Release scope
@@ -44,8 +44,8 @@ Status: completed; GitHub prerelease published 2026-08-25
 
 ## Publication evidence
 
-- Independent release-boundary review found no P0/P1/P2 after the clean rebuild. It confirmed that `HEAD`, ProductVersion, ZIP contents, manifest, release notes and prerelease boundaries all identify the same candidate and contain no tracked-worktree drift.
+- Independent release-boundary review found no P0/P1/P2 after the clean rebuild. It confirmed that `HEAD`, ProductVersion, ZIP contents, manifest, release notes and release boundaries all identify the same candidate and contain no tracked-worktree drift.
 - Release candidate: `83eccf04a114defc9fc479f447d30709fb2d3807` (`chore: prepare first MAUI prerelease`).
 - Annotated tag: `v2.0.0-alpha.1`; remote peeled tag target: `83eccf04a114defc9fc479f447d30709fb2d3807`.
-- GitHub prerelease: https://github.com/Dailin521/relaycove/releases/tag/v2.0.0-alpha.1. It is published, not a draft, and contains the ZIP plus SHA-256 manifest.
+- GitHub Release: https://github.com/Dailin521/relaycove/releases/tag/v2.0.0-alpha.1. It is published, not a draft or prerelease, is marked Latest, and contains the ZIP plus SHA-256 manifest.
 - `origin/main`, the remote tag and both uploaded assets were verified after publication. This evidence-only documentation update intentionally follows the tagged binary-source commit.

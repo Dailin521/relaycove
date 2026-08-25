@@ -1,6 +1,6 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：第一版 MAUI 开发周期已于 2026-08-24 结束，Stage 22M 至 Stage 30 均已进入 `main`；首个 Windows x64 交付按 `2.0.0-alpha.1` 预发布。Stage 21 的最终 MAUI UI 人工密码登录、安装器/签名和干净 Windows 11 VM 门禁仍保留，不因预发布而误报完成
+文档状态：第一版 MAUI 开发周期已于 2026-08-24 结束，Stage 22M 至 Stage 30 均已进入 `main`；首个 Windows x64 交付已按 `2.0.0-alpha.1` 正式发布。Stage 21 的最终 MAUI UI 人工密码登录、安装器/签名和干净 Windows 11 VM 门禁仍保留，不因正式发布而误报完成
 目标版本：`2.0.0-alpha.1`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`
@@ -153,7 +153,7 @@ RelayCove.App
 
 MAUI UI 只依赖 `IClientSession`。所有 register、历史、实时事件、发送对账和 SQLite 写入通过单一 mutation lane；UI 线程不执行数据库 I/O。Web 使用独立的 TypeScript API/session、纯 reducer/store 和 React 投影，不复用 .NET UI runtime；两端只共享书面合同和验收输入。Web 当前不引入 SQLite/IndexedDB/Service Worker，持久化仅限经确认的凭据与非敏感外观偏好。
 
-Windows 应用标识固定为 `com.relaycove.client`。MAUI/Windows 资源元数据只接受数字版 `ApplicationDisplayVersion`，因此资源显示版本使用 `2.0.0`，程序集 `InformationalVersion` 保留完整预发布语义 `2.0.0-alpha.1`；ZIP 文件名也使用完整预发布版本。
+Windows 应用标识固定为 `com.relaycove.client`。MAUI/Windows 资源元数据只接受数字版 `ApplicationDisplayVersion`，因此资源显示版本使用 `2.0.0`，程序集 `InformationalVersion` 保留完整版本字符串 `2.0.0-alpha.1`；ZIP 文件名也使用该完整版本。
 
 ## 5. 冻结公共契约
 
@@ -516,7 +516,7 @@ pwsh ./scripts/verify.ps1 -Mode Live
 6. 相同用户重新认证后恢复缓存。
 7. 显式清缓存后账号目录精确删除。
 
-ZIP 不得包含 API key、密码、Live 环境变量、SQLite 数据库、日志、测试夹具秘密或旧产品素材。只生成 unsigned 内部预发布 ZIP，不创建 MSIX、安装器、签名或自动更新。
+ZIP 不得包含 API key、密码、Live 环境变量、SQLite 数据库、日志、测试夹具秘密或旧产品素材。首版只生成 unsigned 正式发布 ZIP，不创建 MSIX、安装器、签名或自动更新。
 
 ## 14. 风险与控制
 
