@@ -123,6 +123,8 @@ public sealed class MessageItem : ObservableObject
     public bool HasBody => !string.IsNullOrWhiteSpace(Body);
     public IReadOnlyList<MessageAttachmentItem> Attachments => _attachments;
     public bool HasAttachments => Attachments.Count > 0;
+    public bool IsImageOnly => !HasBody && !HasQuote &&
+        Attachments.Count > 0 && Attachments.All(attachment => attachment.IsImage);
     public bool HasReactions => Reactions.Count > 0;
     public bool HasMutationState => !string.IsNullOrWhiteSpace(MutationState);
     public bool HasDeliveryState => !string.IsNullOrWhiteSpace(DeliveryState);
@@ -225,6 +227,7 @@ public sealed class MessageItem : ObservableObject
             OnPropertyChanged(nameof(HasBody));
             OnPropertyChanged(nameof(HasQuote));
             OnPropertyChanged(nameof(HasAttachments));
+            OnPropertyChanged(nameof(IsImageOnly));
         }
     }
 

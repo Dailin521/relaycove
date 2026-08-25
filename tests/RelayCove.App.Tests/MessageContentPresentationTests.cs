@@ -109,4 +109,38 @@ public sealed class MessageContentPresentationTests
         Assert.Equal("🫠", message.Body);
         Assert.Contains(raw, message.AccessibleLabel, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void MessageItem_WhenContentIsOnlyImages_UsesImageOnlyPresentation()
+    {
+        var realm = RealmEndpoint.Parse("https://chat.example.test/");
+        var imageOnly = new MessageItem(
+            "message-1",
+            1,
+            2,
+            "Ada",
+            "![shot](/user_uploads/1/shot.png)",
+            "10:00",
+            realm: realm);
+        var imageWithText = new MessageItem(
+            "message-2",
+            2,
+            2,
+            "Ada",
+            "caption\n![shot](/user_uploads/1/shot.png)",
+            "10:01",
+            realm: realm);
+        var imageWithFile = new MessageItem(
+            "message-3",
+            3,
+            2,
+            "Ada",
+            "![shot](/user_uploads/1/shot.png)\n[notes](/user_uploads/1/notes.txt)",
+            "10:02",
+            realm: realm);
+
+        Assert.True(imageOnly.IsImageOnly);
+        Assert.False(imageWithText.IsImageOnly);
+        Assert.False(imageWithFile.IsImageOnly);
+    }
 }

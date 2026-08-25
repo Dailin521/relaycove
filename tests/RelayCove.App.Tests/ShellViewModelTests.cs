@@ -52,6 +52,66 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task ShowSaved_WhenOpenedFromAccountMenu_UsesWorkspaceContentAndClosesMenu()
+    {
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 10)
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.UpdateViewport(640);
+        viewModel.ToggleAccountMenuCommand.Execute(null);
+
+        await ((IAsyncRelayCommand)viewModel.ShowSavedCommand).ExecuteAsync(null);
+
+        Assert.False(viewModel.IsAccountMenuOpen);
+        Assert.True(viewModel.IsSavedSection);
+        Assert.True(viewModel.IsConversationWorkspaceSection);
+        Assert.False(viewModel.IsConversationPaneVisible);
+        Assert.True(viewModel.IsWorkspaceContentPaneVisible);
+    }
+
+    [Fact]
+    public async Task OpenSavedMessage_WhenAroundPageLoads_QueuesExactMessageAnchor()
+    {
+        var conversation = new DirectMessage([20]);
+        var anchor = new ChatMessage(75, conversation, 20, "saved", DateTimeOffset.UnixEpoch);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 10),
+            CurrentUserId = 10,
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile> { [20] = new UserProfile(20, "Bea") },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        session.OpenMessageAction = (openedConversation, messageId, _) =>
+        {
+            session.Selected = openedConversation;
+            session.HistoryState = new ConversationHistoryState(openedConversation, 3, false, false, false, 51, null);
+            session.StateValue = session.StateValue with
+            {
+                Messages = new Dictionary<long, ChatMessage>
+                {
+                    [74] = new ChatMessage(74, conversation, 20, "before", DateTimeOffset.UnixEpoch),
+                    [anchor.Id] = anchor,
+                    [76] = new ChatMessage(76, conversation, 20, "after", DateTimeOffset.UnixEpoch)
+                }
+            };
+            session.Publish();
+            return Task.CompletedTask;
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await ((IAsyncRelayCommand<SavedMessageItem?>)viewModel.OpenSavedMessageCommand).ExecuteAsync(
+            new SavedMessageItem(anchor.Id, conversation, "Bea", anchor.Content, "13:47"));
+
+        var request = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(anchor.Id, request.TargetMessageId);
+        Assert.Equal(MessageScrollReason.MessageAnchor, request.Reason);
+        Assert.True(viewModel.IsMessagesSection);
+    }
+
+    [Fact]
     public async Task LoadOlderSearch_WhenTwoServerPagesExist_KeepsBothPagesVisible()
     {
         var calls = 0;
@@ -1487,6 +1547,34 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task OpenReactionPickerAtCommand_WhenInvoked_StoresTheQuickActionAnchor()
+    {
+        var conversation = new DirectMessage([8]);
+        var message = new ChatMessage(51, conversation, 8, "hello", DateTimeOffset.UnixEpoch, isRead: true);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            Recent = [conversation],
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage> { [message.Id] = message },
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.ActivateConversation(Assert.Single(viewModel.Conversations));
+        await WaitUntilAsync(() => viewModel.CanCompose);
+        var item = Assert.Single(viewModel.Messages);
+
+        viewModel.OpenReactionPickerAtCommand.Execute(new ReactionPickerRequest(item, 642.5d, 418d));
+
+        Assert.True(viewModel.IsReactionPickerOpen);
+        Assert.Same(item, viewModel.ActiveMessageAction);
+        Assert.Equal(642.5d, viewModel.ReactionPickerAnchorX);
+        Assert.Equal(418d, viewModel.ReactionPickerAnchorY);
+    }
+
+    [Fact]
     public void EmojiSelection_WhenKeyboardIndexChanges_UpdatesOnlyTheCustomPickerState()
     {
         using var viewModel = CreateViewModel(new FakeSession());
@@ -1712,6 +1800,32 @@ public sealed class ShellViewModelTests
         Assert.Same(message, viewModel.ActiveMessageAction);
         Assert.Equal(812.5d, viewModel.MessageMenuAnchorX);
         Assert.Equal(244d, viewModel.MessageMenuAnchorY);
+    }
+
+    [Fact]
+    public void OpenImageAttachmentMenuAtCommand_WhenInvoked_StoresImageAndKeepsNormalMessageActions()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        var message = new MessageItem("message-1", 1, 7, "Ada", "![preview](/user_uploads/preview.png)", "10:00");
+        var image = new MessageAttachmentItem(
+            "image",
+            "preview.png",
+            "https://chat.example.test/user_uploads/preview.png");
+
+        viewModel.OpenImageAttachmentMenuAtCommand.Execute(
+            new ImageAttachmentMenuRequest(message, image, 560d, 320d));
+
+        Assert.True(viewModel.IsMessageMenuOpen);
+        Assert.Same(message, viewModel.ActiveMessageAction);
+        Assert.Same(image, viewModel.ActiveMessageAttachment);
+        Assert.True(viewModel.HasActiveMessageAttachment);
+        Assert.Equal(560d, viewModel.MessageMenuAnchorX);
+        Assert.Equal(320d, viewModel.MessageMenuAnchorY);
+
+        viewModel.OpenMessageMenuAtCommand.Execute(new MessageMenuRequest(message, 400d, 200d));
+
+        Assert.Null(viewModel.ActiveMessageAttachment);
+        Assert.False(viewModel.HasActiveMessageAttachment);
     }
 
     [Fact]
@@ -2685,6 +2799,32 @@ public sealed class ShellViewModelTests
         Assert.Equal("guide.pdf", save.FileName);
         Assert.Equal([4, 5, 6], save.Content);
         Assert.Equal("已保存 guide.pdf。", viewModel.MediaActionStatus);
+    }
+
+    [Fact]
+    public async Task DownloadAttachmentCommand_WhenStartedFromImageMenu_ClosesMenuBeforeSaving()
+    {
+        var media = new FakeRealmMediaService
+        {
+            FileResult = new RealmMediaResult([1, 2, 3], "image/png")
+        };
+        using var viewModel = CreateViewModel(
+            new FakeSession(),
+            realmMediaService: media,
+            fileSaveService: new FakeFileSaveService());
+        var message = new MessageItem("message-1", 1, 7, "Ada", "image", "10:00");
+        var image = new MessageAttachmentItem(
+            "image",
+            "preview.png",
+            "https://chat.example.test/user_uploads/preview.png");
+        viewModel.OpenImageAttachmentMenuAtCommand.Execute(
+            new ImageAttachmentMenuRequest(message, image, 560d, 320d));
+
+        await ((IAsyncRelayCommand)viewModel.DownloadAttachmentCommand).ExecuteAsync(image);
+
+        Assert.False(viewModel.IsMessageMenuOpen);
+        Assert.Null(viewModel.ActiveMessageAttachment);
+        Assert.Equal(1, media.FileCalls);
     }
 
     [Fact]

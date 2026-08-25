@@ -14,6 +14,8 @@ namespace RelayCove.App.Controls;
 
 public partial class MessageListView : ContentView
 {
+    private const double ReactionPickerWidth = 310d;
+    private const double ReactionPickerEdgeMargin = 12d;
     private const int MaximumScrollAttemptsPerLayout = 12;
     private ShellViewModel? _viewModel;
     private VisualElement? _messageMenuTrigger;
@@ -624,6 +626,27 @@ public partial class MessageListView : ContentView
         var index = FindMessageIndex(request.TargetMessageId);
         if (index < 0) return;
 
+        if (request.Reason == MessageScrollReason.MessageAnchor)
+        {
+            if (list.ContainerFromIndex(index) is WinUiFrameworkElement { IsLoaded: true, ActualHeight: > 0d } anchorContainer &&
+                IsTargetVisible(anchorContainer, scrollViewer))
+            {
+                _viewModel.AcknowledgeMessageScrollRequest(request);
+                ClearActiveScrollRequest();
+                return;
+            }
+
+            if (_scrollAttemptCount >= MaximumScrollAttemptsPerLayout)
+            {
+                SuspendScrollRetries(scrollViewer);
+                return;
+            }
+
+            _scrollAttemptCount++;
+            MessageCollection.ScrollTo(index, position: ScrollToPosition.Center, animate: false);
+            return;
+        }
+
         if (request.Reason is MessageScrollReason.RealtimeFollow or
             MessageScrollReason.ConversationActivated or
             MessageScrollReason.ConversationReactivated)
@@ -779,6 +802,22 @@ public partial class MessageListView : ContentView
         }
     }
 
+    private static bool IsTargetVisible(
+        WinUiFrameworkElement container,
+        WinUiScrollViewer scrollViewer)
+    {
+        try
+        {
+            var targetTop = container.TransformToVisual(scrollViewer).TransformPoint(new WinPoint(0, 0)).Y;
+            var targetBottom = targetTop + container.ActualHeight;
+            return targetBottom >= -2d && targetTop <= scrollViewer.ViewportHeight + 2d;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
     private void OnOpenMessageMenuClicked(object? sender, EventArgs eventArgs)
     {
         if (sender is not VisualElement { BindingContext: MessageItem message } trigger) return;
@@ -815,8 +854,46 @@ public partial class MessageListView : ContentView
     private void OnCopyMessageClicked(object? sender, EventArgs eventArgs) =>
         ExecuteMessageCommand(sender, _viewModel?.CopyMessageRawCommand);
 
-    private void OnOpenReactionPickerClicked(object? sender, EventArgs eventArgs) =>
-        ExecuteMessageCommand(sender, _viewModel?.OpenReactionPickerCommand);
+    private void OnOpenReactionPickerClicked(object? sender, EventArgs eventArgs)
+    {
+        if (sender is not VisualElement { BindingContext: MessageItem message } trigger) return;
+        var request = CreateReactionPickerRequest(trigger, message);
+        if (request is null) Execute(_viewModel?.OpenReactionPickerCommand, message);
+        else Execute(_viewModel?.OpenReactionPickerAtCommand, request);
+    }
+
+    private ReactionPickerRequest? CreateReactionPickerRequest(VisualElement trigger, MessageItem message)
+    {
+        var source = trigger.Handler?.PlatformView as WinUiFrameworkElement;
+        var host = Handler?.PlatformView as WinUiFrameworkElement;
+        var pageRoot = Application.Current?.Windows
+            .Select(window => window.Page?.Handler?.PlatformView)
+            .OfType<WinUiFrameworkElement>()
+            .FirstOrDefault();
+        if (source is null || host is null || pageRoot is null) return null;
+        try
+        {
+            var triggerTopLeft = source.TransformToVisual(pageRoot)
+                .TransformPoint(new WinPoint(0d, 0d));
+            var hostTopLeft = host.TransformToVisual(pageRoot)
+                .TransformPoint(new WinPoint(0d, 0d));
+            var minimumX = hostTopLeft.X + ReactionPickerEdgeMargin;
+            var maximumX = Math.Max(
+                minimumX,
+                hostTopLeft.X + host.ActualWidth - ReactionPickerWidth - ReactionPickerEdgeMargin);
+            var preferredX = message.IsOwn
+                ? triggerTopLeft.X + source.ActualWidth - ReactionPickerWidth
+                : triggerTopLeft.X;
+            return new ReactionPickerRequest(
+                message,
+                Math.Clamp(preferredX, minimumX, maximumX),
+                triggerTopLeft.Y + source.ActualHeight);
+        }
+        catch (InvalidOperationException)
+        {
+            return null;
+        }
+    }
 
     private void OnEditMessageClicked(object? sender, EventArgs eventArgs) =>
         ExecuteMessageCommand(sender, _viewModel?.OpenEditDialogCommand);

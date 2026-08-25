@@ -297,7 +297,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial bool IsReactionPickerOpen { get; set; }
 
     [ObservableProperty]
+    public partial double ReactionPickerAnchorX { get; set; }
+
+    [ObservableProperty]
+    public partial double ReactionPickerAnchorY { get; set; }
+
+    [ObservableProperty]
     public partial MessageItem? ActiveMessageAction { get; set; }
+
+    [ObservableProperty]
+    public partial MessageAttachmentItem? ActiveMessageAttachment { get; set; }
 
     [ObservableProperty]
     public partial bool IsMessageMenuOpen { get; set; }
@@ -662,13 +671,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool IsContactsSection => SelectedSection == ShellSection.Contacts;
     public bool IsSavedSection => SelectedSection == ShellSection.Saved;
     public bool IsSettingsSection => SelectedSection == ShellSection.Settings;
+    public bool IsConversationWorkspaceSection => IsMessagesSection || IsSavedSection;
     public bool IsWideLayout => LayoutMode == ShellLayoutMode.Wide;
     public bool IsCompactLayout => LayoutMode == ShellLayoutMode.Compact;
     public bool IsIntermediateLayout => LayoutMode == ShellLayoutMode.Compact && _viewportWidth <= IntermediateLayoutMaximum;
     public bool IsNarrowLayout => LayoutMode == ShellLayoutMode.Narrow;
     public bool IsNotNarrowLayout => !IsNarrowLayout;
     public bool IsConversationPaneVisible =>
-        IsMessagesSection && (!IsNarrowLayout || IsConversationListVisibleOnNarrow);
+        IsConversationWorkspaceSection && (!IsNarrowLayout || IsConversationListVisibleOnNarrow);
+    public bool IsWorkspaceContentPaneVisible =>
+        IsConversationWorkspaceSection && (!IsNarrowLayout || !IsConversationListVisibleOnNarrow);
     public bool IsChatPaneVisible =>
         IsMessagesSection && (!IsNarrowLayout || !IsConversationListVisibleOnNarrow);
     public bool IsInlineDetailsVisible => IsMessagesSection && IsWideLayout && IsDetailsOpen;
@@ -691,6 +703,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool HasLoginError => !string.IsNullOrWhiteSpace(LoginError);
     public bool HasAttachments => Attachments.Count > 0;
     public bool HasAttachmentError => !string.IsNullOrWhiteSpace(AttachmentError);
+    public bool HasActiveMessageAttachment => ActiveMessageAttachment?.IsImage == true;
     public bool HasMediaActionStatus => !string.IsNullOrWhiteSpace(MediaActionStatus);
     public bool HasMessageLoadError => !string.IsNullOrWhiteSpace(MessageLoadError);
     public bool HasTopicActionStatus => !string.IsNullOrWhiteSpace(TopicActionStatus);
@@ -1555,6 +1568,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         CloseTransientOverlays();
         SelectedSection = ShellSection.Saved;
+        if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
         IsDetailsOpen = false;
         await RefreshSavedAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -1695,8 +1709,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         if (message is null || !IsRelayCoveConversation(message.Conversation, _projectedState)) return;
         if (await ExecuteSessionActionAsync(() => _session.OpenMessageAsync(message.Conversation, message.MessageId)))
         {
+            ProjectLatestStateImmediately();
             SelectedSection = ShellSection.Messages;
             if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
+            QueueScrollToMessage(message.MessageId);
         }
     }
 
@@ -1945,6 +1961,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         CancellationToken cancellationToken)
     {
         if (attachment is null || IsMediaActionBusy) return;
+        if (IsMessageMenuOpen && Equals(attachment, ActiveMessageAttachment)) CloseMessageMenu();
         IsMediaActionBusy = true;
         MediaActionStatus = $"正在下载 {attachment.Name}…";
         try
@@ -2039,6 +2056,24 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             !double.IsFinite(request.AnchorX) || !double.IsFinite(request.AnchorY)) return;
         CloseTransientOverlays();
         ActiveMessageAction = request.Message;
+        ActiveMessageAttachment = null;
+        MessageMenuAnchorX = Math.Max(0d, request.AnchorX);
+        MessageMenuAnchorY = Math.Max(0d, request.AnchorY);
+        IsMessageMenuOpen = true;
+    }
+
+    [RelayCommand]
+    private void OpenImageAttachmentMenuAt(ImageAttachmentMenuRequest? request)
+    {
+        if (request?.Message.MessageId is null || request.Attachment.IsImage != true ||
+            !double.IsFinite(request.AnchorX) || !double.IsFinite(request.AnchorY))
+        {
+            return;
+        }
+
+        CloseTransientOverlays();
+        ActiveMessageAction = request.Message;
+        ActiveMessageAttachment = request.Attachment;
         MessageMenuAnchorX = Math.Max(0d, request.AnchorX);
         MessageMenuAnchorY = Math.Max(0d, request.AnchorY);
         IsMessageMenuOpen = true;
@@ -2265,6 +2300,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         IsMessageMenuOpen = false;
         ActiveMessageAction = null;
+        ActiveMessageAttachment = null;
         MessageActionFocusRequest++;
     }
 
@@ -2316,8 +2352,28 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         message ??= ActiveMessageAction;
         if (message?.CanMutate != true || !CanCompose) return;
+        var anchorX = IsMessageMenuOpen
+            ? MessageMenuAnchorX
+            : Math.Max(12d, _viewportWidth - 322d);
+        var anchorY = IsMessageMenuOpen ? MessageMenuAnchorY : 68d;
+        OpenReactionPickerAt(new ReactionPickerRequest(message, anchorX, anchorY));
+    }
+
+    [RelayCommand]
+    private void OpenReactionPickerAt(ReactionPickerRequest? request)
+    {
+        if (request?.Message.CanMutate != true ||
+            !CanCompose ||
+            !double.IsFinite(request.AnchorX) ||
+            !double.IsFinite(request.AnchorY))
+        {
+            return;
+        }
+
         CloseTransientOverlays();
-        ActiveMessageAction = message;
+        ActiveMessageAction = request.Message;
+        ReactionPickerAnchorX = Math.Max(0d, request.AnchorX);
+        ReactionPickerAnchorY = Math.Max(0d, request.AnchorY);
         IsReactionPickerOpen = true;
         SelectedReactionEmoji = null;
     }
@@ -3268,6 +3324,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ActiveImageAttachment = null;
         MediaActionStatus = null;
         ActiveMessageAction = null;
+        ActiveMessageAttachment = null;
     }
 
     private void CloseChannelMenuCore(bool restoreFocus)
@@ -3424,6 +3481,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     }
 
     partial void OnIsMessageMenuOpenChanged(bool value) => NotifyOverlayProperties();
+    partial void OnActiveMessageAttachmentChanged(MessageAttachmentItem? value) =>
+        OnPropertyChanged(nameof(HasActiveMessageAttachment));
     partial void OnIsChannelMenuOpenChanged(bool value) => NotifyOverlayProperties();
     partial void OnActiveChannelActionChanged(ChannelItem? value)
     {
@@ -3454,6 +3513,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsContactsSection));
         OnPropertyChanged(nameof(IsSavedSection));
         OnPropertyChanged(nameof(IsSettingsSection));
+        OnPropertyChanged(nameof(IsConversationWorkspaceSection));
         NotifyLayoutProperties();
         RequestAutoMarkDisplayedRead(_projectedState);
     }
@@ -5758,6 +5818,29 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             reason);
     }
 
+    private void QueueScrollToMessage(long messageId)
+    {
+        var selected = _session.SelectedConversation;
+        var history = _session.HistoryState;
+        if (selected is null ||
+            history.IsLoading ||
+            history.Error is not null ||
+            !string.Equals(history.Conversation?.CanonicalKey, selected.CanonicalKey, StringComparison.Ordinal) ||
+            Messages.All(message => message.MessageId != messageId))
+        {
+            return;
+        }
+
+        _pendingActivationScrollConversationKey = null;
+        _pendingActivationScrollReason = null;
+        PendingMessageScrollRequest = new MessageScrollRequest(
+            ++_messageScrollSequence,
+            selected.CanonicalKey,
+            history.Generation,
+            messageId,
+            MessageScrollReason.MessageAnchor);
+    }
+
     private void CancelActivationScrollForUserInteraction(ConversationKey conversation)
     {
         if (string.Equals(_pendingActivationScrollConversationKey, conversation.CanonicalKey, StringComparison.Ordinal))
@@ -5888,7 +5971,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         if (!IsMessageScrollRequestCurrent(request)) return;
         PendingMessageScrollRequest = null;
-        _isMessageViewportNearBottom = true;
+        _isMessageViewportNearBottom = request.Reason != MessageScrollReason.MessageAnchor;
         if (request.Reason == MessageScrollReason.ManualJumpToLatest)
         {
             NewMessageCount = 0;
@@ -5937,6 +6020,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsNarrowLayout));
         OnPropertyChanged(nameof(IsNotNarrowLayout));
         OnPropertyChanged(nameof(IsConversationPaneVisible));
+        OnPropertyChanged(nameof(IsWorkspaceContentPaneVisible));
         OnPropertyChanged(nameof(IsChatPaneVisible));
         OnPropertyChanged(nameof(IsInlineDetailsVisible));
         OnPropertyChanged(nameof(IsOverlayDetailsVisible));

@@ -232,6 +232,11 @@
                                                     </Setter.Value>
                                                 </Setter>
                                             </DataTrigger>
+                                            <DataTrigger TargetType="Border" Binding="{Binding IsImageOnly}" Value="True">
+                                                <Setter Property="Padding" Value="0" />
+                                                <Setter Property="Background" Value="Transparent" />
+                                                <Setter Property="StrokeThickness" Value="0" />
+                                            </DataTrigger>
                                         </Border.Triggers>
                                         <Border.StrokeShape><RoundRectangle CornerRadius="0,10,10,10" /></Border.StrokeShape>
                                         <VerticalStackLayout Spacing="6">
@@ -289,12 +294,19 @@
                                                                         Background="{StaticResource GroundBrush}"
                                                                         StrokeThickness="0">
                                                                     <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
+                                                                    <Border.Behaviors>
+                                                                        <windowsBehaviors:ImageAttachmentContextBehavior />
+                                                                    </Border.Behaviors>
                                                                     <Border.GestureRecognizers>
                                                                         <TapGestureRecognizer Tapped="OnImageTapped" CommandParameter="{Binding .}" />
                                                                     </Border.GestureRecognizers>
                                                                     <controls:RealmMediaImageView SourceUrl="{Binding SourceUrl}" Aspect="AspectFit" />
                                                                 </Border>
-                                                                <Grid Padding="9,7" ColumnDefinitions="40,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="9">
+                                                                <Grid Padding="9,7"
+                                                                      ColumnDefinitions="40,*,Auto"
+                                                                      RowDefinitions="Auto,Auto"
+                                                                      ColumnSpacing="9"
+                                                                      IsVisible="{Binding IsFile}">
                                                                     <Border Grid.RowSpan="2" WidthRequest="40" HeightRequest="40" Padding="9"
                                                                             Background="{StaticResource SurfaceSelectedBrush}" StrokeThickness="0">
                                                                         <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
@@ -321,17 +333,20 @@
                                                         AlignItems="Start">
                                                 <BindableLayout.ItemTemplate>
                                                     <DataTemplate x:DataType="viewModels:ReactionItem">
-                                                        <Button Text="{Binding ButtonLabel}"
-                                                                Style="{StaticResource ReactionButtonStyle}"
-                                                                Clicked="OnToggleReactionClicked"
-                                                                SemanticProperties.Description="{Binding AccessibleLabel}">
-                                                            <Button.Triggers>
-                                                                <DataTrigger TargetType="Button" Binding="{Binding CurrentUserReacted}" Value="True">
-                                                                    <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
-                                                                    <Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightOwnBubbleColor}, Dark={StaticResource DarkOwnBubbleColor}}" />
-                                                                </DataTrigger>
-                                                            </Button.Triggers>
-                                                        </Button>
+                                                        <Grid Padding="0,0,4,4">
+                                                            <Button Text="{Binding ButtonLabel}"
+                                                                    Margin="0"
+                                                                    Style="{StaticResource ReactionButtonStyle}"
+                                                                    Clicked="OnToggleReactionClicked"
+                                                                    SemanticProperties.Description="{Binding AccessibleLabel}">
+                                                                <Button.Triggers>
+                                                                    <DataTrigger TargetType="Button" Binding="{Binding CurrentUserReacted}" Value="True">
+                                                                        <Setter Property="BorderColor" Value="{StaticResource AccentColor}" />
+                                                                        <Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightOwnBubbleColor}, Dark={StaticResource DarkOwnBubbleColor}}" />
+                                                                    </DataTrigger>
+                                                                </Button.Triggers>
+                                                            </Button>
+                                                        </Grid>
                                                     </DataTemplate>
                                                 </BindableLayout.ItemTemplate>
                                             </FlexLayout>

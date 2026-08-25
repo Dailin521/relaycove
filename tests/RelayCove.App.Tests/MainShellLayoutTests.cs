@@ -11,9 +11,34 @@ public sealed class MainShellLayoutTests
 
         Assert.DoesNotContain("NavigationRailView", source);
         Assert.DoesNotContain("ContactsPageView", source);
-        Assert.DoesNotContain("IsSavedSection", source);
         Assert.Contains("ConversationPaneView", source);
         Assert.Contains("ChatHeaderView", source);
+        Assert.Contains("IsConversationWorkspaceSection", source);
+        Assert.Contains("IsSavedSection", source);
+    }
+
+    [Fact]
+    public void SavedMessages_WhenRendered_UsesAccountMenuEntryAndExistingContentPane()
+    {
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
+        XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2009/xaml";
+
+        var entry = source
+            .Descendants(maui + "Button")
+            .Single(element => element.Attribute("Text")?.Value == "收藏的消息");
+        var savedPanel = source
+            .Descendants(maui + "Grid")
+            .Single(element => element.Attribute("IsVisible")?.Value == "{Binding IsSavedSection}");
+        var workspaceContent = savedPanel.Parent;
+
+        Assert.Equal("FirstAccountMenuButton", entry.Attribute(x + "Name")?.Value);
+        Assert.Equal("{Binding ShowSavedCommand}", entry.Attribute("Command")?.Value);
+        Assert.Equal("1", workspaceContent?.Attribute("Grid.Column")?.Value);
+        Assert.Contains(savedPanel.Descendants(maui + "Button"), button =>
+            button.Attribute("Command")?.Value == "{Binding ShowMessagesCommand}");
+        Assert.Contains(savedPanel.Descendants(maui + "CollectionView"), collection =>
+            collection.Attribute("ItemsSource")?.Value == "{Binding SavedMessages}");
     }
 
     [Fact]
@@ -109,6 +134,25 @@ public sealed class MainShellLayoutTests
     }
 
     [Fact]
+    public void ReactionPicker_WhenRendered_UsesItsOwnTriggerAnchor()
+    {
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
+
+        var reactionPicker = source
+            .Descendants()
+            .Single(element => element.Name.LocalName == "Label" && element.Attribute("Text")?.Value == "添加反应")
+            .Ancestors()
+            .First(element => element.Name.LocalName == "Border");
+        var anchor = Assert.Single(
+            reactionPicker.Descendants(),
+            element => element.Name.LocalName == "PopoverAnchorBehavior");
+
+        Assert.Contains("ReactionPickerAnchorX", anchor.Attribute("AnchorX")?.Value, StringComparison.Ordinal);
+        Assert.Contains("ReactionPickerAnchorY", anchor.Attribute("AnchorY")?.Value, StringComparison.Ordinal);
+        Assert.DoesNotContain("MessageMenuAnchor", anchor.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MessageBubble_WhenContentIsShort_SizesToContentAndKeepsOwnMessageAlignment()
     {
         var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "MessageListView.xaml"));
@@ -130,6 +174,75 @@ public sealed class MainShellLayoutTests
             setter =>
                 setter.Attribute("Property")?.Value == "HorizontalOptions" &&
                 setter.Attribute("Value")?.Value == "End");
+    }
+
+    [Fact]
+    public void MessageReactions_WhenRendered_KeepSpacingOutsideNativeButtons()
+    {
+        var messageSource = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "MessageListView.xaml"));
+        var styleSource = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Resources", "Styles", "ComponentStyles.xaml"));
+        XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2009/xaml";
+
+        var reactionLayout = messageSource
+            .Descendants(maui + "FlexLayout")
+            .Single(element => element.Attribute("BindableLayout.ItemsSource")?.Value == "{Binding Reactions}");
+        var reactionButton = reactionLayout.Descendants(maui + "Button").Single();
+        var spacingContainer = Assert.IsType<XElement>(reactionButton.Parent);
+        var reactionStyle = styleSource
+            .Descendants(maui + "Style")
+            .Single(element => element.Attribute(x + "Key")?.Value == "ReactionButtonStyle");
+
+        Assert.Equal("Grid", spacingContainer.Name.LocalName);
+        Assert.Equal("0,0,4,4", spacingContainer.Attribute("Padding")?.Value);
+        Assert.Equal("0", reactionButton.Attribute("Margin")?.Value);
+        Assert.DoesNotContain(reactionStyle.Elements(maui + "Setter"), setter =>
+            setter.Attribute("Property")?.Value == "Margin");
+    }
+
+    [Fact]
+    public void ImageAttachments_WhenRendered_ShowOnlyPreviewAndAddDownloadToMessageContextMenu()
+    {
+        var messageSource = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "MessageListView.xaml"));
+        var pageSource = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
+        XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+        XNamespace x = "http://schemas.microsoft.com/winfx/2009/xaml";
+
+        var attachmentLayout = messageSource
+            .Descendants(maui + "VerticalStackLayout")
+            .Single(element => element.Attribute("BindableLayout.ItemsSource")?.Value == "{Binding Attachments}");
+        var imagePreview = attachmentLayout
+            .Descendants(maui + "Border")
+            .Single(element => element.Attribute("IsVisible")?.Value == "{Binding IsImage}");
+        var bubble = messageSource
+            .Descendants(maui + "Border")
+            .Single(element => element.Attribute(x + "Name")?.Value == "Bubble");
+        var imageOnlyTrigger = bubble
+            .Descendants(maui + "DataTrigger")
+            .Single(element => element.Attribute("Binding")?.Value == "{Binding IsImageOnly}");
+        var fileDetails = attachmentLayout
+            .Descendants(maui + "Grid")
+            .Single(element => element.Attribute("IsVisible")?.Value == "{Binding IsFile}");
+        var imageDownload = pageSource
+            .Descendants(maui + "Button")
+            .Single(element => element.Attribute("Text")?.Value == "下载原图");
+
+        Assert.Single(
+            imagePreview.Descendants(),
+            element => element.Name.LocalName == "ImageAttachmentContextBehavior");
+        Assert.Contains(imageOnlyTrigger.Elements(maui + "Setter"), setter =>
+            setter.Attribute("Property")?.Value == "Padding" && setter.Attribute("Value")?.Value == "0");
+        Assert.Contains(imageOnlyTrigger.Elements(maui + "Setter"), setter =>
+            setter.Attribute("Property")?.Value == "Background" && setter.Attribute("Value")?.Value == "Transparent");
+        Assert.Contains(imageOnlyTrigger.Elements(maui + "Setter"), setter =>
+            setter.Attribute("Property")?.Value == "StrokeThickness" && setter.Attribute("Value")?.Value == "0");
+        Assert.Contains(fileDetails.Descendants(maui + "Label"), label =>
+            label.Attribute("Text")?.Value == "{Binding Name}");
+        Assert.Contains(fileDetails.Descendants(maui + "Button"), button =>
+            button.Attribute("Text")?.Value == "下载");
+        Assert.Equal("{Binding HasActiveMessageAttachment}", imageDownload.Attribute("IsVisible")?.Value);
+        Assert.Equal("{Binding DownloadAttachmentCommand}", imageDownload.Attribute("Command")?.Value);
+        Assert.Equal("{Binding ActiveMessageAttachment}", imageDownload.Attribute("CommandParameter")?.Value);
     }
 
     [Fact]

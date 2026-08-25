@@ -9,7 +9,7 @@ Status: approved planning baseline; ordered optimization sequence not started
 
 本文中的“V2”指第二个 MAUI 开发优化周期，不预先决定下一个语义版本号、tag 或发布形式。
 
-2026-08-25 用户在计划序列前单独插入并确认了 Stage 31“Windows 消息正文鼠标拖选”。它是一个独立确认、独立交付的窄 UI 修正，不改变下文从搜索正确性开始的既定顺序或范围。
+2026-08-25 用户在计划序列前单独插入并确认了 Stage 31“Windows 消息正文鼠标拖选”，随后单独提出 Stage 32“MAUI 收藏消息入口”、Stage 33“Windows reaction 按钮裁切”和 Stage 34“reaction 表情面板定位”。这些都是独立确认、独立交付的窄 UI 修正，不改变下文从搜索正确性开始的既定顺序或范围。
 
 ## 1. 目标与执行方式
 
@@ -169,6 +169,8 @@ Core 增加统一的 `AuthoritativeWriteOutcome`，供当前 MAUI 产品中的�
 - 回归覆盖 1000 行不变投影的对象复用、单行更新、插入/删除、筛选/搜索，以及无变化时不 reset 集合、不造成滚动跳变。
 
 ## 8. 验证、复核与交付
+
+Stage 35 是用户在 V2 既定序列前单独插入的窄 UI 修正：MAUI 图片消息只显示受控预览框；右键具体图片时复用正常消息菜单并额外提供“下载原图”，普通文件卡片与受控下载边界不变。其范围、验证和人工结果以 dated task 与 STATUS 为准。
 
 - 每个问题运行对应项目的聚焦确定性测试；涉及 XAML/Windows UI 时至少完成 App Debug build，再交给用户进行最短真实窗口验证。
 - 搜索、桌面体验和性能三个检查点各运行一次 Fast；若实际切片很小，可在 dated task 中说明复用相邻检查点，但不能用旧提交证据冒充当前树结果。

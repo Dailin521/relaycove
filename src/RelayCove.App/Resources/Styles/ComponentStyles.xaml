@@ -165,7 +165,6 @@
         <Setter Property="HeightRequest" Value="30" />
         <Setter Property="MinimumHeightRequest" Value="30" />
         <Setter Property="Padding" Value="8,0" />
-        <Setter Property="Margin" Value="0,0,4,4" />
         <Setter Property="FontSize" Value="{DynamicResource MutedFontSize}" />
     </Style>
 

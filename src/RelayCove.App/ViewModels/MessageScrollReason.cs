@@ -4,6 +4,7 @@ public enum MessageScrollReason
 {
     ConversationActivated,
     ConversationReactivated,
+    MessageAnchor,
     RealtimeFollow,
     ManualJumpToLatest
 }

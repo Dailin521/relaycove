@@ -164,7 +164,7 @@ public partial class MainPage : ContentPage
                 Dispatcher.Dispatch(() => ImageViewerCloseButton.Focus());
                 break;
             case nameof(ShellViewModel.IsMessageMenuOpen) when _viewModel.IsMessageMenuOpen:
-                Dispatcher.Dispatch(() => FirstMessageMenuButton.Focus());
+                Dispatcher.Dispatch(() => GetFirstMessageMenuButton().Focus());
                 break;
             case nameof(ShellViewModel.IsChannelMenuOpen) when _viewModel.IsChannelMenuOpen:
                 Dispatcher.Dispatch(() => FirstChannelMenuButton.Focus());
@@ -331,7 +331,7 @@ public partial class MainPage : ContentPage
         }
         if (key == VirtualKey.Home)
         {
-            FirstMessageMenuButton.Focus();
+            GetFirstMessageMenuButton().Focus();
             return true;
         }
         if (key == VirtualKey.End)
@@ -369,6 +369,9 @@ public partial class MainPage : ContentPage
             : FocusNavigationDirection.Down);
         return true;
     }
+
+    private Button GetFirstMessageMenuButton() =>
+        _viewModel.HasActiveMessageAttachment ? ImageDownloadMenuButton : FirstMessageMenuButton;
 
     private bool HandleChannelMenuKey(VirtualKey key)
     {

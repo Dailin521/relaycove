@@ -18,7 +18,7 @@
 - 冻结日期：2026-08-12
 - 目标视口：1440×900；补充检查 1024×768
 - 历史原型（只读）：[RelayCove-UI-Playground.html](baselines/chat-ui-v1/RelayCove-UI-Playground.html)；日常 Web 验收不再使用此入口
-- 当前计划：[第二版（V2）优化计划](../ai/tasks/2026-08-25-v2-optimization-plan.md)；[Stage 31 Windows 消息正文鼠标拖选](../ai/tasks/2026-08-25-stage-31-message-text-selection.md)已通过用户 Visual Studio 人工确认。第一版至 Stage 30 已收口；V2 仍以 MAUI-only 为边界，不改写冻结基线，也不恢复 Web 对齐目标。
+- 当前状态：[Stage 35 图片消息纯预览与右键下载](../ai/tasks/2026-08-25-stage-35-image-preview-context-download.md)已通过用户 Visual Studio 人工确认；[Stage 34 reaction 表情面板定位](../ai/tasks/2026-08-25-stage-34-reaction-picker-anchor.md)与[Stage 32 MAUI 收藏消息入口](../ai/tasks/2026-08-25-stage-32-saved-messages-entry.md)的精确锚点修正仍待最终确认。[Stage 33 reaction 按钮裁切](../ai/tasks/2026-08-25-stage-33-reaction-button-clipping.md)已确认修复。父计划为[第二版（V2）优化计划](../ai/tasks/2026-08-25-v2-optimization-plan.md)。
 
 ## 重要边界
 
