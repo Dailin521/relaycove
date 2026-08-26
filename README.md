@@ -2,11 +2,11 @@
 
 RelayCove 是一个直接连接既有 Zulip Realm 的 Windows 原生 .NET MAUI 客户端。现有 Zulip 官方 Web 保留不动；RelayCove 不包含自研聊天服务端、代理、BFF 或第二套消息后端。仓库中的早期 `RelayCove.Web` 仅保留为历史实现证据，不再是后续产品交付目标。
 
-首个 MAUI 版本周期已经结束，当前正式版本为 [`2.1.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.1.0)，目标平台为 Windows 11 x64。仓库锁定 .NET SDK `10.0.400`、MAUI `10.0.20` 和 Windows `win-x64`。
+当前发布候选版本为 `2.2.0`，目标平台为 Windows 11 x64。仓库锁定 .NET SDK `10.0.400`、MAUI `10.0.20` 和 Windows `win-x64`。
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/Dailin521/relaycove/releases) 下载 `RelayCove-2.1.0-win-x64.zip` 和对应 `.sha256` 文件。校验后解压并运行 `RelayCove.App.exe`。
+从 [GitHub Releases](https://github.com/Dailin521/relaycove/releases) 下载 `RelayCove-2.2.0-win-x64.zip` 和对应 `.sha256` 文件。校验后解压并运行 `RelayCove.App.exe`。
 
 这是未签名、无安装器的正式发布 ZIP；Windows 可能显示 SmartScreen 提示。它不包含后台推送、自动更新、MSIX 或代码签名，干净 Windows 11 VM 验收仍是独立门禁。
 
@@ -16,8 +16,8 @@ RelayCove 是一个直接连接既有 Zulip Realm 的 Windows 原生 .NET MAUI �
 - 默认 Realm：`https://hklight.2000521.xyz`，登录页可编辑。
 - 兼容门禁：HTTPS、`zulip_feature_level >= 500`、`is_incompatible=false`、邮箱密码认证可用。
 - 当前原生产品只展示一对一/self 私信，以及受支持的私有群聊；旧公开频道/话题兼容界面不属于后续产品方向。
-- 已包含历史分页、文本与附件、已读/未读、实时事件、SQLite 缓存、断线恢复、reaction、本人编辑/删除、收藏、统一搜索、引用、完整 Unicode 表情、文本拖选复制、图片预览/原图下载、Windows 通知、任务栏未读状态和系统托盘提醒。
-- 暂不包含：`@` 候选、presence、后台推送、SSO、多账号、AI、自动更新、安装器、签名和最终 clean-VM 验收。
+- 已包含历史分页、文本与附件、已读/未读、实时事件、SQLite 缓存、断线恢复、reaction、本人编辑/删除、收藏、统一搜索、引用、完整 Unicode 表情、文本拖选复制、图片预览/原图下载、Windows 通知、任务栏未读状态、系统托盘提醒、官方 presence 与个人状态。
+- 暂不包含：`@` 候选、后台推送、SSO、多账号、AI、自动更新、安装器、签名和最终 clean-VM 验收。
 
 来自其他 Zulip 客户端的消息编辑、移动和删除事件仍会被动处理，以保持本地缓存正确。
 
