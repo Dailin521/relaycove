@@ -8,20 +8,20 @@
 2. `RelayCove_Zulip_MAUI_重建开发计划.md` —— 产品、架构、安全与验收的权威来源。
 3. `docs/ai/STATUS.md` —— 已验证的当前状态与未关闭门禁。
 4. `docs/ai/WORKFLOW.md` —— 执行与证据规则。
-5. 仅阅读 `docs/ai/tasks/` 下明确标为活动的任务；带日期的历史记录只作证据，不能作为当前指令。
+5. 仅阅读 `docs/ai/README.md` 明确列出的活动计划；不要默认加载已完成的历史阶段记录。
 
 仓库证据优先于正式文档；官方 Zulip 12.1/OpenAPI 证据优先于假设。只有在当前工作树运行过指定命令后，才能将结果标为已验证。
 
 ## 架构边界
 
-- `RelayCove.Web`：可独立部署的 TypeScript/React/Vite 客户端；仅包含浏览器 Zulip HTTP/会话适配器与 UI，不依赖 MAUI 运行时或 .NET UI。
+- `RelayCove.Web`：只保留为历史 TypeScript/React/Vite 实现；除非用户单独要求，不再开发、验证或发布。
 - `RelayCove.App`：MAUI 视图/ViewModel、Windows 组合根与平台凭据/配置适配器。
 - `RelayCove.Core`：领域模型、reducer、用例与公开接口；不得引用 MAUI、JSON、HTTP 或 SQLite。
 - `RelayCove.Zulip.Client`：Zulip REST/事件协议与 DTO 映射；不得引用持久化或 UI。
 - `RelayCove.Data`：SQLite 缓存与迁移；不得存放凭据或网络逻辑。
 - `RelayCove.Zulip.LiveTests` 不属于普通构建/测试命令的一部分。
 
-官方 Zulip Web 不作修改。`RelayCove.Web` 和 `RelayCove.App` 都直接连接同一 Zulip Realm；不得引入 RelayCove 服务端、代理、BFF、第二消息后端、过时 Zulip .NET SDK 或 WebView 渲染器。两个前端共享 Token、交互规格、能力矩阵与验收场景，但不共享 UI 运行时代码。
+官方 Zulip Web 不作修改。当前产品只有 `RelayCove.App`，并直接连接 Zulip Realm；不得引入 RelayCove 服务端、代理、BFF、第二消息后端、过时 Zulip .NET SDK 或 WebView 渲染器。
 
 ## 代码风格
 
@@ -72,13 +72,13 @@ pwsh ./scripts/verify.ps1 -Mode Full
 
 除非用户明确要求隔离、并行工作或新分支，所有 MAUI 开发直接在 `main` 进行。一次只处理一个明确问题；完成代码修改后先交给用户人工确认，确认无误后即可按“提交与推送请求”规则提交并推送。不得在同一轮未经确认地叠加相邻功能、重构或第二个问题，以免来回修改。
 
-MAUI 问题获得用户人工确认后，提交推送前必须按以下顺序收尾：
+MAUI 问题获得用户人工确认后，提交推送前按以下顺序收尾：
 
-1. 在当前任务工作日志中记录现象、根因、被否决的方案、最终实现和实际验证结果。
-2. 将可复用经验落实到对应开发工作流、交互规范或状态文档，清理与最终实现冲突的旧描述。
-3. 确认代码、测试、工作日志和经验文档属于同一个已确认问题，再执行最小提交与推送事务。
+1. 在 `STATUS.md` 留下当前结论和实际验证结果；只有复杂协议、数据迁移或正式 Release 才创建独立临时任务记录。
+2. 将仍有复用价值的约束落实到计划、工作流或交互规格；完成的临时 Stage 日志不长期保留。
+3. 确认代码、测试和必要文档属于同一个已确认问题，再执行最小提交与推送事务。
 
-这些记录应随问题开发及时完成，不得等到开始 Git 提交后才临时扩大工作范围；提交推送本身仍应保持快速。
+记录随问题及时完成并保持简短，不得等到开始 Git 提交后才扩大范围；提交推送本身仍应保持快速。
 
 用户统一通过 Visual Studio 打开 RelayCove 项目并进行 UI/交互快速验证。对于视觉、布局、焦点、鼠标、键盘、窗口和其他原生交互问题，Agent 只负责代码修改；除非用户明确要求，不启动、移动、操作、截图或复验用户的 MAUI 窗口。修改完成后应直接告知用户受影响的文件和最短验证动作。
 

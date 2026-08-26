@@ -1,92 +1,65 @@
 # RelayCove
 
-RelayCove 是一个直接连接既有 Zulip Realm 的 Windows 原生 .NET MAUI 客户端。现有 Zulip 官方 Web 保留不动；RelayCove 不包含自研聊天服务端、代理、BFF 或第二套消息后端。仓库中的早期 `RelayCove.Web` 仅保留为历史实现证据，不再是后续产品交付目标。
+RelayCove 是一个直接连接 Zulip Realm 的 Windows 原生 .NET MAUI 客户端。Zulip 是账号、权限、成员、消息和实时事件的唯一事实源；项目不包含自研聊天服务端、代理、BFF 或第二消息后端。
 
-当前正式版本为 [`2.2.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.2.0)，目标平台为 Windows 11 x64。仓库锁定 .NET SDK `10.0.400`、MAUI `10.0.20` 和 Windows `win-x64`。
+当前正式版本为 [`2.2.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.2.0)，目标平台为 Windows 11 x64，使用 .NET SDK `10.0.400`、MAUI `10.0.20` 和 `win-x64`。`RelayCove.Web` 只保留为历史源码，不再参与产品开发或 Windows 发布。
 
 ## 下载
 
-从 [GitHub Releases](https://github.com/Dailin521/relaycove/releases) 下载 `RelayCove-2.2.0-win-x64.zip` 和对应 `.sha256` 文件。校验后解压并运行 `RelayCove.App.exe`。
+从 [GitHub Releases](https://github.com/Dailin521/relaycove/releases) 下载 `RelayCove-2.2.0-win-x64.zip` 和对应 `.sha256` 文件，校验后解压运行 `RelayCove.App.exe`。
 
-这是未签名、无安装器的正式发布 ZIP；Windows 可能显示 SmartScreen 提示。它不包含后台推送、自动更新、MSIX 或代码签名，干净 Windows 11 VM 验收仍是独立门禁。
+这是自包含、未签名、无安装器的 ZIP。应用关闭后不会接收消息，也不包含后台推送、自动更新、MSIX 或代码签名。
 
-## 冻结范围
+## 当前范围
 
-- Windows：.NET 10、.NET MAUI、CommunityToolkit.Mvvm、Microsoft.Data.Sqlite。
-- 默认 Realm：`https://hklight.2000521.xyz`，登录页可编辑。
-- 兼容门禁：HTTPS、`zulip_feature_level >= 500`、`is_incompatible=false`、邮箱密码认证可用。
-- 当前原生产品只展示一对一/self 私信，以及受支持的私有群聊；旧公开频道/话题兼容界面不属于后续产品方向。
-- 已包含历史分页、文本与附件、已读/未读、实时事件、SQLite 缓存、断线恢复、reaction、本人编辑/删除、收藏、统一搜索、引用、完整 Unicode 表情、文本拖选复制、图片预览/原图下载、Windows 通知、任务栏未读状态、系统托盘提醒、官方 presence 与个人状态。
-- 暂不包含：`@` 候选、后台推送、SSO、多账号、AI、自动更新、安装器、签名和最终 clean-VM 验收。
+- 单账号邮箱密码登录、SecureStorage 凭据恢复和 SQLite 离线缓存。
+- 微信式统一会话：一对一/self-DM，以及受支持的私有空话题群聊。
+- 历史分页、实时消息、已读/未读、文本与附件、引用、reaction、本人编辑/删除、收藏和搜索。
+- 完整 Unicode 表情、图片预览/原图下载、消息文本拖选复制。
+- Windows 系统通知、任务栏未读、托盘提醒与会话跳转。
+- Zulip 官方在线/忙碌/离线显示，以及个人 emoji/text 状态。
 
-来自其他 Zulip 客户端的消息编辑、移动和删除事件仍会被动处理，以保持本地缓存正确。
+公开频道、命名话题、多人私信、SSO、多账号、`@` 候选、后台 push、安装器和签名不属于当前个人 MVP。
 
 ## 工程结构
 
 ```text
-src/
-  RelayCove.App/            MAUI XAML、ViewModel、Windows composition root、SecureStorage
-  RelayCove.Web/            React/Vite 正式 Web、浏览器 Zulip API/session、Playwright
-  RelayCove.Core/           领域模型、用例、reducer、会话与同步状态
-  RelayCove.Zulip.Client/   Zulip REST/事件队列薄适配层与 JSON DTO 映射
-  RelayCove.Data/           SQLite schema、迁移、账号隔离与 mutation lane
-tests/
-  RelayCove.Core.Tests/
-  RelayCove.Zulip.Client.Tests/
-  RelayCove.Data.Tests/
-  RelayCove.App.Tests/
-  RelayCove.Zulip.LiveTests/  显式启用、默认 fail-closed
+src/RelayCove.App/            MAUI UI、ViewModel、Windows 平台适配
+src/RelayCove.Core/           领域模型、用例、reducer、会话状态
+src/RelayCove.Zulip.Client/   Zulip REST/事件协议适配
+src/RelayCove.Data/           SQLite 缓存、迁移、账号隔离
+tests/                        四个普通 xUnit 项目和显式 LiveTests
 ```
 
-这五个目录都是 Visual Studio Test Explorer 可发现的 xUnit 测试工程。普通 Fast/Full 只运行前四个；`RelayCove.Zulip.LiveTests` 只能由显式授权的 `-Mode Live` 启动。
+依赖方向固定为 `App -> Core/Data/Zulip.Client`，`Data -> Core`，`Zulip.Client -> Core`。Core 不引用 MAUI、SQLite 或 Zulip JSON DTO。
 
-MAUI 依赖方向固定为：`App -> Core/Data/Zulip.Client`，`Data -> Core`，`Zulip.Client -> Core`。Core 不引用 MAUI、SQLite 或 Zulip JSON DTO。Web 是独立浏览器工程，不引用 MAUI UI runtime 或把 fixture 混入正式 Zulip 数据层。
-
-## 本地开发
-
-先安装 .NET 10 SDK、Windows MAUI workload，以及符合 `src/RelayCove.Web/package.json` engines 的 Node/npm；首次显式准备 Web 依赖和 Chromium：
+## 验证与发布
 
 ```powershell
-dotnet workload install maui-windows
-dotnet restore RelayCove.sln
-cd src/RelayCove.Web
-npm ci
-npx playwright install chromium
-cd ../..
 pwsh ./scripts/verify.ps1 -Mode Fast
-```
-
-日常 Web UI 可直接双击仓库根目录的 `start-web-dev.cmd`，工具会启动本地 Vite 并打开正式登录入口；fixture 只用于显式自动化模式。需要把大版本同步到服务器供人工验收时，双击 `deploy-web.cmd`；固定入口为 `https://hklight.2000521.xyz/relaycove-web/`。详细发布、回滚和一次性 Nginx provision 见 [`docs/deployment.md`](docs/deployment.md)。日常编辑不会自动上线。
-
-完整本地验证与 Windows ZIP：
-
-```powershell
 pwsh ./scripts/verify.ps1 -Mode Full
 ```
 
-`Live` 模式会向专用测试频道写入消息，只有在显式提供目标 Realm、两个专用测试账号 API key 和写入确认变量时才运行；缺少任意值都会立即失败。不要在个人账号、生产频道或非隔离 Realm 上运行。
+`Fast` 运行 Debug build 和四个普通测试项目。`Full` 独立运行 Release build/tests、MAUI app 自包含 publish、ZIP 检查和秘密扫描。`Live` 只有在明确提供隔离凭据及真实写入授权时才能运行。
+
+发布 ZIP 只包含应用运行文件、`LICENSE` 和 `THIRD-PARTY-NOTICES.md`，不包含 `docs/`。
 
 ## 安全边界
 
-- 密码只用于 Zulip `/fetch_api_key`，不持久化。
-- MAUI API key 只进入 Windows `SecureStorage`；Web 默认“记住登录”时按已确认产品策略进入当前浏览器 local storage，取消记住则只进入 session storage。
-- Web 注销同时清除两种浏览器存储；API key 不进入 URL、日志、UI、异常或测试快照。
-- HTTP 自动重定向关闭；客户端不会把密码或 Basic Authorization 转发给其他 origin。
-- TLS 仅使用系统证书验证，不提供忽略证书错误的发布开关。
-- SQLite 是当前 Windows 用户目录中的明文缓存，不是加密业务主库；Zulip Server 始终是事实源。
-- 注销会删除凭据并锁定本地缓存；重新以同一 Realm/用户登录后才能再次解锁。
-- 非幂等消息发送不自动重试，网络结果不确定时可能产生重复消息，必须由用户显式再次发送。
+- 密码只用于换取 Zulip API key；API key 只保存到 Windows SecureStorage。
+- HTTP 禁用自动重定向，TLS 只使用系统证书校验。
+- SQLite 是当前 Windows 用户目录下的明文缓存，不是第二业务主库。
+- 非幂等消息或群资料写入不自动重试；结果不确定时由用户确认权威状态。
+- 凭据、正文和服务器原始错误不得进入日志、异常、快照或发布包。
 
 ## 文档
 
-- [AI 文档索引与当前 active task](docs/ai/README.md)
-- [完整重建开发计划](RelayCove_Zulip_MAUI_重建开发计划.md)
-- [UI 文档与冻结基线](docs/ui/README.md)
-- [Chat UI 交互规格](docs/ui/INTERACTION_SPEC.md)
-- [正式 Web → 交互冻结 → 原生 MAUI 开发工作流](docs/ui/DEVELOPMENT_WORKFLOW.md)
-- [Stage 22W / 22M 双前端实施记录](docs/ai/tasks/2026-08-12-stage-22-native-chat-ui.md)
-- [目标 Zulip 主机配置索引](E:/GitHubProject/server-admin/servers/zulip-hklight/README.md)
-- [Zulip API 文档](https://docs.zulip.com/api/)
-- [Zulip 12.1 OpenAPI](https://github.com/zulip/zulip/blob/12.1/zerver/openapi/zulip.yaml)
+- [AI 文档索引](docs/ai/README.md)
+- [当前产品与架构计划](RelayCove_Zulip_MAUI_重建开发计划.md)
+- [当前状态](docs/ai/STATUS.md)
+- [开发工作流](docs/ai/WORKFLOW.md)
+- [V2 优化计划](docs/ai/tasks/2026-08-25-v2-optimization-plan.md)
+- [UI 文档](docs/ui/README.md)
+- [版本说明](docs/releases/)
 
-RelayCove 采用 MIT License。项目仅调用 Zulip 公共 API，不复制 Zulip 服务端源码、商标或官方客户端素材；Zulip 是 Zulip, Inc. 的商标。
+RelayCove 采用 MIT License。

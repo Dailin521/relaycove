@@ -1,81 +1,63 @@
-# RelayCove Engineering Workflow
+# RelayCove 简化开发工作流
 
-## 1. Orient
+## 1. 开始前
 
-Read `docs/ai/README.md`, then the root plan, STATUS, WORKFLOW and only the task marked active. Dated Stage 22/23/24 task records are historical evidence after their merge and must not override current repository truth. Run `git status --short`, confirm the expected branch, and identify unrelated user changes before editing. Follow the current user authorization for each commit/push and external write.
+1. 依次读 `docs/ai/README.md`、根计划、STATUS、WORKFLOW 和唯一活动计划。
+2. 执行 `git status --short --branch`，确认在 `main`，保留无关改动和所有 `.verify/`。
+3. 一次只处理用户明确提出的一个问题；不要顺带重构或追加第二项功能。
 
-For UI work, also read `docs/ui/README.md`, the frozen baseline manifest, `docs/ui/INTERACTION_SPEC.md` and `docs/ui/DEVELOPMENT_WORKFLOW.md`.
+仓库代码和本轮实际命令优先于文档。协议问题以 Zulip 12.1 OpenAPI/官方文档为准。
 
-## 2. Implement a vertical slice
+## 2. 实现
 
-Keep changes inside one independently testable path:
+优先最小、直接、可读的改动。按实际需要触及以下层，不为小问题强行走完整纵切片：
 
-1. contract/domain;
-2. adapter/storage;
-3. session/use case;
-4. ViewModel/View;
-5. tests and documentation.
+```text
+Core -> Zulip.Client/Data -> ClientSession -> App
+```
 
-Do not add speculative services, placeholder projects or features outside the active task. Use official Zulip 12.1 OpenAPI/Docs for protocol decisions and record intentional product restrictions separately from server protocol restrictions.
+必须保持：
 
-UI implementation follows the mandatory order `formal RelayCove.Web -> browser/user acceptance -> native MAUI parity`. The current formal Web behavior outranks the old frozen prototype for product interaction corrections; frozen HTML remains immutable initial evidence and is never embedded in a WebView. The Web product and MAUI share Token definitions, interaction specifications, capability matrices and acceptance scenarios, but no UI runtime code. Arbitrary attachments, protected media, message actions, server search/saved and current-user channel self-service use reviewed capability slices; mention candidates, complete membership and administrator channel management still require explicit slices.
+- App 不直接处理 Zulip DTO 或 SQLiteConnection。
+- Core 不引用 MAUI、HTTP、JSON 或 SQLite。
+- Zulip 是权威状态；缓存和 UI 不推测权限、成员或写入成功。
+- 非幂等写入不自动重试，账号/会话切换后的晚到结果不回填。
+- 密钥、正文和原始服务器错误不进入日志、异常、测试快照或包。
 
-`RelayCove.Web` uses a locked TypeScript/React/Vite project. Production output must bundle icons/dependencies, exclude development fixture data and avoid runtime CDN. Formal browser API tests inject fake HTTP. The official Zulip Web stays unchanged; never add a RelayCove server, BFF or proxy to make browser tests pass.
+缺陷修复增加最窄的确定性回归测试；纯 XAML 微调可用结构测试或最小 App build。
 
-Keep the Web delivery cadence explicit. Daily UI work uses repository-root `start-web-dev.cmd`, opens `/` and exercises the formal client against real Realm data by default; do not perform real writes unless the current task explicitly authorizes their exact scope. Deterministic fixtures are automation-only and require explicit fixture/E2E mode. A large-version manual-acceptance sync uses `deploy-web.cmd`, which must complete local verification, versioned archive/SHA-256 checks, atomic switch and HTTPS smoke checks before opening the fixed `/relaycove-web/` entrance. Never add deploy-on-save behavior. Server connection material stays in the private `server-admin` checkout and must not enter this repository or logs.
+## 3. 验证
 
-MAUI visual work follows `docs/ui/MAUI_PREVIEW_WORKFLOW.md`: use the MAUI-aware Visual Studio `Windows Machine` profile and the Debug-only offline preview session. XAML saved inside Visual Studio may use Hot Reload; Codex/external file edits are batched, followed by an App-only no-restore build and one preview restart. Deterministic states use `start-maui-preview.ps1 -Scene/-Theme/-Width/-Height`; `capture-maui-preview.ps1` captures only its recorded PID/EXE with `PrintWindow`. Do not move the user's mouse, inject clicks/keys or depend on foreground focus. The preview may auto-place itself on a non-primary display only under the Debug preview gate. Neither Hot Reload, a secondary-display screenshot nor the in-memory preview can replace XamlC/Release, real Realm, package or clean-VM evidence.
-
-## 3. Verify locally
-
-Run the narrowest relevant tests first. Then run:
+逻辑、协议、缓存问题由 Agent 运行最窄相关测试。形成一个完整交付批次时再运行：
 
 ```powershell
 pwsh ./scripts/verify.ps1 -Mode Fast
 ```
 
-Fast must be deterministic, offline-safe and exclude `RelayCove.Zulip.LiveTests`. NuGet assets are an explicit bootstrap prerequisite (`dotnet restore`) and must already exist locally. Fast runs only the Debug solution build and the four ordinary `--no-restore` .NET test projects. Source formatting is kept reviewable with `git diff --check` before commits instead of the unusable repository-wide line-ending gate. Fast does not restore/install packages, run historical Web checks or download a browser.
-
-Before delivery, run:
+正式发布候选才运行：
 
 ```powershell
 pwsh ./scripts/verify.ps1 -Mode Full
 ```
 
-Full is the MAUI-only release gate. It does not repeat Fast: it performs the Release solution build, the same four ordinary Release test projects, app-project-only self-contained publish, ZIP creation, required-runtime/content checks and secret scan. It does not run `dotnet format`, historical Web typecheck/unit/build or Playwright. A solution-level `dotnet publish` remains prohibited.
+`Full` 不重复 Fast，也不运行历史 Web 检查或 Live。`Live` 必须有当轮明确的隔离凭据、目标和真实写授权，缺少任一项立即停止。
 
-Run Live only with explicit authorization and complete isolated configuration:
+UI、布局、焦点、鼠标、键盘、字号、DPI 和真实窗口体验由用户通过 Visual Studio 验证。除非用户明确要求，Agent 不启动、移动、操作或截图用户窗口。
 
-```powershell
-pwsh ./scripts/verify.ps1 -Mode Live
-```
+## 4. 文档
 
-Missing host, two dedicated account credentials, recipient allowlist or write confirmation is a failure, not a skip.
+- 普通已确认问题只在 STATUS 留一条当前结论；不再为每个 UI 修正永久保留 Stage 日志。
+- 只有复杂协议、数据迁移或正式 Release 才按需创建临时任务记录或 Release Note。
+- 临时任务完成后将仍有价值的约束合并到总计划、STATUS 或交互规格，然后删除临时日志。
+- STATUS 只保留当前版本、最近有效验证和仍未验证的事实，不累计历史流水账。
 
-The local DAL/zhang bootstrap is deliberately kept under ignored `artifacts/live/`. Before reading the private credential archive or issuing HTTP it requires a separate external Stage 23 run confirmation; authenticated PowerShell requests disable redirects. It requests API keys in process, then verifies three distinct targets: two private/non-archived probes and one public/non-archived join probe, each with exactly the same two approved subscribers. `verify.ps1 -Mode Live` additionally requires the password, recipient allowlist, the existing write confirmation, Stage 23 approval and explicit approval/ID/name for all targets before launching tests. Tracked preflight repeats the authoritative privacy/archive/name/member checks before every write. Independent cleanup tokens restore private unsubscribe, public rejoin and personal mute/pin state, delete temporary event queues and clear secret environment variables. Never copy this bootstrap, passwords or API keys into tracked source, logs, snapshots or command output.
+## 5. 提交与推送
 
-For rapid native work, use App-only Debug build and the narrow affected tests. Do not run Fast for every XAML or small capability edit; run Fast at a coherent batch checkpoint and Full only before a delivery commit. Live is independent from Fast/Full and is rerun only when explicit real-write authorization remains in scope.
+用户确认后、且明确要求提交或推送时，执行最小 Git 事务：
 
-For Stage 24 product-polish work, preserve the latest visible message page while refreshing and treat history, mark-read, avatar media and navigation summaries as separate state transitions. Repeated activation must reach the session refresh path; own messages never create unread UI; current-visible realtime auto-read requires active-window/list visibility, a current successful history generation and a pre-event bottom position, but must not be blocked by a follow-scroll acknowledgement; SQLite remains the only cache and Zulip remains authoritative. Use narrow fake tests first, then run Fast at the requested coherent checkpoint. Live remains separate and needs explicit real-write authorization.
+1. 检查分支、上游和工作树。
+2. 只暂存本问题的代码、测试和必要文档。
+3. 检查 staged diff，提交并非强制推送到 `main`。
+4. 确认远端 HEAD 和最终工作树；`.verify/` 始终排除。
 
-Visual Studio exposes two distinct native launch profiles. `Windows Machine` is the formal real-login client and must not set `RELAYCOVE_NATIVE_UI_PREVIEW`; `RelayCove Native Preview` is the Debug-only in-memory/no-network scene profile. Use the latter for Hot Reload and visual work, and the former for final Realm acceptance.
-
-## 4. Review high-risk changes
-
-Authentication, browser credential storage, network protocol, event synchronization, database/migrations, cache authorization, outbox, packaging and deployment/Nginx changes each require an independent read-only review. Verify findings against repository evidence and the frozen plan; advisory findings that contradict an explicit product decision must be documented and rejected with evidence, not implemented blindly.
-
-Resolve all P0/P1 findings or record a genuine blocker. Re-run the affected narrow tests and Fast after fixes.
-
-## 5. Evidence and handoff
-
-Update STATUS and the active task with:
-
-- exact commands and pass/fail counts;
-- icon/package SHA-256 values;
-- review scope and resolution;
-- Web stack/components, login/API boundary, browser results and screenshot paths;
-- external writes performed (normally none);
-- formal Web message-sync implementation and fake-HTTP evidence, plus any real-account Web acceptance, MAUI UI, VM or Live gates not run;
-- known limitations.
-
-A local commit is allowed only after relevant validation. Push, merge, tag, publish, server changes, secret use and destructive cleanup require separate explicit user authorization.
+提交请求本身不隐式授权 Full、Live、发布、tag、部署、真实 Realm 写入或其他外部副作用。
