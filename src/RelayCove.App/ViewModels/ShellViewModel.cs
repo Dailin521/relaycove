@@ -10,6 +10,9 @@ namespace RelayCove.App.ViewModels;
 
 public sealed partial class ShellViewModel : ObservableObject, IDisposable
 {
+    private static readonly Brush OnlinePresenceBrush = new SolidColorBrush(Color.FromArgb("#22C55E"));
+    private static readonly Brush IdlePresenceBrush = new SolidColorBrush(Color.FromArgb("#F59E0B"));
+    private static readonly Brush OfflinePresenceBrush = new SolidColorBrush(Color.FromArgb("#9CA3AF"));
     private const double WideLayoutMinimum = 1121d;
     private const double IntermediateLayoutMaximum = 820d;
     private const double NarrowLayoutMaximum = 720d;
@@ -261,6 +264,24 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial bool IsAccountMenuOpen { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsOwnPresenceBusy { get; set; }
+
+    [ObservableProperty]
+    public partial UserPresenceStatus? PendingOwnPresenceStatus { get; set; }
+
+    [ObservableProperty]
+    public partial string? OwnPresenceError { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsOwnUserStatusBusy { get; set; }
+
+    [ObservableProperty]
+    public partial UserStatusContent? PendingOwnUserStatus { get; set; }
+
+    [ObservableProperty]
+    public partial string? OwnUserStatusError { get; set; }
 
     [ObservableProperty]
     public partial string NewConversationQuery { get; set; } = string.Empty;
@@ -545,7 +566,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial string DetailsAvailableMessage { get; set; } = "选择会话后显示已经接通的能力。";
 
     [ObservableProperty]
-    public partial string DetailsUnavailableMessage { get; set; } = "成员关系、presence、共同频道与频道管理暂不可用。";
+    public partial string DetailsUnavailableMessage { get; set; } = "成员关系、共同频道与频道管理暂不可用。";
 
     [ObservableProperty]
     public partial bool ShowChannelDetails { get; set; }
@@ -920,6 +941,50 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _projectedState.Users.TryGetValue(currentUserId, out var currentUser)
             ? currentUser.AvatarUrl
             : null;
+    public bool ShowOwnPresenceControls => _session.CanSetOwnPresence;
+    public bool CanSetOwnPresence => ShowOwnPresenceControls &&
+        _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected &&
+        !IsOwnPresenceBusy;
+    public bool CanSetOwnPresenceOnline => CanSetOwnPresence && !IsOwnPresenceOnline;
+    public bool CanSetOwnPresenceIdle => CanSetOwnPresence && !IsOwnPresenceIdle;
+    public bool CanSetOwnPresenceOffline => CanSetOwnPresence && !IsOwnPresenceOffline;
+    public UserPresenceStatus? OwnPresenceStatus => _session.OwnPresenceStatus;
+    public bool HasOwnPresenceStatus => OwnPresenceStatus is not null;
+    public string OwnPresenceLabel => OwnPresenceStatus switch
+    {
+        UserPresenceStatus.Active => "在线",
+        UserPresenceStatus.Idle => "忙碌",
+        UserPresenceStatus.Offline => "离线",
+        _ => ShowOwnPresenceControls ? "状态结果未确认" : "不可用"
+    };
+    public bool IsOwnPresenceOnline => OwnPresenceStatus == UserPresenceStatus.Active;
+    public bool IsOwnPresenceIdle => OwnPresenceStatus == UserPresenceStatus.Idle;
+    public bool IsOwnPresenceOffline => OwnPresenceStatus == UserPresenceStatus.Offline;
+    public Brush OwnPresenceBrush => OwnPresenceStatus switch
+    {
+        UserPresenceStatus.Active => OnlinePresenceBrush,
+        UserPresenceStatus.Idle => IdlePresenceBrush,
+        _ => OfflinePresenceBrush
+    };
+    public string OwnPresenceStatusText => IsOwnPresenceBusy && PendingOwnPresenceStatus is { } pending
+        ? $"正在切换为{DescribeOwnPresenceStatus(pending)}…"
+        : $"在线状态：{OwnPresenceLabel}";
+    public bool HasOwnPresenceError => !string.IsNullOrWhiteSpace(OwnPresenceError);
+    public bool ShowOwnUserStatusControls => _session.CanSetOwnUserStatus;
+    public bool CanSetOwnUserStatus => ShowOwnUserStatusControls &&
+        _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected &&
+        !IsOwnUserStatusBusy;
+    public UserStatusContent? OwnUserStatus => _session.OwnUserStatus;
+    public bool HasOwnUserStatus => OwnUserStatus is not null;
+    public bool IsOwnUserStatusConfirmed => _session.IsOwnUserStatusConfirmed;
+    public string OwnUserStatusLabel => !IsOwnUserStatusConfirmed
+        ? "结果未确认"
+        : DescribeUserStatus(OwnUserStatus) ?? "未设置";
+    public string OwnUserStatusStatusText => IsOwnUserStatusBusy && PendingOwnUserStatus is { } pending
+        ? $"正在设置：{DescribeUserStatus(pending) ?? "清除状态"}…"
+        : $"个人状态：{OwnUserStatusLabel}";
+    public bool CanClearOwnUserStatus => CanSetOwnUserStatus && HasOwnUserStatus;
+    public bool HasOwnUserStatusError => !string.IsNullOrWhiteSpace(OwnUserStatusError);
     public string WorkspaceDisplayName
     {
         get
@@ -1585,6 +1650,107 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     private void CloseAccountMenu() => IsAccountMenuOpen = false;
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task SetOwnPresenceOnlineAsync() => SetOwnPresenceCoreAsync(UserPresenceStatus.Active);
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task SetOwnPresenceIdleAsync() => SetOwnPresenceCoreAsync(UserPresenceStatus.Idle);
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task SetOwnPresenceOfflineAsync() => SetOwnPresenceCoreAsync(UserPresenceStatus.Offline);
+
+    private async Task SetOwnPresenceCoreAsync(UserPresenceStatus status)
+    {
+        if (!CanSetOwnPresence || OwnPresenceStatus == status) return;
+        PendingOwnPresenceStatus = status;
+        IsOwnPresenceBusy = true;
+        OwnPresenceError = null;
+        try
+        {
+            await _session.SetOwnPresenceAsync(status, _lifetimeCancellation.Token);
+        }
+        catch (GatewayException exception)
+        {
+            OwnPresenceError = DescribeGatewayFailure(exception);
+        }
+        catch (InvalidOperationException)
+        {
+            OwnPresenceError = "当前状态暂时不可设置，请稍后重试。";
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (OperationCanceledException)
+        {
+            OwnPresenceError = "状态设置已取消。";
+        }
+        finally
+        {
+            IsOwnPresenceBusy = false;
+            PendingOwnPresenceStatus = null;
+            NotifyOwnPresenceProperties();
+        }
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task SetOwnUserStatusBusyAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Busy);
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task SetOwnUserStatusMeetingAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Meeting);
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task SetOwnUserStatusCommutingAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Commuting);
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task SetOwnUserStatusSickAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Sick);
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task SetOwnUserStatusVacationAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Vacation);
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task SetOwnUserStatusRemoteAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Remote);
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task SetOwnUserStatusOfficeAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Office);
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private Task ClearOwnUserStatusAsync() => SetOwnUserStatusCoreAsync(new UserStatusContent());
+
+    private async Task SetOwnUserStatusCoreAsync(UserStatusContent status)
+    {
+        if (!CanSetOwnUserStatus || IsOwnUserStatusConfirmed && Equals(OwnUserStatus, status.IsEmpty ? null : status))
+            return;
+
+        PendingOwnUserStatus = status;
+        IsOwnUserStatusBusy = true;
+        OwnUserStatusError = null;
+        try
+        {
+            await _session.SetOwnUserStatusAsync(status, _lifetimeCancellation.Token);
+        }
+        catch (GatewayException exception)
+        {
+            OwnUserStatusError = DescribeGatewayFailure(exception);
+        }
+        catch (InvalidOperationException)
+        {
+            OwnUserStatusError = "当前个人状态暂时不可设置，请稍后重试。";
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (OperationCanceledException)
+        {
+            OwnUserStatusError = "个人状态设置已取消。";
+        }
+        finally
+        {
+            IsOwnUserStatusBusy = false;
+            PendingOwnUserStatus = null;
+            NotifyOwnUserStatusProperties();
+        }
+    }
 
     [RelayCommand]
     private void ToggleChannels() => AreChannelsExpanded = !AreChannelsExpanded;
@@ -3457,6 +3623,23 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         NotifyOverlayProperties();
     }
     partial void OnIsAccountMenuOpenChanged(bool value) => NotifyOverlayProperties();
+    partial void OnIsOwnPresenceBusyChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanSetOwnPresence));
+        OnPropertyChanged(nameof(CanSetOwnPresenceOnline));
+        OnPropertyChanged(nameof(CanSetOwnPresenceIdle));
+        OnPropertyChanged(nameof(CanSetOwnPresenceOffline));
+        OnPropertyChanged(nameof(OwnPresenceStatusText));
+    }
+    partial void OnPendingOwnPresenceStatusChanged(UserPresenceStatus? value) =>
+        OnPropertyChanged(nameof(OwnPresenceStatusText));
+    partial void OnOwnPresenceErrorChanged(string? value) =>
+        OnPropertyChanged(nameof(HasOwnPresenceError));
+    partial void OnIsOwnUserStatusBusyChanged(bool value) => NotifyOwnUserStatusProperties();
+    partial void OnPendingOwnUserStatusChanged(UserStatusContent? value) =>
+        OnPropertyChanged(nameof(OwnUserStatusStatusText));
+    partial void OnOwnUserStatusErrorChanged(string? value) =>
+        OnPropertyChanged(nameof(HasOwnUserStatusError));
     partial void OnIsNewConversationOpenChanged(bool value)
     {
         if (!value) ClearNewConversationChoices();
@@ -5569,40 +5752,46 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                         topicState
                     }.Where(static value => !string.IsNullOrWhiteSpace(value)));
                     DetailsAvailableMessage = "当前频道与话题身份、未读状态、频道静音、置顶和退出已接通；话题级操作可从右上角菜单进入。";
-                    DetailsUnavailableMessage = "此详情面板不加载频道描述、隐私、创建者、订阅者列表、presence、共同频道、文件夹、邮箱地址或权限组。频道成员和管理信息请进入“频道设置”；所有写操作仍由 Zulip 服务端最终裁决。";
+                    DetailsUnavailableMessage = "此详情面板不加载频道描述、隐私、创建者、订阅者列表、共同频道、文件夹、邮箱地址或权限组。频道成员和管理信息请进入“频道设置”；所有写操作仍由 Zulip 服务端最终裁决。";
                     ShowChannelDetails = true;
                     ShowDirectMessageSettings = false;
                     break;
                 }
             case DirectMessage directMessage:
-                ConversationTitle = DescribeDirectMessage(directMessage, state.Users, _session.CurrentUserId);
-                ConversationSubtitle = DescribeDirectMessageKind(directMessage);
-                DetailsTitle = ConversationTitle;
-                DetailsBody = directMessage.OtherUserIds.Count switch
                 {
-                    0 => "仅你自己可见",
-                    1 => $"与 {ConversationTitle} 的私信",
-                    _ => $"{directMessage.OtherUserIds.Count + 1} 位参与者：你、{DescribeDirectMessageParticipants(directMessage, state.Users)}"
-                };
-                DetailsKindLabel = directMessage.OtherUserIds.Count switch
-                {
-                    0 => "给自己",
-                    1 => "私信",
-                    _ => "群组私信"
-                };
-                DetailsGlyph = "@";
-                DetailsIdentifierLabel = directMessage.OtherUserIds.Count switch
-                {
-                    0 => "给自己的私信",
-                    1 => "一对一私信 · 2 位参与者",
-                    _ => $"群组私信 · {directMessage.OtherUserIds.Count + 1} 位参与者"
-                };
-                DetailsStateLabel = string.Empty;
-                DetailsAvailableMessage = string.Empty;
-                DetailsUnavailableMessage = string.Empty;
-                ShowChannelDetails = false;
-                ShowDirectMessageSettings = directMessage.OtherUserIds.Count == 1;
-                break;
+                    ConversationTitle = DescribeDirectMessage(directMessage, state.Users, _session.CurrentUserId);
+                    var presenceDescription = DescribeDirectMessagePresence(directMessage, state.Presence);
+                    var userStatusDescription = DescribeUserStatus(GetDirectMessageUserStatus(directMessage, state.UserStatuses));
+                    ConversationSubtitle = string.Join(" · ", new[] { presenceDescription, userStatusDescription }
+                        .Where(static value => !string.IsNullOrWhiteSpace(value)));
+                    if (ConversationSubtitle.Length == 0) ConversationSubtitle = DescribeDirectMessageKind(directMessage);
+                    DetailsTitle = ConversationTitle;
+                    DetailsBody = directMessage.OtherUserIds.Count switch
+                    {
+                        0 => "仅你自己可见",
+                        1 => $"与 {ConversationTitle} 的私信",
+                        _ => $"{directMessage.OtherUserIds.Count + 1} 位参与者：你、{DescribeDirectMessageParticipants(directMessage, state.Users)}"
+                    };
+                    DetailsKindLabel = directMessage.OtherUserIds.Count switch
+                    {
+                        0 => "给自己",
+                        1 => "私信",
+                        _ => "群组私信"
+                    };
+                    DetailsGlyph = "@";
+                    DetailsIdentifierLabel = directMessage.OtherUserIds.Count switch
+                    {
+                        0 => "给自己的私信",
+                        1 => "一对一私信 · 2 位参与者",
+                        _ => $"群组私信 · {directMessage.OtherUserIds.Count + 1} 位参与者"
+                    };
+                    DetailsStateLabel = string.Empty;
+                    DetailsAvailableMessage = string.Empty;
+                    DetailsUnavailableMessage = string.Empty;
+                    ShowChannelDetails = false;
+                    ShowDirectMessageSettings = directMessage.OtherUserIds.Count == 1;
+                    break;
+                }
             default:
                 ConversationTitle = "选择会话";
                 ConversationSubtitle = "从左侧选择会话开始";
@@ -5613,7 +5802,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 DetailsIdentifierLabel = "尚未选择会话";
                 DetailsStateLabel = DescribeConnection(state.Connection);
                 DetailsAvailableMessage = "选择会话后显示已经接通的能力。";
-                DetailsUnavailableMessage = "未选择会话时不会推断成员关系、presence、共同频道或管理权限。";
+                DetailsUnavailableMessage = "未选择会话时不会推断成员关系、共同频道或管理权限。";
                 ShowChannelDetails = false;
                 ShowDirectMessageSettings = false;
                 CloseDetailsCore();
@@ -5848,10 +6037,79 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CurrentUserDisplayName));
         OnPropertyChanged(nameof(CurrentUserInitial));
         OnPropertyChanged(nameof(CurrentUserAvatarUrl));
+        NotifyOwnPresenceProperties();
+        NotifyOwnUserStatusProperties();
         OnPropertyChanged(nameof(ChannelListHeight));
         OnPropertyChanged(nameof(TopicListHeight));
         OnPropertyChanged(nameof(HasCurrentConversationUnread));
         NotifyLayoutProperties();
+    }
+
+    private void NotifyOwnPresenceProperties()
+    {
+        OnPropertyChanged(nameof(CanSetOwnPresence));
+        OnPropertyChanged(nameof(CanSetOwnPresenceOnline));
+        OnPropertyChanged(nameof(CanSetOwnPresenceIdle));
+        OnPropertyChanged(nameof(CanSetOwnPresenceOffline));
+        OnPropertyChanged(nameof(ShowOwnPresenceControls));
+        OnPropertyChanged(nameof(OwnPresenceStatus));
+        OnPropertyChanged(nameof(HasOwnPresenceStatus));
+        OnPropertyChanged(nameof(OwnPresenceLabel));
+        OnPropertyChanged(nameof(IsOwnPresenceOnline));
+        OnPropertyChanged(nameof(IsOwnPresenceIdle));
+        OnPropertyChanged(nameof(IsOwnPresenceOffline));
+        OnPropertyChanged(nameof(OwnPresenceBrush));
+        OnPropertyChanged(nameof(OwnPresenceStatusText));
+    }
+
+    private static string DescribeOwnPresenceStatus(UserPresenceStatus status) => status switch
+    {
+        UserPresenceStatus.Active => "在线",
+        UserPresenceStatus.Idle => "忙碌",
+        UserPresenceStatus.Offline => "离线",
+        _ => throw new ArgumentOutOfRangeException(nameof(status))
+    };
+
+    private void NotifyOwnUserStatusProperties()
+    {
+        OnPropertyChanged(nameof(ShowOwnUserStatusControls));
+        OnPropertyChanged(nameof(CanSetOwnUserStatus));
+        OnPropertyChanged(nameof(OwnUserStatus));
+        OnPropertyChanged(nameof(HasOwnUserStatus));
+        OnPropertyChanged(nameof(IsOwnUserStatusConfirmed));
+        OnPropertyChanged(nameof(OwnUserStatusLabel));
+        OnPropertyChanged(nameof(OwnUserStatusStatusText));
+        OnPropertyChanged(nameof(CanClearOwnUserStatus));
+    }
+
+    private static UserStatusContent CreatePresetStatus(string text, string emojiName, string emojiCode) =>
+        new(text, new EmojiReactionIdentity(emojiName, emojiCode, "unicode_emoji"));
+
+    private static class UserStatusPresets
+    {
+        internal static UserStatusContent Busy { get; } = CreatePresetStatus("忙碌", "working_on_it", "1f6e0");
+        internal static UserStatusContent Meeting { get; } = CreatePresetStatus("会议中", "calendar", "1f4c5");
+        internal static UserStatusContent Commuting { get; } = CreatePresetStatus("通勤中", "bus", "1f68c");
+        internal static UserStatusContent Sick { get; } = CreatePresetStatus("病假", "hurt", "1f915");
+        internal static UserStatusContent Vacation { get; } = CreatePresetStatus("休假", "palm_tree", "1f334");
+        internal static UserStatusContent Remote { get; } = CreatePresetStatus("远程办公", "house", "1f3e0");
+        internal static UserStatusContent Office { get; } = CreatePresetStatus("在办公室", "office", "1f3e2");
+    }
+
+    private static string? DescribeUserStatus(UserStatusContent? status)
+    {
+        if (status is null || status.IsEmpty) return null;
+        var glyph = GetUserStatusGlyph(status);
+        if (status.StatusText.Length == 0) return glyph;
+        return glyph.Length == 0 ? status.StatusText : $"{glyph} {status.StatusText}";
+    }
+
+    private static string GetUserStatusGlyph(UserStatusContent? status)
+    {
+        if (status?.Emoji is not { } emoji) return string.Empty;
+        return string.Equals(emoji.ReactionType, "unicode_emoji", StringComparison.Ordinal)
+            ? EmojiCatalog.GetDisplayValue(emoji.EmojiCode)
+            : $":{emoji.EmojiName}:";
     }
 
     private void ProjectHistoryState(ConversationKey? selected)
@@ -6574,6 +6832,28 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             _ => null
         };
 
+    private static UserPresenceStatus? GetDirectMessagePresence(
+        DirectMessage message,
+        PresenceState presence) => message.OtherUserIds.Count == 1
+        ? presence.ResolveStatus(message.OtherUserIds[0], DateTimeOffset.UtcNow)
+        : null;
+
+    private static string? DescribeDirectMessagePresence(
+        DirectMessage message,
+        PresenceState presence) => GetDirectMessagePresence(message, presence) switch
+        {
+            UserPresenceStatus.Active => "在线",
+            UserPresenceStatus.Idle => "忙碌",
+            UserPresenceStatus.Offline => "离线",
+            _ => null
+        };
+
+    private static UserStatusContent? GetDirectMessageUserStatus(
+        DirectMessage message,
+        UserStatusState userStatuses) => message.OtherUserIds.Count == 1 && userStatuses.IsAvailable
+            ? userStatuses.Users.GetValueOrDefault(message.OtherUserIds[0])
+            : null;
+
     private ConversationListItem CreateDirectConversationListItem(ClientState state, DirectMessage conversation)
     {
         var avatar = GetDirectMessageAvatar(conversation, state.Users, _session.CurrentUserId);
@@ -6601,7 +6881,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             latestMessage?.Timestamp,
             string.Equals(_session.SelectedConversation?.CanonicalKey, conversation.CanonicalKey, StringComparison.Ordinal),
             preference.IsMuted,
-            preference.IsPinned);
+            preference.IsPinned,
+            presenceStatus: GetDirectMessagePresence(conversation, state.Presence),
+            userStatus: GetDirectMessageUserStatus(conversation, state.UserStatuses));
     }
 
     private ConversationListItem CreatePrivateGroupConversationListItem(ClientState state, Subscription subscription)

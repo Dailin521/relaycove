@@ -1632,6 +1632,263 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task PresencePolling_WhenMinuteBoundaryPasses_ReplacesSnapshotByOfficialEmailMapping()
+    {
+        var now = DateTimeOffset.FromUnixTimeSeconds(1_000);
+        var presenceDelays = new ControlledDelay();
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(users:
+            [
+                new UserProfile(10, "Me", "me@example.test"),
+                new UserProfile(20, "Bea", "bea@example.test")
+            ]) with
+            {
+                IsPresenceAvailable = true,
+                Presences = [new UserPresence(20, now, now)]
+            })
+        };
+        gateway.RealmPresenceHandler = (_, _) => Task.FromResult(new RealmPresenceResult(
+            now,
+            [new RealmPresenceEntry("bea@example.test", null, now)]));
+        await using var session = new ClientSession(
+            gateway,
+            new FakeAccountStore(),
+            new FakeCredentialVault(),
+            utcNow: () => now,
+            presenceDelay: presenceDelays.DelayAsync);
+
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        now = now.AddSeconds(61);
+        await presenceDelays.CompleteNextAsync(TimeSpan.FromSeconds(60));
+        await WaitUntilAsync(() => gateway.RealmPresenceCalls == 1);
+
+        var presence = session.State.Presence.Users[20];
+        Assert.Null(presence.ActiveTimestamp);
+        Assert.Equal(UserPresenceStatus.Idle, presence.ResolveStatus(now));
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task SetOwnPresenceAsync_WhenOnlineBusyAndInvisibleAreSelected_UsesOfficialWriteSequence()
+    {
+        var now = DateTimeOffset.FromUnixTimeSeconds(1_000);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                users: [new UserProfile(10, "Me", "me@example.test")],
+                isPresenceAvailable: true,
+                isOwnPresenceEnabled: true,
+                presences: [new UserPresence(10, now, now)]))
+        };
+        await using var session = new ClientSession(
+            gateway,
+            new FakeAccountStore(),
+            new FakeCredentialVault(),
+            utcNow: () => now);
+
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => gateway.PresenceWriteLog.Count == 1);
+        Assert.True(session.CanSetOwnPresence);
+        Assert.Equal(UserPresenceStatus.Active, session.OwnPresenceStatus);
+
+        now = now.AddSeconds(1);
+        await session.SetOwnPresenceAsync(UserPresenceStatus.Idle);
+        Assert.Equal(UserPresenceStatus.Idle, session.OwnPresenceStatus);
+        Assert.Equal(UserPresenceStatus.Idle, session.State.Presence.ResolveStatus(10, now));
+
+        await session.SetOwnPresenceAsync(UserPresenceStatus.Offline);
+        Assert.Equal(UserPresenceStatus.Offline, session.OwnPresenceStatus);
+        Assert.Equal(UserPresenceStatus.Offline, session.State.Presence.ResolveStatus(10, now));
+
+        now = now.AddSeconds(1);
+        await session.SetOwnPresenceAsync(UserPresenceStatus.Active);
+
+        Assert.Equal(
+            ["report:Active", "report:Idle", "enabled:False", "report:Active", "enabled:True"],
+            gateway.PresenceWriteLog);
+        Assert.Equal(UserPresenceStatus.Active, session.OwnPresenceStatus);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task SetOwnPresenceAsync_WhenWriteResultIsUncertain_MarksStatusUnconfirmedWithoutRetry()
+    {
+        var now = DateTimeOffset.FromUnixTimeSeconds(1_000);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                users: [new UserProfile(10, "Me", "me@example.test")],
+                isPresenceAvailable: true,
+                isOwnPresenceEnabled: true,
+                presences: [new UserPresence(10, now, now)])),
+            SetPresenceEnabledHandler = (_, _) => Task.FromException(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError))
+        };
+        await using var session = new ClientSession(
+            gateway,
+            new FakeAccountStore(),
+            new FakeCredentialVault(),
+            utcNow: () => now);
+
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => gateway.PresenceWriteLog.Count == 1);
+        gateway.PresenceWriteLog.Clear();
+
+        await Assert.ThrowsAsync<GatewayException>(() =>
+            session.SetOwnPresenceAsync(UserPresenceStatus.Offline));
+
+        Assert.True(session.CanSetOwnPresence);
+        Assert.Null(session.OwnPresenceStatus);
+        Assert.Equal(UserPresenceStatus.Active, session.State.Presence.ResolveStatus(10, now));
+        Assert.Equal(["enabled:False"], gateway.PresenceWriteLog);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task EventLoop_WhenOwnPresenceSettingChanges_UpdatesCurrentSettingProjection()
+    {
+        var now = DateTimeOffset.FromUnixTimeSeconds(1_000);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                users: [new UserProfile(10, "Me", "me@example.test")],
+                isPresenceAvailable: true,
+                isOwnPresenceEnabled: true,
+                presences: [new UserPresence(10, now, now)]))
+        };
+        gateway.GetEventsHandler = (_, cancellationToken) => gateway.GetEventsCalls == 1
+            ? Task.FromResult(new EventBatch(
+                [new OwnPresenceEnabledChangedEvent(false, 2)],
+                2))
+            : Never<EventBatch>(cancellationToken);
+        await using var session = new ClientSession(
+            gateway,
+            new FakeAccountStore(),
+            new FakeCredentialVault(),
+            utcNow: () => now);
+
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => session.OwnPresenceStatus == UserPresenceStatus.Offline);
+
+        Assert.True(session.CanSetOwnPresence);
+        Assert.Equal(UserPresenceStatus.Offline, session.State.Presence.ResolveStatus(10, now));
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task UserStatusSnapshot_WhenRegisterCompletes_ProjectsCurrentUserStatus()
+    {
+        var status = new UserStatusContent(
+            "会议中",
+            new EmojiReactionIdentity("calendar", "1f4c5", "unicode_emoji"));
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                users: [new UserProfile(10, "Me", "me@example.test")],
+                isUserStatusAvailable: true,
+                userStatuses: [new UserCustomStatus(10, status)]))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        Assert.True(session.CanSetOwnUserStatus);
+        Assert.True(session.IsOwnUserStatusConfirmed);
+        Assert.Equal(status, session.OwnUserStatus);
+        Assert.Equal(status, session.State.UserStatuses.Users[10]);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task SetOwnUserStatusAsync_WhenPresetAndClearAreSelected_WritesOnceAndUpdatesMemory()
+    {
+        var status = new UserStatusContent(
+            "在办公室",
+            new EmojiReactionIdentity("office", "1f3e2", "unicode_emoji"));
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(isUserStatusAvailable: true))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.SetOwnUserStatusAsync(status);
+        Assert.Equal(status, session.OwnUserStatus);
+        Assert.Equal(status, Assert.Single(gateway.UserStatusWriteLog));
+
+        await session.SetOwnUserStatusAsync(new UserStatusContent());
+        Assert.Null(session.OwnUserStatus);
+        Assert.Equal(2, gateway.UserStatusWriteLog.Count);
+        Assert.True(gateway.UserStatusWriteLog[1].IsEmpty);
+        Assert.True(session.IsOwnUserStatusConfirmed);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task SetOwnUserStatusAsync_WhenWriteResultIsUncertain_DoesNotRetryAndMarksUnconfirmed()
+    {
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(isUserStatusAvailable: true)),
+            UpdateOwnUserStatusHandler = (_, _) => Task.FromException(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await Assert.ThrowsAsync<GatewayException>(() => session.SetOwnUserStatusAsync(
+            new UserStatusContent("通勤中", new EmojiReactionIdentity("bus", "1f68c", "unicode_emoji"))));
+
+        Assert.Single(gateway.UserStatusWriteLog);
+        Assert.False(session.IsOwnUserStatusConfirmed);
+        Assert.Null(session.OwnUserStatus);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task SetOwnUserStatusAsync_WhenUnrelatedOwnEventArrivesAfterUncertainWrite_DoesNotConfirmTarget()
+    {
+        var unrelated = new UserStatusContent(
+            "会议中",
+            new EmojiReactionIdentity("calendar", "1f4c5", "unicode_emoji"));
+        var target = new UserStatusContent(
+            "通勤中",
+            new EmojiReactionIdentity("bus", "1f68c", "unicode_emoji"));
+        var firstBatch = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondBatch = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(isUserStatusAvailable: true)),
+            UpdateOwnUserStatusHandler = (_, _) => Task.FromException(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError))
+        };
+        gateway.GetEventsHandler = (_, cancellationToken) => gateway.GetEventsCalls switch
+        {
+            1 => firstBatch.Task.WaitAsync(cancellationToken),
+            2 => secondBatch.Task.WaitAsync(cancellationToken),
+            _ => Never<EventBatch>(cancellationToken)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => gateway.GetEventsCalls == 1);
+
+        await Assert.ThrowsAsync<GatewayException>(() => session.SetOwnUserStatusAsync(target));
+        Assert.False(session.IsOwnUserStatusConfirmed);
+
+        firstBatch.SetResult(new EventBatch([new UserStatusChangedEvent(10, unrelated, 2)], 2));
+        await WaitUntilAsync(() => Equals(session.OwnUserStatus, unrelated));
+
+        Assert.False(session.IsOwnUserStatusConfirmed);
+        await WaitUntilAsync(() => gateway.GetEventsCalls == 2);
+        secondBatch.SetResult(new EventBatch([new UserStatusChangedEvent(10, target, 3)], 3));
+        await WaitUntilAsync(() => session.IsOwnUserStatusConfirmed);
+
+        Assert.Equal(target, session.OwnUserStatus);
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task ClearConversationCacheAsync_WhenHistoryIsActive_PurgesOnlyExpectedConversationAndInvalidatesLateResponse()
     {
         var selected = new DirectMessage([20]);
@@ -2585,10 +2842,17 @@ public sealed class ClientSessionTests
         IReadOnlyList<UserTopicVisibility>? userTopics = null,
         bool isOrganizationAdministrator = false,
         bool canCreatePrivateChannel = false,
-        IReadOnlyList<UserProfile>? users = null) =>
+        IReadOnlyList<UserProfile>? users = null,
+        bool isPresenceAvailable = false,
+        bool? isOwnPresenceEnabled = null,
+        IReadOnlyList<UserPresence>? presences = null,
+        bool isUserStatusAvailable = false,
+        IReadOnlyList<UserCustomStatus>? userStatuses = null) =>
         new(queue, 1, TimeSpan.FromSeconds(25), 1_000, 100, subscriptions ?? [],
             users ?? [new UserProfile(10, "Me", "me@example.test")], recent ?? [], unread ?? new UnreadState(), events ?? [], maxFileUploadSizeMiB,
-            UserTopics: userTopics, IsOrganizationAdministrator: isOrganizationAdministrator, CanCreatePrivateChannel: canCreatePrivateChannel);
+            UserTopics: userTopics, IsOrganizationAdministrator: isOrganizationAdministrator, CanCreatePrivateChannel: canCreatePrivateChannel,
+            Presences: presences, IsPresenceAvailable: isPresenceAvailable, IsOwnPresenceEnabled: isOwnPresenceEnabled,
+            UserStatuses: userStatuses, IsUserStatusAvailable: isUserStatusAvailable);
 
     private static async Task WaitUntilAsync(Func<bool> predicate)
     {
@@ -2841,6 +3105,9 @@ public sealed class ClientSessionTests
         public List<HistoryRequest> HistoryRequests { get; } = [];
         public List<MessageAroundRequest> AroundRequests { get; } = [];
         public List<GetEventsRequest> GetEventsRequests { get; } = [];
+        public int RealmPresenceCalls { get; private set; }
+        public List<string> PresenceWriteLog { get; } = [];
+        public List<UserStatusContent> UserStatusWriteLog { get; } = [];
         public List<SendRequest> SendRequests { get; } = [];
         public List<MarkReadRequest> MarkReadRequests { get; } = [];
         public List<DeleteQueueRequest> DeleteQueueRequests { get; } = [];
@@ -2859,6 +3126,10 @@ public sealed class ClientSessionTests
         public int MoveTopicCalls { get; private set; }
         public Func<RegisterRequest, CancellationToken, Task<RegisterResult>> RegisterHandler { get; set; } = (_, _) => Task.FromResult(Register());
         public Func<GetEventsRequest, CancellationToken, Task<EventBatch>>? GetEventsHandler { get; set; }
+        public Func<GetRealmPresenceRequest, CancellationToken, Task<RealmPresenceResult>>? RealmPresenceHandler { get; set; }
+        public Func<SetPresenceEnabledRequest, CancellationToken, Task>? SetPresenceEnabledHandler { get; set; }
+        public Func<UpdateOwnPresenceRequest, CancellationToken, Task>? UpdateOwnPresenceHandler { get; set; }
+        public Func<UpdateOwnUserStatusRequest, CancellationToken, Task>? UpdateOwnUserStatusHandler { get; set; }
         public Func<HistoryRequest, CancellationToken, Task<HistoryResult>> HistoryHandler { get; set; } = (_, _) => Task.FromResult(new HistoryResult([], false, false));
         public Func<MessageSearchRequest, CancellationToken, Task<MessageQueryPage>>? SearchHandler { get; set; }
         public Func<SavedMessagesRequest, CancellationToken, Task<MessageQueryPage>>? SavedHandler { get; set; }
@@ -3007,6 +3278,39 @@ public sealed class ClientSessionTests
             UnsubscribeRequests.Add(request);
             return UnsubscribeChannelHandler?.Invoke(request, cancellationToken) ??
                 Task.FromResult(new UnsubscribeChannelResult([request.ChannelName], []));
+        }
+
+        public Task<RealmPresenceResult> GetRealmPresenceAsync(
+            GetRealmPresenceRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            RealmPresenceCalls++;
+            return RealmPresenceHandler?.Invoke(request, cancellationToken) ??
+                Task.FromResult(new RealmPresenceResult(DateTimeOffset.UtcNow, []));
+        }
+
+        public Task SetPresenceEnabledAsync(
+            SetPresenceEnabledRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            PresenceWriteLog.Add($"enabled:{request.IsEnabled}");
+            return SetPresenceEnabledHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
+        }
+
+        public Task UpdateOwnPresenceAsync(
+            UpdateOwnPresenceRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            PresenceWriteLog.Add($"report:{request.Status}");
+            return UpdateOwnPresenceHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
+        }
+
+        public Task UpdateOwnUserStatusAsync(
+            UpdateOwnUserStatusRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            UserStatusWriteLog.Add(request.Status);
+            return UpdateOwnUserStatusHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
         }
 
         public Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(AvailableChannelsRequest request, CancellationToken cancellationToken = default)

@@ -18,6 +18,8 @@ public sealed class ConversationListItem : ObservableObject
     private bool _isPinned;
     private long? _searchTargetMessageId;
     private IReadOnlyList<ConversationAvatarTile> _avatarTiles;
+    private UserPresenceStatus? _presenceStatus;
+    private UserStatusContent? _userStatus;
 
     public ConversationListItem(
         ConversationKey conversation,
@@ -32,7 +34,9 @@ public sealed class ConversationListItem : ObservableObject
         bool isMuted = false,
         bool isPinned = false,
         IReadOnlyList<ConversationAvatarTile>? avatarTiles = null,
-        long? searchTargetMessageId = null)
+        long? searchTargetMessageId = null,
+        UserPresenceStatus? presenceStatus = null,
+        UserStatusContent? userStatus = null)
     {
         _conversation = conversation ?? throw new ArgumentNullException(nameof(conversation));
         _title = title;
@@ -47,6 +51,8 @@ public sealed class ConversationListItem : ObservableObject
         _isPinned = isPinned;
         _avatarTiles = avatarTiles ?? [];
         _searchTargetMessageId = searchTargetMessageId;
+        _presenceStatus = presenceStatus;
+        _userStatus = userStatus;
     }
 
     public ConversationKey Conversation => _conversation;
@@ -68,6 +74,29 @@ public sealed class ConversationListItem : ObservableObject
     public bool HasAvatarTiles => IsPrivateGroup && AvatarTiles.Count > 0;
     public bool ShowSingleAvatar => !IsPrivateGroup;
     public bool ShowGroupFallback => IsPrivateGroup && !HasAvatarTiles;
+    public UserPresenceStatus? PresenceStatus => _presenceStatus;
+    public bool HasPresence => PresenceStatus is not null;
+    public string PresenceLabel => PresenceStatus switch
+    {
+        UserPresenceStatus.Active => "在线",
+        UserPresenceStatus.Idle => "忙碌",
+        UserPresenceStatus.Offline => "离线",
+        _ => string.Empty
+    };
+    public Brush PresenceBrush => new SolidColorBrush(Color.FromArgb(PresenceStatus switch
+    {
+        UserPresenceStatus.Active => "#22C55E",
+        UserPresenceStatus.Idle => "#F59E0B",
+        _ => "#9CA3AF"
+    }));
+    public UserStatusContent? UserStatus => _userStatus;
+    public string UserStatusGlyph => UserStatus?.Emoji is { ReactionType: "unicode_emoji" } emoji
+        ? EmojiCatalog.GetDisplayValue(emoji.EmojiCode)
+        : UserStatus?.Emoji is { } fallback ? $":{fallback.EmojiName}:" : string.Empty;
+    public bool HasUserStatusGlyph => UserStatusGlyph.Length > 0;
+    public string UserStatusDescription => UserStatus is null
+        ? string.Empty
+        : UserStatus.StatusText.Length > 0 ? UserStatus.StatusText : UserStatusGlyph;
 
     public bool IsSelected
     {
@@ -111,6 +140,18 @@ public sealed class ConversationListItem : ObservableObject
             OnPropertyChanged(nameof(HasAvatarTiles));
             OnPropertyChanged(nameof(ShowGroupFallback));
         }
+        if (SetProperty(ref _presenceStatus, candidate.PresenceStatus, nameof(PresenceStatus)))
+        {
+            OnPropertyChanged(nameof(HasPresence));
+            OnPropertyChanged(nameof(PresenceLabel));
+            OnPropertyChanged(nameof(PresenceBrush));
+        }
+        if (SetProperty(ref _userStatus, candidate.UserStatus, nameof(UserStatus)))
+        {
+            OnPropertyChanged(nameof(UserStatusGlyph));
+            OnPropertyChanged(nameof(HasUserStatusGlyph));
+            OnPropertyChanged(nameof(UserStatusDescription));
+        }
         IsSelected = candidate.IsSelected;
     }
 
@@ -128,7 +169,9 @@ public sealed class ConversationListItem : ObservableObject
             IsMuted,
             IsPinned,
             AvatarTiles,
-            messageId);
+            messageId,
+            PresenceStatus,
+            UserStatus);
 
     private static readonly string[] TonePalette =
     [

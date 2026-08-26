@@ -18,4 +18,9 @@ public sealed record RegisterResult(
     int? MaxChannelFolderDescriptionLength = null,
     IReadOnlyList<UserTopicVisibility>? UserTopics = null,
     bool IsOrganizationAdministrator = false,
-    bool CanCreatePrivateChannel = false);
+    bool CanCreatePrivateChannel = false,
+    IReadOnlyList<UserPresence>? Presences = null,
+    bool IsPresenceAvailable = false,
+    bool? IsOwnPresenceEnabled = null,
+    IReadOnlyList<UserCustomStatus>? UserStatuses = null,
+    bool IsUserStatusAvailable = false);

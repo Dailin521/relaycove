@@ -94,6 +94,19 @@
                                                                       MediaKind="Avatar"
                                                                       Aspect="AspectFill"
                                                                       ShowFailureText="False" />
+                                        <Border WidthRequest="11"
+                                                HeightRequest="11"
+                                                Padding="0"
+                                                Margin="0,0,1,1"
+                                                HorizontalOptions="End"
+                                                VerticalOptions="End"
+                                                IsVisible="{Binding HasPresence}"
+                                                Background="{Binding PresenceBrush}"
+                                                Stroke="{StaticResource SurfaceBrush}"
+                                                StrokeThickness="2"
+                                                SemanticProperties.Description="{Binding PresenceLabel}">
+                                            <Border.StrokeShape><RoundRectangle CornerRadius="6" /></Border.StrokeShape>
+                                        </Border>
                                     </Grid>
                                     <Label Text="{Binding Initial}"
                                            IsVisible="{Binding ShowGroupFallback}"
@@ -135,7 +148,7 @@
                                     </Grid>
                                 </Grid>
                             </Border>
-                            <Grid Grid.Column="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="5">
+                            <Grid Grid.Column="1" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="5">
                                 <Label Text="📌" IsVisible="{Binding IsPinned}" FontSize="10" VerticalTextAlignment="End" />
                                 <Label Grid.Column="1"
                                        Text="{Binding Title}"
@@ -145,6 +158,13 @@
                                        VerticalTextAlignment="End"
                                        LineBreakMode="TailTruncation" />
                                 <Label Grid.Column="2"
+                                       Text="{Binding UserStatusGlyph}"
+                                       IsVisible="{Binding HasUserStatusGlyph}"
+                                       FontSize="12"
+                                       VerticalTextAlignment="End"
+                                       ToolTipProperties.Text="{Binding UserStatusDescription}"
+                                       SemanticProperties.Description="{Binding UserStatusDescription}" />
+                                <Label Grid.Column="3"
                                        Text="{Binding Timestamp}"
                                        IsVisible="{Binding HasTimestamp}"
                                        Style="{StaticResource MutedLabelStyle}"

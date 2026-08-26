@@ -5,6 +5,14 @@ public interface IZulipGateway
     Task<RealmProbeResult> ProbeRealmAsync(RealmEndpoint realm, CancellationToken cancellationToken = default);
     Task<AuthenticationResult> AuthenticateAsync(AuthenticationRequest request, CancellationToken cancellationToken = default);
     Task<RegisterResult> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default);
+    Task<RealmPresenceResult> GetRealmPresenceAsync(GetRealmPresenceRequest request, CancellationToken cancellationToken = default) =>
+        Task.FromException<RealmPresenceResult>(new NotSupportedException("Realm presence is not available."));
+    Task SetPresenceEnabledAsync(SetPresenceEnabledRequest request, CancellationToken cancellationToken = default) =>
+        Task.FromException(new NotSupportedException("Presence privacy settings are not available."));
+    Task UpdateOwnPresenceAsync(UpdateOwnPresenceRequest request, CancellationToken cancellationToken = default) =>
+        Task.FromException(new NotSupportedException("Presence reporting is not available."));
+    Task UpdateOwnUserStatusAsync(UpdateOwnUserStatusRequest request, CancellationToken cancellationToken = default) =>
+        Task.FromException(new NotSupportedException("User status updates are not available."));
     Task<EventBatch> GetEventsAsync(GetEventsRequest request, CancellationToken cancellationToken = default);
     Task<HistoryResult> GetHistoryAsync(HistoryRequest request, CancellationToken cancellationToken = default);
     Task<HistoryResult> GetMessagesAroundAsync(MessageAroundRequest request, CancellationToken cancellationToken = default) =>

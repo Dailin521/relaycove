@@ -64,6 +64,10 @@ public sealed class ZulipGatewayTests
             {"queue_id":"queue-1","last_event_id":9,"event_queue_longpoll_timeout_seconds":90,"idle_queue_timeout_secs":3600,"max_message_length":10000,"max_topic_length":60,"max_file_upload_size_mib":25,
              "subscriptions":[{"stream_id":42,"name":"general","future":1}],
              "realm_users":[{"user_id":7,"full_name":"Ada","email":"ada@example.test","role":200}],
+             "user_settings":{"presence_enabled":true},
+             "realm_presence_disabled":false,
+             "presences":{"7":{"active_timestamp":100,"idle_timestamp":101}},
+             "user_status":{"7":{"status_text":"会议中","emoji_name":"calendar","emoji_code":"1f4c5","reaction_type":"unicode_emoji"}},
              "is_admin":true,
              "user_topics":[{"stream_id":42,"topic_name":"follow me","visibility_policy":3}],
              "recent_private_conversations":[{"user_ids":[9,10]},{"user_ids":[]}],
@@ -82,9 +86,12 @@ public sealed class ZulipGatewayTests
         Assert.Equal("false", form["apply_markdown"]);
         Assert.Equal("false", form["include_subscribers"]);
         Assert.Equal("3600", form["idle_queue_timeout"]);
-        Assert.Equal("[\"subscription\",\"realm_user\",\"realm\",\"realm_user_groups\",\"recent_private_conversations\"]", form["fetch_event_types"]);
+        Assert.Equal("[\"subscription\",\"realm_user\",\"realm\",\"realm_user_groups\",\"recent_private_conversations\",\"presence\",\"user_settings\",\"user_status\"]", form["fetch_event_types"]);
+        Assert.Equal("true", form["slim_presence"]);
         Assert.Contains("\"bulk_message_deletion\":true", form["client_capabilities"], StringComparison.Ordinal);
         Assert.Contains("\"archived_channels\":true", form["client_capabilities"], StringComparison.Ordinal);
+        Assert.Contains("\"user_settings_object\":true", form["client_capabilities"], StringComparison.Ordinal);
+        Assert.Contains("\"simplified_presence_events\":true", form["client_capabilities"], StringComparison.Ordinal);
         Assert.Equal("queue-1", result.QueueId);
         Assert.Equal(TimeSpan.FromSeconds(90), result.EventQueueLongPollTimeout);
         Assert.Equal(42, Assert.Single(result.Subscriptions).ChannelId);
@@ -95,6 +102,14 @@ public sealed class ZulipGatewayTests
         Assert.Equal(25, result.MaxFileUploadSizeMiB);
         Assert.True(result.IsOrganizationAdministrator);
         Assert.False(result.CanCreatePrivateChannel);
+        Assert.True(result.IsPresenceAvailable);
+        Assert.True(result.IsOwnPresenceEnabled);
+        Assert.Equal(7, Assert.Single(result.Presences!).UserId);
+        Assert.True(result.IsUserStatusAvailable);
+        var userStatus = Assert.Single(result.UserStatuses!);
+        Assert.Equal(7, userStatus.UserId);
+        Assert.Equal("会议中", userStatus.Content.StatusText);
+        Assert.Equal("1f4c5", userStatus.Content.Emoji!.EmojiCode);
         Assert.Equal(TopicVisibilityPolicy.Followed, Assert.Single(result.UserTopics!).Policy);
         Assert.Empty(result.Events);
     }
@@ -131,6 +146,310 @@ public sealed class ZulipGatewayTests
 
         var form = ParseForm(Assert.Single(handler.Requests).Body);
         Assert.Contains("\"reaction\"", form["event_types"], StringComparison.Ordinal);
+        Assert.Contains("\"presence\"", form["event_types"], StringComparison.Ordinal);
+        Assert.Contains("\"user_settings\"", form["event_types"], StringComparison.Ordinal);
+        Assert.Contains("\"user_status\"", form["event_types"], StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("{\"presence_enabled\":true}", true)]
+    [InlineData("{\"presence_enabled\":false}", false)]
+    [InlineData("{}", null)]
+    public async Task Register_WhenUserSettingsContainPresenceEnabled_ProjectsOwnSetting(
+        string userSettings,
+        bool? expected)
+    {
+        using var handler = new RecordingHandler(Json($$"""
+            {"queue_id":"queue-1","last_event_id":9,"event_queue_longpoll_timeout_seconds":90,
+             "max_message_length":10000,"max_topic_length":60,"subscriptions":[],
+             "realm_users":[{"user_id":7,"full_name":"Ada","email":"ada@example.test"}],
+             "realm_presence_disabled":false,"presences":{},"user_settings":{{userSettings}}}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.RegisterAsync(new RegisterRequest(Credentials));
+
+        Assert.Equal(expected, result.IsOwnPresenceEnabled);
+    }
+
+    [Theory]
+    [InlineData("", false)]
+    [InlineData(",\"realm_presence_disabled\":false,\"presences\":[]", false)]
+    [InlineData(",\"realm_presence_disabled\":false,\"presences\":{}", true)]
+    [InlineData(",\"realm_presence_disabled\":true,\"presences\":{}", false)]
+    [InlineData(",\"realm_presence_disabled\":false,\"presences\":{\"not-a-user\":{}}", false)]
+    [InlineData(",\"realm_presence_disabled\":false,\"presences\":{\"7\":[]}", false)]
+    [InlineData(",\"realm_presence_disabled\":false,\"presences\":{\"7\":{\"active_timestamp\":100}}", false)]
+    [InlineData(",\"realm_presence_disabled\":false,\"presences\":{\"7\":{\"active_timestamp\":\"100\",\"idle_timestamp\":101}}", false)]
+    public async Task Register_WhenPresenceSnapshotIsUnavailable_FailsClosed(
+        string presenceFields,
+        bool expectedAvailable)
+    {
+        using var handler = new RecordingHandler(Json($$"""
+            {"queue_id":"queue-1","last_event_id":9,"event_queue_longpoll_timeout_seconds":90,
+             "max_message_length":10000,"max_topic_length":60,"subscriptions":[],"realm_users":[]{{presenceFields}}}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.RegisterAsync(new RegisterRequest(Credentials));
+
+        Assert.Equal(expectedAvailable, result.IsPresenceAvailable);
+        Assert.Empty(result.Presences!);
+    }
+
+    [Theory]
+    [InlineData("", false)]
+    [InlineData(",\"user_status\":{}", true)]
+    [InlineData(",\"user_status\":[]", false)]
+    [InlineData(",\"user_status\":{\"bad-id\":{}}", false)]
+    [InlineData(",\"user_status\":{\"7\":{\"status_text\":7}}", false)]
+    public async Task Register_WhenUserStatusSnapshotIsUnavailable_FailsClosed(
+        string userStatusField,
+        bool expectedAvailable)
+    {
+        using var handler = new RecordingHandler(Json($$"""
+            {"queue_id":"queue-1","last_event_id":9,"event_queue_longpoll_timeout_seconds":90,
+             "max_message_length":10000,"max_topic_length":60,"subscriptions":[],"realm_users":[]{{userStatusField}}}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.RegisterAsync(new RegisterRequest(Credentials));
+
+        Assert.Equal(expectedAvailable, result.IsUserStatusAvailable);
+        Assert.Empty(result.UserStatuses!);
+    }
+
+    [Fact]
+    public async Task RealmPresence_UsesReadOnlyEndpointAndMapsLegacyAggregatedStatus()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"server_timestamp":1000.25,"presences":{
+              "active@example.test":{"aggregated":{"status":"active","timestamp":995}},
+              "idle@example.test":{"website":{"status":"idle","timestamp":990}},
+              "offline@example.test":{"aggregated":{"status":"offline","timestamp":100}}
+            }}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.GetRealmPresenceAsync(new GetRealmPresenceRequest(Credentials));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("/api/v1/realm/presence", request.Uri!.AbsolutePath);
+        Assert.Equal(DateTimeOffset.FromUnixTimeMilliseconds(1_000_250), result.ServerTimestamp);
+        Assert.Collection(
+            result.Presences.OrderBy(item => item.UserEmail, StringComparer.Ordinal),
+            active =>
+            {
+                Assert.Equal("active@example.test", active.UserEmail);
+                Assert.Equal(active.ActiveTimestamp, active.IdleTimestamp);
+            },
+            idle =>
+            {
+                Assert.Equal("idle@example.test", idle.UserEmail);
+                Assert.Null(idle.ActiveTimestamp);
+                Assert.NotNull(idle.IdleTimestamp);
+            },
+            offline =>
+            {
+                Assert.Equal("offline@example.test", offline.UserEmail);
+                Assert.Null(offline.ActiveTimestamp);
+                Assert.Null(offline.IdleTimestamp);
+            });
+    }
+
+    [Theory]
+    [InlineData(UserPresenceStatus.Active, "active")]
+    [InlineData(UserPresenceStatus.Idle, "idle")]
+    public async Task UpdateOwnPresence_UsesPingOnlyOfficialStatus(
+        UserPresenceStatus status,
+        string expectedStatus)
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success","msg":""}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        await gateway.UpdateOwnPresenceAsync(new UpdateOwnPresenceRequest(Credentials, status));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("/api/v1/users/me/presence", request.Uri!.AbsolutePath);
+        var form = ParseForm(request.Body);
+        Assert.Equal(expectedStatus, form["status"]);
+        Assert.Equal("true", form["ping_only"]);
+        Assert.Equal("false", form["new_user_input"]);
+    }
+
+    [Fact]
+    public async Task UpdateOwnPresence_WhenOfflineIsRequested_FailsBeforeNetwork()
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success","msg":""}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => gateway.UpdateOwnPresenceAsync(
+            new UpdateOwnPresenceRequest(Credentials, UserPresenceStatus.Offline)));
+
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(true, "true")]
+    [InlineData(false, "false")]
+    public async Task SetPresenceEnabled_UsesOfficialInvisibleSetting(bool enabled, string expected)
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success","msg":""}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        await gateway.SetPresenceEnabledAsync(new SetPresenceEnabledRequest(Credentials, enabled));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Patch, request.Method);
+        Assert.Equal("/api/v1/settings", request.Uri!.AbsolutePath);
+        Assert.Equal(expected, ParseForm(request.Body)["presence_enabled"]);
+    }
+
+    [Fact]
+    public async Task UpdateOwnUserStatus_AlwaysSendsCompleteOfficialStatusTuple()
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success","msg":""}"""));
+        using var gateway = new ZulipGateway(handler);
+        var status = new UserStatusContent(
+            "会议中",
+            new EmojiReactionIdentity("calendar", "1f4c5", "unicode_emoji"));
+
+        await gateway.UpdateOwnUserStatusAsync(new UpdateOwnUserStatusRequest(Credentials, status));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("/api/v1/users/me/status", request.Uri!.AbsolutePath);
+        var form = ParseForm(request.Body);
+        Assert.Equal("会议中", form["status_text"]);
+        Assert.Equal("calendar", form["emoji_name"]);
+        Assert.Equal("1f4c5", form["emoji_code"]);
+        Assert.Equal("unicode_emoji", form["reaction_type"]);
+    }
+
+    [Fact]
+    public async Task UpdateOwnUserStatus_WhenCleared_SendsFourEmptyFields()
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success","msg":""}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        await gateway.UpdateOwnUserStatusAsync(
+            new UpdateOwnUserStatusRequest(Credentials, new UserStatusContent()));
+
+        var form = ParseForm(Assert.Single(handler.Requests).Body);
+        Assert.Equal(string.Empty, form["status_text"]);
+        Assert.Equal(string.Empty, form["emoji_name"]);
+        Assert.Equal(string.Empty, form["emoji_code"]);
+        Assert.Equal(string.Empty, form["reaction_type"]);
+    }
+
+    [Theory]
+    [InlineData("{\"result\":\"error\",\"msg\":\"rejected\"}")]
+    [InlineData("{\"msg\":\"missing result\"}")]
+    [InlineData("{\"result\":\"success\",\"ignored_parameters_unsupported\":[\"emoji_code\"]}")]
+    public async Task UpdateOwnUserStatus_WhenTwoHundredResponseCannotConfirmCompleteWrite_FailsProtocolClosed(string body)
+    {
+        using var handler = new RecordingHandler(Json(body));
+        using var gateway = new ZulipGateway(handler);
+
+        var error = await Assert.ThrowsAsync<GatewayException>(() => gateway.UpdateOwnUserStatusAsync(
+            new UpdateOwnUserStatusRequest(Credentials, new UserStatusContent("会议中"))));
+
+        Assert.Equal(GatewayErrorKind.Protocol, error.Kind);
+        Assert.Equal(GatewayErrorCode.InvalidResponse, error.Code);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Event_PresenceModernFormat_MapsEveryUserInOneEventGroup()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"events":[{"id":14,"type":"presence","presences":{
+              "7":{"active_timestamp":100,"idle_timestamp":101},
+              "9":{"active_timestamp":0,"idle_timestamp":102}
+            }}]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var batch = await gateway.GetEventsAsync(
+            new GetEventsRequest(Credentials, "queue-1", 13, TimeSpan.FromSeconds(30)));
+
+        Assert.Equal(2, batch.Events.Count);
+        var events = batch.Events.Cast<UserPresenceChangedEvent>().OrderBy(item => item.Presence.UserId).ToArray();
+        Assert.All(events, item => Assert.Equal(14, item.EventId));
+        Assert.NotNull(events[0].Presence.ActiveTimestamp);
+        Assert.Null(events[1].Presence.ActiveTimestamp);
+        Assert.NotNull(events[1].Presence.IdleTimestamp);
+    }
+
+    [Theory]
+    [InlineData("false", false)]
+    [InlineData("true", true)]
+    [InlineData("\"bad\"", null)]
+    public async Task Event_UserSettingsPresenceEnabled_MapsOfficialUpdate(
+        string value,
+        bool? expected)
+    {
+        using var handler = new RecordingHandler(Json($$"""
+            {"events":[{"id":14,"type":"user_settings","op":"update",
+              "property":"presence_enabled","value":{{value}}}]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var batch = await gateway.GetEventsAsync(
+            new GetEventsRequest(Credentials, "queue-1", 13, TimeSpan.FromSeconds(30)));
+
+        var changed = Assert.IsType<OwnPresenceEnabledChangedEvent>(Assert.Single(batch.Events));
+        Assert.Equal(expected, changed.IsEnabled);
+        Assert.Equal(14, changed.EventId);
+    }
+
+    [Fact]
+    public async Task Event_UserStatus_MapsPresetAndClear()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"events":[
+              {"id":14,"type":"user_status","user_id":7,"status_text":"远程办公","emoji_name":"house","emoji_code":"1f3e0","reaction_type":"unicode_emoji"},
+              {"id":15,"type":"user_status","user_id":9,"status_text":"","emoji_name":"","emoji_code":"","reaction_type":""}
+            ]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var batch = await gateway.GetEventsAsync(
+            new GetEventsRequest(Credentials, "queue-1", 13, TimeSpan.FromSeconds(30)));
+
+        Assert.Collection(
+            batch.Events,
+            item =>
+            {
+                var changed = Assert.IsType<UserStatusChangedEvent>(item);
+                Assert.Equal(7, changed.UserId);
+                Assert.Equal("远程办公", changed.Status!.StatusText);
+                Assert.Equal("house", changed.Status.Emoji!.EmojiName);
+            },
+            item =>
+            {
+                var changed = Assert.IsType<UserStatusChangedEvent>(item);
+                Assert.Equal(9, changed.UserId);
+                Assert.Null(changed.Status);
+            });
+    }
+
+    [Fact]
+    public async Task Event_UserStatus_WhenEmojiTupleIsPartial_FailsClosedWithoutClearingStatus()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"events":[{"id":14,"type":"user_status","user_id":7,
+              "status_text":"","emoji_name":"calendar","emoji_code":"","reaction_type":"unicode_emoji"}]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var batch = await gateway.GetEventsAsync(
+            new GetEventsRequest(Credentials, "queue-1", 13, TimeSpan.FromSeconds(30)));
+
+        var unknown = Assert.IsType<UnknownDomainEvent>(Assert.Single(batch.Events));
+        Assert.Equal("user_status", unknown.Kind);
     }
 
     [Theory]

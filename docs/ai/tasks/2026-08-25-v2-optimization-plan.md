@@ -9,7 +9,7 @@ Status: approved planning baseline; ordered optimization sequence not started
 
 本文中的“V2”指第二个 MAUI 开发优化周期，不预先决定下一个语义版本号、tag 或发布形式。
 
-2026-08-25 用户在计划序列前单独插入并确认了 Stage 31“Windows 消息正文鼠标拖选”，随后单独提出 Stage 32“MAUI 收藏消息入口”、Stage 33“Windows reaction 按钮裁切”和 Stage 34“reaction 表情面板定位”。这些都是独立确认、独立交付的窄 UI 修正，不改变下文从搜索正确性开始的既定顺序或范围。
+2026-08-25 用户在计划序列前单独插入并确认了 Stage 31“Windows 消息正文鼠标拖选”，随后单独提出 Stage 32“MAUI 收藏消息入口”、Stage 33“Windows reaction 按钮裁切”和 Stage 34“reaction 表情面板定位”。同日 Stage 38 又按用户新需求独立接入 MAUI 官方 presence 显示。这些都是独立问题，不改变下文从搜索正确性开始的既定顺序或范围；Stage 38 明确取代本计划原先“不做 presence”的边界。
 
 2026-08-25 用户授权将已经交付的 Stage 31–36 增量收口并发布为 `v2.1.0`；当日已完成正式 GitHub Release。这是一次发布检查点，不代表下文六部分优化序列已经全部实施或 V2 总计划已经完成；未完成项继续保留。
 
@@ -193,7 +193,7 @@ Stage 35 是用户在 V2 既定序列前单独插入的窄 UI 修正：MAUI 图�
 
 ## 10. 明确不做
 
-- `@` 候选、Realm 自定义表情、标为未读、presence、typing、应用退出后的后台 push、多账号、断点续传上传。
+- `@` 候选、Realm 自定义表情、标为未读、typing、应用退出后的后台 push、多账号、断点续传上传；Stage 38 已单独授权的 MAUI 一对一 presence 显示及当前用户 active/idle/隐身设置除外。
 - Web 对齐或 Web 新功能；公开频道、旧多话题私有频道、命名话题和多人私信入口。
 - Core reducer 重写、大型 `ShellViewModel` 拆分、SQLite/消息窗口/未读/滚动架构改造。
 - Live、真实 Realm 写入、部署、公开发布、tag、签名、安装器和干净 VM 验收。

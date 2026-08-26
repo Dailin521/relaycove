@@ -7,6 +7,8 @@
 
 当前前台会话已近底时，实时入站消息可以仅在 App 显示投影中抑制本轮新增行的临时未读分隔，避免服务器 flags 确认前后造成布局闪动；不得同步改写 `MessageItem.IsUnread`、Core 未读、会话徽标或服务器标读状态。此例外必须同时受同会话、前台激活、内容可见、无遮罩/导航、近底、连接正常和历史稳定门禁约束；任一条件不满足时沿用普通未读与滚动保护。
 
+Zulip availability/presence 与 `user_status` 是两套权威状态：前者负责 active/idle/offline 状态点，后者负责可选 emoji/text 个人状态。Core、协议、缓存和 UI 均不得复用字段或互相推断。个人状态只保存在 session 内存；读取端接受服务端合法自定义值，写入端可限制为产品预置项。`POST /users/me/status` 每次固定发送完整 status text/emoji 四元组，清除发送四个空字段；它使用独立串行通道、不自动重试，并丢弃旧账号/旧运行期的晚到结果。
+
 `RealtimeFollow` 使用一次原生平滑滚动，让已有消息向上移动、新消息从底部进入；即使新消息容器尚未生成，也必须等待列表新 extent 后动画原生底部偏移，不得改用 item-level 动画提前实现目标行。动画开始后，中间 `LayoutUpdated`/`Scrolled` 只能检查完成状态，不得重复下发同一滚动。会话激活/重新激活、手动跳转最新、精确消息锚点和分页恢复仍使用非动画精确定位与原有重试。不得把实时跟随复用为会话激活，或用非动画瞬移制造整列刷新感。
 
 ## 1. 标准流水线
@@ -149,7 +151,7 @@
 - 光标变更必须分别验证首次点击空文本、CJK 文本开头/中间/末尾、换行、选区、切换会话后再次聚焦、发送清空后继续输入、IME 组合和超过系统 timeout 的持续闪烁。编译或初始两三次闪烁不能替代真实窗口验收。
 - 草稿、输入区高度和详情开关属于 App/设备状态，不进入 Core 或 SQLite 业务表。
 - 频道管理按 capability 控制可见性和命令，提交时仍处理 403。
-- Web fixture 占位数据不自动映射成生产数据；成员关系、共同频道、presence、saved flags 或 capability 缺少契约时两端均隐藏/标为不可用。
+- Web fixture 占位数据不自动映射成生产数据；成员关系、共同频道、saved flags 或 capability 缺少契约时两端均隐藏/标为不可用。MAUI presence 只能来自 register/presence event/官方轮询，不得从消息时间、窗口焦点或本机活动推断他人状态。
 
 ### 6.5 原生 UI 快速预览循环
 
@@ -169,7 +171,7 @@
 
 ### 成员关系与已保存读取
 
-- 明确 Realm 用户、频道成员、共同频道和 presence 的不同数据来源，禁止互相推断。
+- 明确 Realm 用户、频道成员、共同频道和 presence 的不同数据来源，禁止互相推断。presence 只保存在当前 session 内存，不写 SQLite；事件负责及时上线，60 秒读取负责收敛 active/idle/offline，当前用户 active/idle 使用官方周期心跳。离线设置必须使用 `presence_enabled=false` 隐身，不能向 presence endpoint 发送不存在的 offline 枚举。手动状态写入只执行一次；模糊失败投影为结果未确认，旧账号/旧运行期的成功或 401 均丢弃。
 - 为 saved/starred flags 定义 Core、Zulip.Client、Data 和撤权清理规则；能力启用前隐藏“已保存”结果区。
 - 频道成员读取是 `@` 候选和频道管理的前置能力，但只读能力本身不授权任何管理写入。
 

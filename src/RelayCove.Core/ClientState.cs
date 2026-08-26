@@ -12,7 +12,9 @@ public sealed record ClientState
         UnreadState? unread = null,
         ConnectionState? connection = null,
         long? lastEventId = null,
-        IReadOnlyDictionary<long, MessageMutationState>? messageMutations = null)
+        IReadOnlyDictionary<long, MessageMutationState>? messageMutations = null,
+        PresenceState? presence = null,
+        UserStatusState? userStatuses = null)
     {
         Messages = new Dictionary<long, ChatMessage>(messages ?? new Dictionary<long, ChatMessage>());
         Subscriptions = new Dictionary<long, Subscription>(subscriptions ?? new Dictionary<long, Subscription>());
@@ -24,6 +26,8 @@ public sealed record ClientState
         Unread = unread ?? new UnreadState();
         Connection = connection ?? ConnectionState.SignedOut;
         LastEventId = lastEventId;
+        Presence = presence ?? PresenceState.Unavailable;
+        UserStatuses = userStatuses ?? UserStatusState.Unavailable;
     }
 
     public static ClientState Empty { get; } = new();
@@ -37,4 +41,6 @@ public sealed record ClientState
     public UnreadState Unread { get; init; }
     public ConnectionState Connection { get; init; }
     public long? LastEventId { get; init; }
+    public PresenceState Presence { get; init; }
+    public UserStatusState UserStatuses { get; init; }
 }

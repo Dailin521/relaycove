@@ -43,6 +43,21 @@
                         Padding="0"
                         Command="{Binding ToggleAccountMenuCommand}"
                         SemanticProperties.Description="打开账户菜单" />
+                <Border x:Name="ProductBarOwnPresenceDot"
+                        WidthRequest="10"
+                        HeightRequest="10"
+                        Padding="0"
+                        Margin="0,0,1,1"
+                        HorizontalOptions="End"
+                        VerticalOptions="End"
+                        InputTransparent="True"
+                        IsVisible="{Binding HasOwnPresenceStatus}"
+                        Background="{Binding OwnPresenceBrush}"
+                        Stroke="{StaticResource GroundBrush}"
+                        StrokeThickness="2"
+                        SemanticProperties.Description="{Binding OwnPresenceLabel, StringFormat='我的状态 {0}'}">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="5" /></Border.StrokeShape>
+                </Border>
             </Grid>
             <Border.Triggers>
                 <DataTrigger TargetType="Border"

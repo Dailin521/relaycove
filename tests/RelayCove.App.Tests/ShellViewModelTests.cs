@@ -9,6 +9,47 @@ namespace RelayCove.App.Tests;
 public sealed class ShellViewModelTests
 {
     [Fact]
+    public void DirectConversation_WhenOfficialPresenceAndUserStatusAreAvailable_ShowsBothLayers()
+    {
+        var direct = new DirectMessage([20]);
+        var now = DateTimeOffset.UtcNow;
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 10),
+            CurrentUserId = 10,
+            Selected = direct,
+            Recent = [direct],
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile>
+                {
+                    [10] = new UserProfile(10, "Ada"),
+                    [20] = new UserProfile(20, "Bea")
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected),
+                presence: new PresenceState(true, new Dictionary<long, UserPresence>
+                {
+                    [20] = new UserPresence(20, now, now)
+                }),
+                userStatuses: new UserStatusState(true, new Dictionary<long, UserStatusContent>
+                {
+                    [20] = new UserStatusContent(
+                        "会议中",
+                        new EmojiReactionIdentity("calendar", "1f4c5", "unicode_emoji"))
+                }))
+        };
+
+        using var viewModel = CreateViewModel(session);
+
+        var item = Assert.Single(viewModel.Conversations);
+        Assert.True(item.HasPresence);
+        Assert.Equal(UserPresenceStatus.Active, item.PresenceStatus);
+        Assert.Equal("在线", item.PresenceLabel);
+        Assert.Equal("📅", item.UserStatusGlyph);
+        Assert.Equal("会议中", item.UserStatusDescription);
+        Assert.Equal("在线 · 📅 会议中", viewModel.ConversationSubtitle);
+    }
+
+    [Fact]
     public void Constructor_WhenNoLastRealm_UsesConfiguredDefault()
     {
         using var viewModel = CreateViewModel(new FakeSession(), new FakeLastRealmStore());
@@ -1529,6 +1570,180 @@ public sealed class ShellViewModelTests
         Assert.False(viewModel.IsAccountMenuOpen);
         Assert.True(viewModel.IsSettingsSection);
         Assert.True(viewModel.IsAppearanceSettings);
+    }
+
+    [Fact]
+    public async Task OwnPresence_WhenBusyAndOfflineAreSelected_UsesSessionAndUpdatesMenuState()
+    {
+        var state = new ClientState(
+            users: new Dictionary<long, UserProfile> { [7] = new(7, "Ada") },
+            connection: new ConnectionState(ConnectionStatus.Connected),
+            presence: new PresenceState(true, new Dictionary<long, UserPresence>
+            {
+                [7] = new UserPresence(7, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
+            }));
+        var session = new FakeSession
+        {
+            StateValue = state,
+            Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
+            CurrentUserId = 7,
+            CanSetOwnPresenceValue = true,
+            OwnPresenceStatusValue = UserPresenceStatus.Active
+        };
+        session.SetOwnPresenceAction = (status, _) =>
+        {
+            session.OwnPresenceStatusValue = status;
+            return Task.CompletedTask;
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await viewModel.SetOwnPresenceIdleCommand.ExecuteAsync(null);
+        Assert.Equal(UserPresenceStatus.Idle, session.OwnPresenceStatusValue);
+        Assert.Equal("忙碌", viewModel.OwnPresenceLabel);
+        Assert.True(viewModel.IsOwnPresenceIdle);
+        Assert.True(viewModel.HasOwnPresenceStatus);
+
+        await viewModel.SetOwnPresenceOfflineCommand.ExecuteAsync(null);
+        Assert.Equal(UserPresenceStatus.Offline, session.OwnPresenceStatusValue);
+        Assert.Equal("离线", viewModel.OwnPresenceLabel);
+        Assert.True(viewModel.IsOwnPresenceOffline);
+        Assert.True(viewModel.HasOwnPresenceStatus);
+        Assert.Null(viewModel.OwnPresenceError);
+    }
+
+    [Fact]
+    public void OwnPresence_WhenStatusIsKnownButSettingIsUnavailable_StillShowsAvatarStatus()
+    {
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
+            CurrentUserId = 7,
+            CanSetOwnPresenceValue = false,
+            OwnPresenceStatusValue = UserPresenceStatus.Active
+        };
+        using var viewModel = CreateViewModel(session);
+
+        Assert.True(viewModel.HasOwnPresenceStatus);
+        Assert.False(viewModel.ShowOwnPresenceControls);
+        Assert.True(viewModel.IsOwnPresenceOnline);
+    }
+
+    [Fact]
+    public async Task OwnPresence_WhenCurrentStatusIsSelected_DoesNotRepeatWrite()
+    {
+        var writes = 0;
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
+            CurrentUserId = 7,
+            CanSetOwnPresenceValue = true,
+            OwnPresenceStatusValue = UserPresenceStatus.Active,
+            SetOwnPresenceAction = (_, _) =>
+            {
+                writes++;
+                return Task.CompletedTask;
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await viewModel.SetOwnPresenceOnlineCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, writes);
+        Assert.False(viewModel.CanSetOwnPresenceOnline);
+        Assert.True(viewModel.CanSetOwnPresenceIdle);
+    }
+
+    [Fact]
+    public async Task OwnPresence_WhileServerConfirmationIsPending_ShowsImmediateProgress()
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
+            CurrentUserId = 7,
+            CanSetOwnPresenceValue = true,
+            OwnPresenceStatusValue = UserPresenceStatus.Active
+        };
+        session.SetOwnPresenceAction = async (status, _) =>
+        {
+            await completion.Task;
+            session.OwnPresenceStatusValue = status;
+        };
+        using var viewModel = CreateViewModel(session);
+
+        var operation = viewModel.SetOwnPresenceIdleCommand.ExecuteAsync(null);
+        Assert.True(viewModel.IsOwnPresenceBusy);
+        Assert.Equal(UserPresenceStatus.Idle, viewModel.PendingOwnPresenceStatus);
+        Assert.Equal("正在切换为忙碌…", viewModel.OwnPresenceStatusText);
+        Assert.False(viewModel.CanSetOwnPresenceIdle);
+
+        completion.SetResult();
+        await operation;
+
+        Assert.False(viewModel.IsOwnPresenceBusy);
+        Assert.Null(viewModel.PendingOwnPresenceStatus);
+        Assert.Equal("在线状态：忙碌", viewModel.OwnPresenceStatusText);
+    }
+
+    [Fact]
+    public async Task OwnPresence_WhenWriteResultIsUncertain_ShowsUnconfirmedState()
+    {
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
+            CurrentUserId = 7,
+            CanSetOwnPresenceValue = true,
+            OwnPresenceStatusValue = UserPresenceStatus.Active
+        };
+        session.SetOwnPresenceAction = (_, _) =>
+        {
+            session.OwnPresenceStatusValue = null;
+            return Task.FromException(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await viewModel.SetOwnPresenceOfflineCommand.ExecuteAsync(null);
+
+        Assert.Equal("状态结果未确认", viewModel.OwnPresenceLabel);
+        Assert.True(viewModel.ShowOwnPresenceControls);
+        Assert.True(viewModel.HasOwnPresenceError);
+    }
+
+    [Fact]
+    public async Task OwnUserStatus_WhenOfficialPresetAndClearAreSelected_UsesIndependentSessionSetting()
+    {
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
+            CurrentUserId = 7,
+            CanSetOwnUserStatusValue = true,
+            IsOwnUserStatusConfirmedValue = true
+        };
+        session.SetOwnUserStatusAction = (status, _) =>
+        {
+            session.OwnUserStatusValue = status.IsEmpty ? null : status;
+            return Task.CompletedTask;
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await viewModel.SetOwnUserStatusRemoteCommand.ExecuteAsync(null);
+
+        Assert.Equal("远程办公", session.OwnUserStatusValue!.StatusText);
+        Assert.Equal("house", session.OwnUserStatusValue.Emoji!.EmojiName);
+        Assert.Equal("个人状态：🏠 远程办公", viewModel.OwnUserStatusStatusText);
+        Assert.True(viewModel.CanClearOwnUserStatus);
+
+        await viewModel.ClearOwnUserStatusCommand.ExecuteAsync(null);
+
+        Assert.Null(session.OwnUserStatusValue);
+        Assert.Equal("个人状态：未设置", viewModel.OwnUserStatusStatusText);
+        Assert.False(viewModel.CanClearOwnUserStatus);
     }
 
     [Fact]
@@ -3601,6 +3816,8 @@ public sealed class ShellViewModelTests
         public Func<string, long?, int, CancellationToken, Task<MessageQueryPage>>? SearchMessagesAction { get; set; }
         public Func<ConversationKey, long, CancellationToken, Task>? OpenMessageAction { get; set; }
         public Func<CancellationToken, Task<IReadOnlyList<ChannelSummary>>>? AvailableChannelsAction { get; set; }
+        public Func<UserPresenceStatus, CancellationToken, Task>? SetOwnPresenceAction { get; set; }
+        public Func<UserStatusContent, CancellationToken, Task>? SetOwnUserStatusAction { get; set; }
         public Func<long, CancellationToken, Task<ChannelDetails>>? LoadChannelDetailsAction { get; set; }
         public Func<long, CancellationToken, Task<IReadOnlyList<long>>>? ChannelMemberIdsAction { get; set; }
         public Func<CancellationToken, Task<IReadOnlyList<UserProfile>>>? RealmUsersAction { get; set; }
@@ -3629,6 +3846,16 @@ public sealed class ShellViewModelTests
         public long? CurrentUserId { get; set; }
         public bool IsOrganizationAdministrator { get; set; }
         public bool CanCreatePrivateGroup { get; set; }
+        public bool CanSetOwnPresenceValue { get; set; }
+        public UserPresenceStatus? OwnPresenceStatusValue { get; set; }
+        public bool CanSetOwnPresence => CanSetOwnPresenceValue;
+        public UserPresenceStatus? OwnPresenceStatus => OwnPresenceStatusValue;
+        public bool CanSetOwnUserStatusValue { get; set; }
+        public UserStatusContent? OwnUserStatusValue { get; set; }
+        public bool IsOwnUserStatusConfirmedValue { get; set; }
+        public bool CanSetOwnUserStatus => CanSetOwnUserStatusValue;
+        public UserStatusContent? OwnUserStatus => OwnUserStatusValue;
+        public bool IsOwnUserStatusConfirmed => IsOwnUserStatusConfirmedValue;
         public long MaxFileUploadBytes { get; set; } = 10L * 1024 * 1024;
         public ClientState State => StateValue;
         public ConversationKey? SelectedConversation => Selected;
@@ -3689,6 +3916,10 @@ public sealed class ShellViewModelTests
         }
         public Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(CancellationToken cancellationToken = default) =>
             AvailableChannelsAction?.Invoke(cancellationToken) ?? Task.FromResult<IReadOnlyList<ChannelSummary>>([]);
+        public Task SetOwnPresenceAsync(UserPresenceStatus status, CancellationToken cancellationToken = default) =>
+            SetOwnPresenceAction?.Invoke(status, cancellationToken) ?? Task.CompletedTask;
+        public Task SetOwnUserStatusAsync(UserStatusContent status, CancellationToken cancellationToken = default) =>
+            SetOwnUserStatusAction?.Invoke(status, cancellationToken) ?? Task.CompletedTask;
         public Task<ChannelDetails> LoadChannelDetailsAsync(long channelId, CancellationToken cancellationToken = default) =>
             LoadChannelDetailsAction?.Invoke(channelId, cancellationToken) ?? Task.FromException<ChannelDetails>(new NotSupportedException());
         public Task<IReadOnlyList<long>> GetChannelMemberIdsAsync(long channelId, CancellationToken cancellationToken = default) =>

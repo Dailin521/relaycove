@@ -218,7 +218,7 @@
                     <BoxView Background="Transparent">
                         <BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CloseAccountMenuCommand}" /></BoxView.GestureRecognizers>
                     </BoxView>
-                    <Border WidthRequest="220"
+                    <Border WidthRequest="320"
                             Margin="8,8,0,0"
                             Style="{StaticResource PopoverBorderStyle}"
                             HorizontalOptions="Start"
@@ -234,6 +234,21 @@
                                                HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
                                         <controls:RealmMediaImageView SourceUrl="{Binding CurrentUserAvatarUrl}"
                                                                       MediaKind="Avatar" Aspect="AspectFill" ShowFailureText="False" />
+                                        <Border x:Name="AccountMenuOwnPresenceDot"
+                                                WidthRequest="11"
+                                                HeightRequest="11"
+                                                Padding="0"
+                                                Margin="0,0,1,1"
+                                                HorizontalOptions="End"
+                                                VerticalOptions="End"
+                                                InputTransparent="True"
+                                                IsVisible="{Binding HasOwnPresenceStatus}"
+                                                Background="{Binding OwnPresenceBrush}"
+                                                Stroke="{StaticResource SurfaceBrush}"
+                                                StrokeThickness="2"
+                                                SemanticProperties.Description="{Binding OwnPresenceLabel, StringFormat='我的状态 {0}'}">
+                                            <Border.StrokeShape><RoundRectangle CornerRadius="6" /></Border.StrokeShape>
+                                        </Border>
                                     </Grid>
                                 </Border>
                                 <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
@@ -242,6 +257,125 @@
                                 </VerticalStackLayout>
                             </Grid>
                             <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                            <VerticalStackLayout Padding="6,4" Spacing="6"
+                                                 IsVisible="{Binding ShowOwnPresenceControls}">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                    <Label Text="{Binding OwnPresenceStatusText}"
+                                           Style="{StaticResource MutedLabelStyle}"
+                                           VerticalTextAlignment="Center"
+                                           SemanticProperties.HeadingLevel="Level3" />
+                                    <ActivityIndicator Grid.Column="1"
+                                                       WidthRequest="16"
+                                                       HeightRequest="16"
+                                                       IsRunning="{Binding IsOwnPresenceBusy}"
+                                                       Color="{StaticResource AccentColor}"
+                                                       SemanticProperties.Description="正在更新我的状态" />
+                                </Grid>
+                                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="6">
+                                    <Button Grid.Column="0" Text="在线" FontSize="12" Padding="6,5"
+                                            Style="{StaticResource BaseButtonStyle}"
+                                            IsEnabled="{Binding CanSetOwnPresenceOnline}"
+                                            Command="{Binding SetOwnPresenceOnlineCommand}"
+                                            SemanticProperties.Description="设置我的状态为在线">
+                                        <Button.Triggers>
+                                            <DataTrigger TargetType="Button" Binding="{Binding IsOwnPresenceOnline}" Value="True">
+                                                <Setter Property="BackgroundColor" Value="#DCFCE7" />
+                                                <Setter Property="BorderColor" Value="#22C55E" />
+                                            </DataTrigger>
+                                        </Button.Triggers>
+                                    </Button>
+                                    <Button Grid.Column="1" Text="忙碌" FontSize="12" Padding="6,5"
+                                            Style="{StaticResource BaseButtonStyle}"
+                                            IsEnabled="{Binding CanSetOwnPresenceIdle}"
+                                            Command="{Binding SetOwnPresenceIdleCommand}"
+                                            SemanticProperties.Description="设置我的状态为忙碌">
+                                        <Button.Triggers>
+                                            <DataTrigger TargetType="Button" Binding="{Binding IsOwnPresenceIdle}" Value="True">
+                                                <Setter Property="BackgroundColor" Value="#FEF3C7" />
+                                                <Setter Property="BorderColor" Value="#F59E0B" />
+                                            </DataTrigger>
+                                        </Button.Triggers>
+                                    </Button>
+                                    <Button Grid.Column="2" Text="离线" FontSize="12" Padding="6,5"
+                                            Style="{StaticResource BaseButtonStyle}"
+                                            IsEnabled="{Binding CanSetOwnPresenceOffline}"
+                                            Command="{Binding SetOwnPresenceOfflineCommand}"
+                                            SemanticProperties.Description="开启隐身模式，对其他用户显示离线">
+                                        <Button.Triggers>
+                                            <DataTrigger TargetType="Button" Binding="{Binding IsOwnPresenceOffline}" Value="True">
+                                                <Setter Property="BackgroundColor" Value="#F3F4F6" />
+                                                <Setter Property="BorderColor" Value="#9CA3AF" />
+                                            </DataTrigger>
+                                        </Button.Triggers>
+                                    </Button>
+                                </Grid>
+                                <Label Text="{Binding OwnPresenceError}"
+                                       IsVisible="{Binding HasOwnPresenceError}"
+                                       Style="{StaticResource DangerLabelStyle}"
+                                       FontSize="11" />
+                            </VerticalStackLayout>
+                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}"
+                                     IsVisible="{Binding ShowOwnPresenceControls}" />
+                            <VerticalStackLayout Padding="6,4" Spacing="6"
+                                                 IsVisible="{Binding ShowOwnUserStatusControls}">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                    <Label Text="{Binding OwnUserStatusStatusText}"
+                                           Style="{StaticResource MutedLabelStyle}"
+                                           VerticalTextAlignment="Center"
+                                           LineBreakMode="TailTruncation"
+                                           SemanticProperties.HeadingLevel="Level3" />
+                                    <ActivityIndicator Grid.Column="1"
+                                                       WidthRequest="16"
+                                                       HeightRequest="16"
+                                                       IsRunning="{Binding IsOwnUserStatusBusy}"
+                                                       Color="{StaticResource AccentColor}"
+                                                       SemanticProperties.Description="正在更新个人状态" />
+                                </Grid>
+                                <Grid ColumnDefinitions="*,*"
+                                      RowDefinitions="Auto,Auto,Auto,Auto"
+                                      ColumnSpacing="6"
+                                      RowSpacing="6">
+                                    <Button Grid.Row="0" Grid.Column="0" Text="🛠️ 忙碌" FontSize="12" Padding="6,5"
+                                            Style="{StaticResource BaseButtonStyle}"
+                                            IsEnabled="{Binding CanSetOwnUserStatus}"
+                                            Command="{Binding SetOwnUserStatusBusyCommand}" />
+                                    <Button Grid.Row="0" Grid.Column="1" Text="📅 会议中" FontSize="12" Padding="6,5"
+                                            Style="{StaticResource BaseButtonStyle}"
+                                            IsEnabled="{Binding CanSetOwnUserStatus}"
+                                            Command="{Binding SetOwnUserStatusMeetingCommand}" />
+                                    <Button Grid.Row="1" Grid.Column="0" Text="🚌 通勤中" FontSize="12" Padding="6,5"
+                                            Style="{StaticResource BaseButtonStyle}"
+                                            IsEnabled="{Binding CanSetOwnUserStatus}"
+                                            Command="{Binding SetOwnUserStatusCommutingCommand}" />
+                                    <Button Grid.Row="1" Grid.Column="1" Text="🤕 病假" FontSize="12" Padding="6,5"
+                                            Style="{StaticResource BaseButtonStyle}"
+                                            IsEnabled="{Binding CanSetOwnUserStatus}"
+                                            Command="{Binding SetOwnUserStatusSickCommand}" />
+                                    <Button Grid.Row="2" Grid.Column="0" Text="🌴 休假" FontSize="12" Padding="6,5"
+                                            Style="{StaticResource BaseButtonStyle}"
+                                            IsEnabled="{Binding CanSetOwnUserStatus}"
+                                            Command="{Binding SetOwnUserStatusVacationCommand}" />
+                                    <Button Grid.Row="2" Grid.Column="1" Text="🏠 远程办公" FontSize="12" Padding="6,5"
+                                            Style="{StaticResource BaseButtonStyle}"
+                                            IsEnabled="{Binding CanSetOwnUserStatus}"
+                                            Command="{Binding SetOwnUserStatusRemoteCommand}" />
+                                    <Button Grid.Row="3" Grid.Column="0" Text="🏢 在办公室" FontSize="12" Padding="6,5"
+                                            Style="{StaticResource BaseButtonStyle}"
+                                            IsEnabled="{Binding CanSetOwnUserStatus}"
+                                            Command="{Binding SetOwnUserStatusOfficeCommand}" />
+                                    <Button Grid.Row="3" Grid.Column="1" Text="清除状态" FontSize="12" Padding="6,5"
+                                            Style="{StaticResource BaseButtonStyle}"
+                                            IsEnabled="{Binding CanClearOwnUserStatus}"
+                                            Command="{Binding ClearOwnUserStatusCommand}" />
+                                </Grid>
+                                <Label Text="{Binding OwnUserStatusError}"
+                                       IsVisible="{Binding HasOwnUserStatusError}"
+                                       Style="{StaticResource DangerLabelStyle}"
+                                       FontSize="11"
+                                       LineBreakMode="WordWrap" />
+                            </VerticalStackLayout>
+                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}"
+                                     IsVisible="{Binding ShowOwnUserStatusControls}" />
                             <Button x:Name="FirstAccountMenuButton" Text="收藏的消息" ImageSource="icon_star.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding ShowSavedCommand}">
                                 <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
                             </Button>
@@ -333,7 +467,7 @@
                                 <VerticalStackLayout>
                                     <Label Text="发起私聊" IsVisible="{Binding IsNewDirectConversationMode}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
                                     <Label Text="新建群聊" IsVisible="{Binding IsNewChannelConversationMode}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
-                                    <Label Text="仅列出 IClientSession 当前可靠获知的活跃用户；不代表完整成员目录或 presence。"
+                                    <Label Text="仅列出 IClientSession 当前可靠获知的活跃用户；不代表完整成员目录。在线状态只在一对一会话显示。"
                                            IsVisible="{Binding IsNewDirectConversationMode}"
                                            Style="{StaticResource MutedLabelStyle}"
                                            LineBreakMode="WordWrap" />

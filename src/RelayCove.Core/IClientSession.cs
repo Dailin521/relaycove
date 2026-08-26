@@ -7,6 +7,11 @@ public interface IClientSession
     long? CurrentUserId { get; }
     bool IsOrganizationAdministrator => false;
     bool CanCreatePrivateGroup => false;
+    bool CanSetOwnPresence => false;
+    UserPresenceStatus? OwnPresenceStatus => null;
+    bool CanSetOwnUserStatus => false;
+    UserStatusContent? OwnUserStatus => null;
+    bool IsOwnUserStatusConfirmed => false;
     long MaxFileUploadBytes { get; }
     ClientState State { get; }
     ConversationKey? SelectedConversation { get; }
@@ -45,6 +50,8 @@ public interface IClientSession
     Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ChannelSummary>>([]);
     Task SubscribeToChannelAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException());
     Task SetSubscriptionPreferenceAsync(long channelId, SubscriptionPreference preference, bool value, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException());
+    Task SetOwnPresenceAsync(UserPresenceStatus status, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Presence settings are not available."));
+    Task SetOwnUserStatusAsync(UserStatusContent status, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("User status settings are not available."));
     Task<ChannelSettingsSnapshot> LoadChannelSettingsSnapshotAsync(CancellationToken cancellationToken = default) => Task.FromException<ChannelSettingsSnapshot>(new NotSupportedException("Channel settings are not available."));
     Task<ChannelDetails> LoadChannelDetailsAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException<ChannelDetails>(new NotSupportedException("Channel settings are not available."));
     Task UpdateChannelAsync(long channelId, string? name, string? description, long? folderId, bool clearFolder = false, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Channel settings are not available."));

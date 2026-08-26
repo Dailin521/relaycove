@@ -79,7 +79,7 @@ Stage 21 初始重建由用户明确要求直接在本地 `main` 实施。2026-0
 
 ### 3.2 当前仍不可用或未完成真实验收的能力
 
-完整成员目录/频道关系、服务器 `@` 候选、typing、presence、后台 push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux 仍不可用或不在当前范围。Stage 27 为运行中的 MAUI Windows 客户端接入本机系统通知、任务栏闪烁和权威未读徽标，但不提供应用退出后的后台消息接收。Stage 23 已为 MAUI 实现普通用户服务器搜索、saved 消息、频道发现/加入/退订及个人静音/置顶；其隔离双账号 Live 已通过。最终 MAUI UI 人工密码登录、真实窗口长列表与干净 VM 仍是独立门禁。
+完整成员目录/频道关系、服务器 `@` 候选、typing、后台 push、SSO、多账号、AI、自动更新、安装器、MSIX、签名、Android、iOS、Mac Catalyst 和 Linux 仍不可用或不在当前范围。Stage 38 为 MAUI 一对一私信接入 Zulip 官方 presence 的 register 快照、上线事件和每分钟刷新，并显示在线/忙碌（协议 `idle`）/离线；当前用户可从账户菜单上报在线/忙碌，或通过官方隐身设置对外显示离线，不为群聊伪造聚合状态。独立的 `user_status` 从 register 和实时事件同步 emoji/text 个人状态，账户菜单提供 Zulip 12.1 七个官方预置图标及清除；两种状态不混用且都不持久化到 SQLite。Stage 27 为运行中的 MAUI Windows 客户端接入本机系统通知、任务栏闪烁和权威未读徽标，但不提供应用退出后的后台消息接收。Stage 23 已为 MAUI 实现普通用户服务器搜索、saved 消息、频道发现/加入/退订及个人静音/置顶；其隔离双账号 Live 已通过。最终 MAUI UI 人工密码登录、真实窗口长列表与干净 VM 仍是独立门禁。
 
 后续平台可以复用 Core、Zulip.Client 与 Data，但必须另行增加目标框架、图标、签名、后台生命周期和发布验证。本阶段不声称可交付这些平台；Linux 不支持。
 
@@ -123,7 +123,7 @@ Slice 3 完成首批完整交互能力，而不是只添加视觉按钮：
 - 同 Realm 非图片上传使用受控下载卡片：先以 Basic 换取临时 URL，再用无 Authorization、无 referrer 的请求读取有大小上限的 Blob；不内嵌 SVG/HTML/PDF/Office 等主动内容。
 - 频道详情支持当前用户按真实订阅名调用 `DELETE /users/me/subscriptions` 退订；确认成功或已退订都复用既有 `subscriptionRemoved` 清理，结果未知不自动重试。
 
-所有仓库普通自动门禁继续只使用 mock/fake HTTP；Live 始终是显式授权的独立模式。2026-08-13 的 Web/早期 MAUI 证据曾只覆盖有限消息链路。2026-08-14 Stage 23 进一步以 DAL/zhang 隔离频道完成服务器搜索、saved、按锚点打开、个人频道偏好、退订恢复和自助重加的真实 Live。mention 候选、presence、后台 push 与完整成员关系仍是独立能力门。
+所有仓库普通自动门禁继续只使用 mock/fake HTTP；Live 始终是显式授权的独立模式。2026-08-13 的 Web/早期 MAUI 证据曾只覆盖有限消息链路。2026-08-14 Stage 23 进一步以 DAL/zhang 隔离频道完成服务器搜索、saved、按锚点打开、个人频道偏好、退订恢复和自助重加的真实 Live。mention 候选、后台 push 与完整成员关系仍是独立能力门；Stage 38 覆盖 MAUI 一对一私信的官方 availability 显示、当前用户 active/idle/隐身设置，以及独立的官方 emoji/text 个人状态同步与预置写入。
 
 ### 3.4 Stage 25 MAUI-first 产品例外
 

@@ -18,7 +18,7 @@
 - 冻结日期：2026-08-12
 - 目标视口：1440×900；补充检查 1024×768
 - 历史原型（只读）：[RelayCove-UI-Playground.html](baselines/chat-ui-v1/RelayCove-UI-Playground.html)；日常 Web 验收不再使用此入口
-- 当前状态：[Stage 37 当前会话收到消息时稳定追加](../ai/tasks/2026-08-25-stage-37-active-chat-incoming-stability.md)已通过用户 Visual Studio 人工确认并获本地提交授权；[Stage 36 Windows 系统托盘闪烁与悬浮预览](../ai/tasks/2026-08-25-stage-36-windows-system-tray-attention.md)已随 `main@f221424` 交付。Stage 34 reaction 表情面板定位与 Stage 32 收藏消息精确锚点的最终位置仍待确认。父计划为[第二版（V2）优化计划](../ai/tasks/2026-08-25-v2-optimization-plan.md)。
+- 当前状态：[Stage 38 Zulip 官方在线状态与个人状态显示](../ai/tasks/2026-08-25-stage-38-official-presence-display.md)正在实现并等待用户 Visual Studio 人工确认；[Stage 37 当前会话收到消息时稳定追加](../ai/tasks/2026-08-25-stage-37-active-chat-incoming-stability.md)已随 `main@b0fb6ee` 交付。Stage 34 reaction 表情面板定位与 Stage 32 收藏消息精确锚点的最终位置仍待确认。父计划为[第二版（V2）优化计划](../ai/tasks/2026-08-25-v2-optimization-plan.md)。
 
 ## 重要边界
 
@@ -26,5 +26,5 @@
 - 两端共享 Token、协议安全边界与可复用验收场景，不共享 UI 运行时代码；Stage 25 的 MAUI 信息架构差异在交互规格第 1.1 节显式覆盖。
 - MAUI 必须使用原生 XAML、控件和 ViewModel，不得把 RelayCove.Web 或冻结 HTML 放进 WebView。
 - Zulip 仍是用户、权限、频道、话题和消息的唯一事实源。
-- Stage 25 MAUI 左栏只显示一对一/self-DM 与合格私有空话题群聊；公开/旧多话题频道、group-DM、话题入口和公开频道浏览均无产品入口。旧活动频道已由用户授权全部归档；群成员与管理权限仍只使用权威读取，`@` 候选、presence 与复杂外部权限管理继续失败关闭。
+- Stage 25 MAUI 左栏只显示一对一/self-DM 与合格私有空话题群聊；公开/旧多话题频道、group-DM、话题入口和公开频道浏览均无产品入口。旧活动频道已由用户授权全部归档；群成员与管理权限仍只使用权威读取，`@` 候选与复杂外部权限管理继续失败关闭。Stage 38 presence 显示一对一对端的官方 availability，并在左上账户菜单设置当前用户在线/忙碌/隐身离线；独立的 `user_status` 显示并设置官方预制 emoji/text 个人状态。两者不混用，也不推断群状态。
 - 截图用于视觉比较；交互规格用于行为判断；两者都不能替代 Windows 真实窗口验收。

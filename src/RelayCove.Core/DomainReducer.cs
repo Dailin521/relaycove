@@ -159,6 +159,21 @@ public static class DomainReducer
                     IsActive = userPatch.IsActive ?? userExisting.IsActive
                 };
                 break;
+            case UserPresenceChangedEvent presence when state.Presence.IsAvailable:
+                var presences = new Dictionary<long, UserPresence>(state.Presence.Users)
+                {
+                    [presence.Presence.UserId] = presence.Presence
+                };
+                state = state with { Presence = new PresenceState(state.Presence.IsAvailable, presences) };
+                break;
+            case UserStatusChangedEvent userStatus when state.UserStatuses.IsAvailable:
+                var userStatuses = new Dictionary<long, UserStatusContent>(state.UserStatuses.Users);
+                if (userStatus.Status is null || userStatus.Status.IsEmpty)
+                    userStatuses.Remove(userStatus.UserId);
+                else
+                    userStatuses[userStatus.UserId] = userStatus.Status;
+                state = state with { UserStatuses = new UserStatusState(true, userStatuses) };
+                break;
             case TopicUpsertEvent topic:
                 topics[TopicKey(topic.Topic.ChannelId, topic.Topic.Topic)] = topic.Topic;
                 break;
@@ -247,7 +262,19 @@ public static class DomainReducer
         var lastEventId = advanceCursor && domainEvent.EventId is { } incoming
             ? incoming
             : state.LastEventId;
-        return new ClientState(messages, subscriptions, users, topics, summaries, outbox, unread, connection, lastEventId, messageMutations);
+        return new ClientState(
+            messages,
+            subscriptions,
+            users,
+            topics,
+            summaries,
+            outbox,
+            unread,
+            connection,
+            lastEventId,
+            messageMutations,
+            state.Presence,
+            state.UserStatuses);
     }
 
     private static UnreadState AdjustForReplacement(

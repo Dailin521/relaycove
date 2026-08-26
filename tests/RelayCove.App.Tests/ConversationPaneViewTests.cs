@@ -29,6 +29,16 @@ public sealed class ConversationPaneViewTests
         Assert.DoesNotContain("频道", labels);
         Assert.DoesNotContain("私信", labels);
         Assert.DoesNotContain(source.Descendants(), element => element.Attribute("ItemsSource")?.Value is "{Binding FilteredChannels}" or "{Binding FilteredDirectMessages}");
+        var presenceDot = source.Descendants()
+            .Single(element => element.Name.LocalName == "Border" &&
+                               element.Attribute("IsVisible")?.Value == "{Binding HasPresence}");
+        Assert.Equal("{Binding PresenceBrush}", presenceDot.Attribute("Background")?.Value);
+        Assert.Equal("{Binding PresenceLabel}", presenceDot.Attribute("SemanticProperties.Description")?.Value);
+        var userStatusGlyph = source.Descendants()
+            .Single(element => element.Name.LocalName == "Label" &&
+                               element.Attribute("Text")?.Value == "{Binding UserStatusGlyph}");
+        Assert.Equal("{Binding HasUserStatusGlyph}", userStatusGlyph.Attribute("IsVisible")?.Value);
+        Assert.Equal("{Binding UserStatusDescription}", userStatusGlyph.Attribute("ToolTipProperties.Text")?.Value);
     }
 
     private static string FindWorkspaceFile(params string[] parts)

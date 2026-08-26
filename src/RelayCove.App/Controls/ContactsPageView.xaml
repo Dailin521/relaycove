@@ -13,7 +13,7 @@
                        Style="{StaticResource BaseLabelStyle}"
                        FontSize="24"
                        FontAttributes="Bold" />
-                <Label Text="仅显示 IClientSession 当前可靠获知的活跃用户；不声称完整成员目录或在线状态。"
+                <Label Text="仅显示 IClientSession 当前可靠获知的活跃用户；不声称完整成员目录。在线状态只在一对一会话显示。"
                        Style="{StaticResource MutedLabelStyle}" />
             </VerticalStackLayout>
             <Button Grid.Column="1"

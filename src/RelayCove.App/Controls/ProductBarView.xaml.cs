@@ -64,6 +64,12 @@ public partial class ProductBarView : TitleBar
         AccountAvatar.SetBinding(
             RealmMediaImageView.SourceUrlProperty,
             new Binding(nameof(ShellViewModel.CurrentUserAvatarUrl), source: viewModel));
+        ProductBarOwnPresenceDot.SetBinding(
+            IsVisibleProperty,
+            new Binding(nameof(ShellViewModel.HasOwnPresenceStatus), source: viewModel));
+        ProductBarOwnPresenceDot.SetBinding(
+            Border.BackgroundProperty,
+            new Binding(nameof(ShellViewModel.OwnPresenceBrush), source: viewModel));
         SettingsButton.SetBinding(
             IsVisibleProperty,
             new Binding(nameof(ShellViewModel.MainVisible), source: viewModel));

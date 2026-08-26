@@ -16,11 +16,11 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
     private static readonly string[] DefaultEventTypes =
     [
         "message", "subscription", "realm_user", "stream", "update_message",
-        "delete_message", "update_message_flags", "reaction", "realm", "heartbeat", "restart"
+        "delete_message", "update_message_flags", "reaction", "realm", "presence", "user_settings", "user_status", "heartbeat", "restart"
     ];
     private static readonly string[] InitialFetchEventTypes =
     [
-        "subscription", "realm_user", "realm", "realm_user_groups", "recent_private_conversations"
+        "subscription", "realm_user", "realm", "realm_user_groups", "recent_private_conversations", "presence", "user_settings", "user_status"
     ];
     private static readonly IReadOnlyDictionary<string, bool> ClientCapabilities =
         new Dictionary<string, bool>(StringComparer.Ordinal)
@@ -30,7 +30,9 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             ["user_avatar_url_field_optional"] = true,
             ["user_list_incomplete"] = true,
             ["empty_topic_name"] = true,
-            ["archived_channels"] = true
+            ["archived_channels"] = true,
+            ["user_settings_object"] = true,
+            ["simplified_presence_events"] = true
         };
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient _httpClient;
@@ -141,6 +143,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             ["client_gravatar"] = "false",
             ["include_subscribers"] = "false",
             ["idle_queue_timeout"] = "3600",
+            ["slim_presence"] = "true",
             ["event_types"] = JsonSerializer.Serialize(eventTypes, JsonOptions),
             ["fetch_event_types"] = JsonSerializer.Serialize(InitialFetchEventTypes, JsonOptions),
             ["client_capabilities"] = JsonSerializer.Serialize(ClientCapabilities, JsonOptions)
@@ -157,6 +160,8 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         var maxFileUploadSizeMiB = GetInt32(root, "max_file_upload_size_mib");
         var subscriptions = GetArray(root, "subscriptions").Select(ToSubscription).Where(static item => item is not null).Cast<Subscription>().ToArray();
         var users = GetArray(root, "realm_users").Select(ToUserOrNull).Where(static item => item is not null).Cast<UserProfile>().ToArray();
+        var hasPresenceSnapshot = TryToModernPresences(root, out var presences);
+        var hasUserStatusSnapshot = TryToUserStatuses(root, out var userStatuses);
         return new RegisterResult(
             RequireString(root, "queue_id"),
             RequireInt64(root, "last_event_id"),
@@ -175,7 +180,104 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             PositiveOrNull(GetInt32(root, "max_channel_folder_description_length")),
             ToUserTopicVisibilities(root),
             IsOrganizationAdministrator(root, request.Credentials.UserId),
-            CanCreatePrivateChannel(root, request.Credentials.UserId));
+            CanCreatePrivateChannel(root, request.Credentials.UserId),
+            presences,
+            GetBoolean(root, "realm_presence_disabled") is false && hasPresenceSnapshot,
+            GetOwnPresenceEnabled(root, request.Credentials.UserId),
+            userStatuses,
+            hasUserStatusSnapshot);
+    }
+
+    public async Task<RealmPresenceResult> GetRealmPresenceAsync(
+        GetRealmPresenceRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        using var response = await SendAsync(
+            request.Credentials.Realm,
+            HttpMethod.Get,
+            "realm/presence",
+            null,
+            request.Credentials,
+            cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        var root = document.RootElement;
+        return new RealmPresenceResult(
+            ToUnixDateTimeOffset(GetDecimal(root, "server_timestamp")) ?? _timeProvider.GetUtcNow(),
+            ToLegacyRealmPresences(root));
+    }
+
+    public async Task SetPresenceEnabledAsync(
+        SetPresenceEnabledRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["presence_enabled"] = request.IsEnabled ? "true" : "false"
+        };
+        using var response = await SendAsync(
+            request.Credentials.Realm,
+            HttpMethod.Patch,
+            "settings",
+            fields,
+            request.Credentials,
+            cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        EnsureNoUnsupportedParameters(document.RootElement);
+    }
+
+    public async Task UpdateOwnPresenceAsync(
+        UpdateOwnPresenceRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var status = request.Status switch
+        {
+            UserPresenceStatus.Active => "active",
+            UserPresenceStatus.Idle => "idle",
+            _ => throw new ArgumentOutOfRangeException(nameof(request))
+        };
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["status"] = status,
+            ["ping_only"] = "true",
+            ["new_user_input"] = "false"
+        };
+        using var response = await SendAsync(
+            request.Credentials.Realm,
+            HttpMethod.Post,
+            "users/me/presence",
+            fields,
+            request.Credentials,
+            cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        EnsureNoUnsupportedParameters(document.RootElement);
+    }
+
+    public async Task UpdateOwnUserStatusAsync(
+        UpdateOwnUserStatusRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var emoji = request.Status.Emoji;
+        var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["status_text"] = request.Status.StatusText,
+            ["emoji_name"] = emoji?.EmojiName ?? string.Empty,
+            ["emoji_code"] = emoji?.EmojiCode ?? string.Empty,
+            ["reaction_type"] = emoji?.ReactionType ?? string.Empty
+        };
+        using var response = await SendAsync(
+            request.Credentials.Realm,
+            HttpMethod.Post,
+            "users/me/status",
+            fields,
+            request.Credentials,
+            cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        EnsureSuccessResponse(document.RootElement);
+        EnsureNoUnsupportedParameters(document.RootElement);
     }
 
     public async Task<EventBatch> GetEventsAsync(GetEventsRequest request, CancellationToken cancellationToken = default)
@@ -1430,6 +1532,9 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
                         source)
                 ],
                 "realm_user" => ToRealmUserEvents(value, source, eventId),
+                "presence" => ToPresenceEvents(value, source, eventId),
+                "user_settings" => ToUserSettingsEvents(value, source, eventId),
+                "user_status" => ToUserStatusEvents(value, source, eventId),
                 "subscription" => ToSubscriptionEvents(value, source, eventId),
                 "stream" => ToStreamEvents(value, source, eventId),
                 "restart" =>
@@ -1787,6 +1892,138 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             : null;
     }
 
+    private static IReadOnlyList<DomainEvent> ToPresenceEvents(
+        JsonElement value,
+        DomainEventSource source,
+        long? eventId)
+    {
+        var modern = (TryToModernPresences(value, out var presences) ? presences : [])
+            .Select(presence => (DomainEvent)new UserPresenceChangedEvent(presence, eventId, source))
+            .ToArray();
+        if (modern.Length > 0) return modern;
+
+        var userId = GetInt64(value, "user_id");
+        var legacy = ToLegacyPresence(GetObject(value, "presence"));
+        if (userId is not > 0 || legacy is null)
+        {
+            return [new UnknownDomainEvent("presence", eventId, source)];
+        }
+        return
+        [
+            new UserPresenceChangedEvent(
+                new UserPresence(userId.Value, legacy.Value.ActiveTimestamp, legacy.Value.IdleTimestamp),
+                eventId,
+                source)
+        ];
+    }
+
+    private static IReadOnlyList<DomainEvent> ToUserSettingsEvents(
+        JsonElement value,
+        DomainEventSource source,
+        long? eventId)
+    {
+        if (!string.Equals(GetString(value, "op"), "update", StringComparison.Ordinal) ||
+            GetString(value, "property") is not { } property)
+        {
+            return [new OwnPresenceEnabledChangedEvent(null, eventId, source)];
+        }
+        if (!string.Equals(property, "presence_enabled", StringComparison.Ordinal))
+        {
+            return [new UnknownDomainEvent("user_settings", eventId, source)];
+        }
+        return
+        [
+            new OwnPresenceEnabledChangedEvent(
+                GetBoolean(value, "value"),
+                eventId,
+                source)
+        ];
+    }
+
+    private static IReadOnlyList<DomainEvent> ToUserStatusEvents(
+        JsonElement value,
+        DomainEventSource source,
+        long? eventId)
+    {
+        if (GetInt64(value, "user_id") is not { } userId || userId <= 0 ||
+            !TryToUserStatusContent(value, out var status))
+        {
+            return [new UnknownDomainEvent("user_status", eventId, source)];
+        }
+
+        return [new UserStatusChangedEvent(userId, status.IsEmpty ? null : status, eventId, source)];
+    }
+
+    private static bool TryToUserStatuses(JsonElement root, out IReadOnlyList<UserCustomStatus> statuses)
+    {
+        statuses = [];
+        if (!TryGetProperty(root, "user_status", out var value) || value.ValueKind != JsonValueKind.Object)
+            return false;
+
+        var parsed = new List<UserCustomStatus>();
+        foreach (var property in value.EnumerateObject())
+        {
+            if (!long.TryParse(property.Name, NumberStyles.None, CultureInfo.InvariantCulture, out var userId) ||
+                userId <= 0 ||
+                property.Value.ValueKind != JsonValueKind.Object ||
+                !TryToUserStatusContent(property.Value, out var status))
+            {
+                statuses = [];
+                return false;
+            }
+
+            if (!status.IsEmpty) parsed.Add(new UserCustomStatus(userId, status));
+        }
+
+        statuses = parsed;
+        return true;
+    }
+
+    private static bool TryToUserStatusContent(JsonElement value, out UserStatusContent status)
+    {
+        status = new UserStatusContent();
+        if (!TryGetOptionalString(value, "status_text", out var statusText) ||
+            !TryGetOptionalString(value, "emoji_name", out var emojiName) ||
+            !TryGetOptionalString(value, "emoji_code", out var emojiCode) ||
+            !TryGetOptionalString(value, "reaction_type", out var reactionType))
+        {
+            return false;
+        }
+
+        EmojiReactionIdentity? emoji = null;
+        var hasEmojiName = emojiName.Length > 0;
+        var hasEmojiCode = emojiCode.Length > 0;
+        var hasReactionType = reactionType.Length > 0;
+        if (hasEmojiName || hasEmojiCode || hasReactionType)
+        {
+            if (!hasEmojiName || !hasEmojiCode || !hasReactionType ||
+                reactionType is not ("unicode_emoji" or "realm_emoji" or "zulip_extra_emoji"))
+            {
+                return false;
+            }
+            emoji = new EmojiReactionIdentity(emojiName, emojiCode, reactionType);
+        }
+
+        try
+        {
+            status = new UserStatusContent(statusText, emoji);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryGetOptionalString(JsonElement value, string name, out string result)
+    {
+        result = string.Empty;
+        if (!TryGetProperty(value, name, out var property)) return true;
+        if (property.ValueKind != JsonValueKind.String) return false;
+        result = property.GetString() ?? string.Empty;
+        return true;
+    }
+
     private static ChannelDetails? ToChannelDetails(JsonElement value)
     {
         var id = GetInt64(value, "stream_id", "channel_id");
@@ -1885,6 +2122,28 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
                 GetInt32(value, "avatar_version"),
                 GetBoolean(value, "is_bot") ?? false)
             : null;
+    }
+
+    private static bool? GetOwnPresenceEnabled(JsonElement root, long currentUserId)
+    {
+        if (TryGetProperty(root, "user_settings", out var settings))
+        {
+            return settings.ValueKind == JsonValueKind.Object
+                ? GetBoolean(settings, "presence_enabled")
+                : null;
+        }
+
+        var legacyTopLevel = GetBoolean(root, "presence_enabled");
+        if (legacyTopLevel is not null) return legacyTopLevel;
+
+        foreach (var user in GetArray(root, "realm_users"))
+        {
+            if (GetInt64(user, "user_id", "id") == currentUserId)
+            {
+                return GetBoolean(user, "presence_enabled");
+            }
+        }
+        return null;
     }
 
     private static UserProfile ToRequiredRealmUser(JsonElement value)
@@ -2017,6 +2276,12 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
     private static void EnsureNotErrorResponse(JsonElement root)
     {
         if (string.Equals(GetString(root, "result"), "error", StringComparison.OrdinalIgnoreCase))
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+    }
+
+    private static void EnsureSuccessResponse(JsonElement root)
+    {
+        if (!string.Equals(GetString(root, "result"), "success", StringComparison.OrdinalIgnoreCase))
             throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
     }
 
@@ -2247,6 +2512,110 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
         }
         return checked((int)result.Value);
+    }
+
+    private static bool TryToModernPresences(
+        JsonElement root,
+        out IReadOnlyList<UserPresence> result)
+    {
+        if (!TryGetProperty(root, "presences", out var presences) || presences.ValueKind != JsonValueKind.Object)
+        {
+            result = [];
+            return false;
+        }
+
+        var parsed = new List<UserPresence>();
+        foreach (var property in presences.EnumerateObject())
+        {
+            if (!long.TryParse(property.Name, NumberStyles.None, CultureInfo.InvariantCulture, out var userId) || userId <= 0)
+            {
+                result = [];
+                return false;
+            }
+            if (property.Value.ValueKind != JsonValueKind.Object ||
+                !TryToModernPresenceTimestamp(property.Value, "active_timestamp", out var activeTimestamp) ||
+                !TryToModernPresenceTimestamp(property.Value, "idle_timestamp", out var idleTimestamp))
+            {
+                result = [];
+                return false;
+            }
+            parsed.Add(new UserPresence(
+                userId,
+                activeTimestamp,
+                idleTimestamp));
+        }
+        result = parsed;
+        return true;
+    }
+
+    private static bool TryToModernPresenceTimestamp(
+        JsonElement value,
+        string name,
+        out DateTimeOffset? timestamp)
+    {
+        timestamp = null;
+        if (!TryGetProperty(value, name, out var item) ||
+            item.ValueKind != JsonValueKind.Number ||
+            !item.TryGetDecimal(out var seconds) ||
+            seconds < 0 ||
+            seconds != decimal.Truncate(seconds))
+        {
+            return false;
+        }
+        if (seconds == 0) return true;
+        timestamp = ToUnixDateTimeOffset(seconds);
+        return timestamp is not null;
+    }
+
+    private static IReadOnlyList<RealmPresenceEntry> ToLegacyRealmPresences(JsonElement root)
+    {
+        if (!TryGetProperty(root, "presences", out var presences) || presences.ValueKind != JsonValueKind.Object)
+        {
+            return [];
+        }
+
+        var result = new List<RealmPresenceEntry>();
+        foreach (var property in presences.EnumerateObject())
+        {
+            var parsed = ToLegacyPresence(property.Value);
+            if (parsed is null) continue;
+            result.Add(new RealmPresenceEntry(
+                property.Name,
+                parsed.Value.ActiveTimestamp,
+                parsed.Value.IdleTimestamp));
+        }
+        return result;
+    }
+
+    private static (DateTimeOffset? ActiveTimestamp, DateTimeOffset? IdleTimestamp)? ToLegacyPresence(JsonElement value)
+    {
+        var aggregated = GetObject(value, "aggregated");
+        if (aggregated.ValueKind != JsonValueKind.Object) aggregated = GetObject(value, "website");
+        if (aggregated.ValueKind != JsonValueKind.Object) return null;
+
+        var status = GetString(aggregated, "status");
+        var timestamp = ToUnixDateTimeOffset(GetDecimal(aggregated, "timestamp"));
+        return status switch
+        {
+            "active" when timestamp is not null => (timestamp, timestamp),
+            "idle" when timestamp is not null => (null, timestamp),
+            "offline" => (null, null),
+            _ => null
+        };
+    }
+
+    private static DateTimeOffset? ToUnixDateTimeOffset(decimal? timestamp)
+    {
+        if (timestamp is null || timestamp <= 0) return null;
+        try
+        {
+            var milliseconds = decimal.ToInt64(decimal.Truncate(timestamp.Value * 1000m));
+            return DateTimeOffset.FromUnixTimeMilliseconds(milliseconds);
+        }
+        catch (Exception exception) when (exception is OverflowException or ArgumentOutOfRangeException)
+        {
+            return null;
+        }
     }
     private static int? PositiveOrNull(int? value) => value is > 0 ? value : null;
     private static long RequireInt64(JsonElement value, string name) => GetInt64(value, name) ?? throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);

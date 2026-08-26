@@ -21,6 +21,29 @@ public sealed class SqliteAccountStoreCacheTests
     }
 
     [Fact]
+    public async Task ReplaceRegisterSnapshotAsync_WhenUserStatusIsPresent_DoesNotPersistSessionOnlyStatus()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        await context.Store.InitializeAsync(account);
+        var status = new UserStatusContent(
+            "会议中",
+            new EmojiReactionIdentity("calendar", "1f4c5", "unicode_emoji"));
+
+        await context.Store.ReplaceRegisterSnapshotAsync(
+            account.AccountId,
+            StoreTestData.Register([], []) with
+            {
+                IsUserStatusAvailable = true,
+                UserStatuses = [new UserCustomStatus(account.UserId, status)]
+            });
+
+        var restored = (await context.Store.LoadAsync(account.AccountId))!.State;
+        Assert.False(restored.UserStatuses.IsAvailable);
+        Assert.Empty(restored.UserStatuses.Users);
+    }
+
+    [Fact]
     public async Task LoadAsync_WhenCacheIsLocked_HidesMessagesAndQueryFailsClosedUntilUnlocked()
     {
         await using var context = StoreTestContext.Create();
