@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Windows.Input;
@@ -65,6 +66,29 @@ public partial class MessageListView : ContentView
         MessageCollection.HandlerChanged += OnMessageCollectionHandlerChanged;
     }
 
+    public static readonly BindableProperty MessageItemsProperty = BindableProperty.Create(
+        nameof(MessageItems),
+        typeof(ObservableCollection<MessageItem>),
+        typeof(MessageListView),
+        propertyChanged: OnMessageItemsChanged);
+
+    public static readonly BindableProperty ConversationKeyProperty = BindableProperty.Create(
+        nameof(ConversationKey),
+        typeof(string),
+        typeof(MessageListView));
+
+    public ObservableCollection<MessageItem>? MessageItems
+    {
+        get => (ObservableCollection<MessageItem>?)GetValue(MessageItemsProperty);
+        set => SetValue(MessageItemsProperty, value);
+    }
+
+    public string? ConversationKey
+    {
+        get => (string?)GetValue(ConversationKeyProperty);
+        set => SetValue(ConversationKeyProperty, value);
+    }
+
     public ShellViewModel? ViewModel => BindingContext as ShellViewModel;
 
     protected override void OnBindingContextChanged()
@@ -72,7 +96,6 @@ public partial class MessageListView : ContentView
         if (_viewModel is not null)
         {
             _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
-            _viewModel.Messages.CollectionChanged -= OnMessagesCollectionChanged;
         }
         base.OnBindingContextChanged();
         _viewModel = BindingContext as ShellViewModel;
@@ -80,17 +103,35 @@ public partial class MessageListView : ContentView
         if (_viewModel is not null)
         {
             _viewModel.PropertyChanged += OnViewModelPropertyChanged;
-            _viewModel.Messages.CollectionChanged += OnMessagesCollectionChanged;
         }
-        BeginScrollRequest(_viewModel?.PendingMessageScrollRequest);
+        BeginScrollRequest(CurrentScrollRequest());
         EnsurePlatformLayoutHook();
+    }
+
+    private static void OnMessageItemsChanged(BindableObject bindable, object oldValue, object newValue)
+    {
+        var view = (MessageListView)bindable;
+        if (oldValue is ObservableCollection<MessageItem> previous)
+            previous.CollectionChanged -= view.OnMessagesCollectionChanged;
+        if (newValue is ObservableCollection<MessageItem> current)
+            current.CollectionChanged += view.OnMessagesCollectionChanged;
+        view.BeginScrollRequest(view.CurrentScrollRequest());
+    }
+
+    private MessageScrollRequest? CurrentScrollRequest()
+    {
+        var request = _viewModel?.PendingMessageScrollRequest;
+        return request is not null &&
+               string.Equals(request.ConversationKey, ConversationKey, StringComparison.Ordinal)
+            ? request
+            : null;
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs eventArgs)
     {
         if (eventArgs.PropertyName == nameof(ShellViewModel.PendingMessageScrollRequest))
         {
-            BeginScrollRequest(_viewModel?.PendingMessageScrollRequest);
+            BeginScrollRequest(CurrentScrollRequest());
             return;
         }
 
@@ -107,7 +148,8 @@ public partial class MessageListView : ContentView
 
     private async void OnMessageCollectionScrolled(object? sender, ItemsViewScrolledEventArgs eventArgs)
     {
-        if (_viewModel is null) return;
+        if (_viewModel is null || MessageItems is null ||
+            !string.Equals(_viewModel.CurrentConversationKey, ConversationKey, StringComparison.Ordinal)) return;
 
         // CollectionView raises Scrolled while ScrollTo/ChangeView is realizing and
         // positioning the requested item. Treating those intermediate positions as
@@ -127,9 +169,9 @@ public partial class MessageListView : ContentView
         long? visibleMessageId = null;
         var hasVisibleOffset = false;
         var visibleOffset = 0d;
-        if (eventArgs.FirstVisibleItemIndex >= 0 && eventArgs.FirstVisibleItemIndex < _viewModel.Messages.Count)
+        if (eventArgs.FirstVisibleItemIndex >= 0 && eventArgs.FirstVisibleItemIndex < MessageItems.Count)
         {
-            visibleMessageId = _viewModel.Messages[eventArgs.FirstVisibleItemIndex].MessageId;
+            visibleMessageId = MessageItems[eventArgs.FirstVisibleItemIndex].MessageId;
             hasVisibleOffset = TryGetItemViewportOffset(eventArgs.FirstVisibleItemIndex, out visibleOffset);
         }
 
@@ -260,10 +302,10 @@ public partial class MessageListView : ContentView
 
     private int FindMessageIndex(long messageId)
     {
-        if (_viewModel is null) return -1;
-        for (var index = 0; index < _viewModel.Messages.Count; index++)
+        if (MessageItems is null) return -1;
+        for (var index = 0; index < MessageItems.Count; index++)
         {
-            if (_viewModel.Messages[index].MessageId == messageId) return index;
+            if (MessageItems[index].MessageId == messageId) return index;
         }
         return -1;
     }
@@ -374,7 +416,7 @@ public partial class MessageListView : ContentView
     private void OnLoaded(object? sender, EventArgs eventArgs)
     {
         EnsurePlatformLayoutHook();
-        BeginScrollRequest(_viewModel?.PendingMessageScrollRequest);
+        BeginScrollRequest(CurrentScrollRequest());
     }
 
     private void OnUnloaded(object? sender, EventArgs eventArgs)
@@ -713,7 +755,7 @@ public partial class MessageListView : ContentView
                         null,
                         scrollViewer.ScrollableHeight,
                         null,
-                        disableAnimation: false);
+                        disableAnimation: !MessageViewportPolicy.ShouldAnimateLatestScroll(request.Reason));
                     return;
                 }
 
@@ -831,7 +873,6 @@ public partial class MessageListView : ContentView
 
     private void SetActivationPositioning(bool isPositioning)
     {
-        MessageCollection.Opacity = isPositioning ? 0d : 1d;
         MessageCollection.InputTransparent = isPositioning;
     }
 
@@ -892,9 +933,10 @@ public partial class MessageListView : ContentView
         foreach (var id in _pendingInsertionAnimationIds.ToArray())
         {
             var index = -1;
-            for (var candidate = 0; candidate < _viewModel.Messages.Count; candidate++)
+            if (MessageItems is null) return;
+            for (var candidate = 0; candidate < MessageItems.Count; candidate++)
             {
-                if (!string.Equals(_viewModel.Messages[candidate].Id, id, StringComparison.Ordinal)) continue;
+                if (!string.Equals(MessageItems[candidate].Id, id, StringComparison.Ordinal)) continue;
                 index = candidate;
                 break;
             }
@@ -914,7 +956,7 @@ public partial class MessageListView : ContentView
             if (_preparedInsertionAnimationIds.Add(id)) PrepareInsertionVisual(container);
             if (!IsTargetVisible(container, scrollViewer)) continue;
 
-            var message = _viewModel.Messages[index];
+            var message = MessageItems[index];
             _pendingInsertionAnimationIds.Remove(id);
             _preparedInsertionAnimationIds.Remove(id);
             if (!message.TryConsumeInsertionAnimation()) continue;

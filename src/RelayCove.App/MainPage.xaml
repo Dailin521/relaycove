@@ -93,7 +93,8 @@
                             <Grid IsVisible="{Binding IsMessagesSection}"
                                   RowDefinitions="Auto,*,Auto">
                                 <controls:ChatHeaderView x:Name="ChatHeader" Grid.Row="0" />
-                                <controls:MessageListView Grid.Row="1" />
+                                <controls:ConversationMessageHost Grid.Row="1"
+                                                                  Presentations="{Binding MessagePresentations}" />
                                 <controls:ComposerView Grid.Row="2" />
                             </Grid>
 

@@ -57,7 +57,7 @@
         <CollectionView x:Name="MessageCollection"
                         Grid.Row="2"
                         Margin="0"
-                        ItemsSource="{Binding Messages}"
+                        ItemsSource="{Binding MessageItems, Source={x:Reference Root}, x:DataType=controls:MessageListView}"
                         IsVisible="{Binding IsMessageCollectionVisible}"
                         SelectionMode="None"
                         ItemsUpdatingScrollMode="KeepScrollOffset"

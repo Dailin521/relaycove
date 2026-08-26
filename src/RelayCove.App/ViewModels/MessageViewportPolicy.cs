@@ -38,7 +38,9 @@ internal static class MessageViewportPolicy
         reason != MessageScrollReason.RealtimeFollow || !animatedScrollIssued;
 
     internal static bool ShouldUseNativeOffsetBeforeTargetRealized(MessageScrollReason reason) =>
-        reason == MessageScrollReason.RealtimeFollow;
+        reason is MessageScrollReason.RealtimeFollow or
+            MessageScrollReason.ConversationActivated or
+            MessageScrollReason.ConversationReactivated;
 
     internal static bool ShouldShowJumpToLatest(
         double? bottomDistanceDip,

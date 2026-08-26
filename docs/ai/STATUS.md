@@ -2,7 +2,7 @@
 
 Updated: 2026-08-26
 Branch: `main`
-Current baseline: `a91679106a7ad446a7f01fd6a444796172a382f4`（与 `origin/main` 一致）
+Current baseline: `main`（精确提交以 Git 历史为准）
 Current release: [`v2.2.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.2.0)
 
 ## 产品状态
@@ -36,10 +36,11 @@ Current release: [`v2.2.0`](https://github.com/Dailin521/relaycove/releases/tag/
 - Windows 通知、任务栏未读、托盘闪烁/悬浮预览/会话点击跳转。
 - 主窗口 `X` 隐藏窗口并移除任务栏按钮，进程继续驻留托盘；托盘右键“退出 RelayCove”才执行完整关闭清理。
 - 一对一官方在线/忙碌/离线状态，以及独立的个人 emoji/text 状态；两者均为 session-only。
+- 私聊与私有群聊保留最多 6 个独立原生消息视图；返回缓存会话不重建消息行和头像，内容未变化时不重复滚动，带回新消息时仍定位到最新消息。
 
 ## 未运行或不在个人 MVP 默认门禁
 
-- 当前 V2 发送批次定向验证为 Core 168/168、App 330/330，最终 App 独立 Debug 构建 0 warning/0 error；真实发送与动画由用户在 Visual Studio 验证。关闭到托盘与右键退出批次 App 335/335 通过，并由用户确认交互。
+- 当前 V2 发送批次定向验证为 Core 168/168、App 330/330，最终 App 独立 Debug 构建 0 warning/0 error；真实发送与动画由用户在 Visual Studio 验证。关闭到托盘与右键退出批次 App 335/335 通过，并由用户确认交互。会话缓存切换批次 App 342/342 通过，私聊无感切换与群聊无冗余滚动已由用户在 Visual Studio 确认。
 - 当前批次未运行 Fast、Full、Live、应用截图或 Agent 发起的 Realm 写入。
 - `Live` 仍只允许显式隔离凭据和真实写授权；普通开发及发布不得隐式运行。
 - 干净 Windows 11 VM、安装器、MSIX、签名和应用退出后的后台 push 尚未验证或不在当前范围，不能声称已支持。

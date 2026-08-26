@@ -23,6 +23,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private const double MinimumComposerHeight = 128d;
     private const double MaximumComposerHeight = 300d;
     private const int MessageItemConversationCacheLimit = 12;
+    private const int MessagePresentationCacheLimit = 6;
 
     private readonly IClientSession _session;
     private readonly ILastRealmStore _lastRealmStore;
@@ -45,10 +46,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private readonly Dictionary<long, IReadOnlyList<UserProfile>> _privateGroupMembers = [];
     private readonly HashSet<long> _privateGroupRosterLoadAttempts = [];
     private readonly Dictionary<long, string> _lastSelectedTopicByChannel = [];
-    private readonly ResettableObservableCollection<MessageItem> _messages = [];
+    private readonly ResettableObservableCollection<MessageItem> _emptyMessages = [];
     private readonly ResettableObservableCollection<EmojiChoice> _visibleEmojiChoices = [];
     private readonly Dictionary<string, Dictionary<string, MessageItem>> _messageItemsByConversation = new(StringComparer.Ordinal);
     private readonly LinkedList<string> _messageItemConversationLru = [];
+    private readonly Dictionary<string, ConversationMessagePresentation> _messagePresentationsByConversation = new(StringComparer.Ordinal);
+    private readonly LinkedList<string> _messagePresentationLru = [];
     private readonly object _projectionGate = new();
     private readonly object _autoMarkReadSync = new();
     private readonly CancellationTokenSource _lifetimeCancellation = new();
@@ -74,6 +77,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private string? _lastActivationScrollConversationKey;
     private long _lastActivationScrollGeneration;
     private long _lastActivationScrollTargetMessageId;
+    private string? _retainedActivationConversationKey;
+    private long _retainedActivationLatestMessageId;
     private long _messageScrollSequence;
     private CancellationTokenSource? _searchInputCancellation;
     private long _searchInputGeneration;
@@ -89,7 +94,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private long _savedLoadGeneration;
     private AccountId? _savedAccountId;
     private AccountId? _messageItemCacheAccountId;
+    private AccountId? _messagePresentationAccountId;
     private AccountId? _privateGroupRosterAccountId;
+    private ConversationMessagePresentation? _activeMessagePresentation;
     private ClientState _projectedState = ClientState.Empty;
     private IReadOnlyList<TopicSummary> _loadedTopics = [];
     private long? _loadedTopicsChannelId;
@@ -178,8 +185,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public ObservableCollection<NavigationItem> FilteredDirectMessages { get; } = [];
     public ObservableCollection<ConversationListItem> Conversations { get; } = [];
     public ObservableCollection<ConversationListItem> FilteredConversations { get; } = [];
+    public ObservableCollection<ConversationMessagePresentation> MessagePresentations { get; } = [];
     public ObservableCollection<ContactItem> KnownContacts { get; } = [];
-    public ObservableCollection<MessageItem> Messages => _messages;
+    public ObservableCollection<MessageItem> Messages => _activeMessagePresentation?.Messages ?? _emptyMessages;
     public ObservableCollection<SearchResultItem> SearchResults { get; } = [];
     public ObservableCollection<SavedMessageItem> SavedMessages { get; } = [];
     public ObservableCollection<AvailableChannelItem> AvailableChannels { get; } = [];
@@ -668,8 +676,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool IsConversationContentVisible =>
         !IsAuthoritativeEmptyChannel &&
         HasSelectedConversation &&
-        _session.SelectedConversation is { } selected &&
-        string.Equals(_displayedConversationKey, selected.CanonicalKey, StringComparison.Ordinal);
+        (IsNavigationPending &&
+             _activeMessagePresentation is { } activePresentation &&
+             string.Equals(_displayedConversationKey, activePresentation.ConversationKey, StringComparison.Ordinal) ||
+         _session.SelectedConversation is { } selected &&
+             string.Equals(_displayedConversationKey, selected.CanonicalKey, StringComparison.Ordinal));
     public string ComposerPlaceholder => HasSelectedConversation
         ? $"发送到 {ConversationTitle}"
         : "发送到当前会话";
@@ -1287,6 +1298,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         if (_session.SelectedConversation is null || HasReachedOldestMessage) return;
         MessageLoadError = null;
+        IsLoadingOlder = true;
         try
         {
             if (!await ExecuteSessionActionAsync(() => _session.LoadOlderAsync(cancellationToken)))
@@ -1296,6 +1308,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
         finally
         {
+            IsLoadingOlder = false;
             ProjectHistoryState(_session.SelectedConversation);
         }
     }
@@ -4160,9 +4173,27 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _pendingActivationScrollReason = wasRepeatedActivation
             ? MessageScrollReason.ConversationReactivated
             : MessageScrollReason.ConversationActivated;
+        var shouldDeferRevalidation = ActivateMessagePresentation(conversation.CanonicalKey);
+        if (shouldDeferRevalidation)
+        {
+            _retainedActivationConversationKey = conversation.CanonicalKey;
+            _retainedActivationLatestMessageId = Messages
+                .Where(message => message.MessageId is not null)
+                .Select(message => message.MessageId!.Value)
+                .DefaultIfEmpty()
+                .Max();
+        }
         ProjectConversation(conversation, _projectedState);
         ProjectDraft(conversation);
         NotifyConversationAvailability();
+        if (shouldDeferRevalidation)
+        {
+            // Return the click to WinUI after activating an already-realized
+            // presentation. Cache/database revalidation must not block the visual
+            // conversation swap on the UI thread.
+            await Task.Yield();
+            if (!IsNavigationCurrent(navigationGeneration, cancellation)) return false;
+        }
         var selectionTask = _session.SelectConversationAsync(conversation, cancellation.Token);
         ProjectLatestStateImmediately();
         var success = await ExecuteSessionActionAsync(() => selectionTask);
@@ -4220,6 +4251,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _lastActivationScrollConversationKey = null;
         _lastActivationScrollGeneration = 0;
         _lastActivationScrollTargetMessageId = 0;
+        _retainedActivationConversationKey = null;
+        _retainedActivationLatestMessageId = 0;
         var cancellation = new CancellationTokenSource();
         _navigationCancellation = cancellation;
         var generation = ++_navigationGeneration;
@@ -4263,6 +4296,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IsConversationLoading = false;
         NotifyConversationAvailability();
         ProjectLatestStateImmediately();
+        _retainedActivationConversationKey = null;
+        _retainedActivationLatestMessageId = 0;
     }
 
     private async Task<bool> ExecuteSessionActionAsync(Func<Task> action, string? failureMessage = null)
@@ -4583,6 +4618,21 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             ? _session.SelectedConversation
             : null;
         var selectedKey = selected?.CanonicalKey;
+        if (IsNavigationPending &&
+            !string.IsNullOrWhiteSpace(_navigationConversationKey) &&
+            !string.Equals(_navigationConversationKey, selectedKey, StringComparison.Ordinal))
+        {
+            // The visual presentation has already switched to the cached target.
+            // A projection published by the previously selected conversation must
+            // not reactivate that old native tree while Core is acquiring its
+            // selection lock and beginning background revalidation.
+            _ = ActivateMessagePresentation(_navigationConversationKey);
+            ProjectUnread(state.Unread);
+            ProjectSearch();
+            NotifyProjectionProperties();
+            return;
+        }
+        _ = ActivateMessagePresentation(selectedKey);
         var conversationChanged = !string.Equals(_projectedConversationKey, selectedKey, StringComparison.Ordinal);
         var previousNewestMessageId = conversationChanged ? null : _newestProjectedMessageId;
         var transientUnreadDividerCutoff = GetTransientUnreadDividerCutoff(
@@ -4591,9 +4641,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             conversationChanged,
             previousNewestMessageId);
         var projectedMessages = BuildMessageItems(state, selected, transientUnreadDividerCutoff);
+        var hasImmediateConversationCache = projectedMessages.Count > 0 || Messages.Count > 0;
         var deferInitialMessageProjection = conversationChanged &&
             IsNavigationPending &&
-            selectedKey is not null;
+            selectedKey is not null &&
+            !hasImmediateConversationCache;
         if (deferInitialMessageProjection)
         {
             _deferredInitialMessageProjectionConversationKey = selectedKey;
@@ -4617,13 +4669,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 StringComparison.Ordinal);
         if (conversationChanged)
         {
-            _messages.ReplaceAll(isDeferringInitialMessageProjection ? [] : projectedMessages);
+            if (!isDeferringInitialMessageProjection)
+            {
+                Reconcile(Messages, projectedMessages, item => item.Id);
+            }
         }
         else if (!isDeferringInitialMessageProjection)
         {
             if (publishDeferredInitialMessageProjection)
             {
-                _messages.ReplaceAll(projectedMessages);
+                Reconcile(Messages, projectedMessages, item => item.Id);
                 _deferredInitialMessageProjectionConversationKey = null;
             }
             else
@@ -4939,6 +4994,74 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
         existing.ApplyFrom(candidate);
         return existing;
+    }
+
+    private bool ActivateMessagePresentation(string? conversationKey)
+    {
+        ResetMessagePresentationCacheForAccount();
+        if (string.IsNullOrWhiteSpace(conversationKey))
+        {
+            if (_activeMessagePresentation is null) return false;
+            _activeMessagePresentation.IsActive = false;
+            _activeMessagePresentation = null;
+            OnPropertyChanged(nameof(Messages));
+            NotifyConversationAvailability();
+            return false;
+        }
+
+        var presentationExisted = _messagePresentationsByConversation.TryGetValue(conversationKey, out var existingPresentation);
+        var presentation = existingPresentation;
+        if (presentation is null)
+        {
+            presentation = new ConversationMessagePresentation(conversationKey, this);
+            _messagePresentationsByConversation[conversationKey] = presentation;
+            MessagePresentations.Add(presentation);
+        }
+
+        var shouldDeferRevalidation = presentationExisted &&
+            presentation.Messages.Count > 0 &&
+            !ReferenceEquals(_activeMessagePresentation, presentation);
+        TouchMessagePresentation(conversationKey);
+        if (!ReferenceEquals(_activeMessagePresentation, presentation))
+        {
+            if (_activeMessagePresentation is not null) _activeMessagePresentation.IsActive = false;
+            _activeMessagePresentation = presentation;
+            presentation.IsActive = true;
+            OnPropertyChanged(nameof(Messages));
+            NotifyConversationAvailability();
+        }
+
+        TrimMessagePresentations();
+        return shouldDeferRevalidation;
+    }
+
+    private void ResetMessagePresentationCacheForAccount()
+    {
+        if (_messagePresentationAccountId == _session.AccountId) return;
+        _activeMessagePresentation = null;
+        _messagePresentationsByConversation.Clear();
+        _messagePresentationLru.Clear();
+        MessagePresentations.Clear();
+        _messagePresentationAccountId = _session.AccountId;
+        OnPropertyChanged(nameof(Messages));
+    }
+
+    private void TouchMessagePresentation(string conversationKey)
+    {
+        var existing = _messagePresentationLru.Find(conversationKey);
+        if (existing is not null) _messagePresentationLru.Remove(existing);
+        _messagePresentationLru.AddLast(conversationKey);
+    }
+
+    private void TrimMessagePresentations()
+    {
+        while (_messagePresentationsByConversation.Count > MessagePresentationCacheLimit &&
+               _messagePresentationLru.First is { } oldest)
+        {
+            _messagePresentationLru.RemoveFirst();
+            if (!_messagePresentationsByConversation.Remove(oldest.Value, out var presentation)) continue;
+            MessagePresentations.Remove(presentation);
+        }
     }
 
     private Dictionary<string, MessageItem> GetMessageItemConversationCache(string conversationKey)
@@ -6139,7 +6262,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         var history = _session.HistoryState;
         var matchesSelected = selected is not null &&
             string.Equals(history.Conversation?.CanonicalKey, selected.CanonicalKey, StringComparison.Ordinal);
-        IsLoadingOlder = matchesSelected && history.IsLoading;
         HasReachedOldestMessage = matchesSelected && history.FoundOldest;
         if (!HasConversationActivationError)
         {
@@ -6204,6 +6326,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             _pendingActivationScrollConversationKey = null;
             _pendingActivationScrollReason = null;
         }
+        if (string.Equals(_retainedActivationConversationKey, conversation.CanonicalKey, StringComparison.Ordinal))
+        {
+            _retainedActivationConversationKey = null;
+            _retainedActivationLatestMessageId = 0;
+        }
 
         if (PendingMessageScrollRequest is
             {
@@ -6267,7 +6394,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             .Select(message => message.MessageId!.Value)
             .DefaultIfEmpty()
             .Max();
+        var isAlreadyDisplayedByRetainedPresentation =
+            string.Equals(_retainedActivationConversationKey, conversationKey, StringComparison.Ordinal) &&
+            targetMessageId > 0 &&
+            targetMessageId <= _retainedActivationLatestMessageId;
         if (targetMessageId > 0 &&
+            !isAlreadyDisplayedByRetainedPresentation &&
             (!string.Equals(_lastActivationScrollConversationKey, conversationKey, StringComparison.Ordinal) ||
              _lastActivationScrollGeneration != history.Generation ||
              _lastActivationScrollTargetMessageId != targetMessageId))
@@ -6343,7 +6475,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ShowNewMessagesButton));
     }
 
-    internal string? CurrentConversationKey => _session.SelectedConversation?.CanonicalKey;
+    internal string? CurrentConversationKey => _displayedConversationKey ?? _session.SelectedConversation?.CanonicalKey;
 
     internal long CurrentHistoryGeneration => _session.HistoryState.Generation;
 

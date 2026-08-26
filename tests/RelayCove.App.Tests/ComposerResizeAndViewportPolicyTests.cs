@@ -94,9 +94,11 @@ public sealed class ComposerResizeAndViewportPolicyTests
 
     [Theory]
     [InlineData(MessageScrollReason.RealtimeFollow, true)]
-    [InlineData(MessageScrollReason.ConversationActivated, false)]
-    [InlineData(MessageScrollReason.ConversationReactivated, false)]
-    public void ShouldUseNativeOffsetBeforeTargetRealized_WhenReasonVaries_UsesItOnlyForRealtimeFollow(
+    [InlineData(MessageScrollReason.ConversationActivated, true)]
+    [InlineData(MessageScrollReason.ConversationReactivated, true)]
+    [InlineData(MessageScrollReason.ManualJumpToLatest, false)]
+    [InlineData(MessageScrollReason.MessageAnchor, false)]
+    public void ShouldUseNativeOffsetBeforeTargetRealized_WhenReasonVaries_UsesItForBottomFollowingRequests(
         MessageScrollReason reason,
         bool expected)
     {

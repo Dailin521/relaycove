@@ -300,7 +300,7 @@ public sealed class MainShellLayoutTests
                 element.Attribute("IsVisible")?.Value == "{Binding HasBody}");
         var messageCollection = source
             .Descendants(maui + "CollectionView")
-            .Single(element => element.Attribute("ItemsSource")?.Value == "{Binding Messages}");
+            .Single(element => element.Attribute("ItemsSource")?.Value?.Contains("MessageItems", StringComparison.Ordinal) == true);
 
         Assert.Single(
             messageBody.Descendants(),
@@ -309,6 +309,30 @@ public sealed class MainShellLayoutTests
             source.Descendants(),
             element => element.Name.LocalName == "SelectableTextBehavior");
         Assert.Equal("None", messageCollection.Attribute("SelectionMode")?.Value);
+    }
+
+    [Fact]
+    public void MessageListActivation_WhenPositioningCachedConversation_KeepsCollectionVisible()
+    {
+        var source = File.ReadAllText(FindWorkspaceFile(
+            "src",
+            "RelayCove.App",
+            "Controls",
+            "MessageListView.xaml.cs"));
+        var hostSource = File.ReadAllText(FindWorkspaceFile(
+            "src",
+            "RelayCove.App",
+            "Controls",
+            "ConversationMessageHost.cs"));
+        var mainPage = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
+
+        Assert.DoesNotContain("MessageCollection.Opacity", source, StringComparison.Ordinal);
+        Assert.Contains("MessageCollection.InputTransparent = isPositioning;", source, StringComparison.Ordinal);
+        Assert.Contains("<controls:ConversationMessageHost Grid.Row=\"1\"", mainPage, StringComparison.Ordinal);
+        Assert.Contains("Presentations=\"{Binding MessagePresentations}\"", mainPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("BindableLayout.ItemsSource=\"{Binding MessagePresentations}\"", mainPage, StringComparison.Ordinal);
+        Assert.Contains("view.IsVisible = isActive;", hostSource, StringComparison.Ordinal);
+        Assert.Contains("view.InputTransparent = !isActive;", hostSource, StringComparison.Ordinal);
     }
 
     [Fact]
