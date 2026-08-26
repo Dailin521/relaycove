@@ -1342,9 +1342,6 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
         await _commands.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!CanCreatePrivateGroup)
-                throw new InvalidOperationException("The current user is not authorized to create a private group.");
-
             var currentUserId = CurrentUserId ?? throw new InvalidOperationException("No current user is available.");
             var otherMemberIds = options.OtherMemberIds
                 .Where(id => id > 0 && id != currentUserId)

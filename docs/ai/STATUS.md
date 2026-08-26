@@ -30,13 +30,16 @@ Current release: [`v2.2.0`](https://github.com/Dailin521/relaycove/releases/tag/
 
 - 登录、凭据恢复、SQLite 缓存、历史分页、实时事件、已读/未读和断线恢复。
 - 文本/附件、引用、reaction、编辑/删除、收藏、搜索、表情、文本选择和图片预览。
+- 文本发送立即清空已提交输入并显示本地消息；服务器确认通过稳定 local ID 原地收敛，不重复插入或自动重发。
 - 私有群聊创建与群设置，所有非幂等写入保持零自动重试。
+- 所有已连接账号都可进入私有群聊创建并提交一次请求，最终权限由 Zulip 服务器权威判定。
 - Windows 通知、任务栏未读、托盘闪烁/悬浮预览/会话点击跳转。
 - 一对一官方在线/忙碌/离线状态，以及独立的个人 emoji/text 状态；两者均为 session-only。
 
 ## 未运行或不在个人 MVP 默认门禁
 
-- 当前文档清理未运行 Fast、Full、Live、应用启动、截图或 Realm 访问。
+- 当前 V2 发送批次定向验证为 Core 168/168、App 330/330，最终 App 独立 Debug 构建 0 warning/0 error；真实发送与动画由用户在 Visual Studio 验证。
+- 当前批次未运行 Fast、Full、Live、应用截图或 Agent 发起的 Realm 写入。
 - `Live` 仍只允许显式隔离凭据和真实写授权；普通开发及发布不得隐式运行。
 - 干净 Windows 11 VM、安装器、MSIX、签名和应用退出后的后台 push 尚未验证或不在当前范围，不能声称已支持。
 - 本机 `.verify/` 目录保留，不清理、不暂存、不提交。

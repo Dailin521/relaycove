@@ -794,13 +794,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         CanCreatePrivateGroup &&
         !string.IsNullOrWhiteSpace(NewPrivateGroupName) &&
         _allNewConversationChoices.Count(choice => choice.IsSelected) >= 2;
-    public bool CanCreatePrivateGroup => _session.CanCreatePrivateGroup &&
+    public bool CanCreatePrivateGroup =>
         _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
     public string PrivateGroupCreateDisabledReason => CanCreatePrivateGroup
         ? "群聊至少选择两名其他成员。"
-        : !_session.CanCreatePrivateGroup
-            ? "当前组织未授权此账号创建私有群聊。"
-            : "当前未连接，暂时无法创建群聊。";
+        : "当前未连接，暂时无法创建群聊。";
     public bool ShowPrivateGroupCreateDisabledReason => IsNewConversationOpen && !CanCreatePrivateGroup;
     public bool HasNewConversationError => !string.IsNullOrWhiteSpace(NewConversationError);
     public bool CanChooseNewConversationChannel => !IsNewConversationChannelLocked;
@@ -1447,8 +1445,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         CancelActivationScrollForUserInteraction(conversation);
 
         var key = conversation.CanonicalKey;
-        var version = _draftVersions.GetValueOrDefault(key);
-        await ExecuteSessionActionAsync(async () =>
+        var clearedDraftVersion = ClearSubmittedComposerText(key);
+        var messageSendStarted = false;
+        var succeeded = await ExecuteSessionActionAsync(async () =>
         {
             AttachmentError = null;
             foreach (var attachment in attachmentSnapshot)
@@ -1510,25 +1509,27 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             var sendContent = string.Join(
                 "\n",
                 new[] { content.TrimEnd() }.Where(value => value.Length > 0).Concat(uploadedMarkdown));
+            messageSendStarted = true;
             await _session.SendAsync(conversation, sendContent, cancellationToken);
             QueueScrollToLatest(MessageScrollReason.RealtimeFollow);
-            if (_draftVersions.GetValueOrDefault(key) != version) return;
-            var current = _drafts.GetValueOrDefault(key, string.Empty);
-            if (!string.Equals(current, content, StringComparison.Ordinal)) return;
+            if (attachmentSnapshot.Length == 0) return;
             var currentAttachments = _attachmentDrafts.GetValueOrDefault(key) ?? [];
             if (currentAttachments.Count != attachmentSnapshot.Length ||
                 !currentAttachments.SequenceEqual(attachmentSnapshot)) return;
 
-            _drafts.Remove(key);
             _attachmentDrafts.Remove(key);
-            _draftVersions[key] = version + 1;
+            _draftVersions[key] = _draftVersions.GetValueOrDefault(key) + 1;
             if (string.Equals(_activeDraftKey, key, StringComparison.Ordinal))
             {
-                SetComposerTextWithoutTracking(string.Empty);
                 Reconcile(Attachments, [], item => item.Id);
                 NotifyAttachmentProperties();
             }
         });
+
+        if (!succeeded && !messageSendStarted)
+        {
+            RestoreSubmittedComposerText(key, content, clearedDraftVersion);
+        }
     }
 
     [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
@@ -4836,6 +4837,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             var showPreviewUnreadDivider = previewUnreadAfterMessageId is { } previewAfter &&
                 previousMessageId == previewAfter;
             var mutation = state.MessageMutations.GetValueOrDefault(message.Id);
+            var projectionId = string.IsNullOrWhiteSpace(message.ClientLocalId)
+                ? message.Id.ToString()
+                : $"local-{message.ClientLocalId}";
             var reactions = message.Reactions
                 .GroupBy(reaction => reaction.Identity.CanonicalKey, StringComparer.Ordinal)
                 .Select(group =>
@@ -4858,7 +4862,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 .OrderBy(reaction => reaction.Identity.CanonicalKey, StringComparer.Ordinal)
                 .ToArray();
             var item = new MessageItem(
-                message.Id.ToString(),
+                projectionId,
                 message.Id,
                 message.SenderId,
                 message.SenderDisplayName ?? user?.FullName ?? $"用户 {message.SenderId}",
@@ -4885,25 +4889,31 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
 
         foreach (var entry in state.Outbox.Values
-                     .Where(entry => entry.Conversation == selected && entry.State != OutboxState.Hidden)
+                     .Where(entry => entry.Conversation == selected)
                      .OrderBy(entry => entry.CreatedAt))
         {
             var localTime = entry.CreatedAt.LocalDateTime;
             var date = DateOnly.FromDateTime(localTime);
+            var currentUser = currentUserId is { } ownUserId
+                ? state.Users.GetValueOrDefault(ownUserId)
+                : null;
             var item = new MessageItem(
                 $"local-{entry.LocalId}",
                 null,
                 currentUserId,
-                "你",
+                currentUser?.FullName ?? "你",
                 entry.Content,
                 localTime.ToString("t"),
                 isOwn: true,
+                isBot: currentUser?.IsBot ?? false,
+                senderAvatarUrl: currentUser?.AvatarUrl,
                 showDateDivider: previousDate != date,
                 dateDividerLabel: DescribeDate(date, localTime),
                 deliveryState: DescribeOutbox(entry.State),
                 canRecover: entry.State is OutboxState.WaitExpired or OutboxState.Failed,
                 recoverCommand: RecoverOutboxCommand,
-                realm: _session.ActiveRealm);
+                realm: _session.ActiveRealm,
+                animateInsertion: entry.State == OutboxState.Hidden);
             projected.Add(ReuseMessageItem(existingById, item));
             previousDate = date;
         }
@@ -6457,6 +6467,35 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         finally
         {
             _suppressDraftTracking = false;
+        }
+    }
+
+    private long ClearSubmittedComposerText(string key)
+    {
+        _drafts.Remove(key);
+        var version = _draftVersions.GetValueOrDefault(key) + 1;
+        _draftVersions[key] = version;
+        if (string.Equals(_activeDraftKey, key, StringComparison.Ordinal))
+        {
+            SetComposerTextWithoutTracking(string.Empty);
+        }
+        return version;
+    }
+
+    private void RestoreSubmittedComposerText(string key, string content, long clearedDraftVersion)
+    {
+        if (content.Length == 0 ||
+            _draftVersions.GetValueOrDefault(key) != clearedDraftVersion ||
+            _drafts.ContainsKey(key))
+        {
+            return;
+        }
+
+        _drafts[key] = content;
+        _draftVersions[key] = clearedDraftVersion + 1;
+        if (string.Equals(_activeDraftKey, key, StringComparison.Ordinal))
+        {
+            SetComposerTextWithoutTracking(content);
         }
     }
 

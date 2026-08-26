@@ -1181,7 +1181,7 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public void ShowNewChannelConversation_WhenRegisterPermissionIsMissing_StaysDisabledWithReason()
+    public void ShowNewChannelConversation_WhenConnected_DoesNotGateOnRegisterPermissionProjection()
     {
         var session = new FakeSession
         {
@@ -1195,10 +1195,29 @@ public sealed class ShellViewModelTests
         viewModel.ShowNewChannelConversationCommand.Execute(null);
 
         Assert.True(viewModel.IsNewConversationOpen);
+        Assert.True(viewModel.IsNewChannelConversationMode);
+        Assert.True(viewModel.CanCreatePrivateGroup);
+        Assert.False(viewModel.ShowPrivateGroupCreateDisabledReason);
+        Assert.Null(viewModel.NewConversationError);
+    }
+
+    [Fact]
+    public void ShowNewChannelConversation_WhenOffline_StaysDisabledWithConnectionReason()
+    {
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
+                connection: new ConnectionState(ConnectionStatus.Offline))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        viewModel.OpenNewConversationCommand.Execute(null);
+        viewModel.ShowNewChannelConversationCommand.Execute(null);
+
         Assert.False(viewModel.IsNewChannelConversationMode);
         Assert.False(viewModel.CanCreatePrivateGroup);
-        Assert.True(viewModel.ShowPrivateGroupCreateDisabledReason);
-        Assert.Contains("未授权", viewModel.NewConversationError);
+        Assert.Contains("未连接", viewModel.NewConversationError);
     }
 
     [Fact]
@@ -2136,12 +2155,78 @@ public sealed class ShellViewModelTests
 
         var send = ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
         await started.Task;
+        Assert.Equal(string.Empty, viewModel.ComposerText);
         viewModel.ComposerText = "newer input";
         release.SetResult();
         await send;
 
         Assert.Equal("newer input", viewModel.ComposerText);
         Assert.Equal(["original"], session.SentContents);
+    }
+
+    [Fact]
+    public async Task SendCommand_WhenServerConfirmationIsPending_ClearsSubmittedTextImmediately()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            Recent = [conversation],
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            SendAction = async (_, cancellationToken) =>
+            {
+                started.SetResult();
+                await release.Task.WaitAsync(cancellationToken);
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
+        viewModel.ComposerText = "send now";
+
+        var send = ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
+        await started.Task;
+
+        Assert.Equal(string.Empty, viewModel.ComposerText);
+        Assert.Equal(["send now"], session.SentContents);
+        release.SetResult();
+        await send;
+    }
+
+    [Fact]
+    public async Task SendCommand_WhenAttachmentUploadFailsBeforeMessageSend_RestoresSubmittedText()
+    {
+        var conversation = new DirectMessage([8]);
+        var filePicker = new FakeFileSelectionService
+        {
+            Files =
+            [
+                new SelectedAttachmentFile(
+                    "broken.png",
+                    "image/png",
+                    3,
+                    _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3])))
+            ]
+        };
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            Recent = [conversation],
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            UploadAction = (_, _) => Task.FromException<UploadedAttachment>(
+                new InvalidOperationException("read failed"))
+        };
+        using var viewModel = CreateViewModel(session, fileSelectionService: filePicker);
+        session.Publish();
+        await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
+        viewModel.ComposerText = "keep this caption";
+
+        await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
+
+        Assert.Equal("keep this caption", viewModel.ComposerText);
+        Assert.Single(viewModel.Attachments);
+        Assert.Empty(session.SentContents);
     }
 
     [Fact]
@@ -2438,6 +2523,103 @@ public sealed class ShellViewModelTests
         Assert.True(message.CanRecover);
         Assert.Equal("recover this raw text", viewModel.ComposerText);
         Assert.Contains("可能产生重复消息", message.DeliveryState, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SessionStateChanged_WhenOutboxIsInitiallyHidden_ProjectsAnimatedOptimisticMessageImmediately()
+    {
+        var conversation = new DirectMessage([8]);
+        var outbox = new OutboxEntry(
+            "10",
+            conversation,
+            "send immediately",
+            DateTimeOffset.UnixEpoch,
+            OutboxState.Hidden);
+        var session = new FakeSession
+        {
+            CurrentUserId = 1,
+            Selected = conversation,
+            StateValue = new ClientState(
+                outbox: new Dictionary<string, OutboxEntry> { [outbox.LocalId] = outbox },
+                users: new Dictionary<long, UserProfile>
+                {
+                    [1] = new UserProfile(1, "Current user", avatarUrl: "https://example.test/avatar.png")
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        var message = Assert.Single(viewModel.Messages);
+
+        Assert.Equal("local-10", message.Id);
+        Assert.Null(message.MessageId);
+        Assert.True(message.IsOwn);
+        Assert.Equal("Current user", message.Sender);
+        Assert.Equal("https://example.test/avatar.png", message.SenderAvatarUrl);
+        Assert.Equal("send immediately", message.Content);
+        Assert.False(message.HasDeliveryState);
+        Assert.False(message.CanRecover);
+        Assert.True(message.IsInsertionAnimationPending);
+    }
+
+    [Fact]
+    public void SessionStateChanged_WhenOptimisticMessageIsConfirmed_UpdatesSameRowWithoutCollectionReplacement()
+    {
+        var conversation = new DirectMessage([8]);
+        var outbox = new OutboxEntry(
+            "11",
+            conversation,
+            "send immediately",
+            DateTimeOffset.UnixEpoch,
+            OutboxState.Hidden);
+        var session = new FakeSession
+        {
+            CurrentUserId = 1,
+            Selected = conversation,
+            StateValue = new ClientState(
+                outbox: new Dictionary<string, OutboxEntry> { [outbox.LocalId] = outbox },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        var optimistic = Assert.Single(viewModel.Messages);
+        var changes = new List<NotifyCollectionChangedAction>();
+        viewModel.Messages.CollectionChanged += (_, eventArgs) => changes.Add(eventArgs.Action);
+
+        var confirmed = new ChatMessage(
+            501,
+            conversation,
+            1,
+            "send immediately",
+            DateTimeOffset.UnixEpoch,
+            isRead: true,
+            clientLocalId: outbox.LocalId);
+        session.StateValue = new ClientState(
+            messages: new Dictionary<long, ChatMessage> { [confirmed.Id] = confirmed },
+            connection: new ConnectionState(ConnectionStatus.Connected));
+        session.Publish();
+
+        var message = Assert.Single(viewModel.Messages);
+        Assert.Same(optimistic, message);
+        Assert.Equal(501, message.MessageId);
+        Assert.Empty(changes);
+    }
+
+    [Fact]
+    public void MessageItem_InsertionAnimation_IsConsumedOnlyOnce()
+    {
+        var message = new MessageItem(
+            "local-12",
+            null,
+            1,
+            "你",
+            "hello",
+            "10:00",
+            isOwn: true,
+            animateInsertion: true);
+
+        Assert.True(message.TryConsumeInsertionAnimation());
+        Assert.False(message.TryConsumeInsertionAnimation());
+        Assert.False(message.IsInsertionAnimationPending);
     }
 
     [Fact]

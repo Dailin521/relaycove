@@ -2189,7 +2189,32 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
-    public async Task CreatePrivateGroupAsync_WhenPermissionOrMembersAreInvalid_FailsBeforeNetwork()
+    public async Task CreatePrivateGroupAsync_WhenRegisterPermissionProjectionIsFalse_DefersToServerAuthority()
+    {
+        var users = new[]
+        {
+            new UserProfile(10, "Me", "me@example.test"),
+            new UserProfile(20, "Ada"),
+            new UserProfile(30, "Grace")
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(users: users)),
+            CreatePrivateGroupHandler = (_, _) => Task.FromResult(77L)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var created = await session.CreatePrivateGroupAsync(new PrivateGroupCreateOptions("group", [20, 30]));
+
+        Assert.False(session.CanCreatePrivateGroup);
+        Assert.Equal(77, created.ChannelId);
+        Assert.Single(gateway.PrivateGroupCreateRequests);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task CreatePrivateGroupAsync_WhenMembersAreInvalid_FailsBeforeNetwork()
     {
         var users = new[]
         {
@@ -2199,25 +2224,17 @@ public sealed class ClientSessionTests
         };
         var gateway = new FakeGateway
         {
-            RegisterHandler = (_, _) => Task.FromResult(Register(users: users))
+            RegisterHandler = (_, _) => Task.FromResult(Register(canCreatePrivateChannel: true, users: users))
         };
         await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => session.CreatePrivateGroupAsync(
             new PrivateGroupCreateOptions("group", [20, 30])));
-        Assert.Empty(gateway.PrivateGroupCreateRequests);
-
-        gateway.RegisterHandler = (_, _) => Task.FromResult(Register(canCreatePrivateChannel: true, users: users));
-        await session.StopAsync();
-        await using var authorized = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
-        await authorized.LoginAsync("https://zulip.example/", "me@example.test", "password");
-        await Assert.ThrowsAsync<InvalidOperationException>(() => authorized.CreatePrivateGroupAsync(
-            new PrivateGroupCreateOptions("group", [20, 30])));
-        await Assert.ThrowsAsync<ArgumentException>(() => authorized.CreatePrivateGroupAsync(
+        await Assert.ThrowsAsync<ArgumentException>(() => session.CreatePrivateGroupAsync(
             new PrivateGroupCreateOptions("group", [20, 20])));
         Assert.Empty(gateway.PrivateGroupCreateRequests);
-        await authorized.StopAsync();
+        await session.StopAsync();
     }
 
     [Fact]

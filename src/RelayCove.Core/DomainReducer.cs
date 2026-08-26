@@ -64,15 +64,17 @@ public static class DomainReducer
         switch (domainEvent)
         {
             case MessageUpsertEvent upsert:
-                unread = AdjustForReplacement(unread, messages, upsert.Message, upsert.Source);
-                messages[upsert.Message.Id] = upsert.Message;
-                UpdateConversationSummary(summaries, upsert.Message);
-                UpdateTopicFromMessage(topics, upsert.Message);
+                var upsertMessage = PreserveClientLocalId(messages, upsert.Message, upsert.LocalId);
+                unread = AdjustForReplacement(unread, messages, upsertMessage, upsert.Source);
+                messages[upsertMessage.Id] = upsertMessage;
+                UpdateConversationSummary(summaries, upsertMessage);
+                UpdateTopicFromMessage(topics, upsertMessage);
                 if (upsert.LocalId is { } localId) outbox.Remove(localId);
                 break;
             case MessagesUpdatedEvent updated:
-                foreach (var message in updated.Messages)
+                foreach (var incomingMessage in updated.Messages)
                 {
+                    var message = PreserveClientLocalId(messages, incomingMessage);
                     unread = AdjustForReplacement(unread, messages, message, updated.Source);
                     messages[message.Id] = message;
                     UpdateConversationSummary(summaries, message);
@@ -101,9 +103,10 @@ public static class DomainReducer
                 messageMutations.Remove(changed.MessageId);
                 break;
             case SendConfirmedEvent sent:
-                messages[sent.Message.Id] = sent.Message;
-                UpdateConversationSummary(summaries, sent.Message);
-                UpdateTopicFromMessage(topics, sent.Message);
+                var sentMessage = PreserveClientLocalId(messages, sent.Message, sent.LocalId);
+                messages[sentMessage.Id] = sentMessage;
+                UpdateConversationSummary(summaries, sentMessage);
+                UpdateTopicFromMessage(topics, sentMessage);
                 outbox.Remove(sent.LocalId);
                 break;
             case OutboxQueuedEvent queued:
@@ -300,6 +303,20 @@ public static class DomainReducer
         }
 
         return unread;
+    }
+
+    private static ChatMessage PreserveClientLocalId(
+        IReadOnlyDictionary<long, ChatMessage> messages,
+        ChatMessage message,
+        string? localId = null)
+    {
+        var preservedLocalId = string.IsNullOrWhiteSpace(localId)
+            ? messages.GetValueOrDefault(message.Id)?.ClientLocalId
+            : localId;
+        return string.IsNullOrWhiteSpace(preservedLocalId) ||
+               string.Equals(message.ClientLocalId, preservedLocalId, StringComparison.Ordinal)
+            ? message
+            : message with { ClientLocalId = preservedLocalId };
     }
 
     private static void RemoveChannel(

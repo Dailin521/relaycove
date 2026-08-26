@@ -32,6 +32,7 @@ public sealed class MessageItem : ObservableObject
     private RealmEndpoint? _realm;
     private IReadOnlyList<MessageQuote> _quotes;
     private IReadOnlyList<MessageAttachmentItem> _attachments;
+    private bool _animateInsertion;
 
     public MessageItem(
         string id,
@@ -56,7 +57,8 @@ public sealed class MessageItem : ObservableObject
         string? deliveryState = null,
         bool canRecover = false,
         ICommand? recoverCommand = null,
-        RealmEndpoint? realm = null)
+        RealmEndpoint? realm = null,
+        bool animateInsertion = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         ArgumentException.ThrowIfNullOrWhiteSpace(sender);
@@ -84,6 +86,7 @@ public sealed class MessageItem : ObservableObject
         _canRecover = canRecover;
         _recoverCommand = recoverCommand;
         _realm = realm;
+        _animateInsertion = animateInsertion;
 
         var presentation = MessageContentPresentation.Parse(content, Realm);
         _quotes = presentation.Quotes;
@@ -135,6 +138,15 @@ public sealed class MessageItem : ObservableObject
         Color.FromArgb(TonePalette[(int)(Math.Abs((SenderId ?? 0) % TonePalette.Length))]));
     public string AvatarInitial => AvatarInitials.Create(Sender, IsBot);
     public string AccessibleLabel => $"{Sender}，{Timestamp}。{Content}";
+
+    internal bool IsInsertionAnimationPending => _animateInsertion;
+
+    internal bool TryConsumeInsertionAnimation()
+    {
+        if (!_animateInsertion) return false;
+        _animateInsertion = false;
+        return true;
+    }
 
     internal void ApplyFrom(MessageItem candidate)
     {

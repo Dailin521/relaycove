@@ -12,7 +12,8 @@ public sealed record ChatMessage
         string? senderDisplayName = null,
         string? senderAvatarUrl = null,
         bool isStarred = false,
-        IReadOnlyList<EmojiReaction>? reactions = null)
+        IReadOnlyList<EmojiReaction>? reactions = null,
+        string? clientLocalId = null)
     {
         if (id <= 0) throw new ArgumentOutOfRangeException(nameof(id));
         ArgumentNullException.ThrowIfNull(conversation);
@@ -28,6 +29,7 @@ public sealed record ChatMessage
         SenderAvatarUrl = string.IsNullOrWhiteSpace(senderAvatarUrl) ? null : senderAvatarUrl;
         IsStarred = isStarred;
         Reactions = (reactions ?? []).ToArray();
+        ClientLocalId = string.IsNullOrWhiteSpace(clientLocalId) ? null : clientLocalId;
     }
 
     public long Id { get; init; }
@@ -40,6 +42,7 @@ public sealed record ChatMessage
     public string? SenderAvatarUrl { get; init; }
     public bool IsStarred { get; init; }
     public IReadOnlyList<EmojiReaction> Reactions { get; init; }
+    public string? ClientLocalId { get; init; }
 
     public override string ToString() =>
         $"ChatMessage {{ Id = {Id}, Conversation = [redacted], SenderId = {SenderId}, Content = [redacted], Timestamp = {Timestamp:O}, IsRead = {IsRead}, IsStarred = {IsStarred}, Reactions = {Reactions.Count} }}";

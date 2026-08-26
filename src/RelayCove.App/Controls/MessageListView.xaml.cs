@@ -8,6 +8,8 @@ using WinUiDependencyObject = Microsoft.UI.Xaml.DependencyObject;
 using WinUiFrameworkElement = Microsoft.UI.Xaml.FrameworkElement;
 using WinUiListViewBase = Microsoft.UI.Xaml.Controls.ListViewBase;
 using WinUiScrollViewer = Microsoft.UI.Xaml.Controls.ScrollViewer;
+using WinUiTransitionCollection = Microsoft.UI.Xaml.Media.Animation.TransitionCollection;
+using WinUiTranslateTransform = Microsoft.UI.Xaml.Media.TranslateTransform;
 using WinUiVisualTreeHelper = Microsoft.UI.Xaml.Media.VisualTreeHelper;
 
 namespace RelayCove.App.Controls;
@@ -16,6 +18,9 @@ public partial class MessageListView : ContentView
 {
     private const double ReactionPickerWidth = 310d;
     private const double ReactionPickerEdgeMargin = 12d;
+    private const double MessageInsertionInitialOpacity = 0d;
+    private const uint MessageInsertionDelay = 100;
+    private const uint MessageInsertionDuration = 140;
     private const int MaximumScrollAttemptsPerLayout = 12;
     private ShellViewModel? _viewModel;
     private VisualElement? _messageMenuTrigger;
@@ -44,6 +49,9 @@ public partial class MessageListView : ContentView
     private double _suspendedScrollVerticalOffset;
     private bool _keepLatestMessageInView;
     private WinUiFrameworkElement? _platformLayoutRoot;
+    private WinUiListViewBase? _platformMessageList;
+    private readonly HashSet<string> _pendingInsertionAnimationIds = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _preparedInsertionAnimationIds = new(StringComparer.Ordinal);
     private readonly PointerEventHandler _viewportPointerInputHandler;
     private readonly KeyEventHandler _viewportKeyInputHandler;
 
@@ -185,6 +193,15 @@ public partial class MessageListView : ContentView
 
     private void OnMessagesCollectionChanged(object? sender, NotifyCollectionChangedEventArgs eventArgs)
     {
+        if (eventArgs.Action == NotifyCollectionChangedAction.Add &&
+            eventArgs.NewItems?.OfType<MessageItem>()
+                .Where(item => item.IsInsertionAnimationPending)
+                .ToArray() is { Length: > 0 } insertedItems)
+        {
+            foreach (var item in insertedItems) _pendingInsertionAnimationIds.Add(item.Id);
+            _keepLatestMessageInView = true;
+        }
+
         if (_activeScrollRequest is not null)
         {
             ResetScrollRetryBudget();
@@ -364,6 +381,8 @@ public partial class MessageListView : ContentView
     {
         RemovePlatformLayoutHook();
         _keepLatestMessageInView = false;
+        _pendingInsertionAnimationIds.Clear();
+        _preparedInsertionAnimationIds.Clear();
         ClearActiveScrollRequest();
         ClearPendingPrependAnchor();
         ClearStabilizedAnchor();
@@ -379,7 +398,11 @@ public partial class MessageListView : ContentView
     private void EnsurePlatformLayoutHook()
     {
         var root = MessageCollection.Handler?.PlatformView as WinUiFrameworkElement;
-        if (ReferenceEquals(root, _platformLayoutRoot)) return;
+        if (ReferenceEquals(root, _platformLayoutRoot))
+        {
+            EnsurePlatformMessageListConfigured();
+            return;
+        }
         RemovePlatformLayoutHook();
         _platformLayoutRoot = root;
         if (_platformLayoutRoot is not null)
@@ -397,7 +420,22 @@ public partial class MessageListView : ContentView
                 Microsoft.UI.Xaml.UIElement.KeyDownEvent,
                 _viewportKeyInputHandler,
                 true);
+            EnsurePlatformMessageListConfigured();
         }
+    }
+
+    private void EnsurePlatformMessageListConfigured()
+    {
+        if (_platformMessageList is not null || _platformLayoutRoot is null) return;
+        var list = _platformLayoutRoot as WinUiListViewBase ??
+            FindDescendant<WinUiListViewBase>(_platformLayoutRoot);
+        if (list is null) return;
+
+        // WinUI's default add transition keeps a newly inserted virtualized row
+        // transparent before its reveal starts. RelayCove owns the immediate
+        // compositor fade, so the platform transition must not run as well.
+        list.ItemContainerTransitions = new WinUiTransitionCollection();
+        _platformMessageList = list;
     }
 
     private void RemovePlatformLayoutHook()
@@ -416,6 +454,7 @@ public partial class MessageListView : ContentView
             _platformLayoutRoot.LayoutUpdated -= OnPlatformLayoutUpdated;
         }
         _platformLayoutRoot = null;
+        _platformMessageList = null;
     }
 
     private void OnViewportPointerInput(object sender, PointerRoutedEventArgs eventArgs) => ClearViewportAnchorsForUserInput();
@@ -445,6 +484,7 @@ public partial class MessageListView : ContentView
 
     private void OnPlatformLayoutUpdated(object? sender, object eventArgs)
     {
+        EnsurePlatformMessageListConfigured();
         if (_activeScrollRequest is not null)
         {
             if (_scrollRetrySuspended && !ResumeScrollRetriesAfterLayoutChange()) return;
@@ -453,6 +493,7 @@ public partial class MessageListView : ContentView
         }
 
         MaintainLatestMessageAfterLayout();
+        StartVisibleInsertionAnimations();
         ReportLayoutBottomDistance();
         MaintainViewportAnchorAfterLayout();
     }
@@ -835,6 +876,98 @@ public partial class MessageListView : ContentView
         {
             return false;
         }
+    }
+
+    private void StartVisibleInsertionAnimations()
+    {
+        if (_pendingInsertionAnimationIds.Count == 0 ||
+            _viewModel is null ||
+            _platformMessageList is null ||
+            _platformLayoutRoot is null ||
+            FindDescendant<WinUiScrollViewer>(_platformLayoutRoot) is not { } scrollViewer)
+        {
+            return;
+        }
+
+        foreach (var id in _pendingInsertionAnimationIds.ToArray())
+        {
+            var index = -1;
+            for (var candidate = 0; candidate < _viewModel.Messages.Count; candidate++)
+            {
+                if (!string.Equals(_viewModel.Messages[candidate].Id, id, StringComparison.Ordinal)) continue;
+                index = candidate;
+                break;
+            }
+
+            if (index < 0)
+            {
+                _pendingInsertionAnimationIds.Remove(id);
+                _preparedInsertionAnimationIds.Remove(id);
+                continue;
+            }
+
+            if (_platformMessageList.ContainerFromIndex(index) is not WinUiFrameworkElement { IsLoaded: true } container)
+            {
+                continue;
+            }
+
+            if (_preparedInsertionAnimationIds.Add(id)) PrepareInsertionVisual(container);
+            if (!IsTargetVisible(container, scrollViewer)) continue;
+
+            var message = _viewModel.Messages[index];
+            _pendingInsertionAnimationIds.Remove(id);
+            _preparedInsertionAnimationIds.Remove(id);
+            if (!message.TryConsumeInsertionAnimation()) continue;
+            StartInsertionFade(container);
+        }
+    }
+
+    private static void PrepareInsertionVisual(WinUiFrameworkElement platformElement)
+    {
+        platformElement.Opacity = MessageInsertionInitialOpacity;
+        platformElement.RenderTransform = new WinUiTranslateTransform { Y = 6d };
+    }
+
+    private static void StartInsertionFade(WinUiFrameworkElement platformElement)
+    {
+        var transform = platformElement.RenderTransform as WinUiTranslateTransform ??
+            new WinUiTranslateTransform { Y = 6d };
+        platformElement.RenderTransform = transform;
+        var beginTime = TimeSpan.FromMilliseconds(MessageInsertionDelay);
+        var duration = new Microsoft.UI.Xaml.Duration(TimeSpan.FromMilliseconds(MessageInsertionDuration));
+        var easing = new Microsoft.UI.Xaml.Media.Animation.CubicEase
+        {
+            EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut
+        };
+        var fade = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+        {
+            From = MessageInsertionInitialOpacity,
+            To = 1d,
+            BeginTime = beginTime,
+            Duration = duration,
+            EasingFunction = easing
+        };
+        var slide = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
+        {
+            From = 6d,
+            To = 0d,
+            BeginTime = beginTime,
+            Duration = duration,
+            EasingFunction = easing
+        };
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(fade, platformElement);
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(fade, "Opacity");
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(slide, transform);
+        Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(slide, "Y");
+        var storyboard = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+        storyboard.Children.Add(fade);
+        storyboard.Children.Add(slide);
+        storyboard.Completed += (_, _) =>
+        {
+            platformElement.Opacity = 1d;
+            transform.Y = 0d;
+        };
+        storyboard.Begin();
     }
 
     private static bool IsTargetVisible(

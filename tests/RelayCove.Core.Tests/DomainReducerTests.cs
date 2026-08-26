@@ -86,6 +86,24 @@ public sealed class DomainReducerTests
         state = DomainReducer.Apply(state, new MessageUpsertEvent(Message(101), LocalId: localId));
 
         Assert.Empty(state.Outbox);
+        Assert.Equal(localId, state.Messages[101].ClientLocalId);
+    }
+
+    [Fact]
+    public void Apply_WhenCorrelatedMessageIsRefreshed_PreservesClientLocalId()
+    {
+        const string localId = "3";
+        var message = Message(102);
+        var state = DomainReducer.Apply(
+            ClientState.Empty,
+            new MessageUpsertEvent(message, LocalId: localId));
+
+        state = DomainReducer.Apply(
+            state,
+            new MessagesUpdatedEvent([message with { Content = "updated" }]));
+
+        Assert.Equal(localId, state.Messages[102].ClientLocalId);
+        Assert.Equal("updated", state.Messages[102].Content);
     }
 
     [Fact]
