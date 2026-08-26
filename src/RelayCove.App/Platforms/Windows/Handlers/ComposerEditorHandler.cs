@@ -7,7 +7,10 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using RelayCove.App.Controls;
+using RelayCove.App.Platforms.Windows;
 using RelayCove.App.Platforms.Windows.Behaviors;
+using RelayCove.App.Services;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 using Windows.UI.Core;
 using WinUiGrid = Microsoft.UI.Xaml.Controls.Grid;
@@ -16,6 +19,8 @@ using WinUiHorizontalAlignment = Microsoft.UI.Xaml.HorizontalAlignment;
 using WinUiSolidColorBrush = Microsoft.UI.Xaml.Media.SolidColorBrush;
 using WinUiThickness = Microsoft.UI.Xaml.Thickness;
 using WinUiVerticalAlignment = Microsoft.UI.Xaml.VerticalAlignment;
+using WinClipboard = Windows.ApplicationModel.DataTransfer.Clipboard;
+using WinDataPackageView = Windows.ApplicationModel.DataTransfer.DataPackageView;
 
 namespace RelayCove.App.Platforms.Windows.Handlers;
 
@@ -82,6 +87,7 @@ public sealed class ComposerEditorHandler : ViewHandler<ComposerEditor, WinUiGri
         base.ConnectHandler(platformView);
         _editor.TextChanged += OnTextChanged;
         _editor.SelectionChanged += OnSelectionChanged;
+        _editor.PreviewKeyDown += OnPreviewKeyDown;
         _editor.TextCompositionStarted += OnTextCompositionStarted;
         _editor.TextCompositionEnded += OnTextCompositionEnded;
 
@@ -121,6 +127,7 @@ public sealed class ComposerEditorHandler : ViewHandler<ComposerEditor, WinUiGri
 
         _editor.TextCompositionEnded -= OnTextCompositionEnded;
         _editor.TextCompositionStarted -= OnTextCompositionStarted;
+        _editor.PreviewKeyDown -= OnPreviewKeyDown;
         _editor.SelectionChanged -= OnSelectionChanged;
         _editor.TextChanged -= OnTextChanged;
         _isTextCompositionActive = false;
@@ -287,6 +294,41 @@ public sealed class ComposerEditorHandler : ViewHandler<ComposerEditor, WinUiGri
         selection.SetText(TextSetOptions.None, "\r");
         selection.SetRange(insertionPosition + 1, insertionPosition + 1);
         eventArgs.Handled = true;
+    }
+
+    private async void OnPreviewKeyDown(object sender, KeyRoutedEventArgs eventArgs)
+    {
+        if (eventArgs.Key != VirtualKey.V ||
+            !IsControlPressed() ||
+            _isTextCompositionActive ||
+            VirtualView?.PasteImageCommand is not { } command)
+        {
+            return;
+        }
+
+        WinDataPackageView dataView;
+        try
+        {
+            dataView = WinClipboard.GetContent();
+            if (!dataView.Contains(StandardDataFormats.Bitmap)) return;
+        }
+        catch
+        {
+            return;
+        }
+
+        eventArgs.Handled = true;
+        SelectedAttachmentFile? attachment = null;
+        try
+        {
+            attachment = await ClipboardImageAttachmentFactory.CreateAsync(dataView, DateTimeOffset.Now);
+        }
+        catch
+        {
+            // The ViewModel presents a safe, localized error without surfacing clipboard details.
+        }
+
+        if (command.CanExecute(attachment)) command.Execute(attachment);
     }
 
     private string GetDocumentText()

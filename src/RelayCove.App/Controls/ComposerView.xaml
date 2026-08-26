@@ -47,6 +47,7 @@
                                      Text="{Binding ComposerText, Mode=TwoWay}"
                                      IsEnabled="{Binding CanCompose}"
                                      SendCommand="{Binding ViewModel.SendCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
+                                     PasteImageCommand="{Binding ViewModel.AddPastedImageCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
                                      CursorPosition="{Binding ViewModel.ComposerCursorPosition, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}"
                                      SelectionLength="{Binding ViewModel.ComposerSelectionLength, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}"
                                      FocusRequest="{Binding ViewModel.ComposerFocusRequest, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
@@ -84,10 +85,17 @@
                                     StrokeThickness="1">
                                 <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
                                 <Grid ColumnDefinitions="34,*,28" RowDefinitions="Auto,Auto" ColumnSpacing="7">
-                                    <Border Grid.RowSpan="2" WidthRequest="34" HeightRequest="34" Padding="7"
+                                    <Border Grid.RowSpan="2" WidthRequest="34" HeightRequest="34" Padding="0"
                                             VerticalOptions="Center" Background="{StaticResource SurfaceSelectedBrush}" StrokeThickness="0">
                                         <Border.StrokeShape><RoundRectangle CornerRadius="6" /></Border.StrokeShape>
-                                        <Image Source="icon_attachment.png" />
+                                        <Grid>
+                                            <Image Source="{Binding PreviewSource}"
+                                                   IsVisible="{Binding HasPreview}"
+                                                   Aspect="AspectFill" />
+                                            <Image Source="icon_attachment.png"
+                                                   IsVisible="{Binding HasGenericIcon}"
+                                                   Margin="7" />
+                                        </Grid>
                                     </Border>
                                     <Label Grid.Column="1" Text="{Binding FileName}" Style="{StaticResource BaseLabelStyle}"
                                            FontSize="12" FontAttributes="Bold" LineBreakMode="TailTruncation" />
@@ -134,7 +142,7 @@
                              IsEnabled="{Binding CanCompose}"
                              SemanticProperties.Description="选择最多 10 个图片或文件附件" />
                 <Label Grid.Column="2"
-                       Text="拖放文件到这里 · Enter 发送 · Ctrl+Enter 换行"
+                       Text="粘贴或拖放图片与文件 · Enter 发送 · Ctrl+Enter 换行"
                        Style="{StaticResource MutedLabelStyle}"
                        FontSize="10"
                        VerticalTextAlignment="Center"

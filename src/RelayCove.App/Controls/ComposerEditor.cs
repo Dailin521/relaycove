@@ -54,6 +54,11 @@ public sealed class ComposerEditor : View
         typeof(ICommand),
         typeof(ComposerEditor));
 
+    public static readonly BindableProperty PasteImageCommandProperty = BindableProperty.Create(
+        nameof(PasteImageCommand),
+        typeof(ICommand),
+        typeof(ComposerEditor));
+
     public string Text
     {
         get => (string)GetValue(TextProperty);
@@ -100,5 +105,11 @@ public sealed class ComposerEditor : View
     {
         get => (ICommand?)GetValue(SendCommandProperty);
         set => SetValue(SendCommandProperty, value);
+    }
+
+    public ICommand? PasteImageCommand
+    {
+        get => (ICommand?)GetValue(PasteImageCommandProperty);
+        set => SetValue(PasteImageCommandProperty, value);
     }
 }

@@ -2965,9 +2965,40 @@ public sealed class ShellViewModelTests
         await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
 
         Assert.Equal(1, session.UploadCalls);
-        Assert.Equal("caption\n[design\\[1\\].png](https://example.test/user_uploads/design[1].png)", Assert.Single(session.SentContents));
+        Assert.Equal("caption\n![design\\[1\\].png](https://example.test/user_uploads/design[1].png)", Assert.Single(session.SentContents));
         Assert.Empty(viewModel.Attachments);
         Assert.Equal(string.Empty, viewModel.ComposerText);
+    }
+
+    [Fact]
+    public void AddPastedImage_WhenClipboardProvidesPng_UsesValidatedAttachmentDraftPath()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        var screenshot = new SelectedAttachmentFile(
+            "screenshot-20260826-120000.png",
+            "image/png",
+            3,
+            _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3])),
+            openPreviewStream: () => new MemoryStream([1, 2, 3]));
+
+        viewModel.AddPastedImageCommand.Execute(screenshot);
+
+        var draft = Assert.Single(viewModel.Attachments);
+        Assert.True(draft.IsImage);
+        Assert.True(draft.HasPreview);
+        Assert.Equal("screenshot-20260826-120000.png", draft.FileName);
+        Assert.True(viewModel.HasAttachments);
+    }
+
+    [Fact]
+    public void AddPastedImage_WhenClipboardImageCouldNotBeRead_ShowsSafeError()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        viewModel.AddPastedImageCommand.Execute(null);
+
+        Assert.Equal("无法读取剪贴板中的截图。", viewModel.AttachmentError);
+        Assert.Empty(viewModel.Attachments);
     }
 
     [Fact]
@@ -3006,6 +3037,9 @@ public sealed class ShellViewModelTests
 
         Assert.Equal(1, session.UploadCalls);
         Assert.Equal(2, session.SentContents.Count);
+        Assert.All(
+            session.SentContents,
+            sent => Assert.Equal("[notes.txt](https://example.test/user_uploads/notes.txt)", sent));
         Assert.Empty(viewModel.Attachments);
     }
 

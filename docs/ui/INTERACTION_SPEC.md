@@ -307,6 +307,7 @@ Stage 22W 当前没有正式全局/服务端搜索数据契约；本地 fixture 
 ### 9.4 附件选择与发送
 
 - 点击上传打开支持多选的系统文件选择器；也可把本地文件拖到输入区。只处理 `DataTransfer.files`，拒绝远程 URL/HTML 拖入并阻止浏览器导航。取消或拒绝不改变正文和既有附件。
+- MAUI Windows Composer 在剪贴板含位图时将 `Ctrl+V` 转为 PNG 图片草稿并显示缩略图；剪贴板无位图时保留原生纯文本粘贴。截图必须复用同一附件校验、上传和失败不重试链路，发送引用使用 Zulip 内嵌图片 Markdown，不能把富文本位图直接留在输入控件中。
 - 支持任意文件类型，每条消息最多 10 个；拒绝空文件、控制字符/过长文件名、超过 register `max_file_upload_size_mib` 的单文件和超过产品总预算的组合。MIME/扩展名只决定展示，不作为上传信任依据。
 - PNG/JPEG/WebP/GIF/AVIF 显示本地 Blob 缩略图；其他类型只显示文件图标、名称、大小和移除按钮，不生成活动预览。每个会话独立保存附件草稿。
 - 上传按草稿顺序逐个执行 `POST /api/v1/user_uploads` multipart `filename`；服务端返回的 `filename` 必须清洗并按 Markdown label 转义，URL 必须保持同 Realm。所有上传确认后，正文和全部链接只进入一次消息 POST。

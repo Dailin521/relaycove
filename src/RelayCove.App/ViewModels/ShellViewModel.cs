@@ -1502,7 +1502,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
             var uploadedMarkdown = attachmentSnapshot
                 .Select(attachment => attachment.Uploaded is { } uploaded
-                    ? BuildUploadedAttachmentMarkdown(uploaded)
+                    ? BuildUploadedAttachmentMarkdown(uploaded, attachment.IsImage)
                     : null)
                 .Where(markdown => markdown is not null)
                 .Cast<string>()
@@ -2068,6 +2068,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         IsFileDragActive = false;
         AddAttachmentSelection(selected ?? []);
+    }
+
+    [RelayCommand]
+    private void AddPastedImage(SelectedAttachmentFile? selected)
+    {
+        if (selected is null)
+        {
+            AttachmentError = "无法读取剪贴板中的截图。";
+            return;
+        }
+
+        AddAttachmentSelection([selected]);
     }
 
     private void AddAttachmentSelection(IReadOnlyList<SelectedAttachmentFile> selected)
@@ -6738,7 +6750,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             : null;
     }
 
-    private static string BuildUploadedAttachmentMarkdown(UploadedAttachment uploaded)
+    private static string BuildUploadedAttachmentMarkdown(UploadedAttachment uploaded, bool isImage)
     {
         var normalized = new string(uploaded.FileName
                 .Select(character => character < 0x20 || character == 0x7f ? '_' : character)
@@ -6752,7 +6764,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             .Replace("]", "\\]", StringComparison.Ordinal)
             .Replace("(", "\\(", StringComparison.Ordinal)
             .Replace(")", "\\)", StringComparison.Ordinal);
-        return $"[{label}]({uploaded.Url})";
+        return $"{(isImage ? "!" : string.Empty)}[{label}]({uploaded.Url})";
     }
 
     private static string DescribeGatewayFailure(GatewayException exception) => exception.Kind switch

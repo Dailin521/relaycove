@@ -22,6 +22,11 @@ public sealed partial class AttachmentDraftItem : ObservableObject
     public long Length => File.Length;
     public string SizeLabel => FormatBytes(Length);
     public bool IsImage => File.ContentType is { } contentType && PreviewImageTypes.Contains(contentType);
+    public ImageSource? PreviewSource => File.HasPreview
+        ? field ??= ImageSource.FromStream(File.OpenPreviewStream)
+        : null;
+    public bool HasPreview => File.HasPreview;
+    public bool HasGenericIcon => !HasPreview;
     public string KindLabel => IsImage ? "图片" : "文件";
 
     [ObservableProperty]
