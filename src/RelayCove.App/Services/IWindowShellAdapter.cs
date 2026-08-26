@@ -7,4 +7,5 @@ public interface IWindowShellAdapter
     bool IsForeground { get; }
     void Attach(Window window);
     void TogglePinned();
+    void RequestExit();
 }

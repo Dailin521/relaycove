@@ -7,10 +7,12 @@ namespace RelayCove.App.Platforms.Windows;
 
 public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
 {
+    private const uint WindowClose = 0x0010;
     private Window? _window;
     private AppWindow? _appWindow;
     private nint _windowHandle;
     private bool _isPinned;
+    private bool _exitRequested;
 #if DEBUG
     private bool _previewPlacementApplied;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _previewPlacementTimer;
@@ -61,6 +63,16 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    public void RequestExit()
+    {
+        if (_windowHandle == 0) return;
+        _exitRequested = true;
+        if (!PostMessage(_windowHandle, WindowClose, 0, 0))
+        {
+            _exitRequested = false;
+        }
+    }
+
     private void OnHandlerChanged(object? sender, EventArgs eventArgs) => TryInitializeNativeWindow();
 
     private void TryInitializeNativeWindow()
@@ -69,7 +81,12 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
         var windowHandle = WindowNative.GetWindowHandle(nativeWindow);
         _windowHandle = windowHandle;
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(windowHandle);
+        if (_appWindow is not null)
+        {
+            _appWindow.Closing -= OnAppWindowClosing;
+        }
         _appWindow = AppWindow.GetFromWindowId(windowId);
+        _appWindow.Closing += OnAppWindowClosing;
         if (_appWindow.Presenter is OverlappedPresenter presenter)
         {
             _isPinned = presenter.IsAlwaysOnTop;
@@ -259,6 +276,19 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
     internal static bool IsForegroundWindow(nint windowHandle, nint foregroundWindow, bool isMinimized) =>
         windowHandle != 0 && windowHandle == foregroundWindow && !isMinimized;
 
+    internal static bool ShouldCloseToTray(bool isNativePreviewRequested) => !isNativePreviewRequested;
+
+    private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs eventArgs)
+    {
+        if (_exitRequested) return;
+#if DEBUG
+        if (!ShouldCloseToTray(NativeShellPreviewSession.IsRequested)) return;
+#endif
+        eventArgs.Cancel = true;
+        sender.Hide();
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     private void OnWindowDestroying(object? sender, EventArgs eventArgs)
     {
         if (_window is not null)
@@ -267,9 +297,14 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
             _window.Destroying -= OnWindowDestroying;
         }
 
-        _appWindow = null;
+        if (_appWindow is not null)
+        {
+            _appWindow.Closing -= OnAppWindowClosing;
+            _appWindow = null;
+        }
         _windowHandle = 0;
         _window = null;
+        _exitRequested = false;
 #if DEBUG
         _previewPlacementApplied = false;
         _previewPlacementTimer?.Stop();
@@ -283,4 +318,12 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsIconic(nint windowHandle);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "PostMessageW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool PostMessage(
+        nint windowHandle,
+        uint message,
+        nint wordParameter,
+        nint longParameter);
 }

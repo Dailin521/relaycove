@@ -138,4 +138,13 @@ public sealed class WindowsAppNotificationServiceTests
             expected,
             WindowsTrayIconController.ResolveActivationConversation(notification, hasUnread));
     }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, true)]
+    [InlineData(2, false)]
+    public void TrayContextMenu_WhenCommandVaries_ExitsOnlyForExplicitExitCommand(
+        uint command,
+        bool expected) =>
+        Assert.Equal(expected, WindowsTrayIconController.IsExitMenuCommand(command));
 }

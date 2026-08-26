@@ -34,4 +34,16 @@ public sealed class WindowsWindowShellAdapterTests
             (nint)foregroundWindow,
             isMinimized));
     }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void ShouldCloseToTray_WhenNativePreviewIsRunning_PreservesPreviewShutdown(
+        bool isNativePreviewRequested,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            WindowsWindowShellAdapter.ShouldCloseToTray(isNativePreviewRequested));
+    }
 }

@@ -34,11 +34,12 @@ Current release: [`v2.2.0`](https://github.com/Dailin521/relaycove/releases/tag/
 - 私有群聊创建与群设置，所有非幂等写入保持零自动重试。
 - 所有已连接账号都可进入私有群聊创建并提交一次请求，最终权限由 Zulip 服务器权威判定。
 - Windows 通知、任务栏未读、托盘闪烁/悬浮预览/会话点击跳转。
+- 主窗口 `X` 隐藏窗口并移除任务栏按钮，进程继续驻留托盘；托盘右键“退出 RelayCove”才执行完整关闭清理。
 - 一对一官方在线/忙碌/离线状态，以及独立的个人 emoji/text 状态；两者均为 session-only。
 
 ## 未运行或不在个人 MVP 默认门禁
 
-- 当前 V2 发送批次定向验证为 Core 168/168、App 330/330，最终 App 独立 Debug 构建 0 warning/0 error；真实发送与动画由用户在 Visual Studio 验证。
+- 当前 V2 发送批次定向验证为 Core 168/168、App 330/330，最终 App 独立 Debug 构建 0 warning/0 error；真实发送与动画由用户在 Visual Studio 验证。关闭到托盘与右键退出批次 App 335/335 通过，并由用户确认交互。
 - 当前批次未运行 Fast、Full、Live、应用截图或 Agent 发起的 Realm 写入。
 - `Live` 仍只允许显式隔离凭据和真实写授权；普通开发及发布不得隐式运行。
 - 干净 Windows 11 VM、安装器、MSIX、签名和应用退出后的后台 push 尚未验证或不在当前范围，不能声称已支持。

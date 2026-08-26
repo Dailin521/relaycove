@@ -16,6 +16,7 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     private readonly TaskbarUnreadOverlay _taskbarUnreadOverlay = new();
     private readonly INotificationAvatarFileStore _notificationAvatarFileStore;
     private readonly IUiDispatcher _dispatcher;
+    private readonly IWindowShellAdapter _windowShellAdapter;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private WindowsTrayIconController? _trayIconController;
     private Window? _window;
@@ -42,11 +43,13 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
 
     public WindowsAppNotificationService(
         INotificationAvatarFileStore notificationAvatarFileStore,
-        IUiDispatcher dispatcher)
+        IUiDispatcher dispatcher,
+        IWindowShellAdapter windowShellAdapter)
     {
         _notificationAvatarFileStore = notificationAvatarFileStore ??
                                        throw new ArgumentNullException(nameof(notificationAvatarFileStore));
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+        _windowShellAdapter = windowShellAdapter ?? throw new ArgumentNullException(nameof(windowShellAdapter));
     }
 
     public void Attach(Window window)
@@ -276,7 +279,9 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     {
         if (_disposed || _window?.Handler?.PlatformView is not Microsoft.UI.Xaml.Window nativeWindow) return;
         _windowHandle = WindowNative.GetWindowHandle(nativeWindow);
-        _trayIconController ??= new WindowsTrayIconController(ActivateTrayIcon);
+        _trayIconController ??= new WindowsTrayIconController(
+            ActivateTrayIcon,
+            _windowShellAdapter.RequestExit);
         _trayIconController.Attach(_windowHandle);
         _trayIconController.UpdateUnread(_pendingTrayUnreadCount, _pendingTrayUnreadIsTruncated);
         UpdateUnreadBadge(_pendingUnreadCount, _pendingUnreadIsTruncated);

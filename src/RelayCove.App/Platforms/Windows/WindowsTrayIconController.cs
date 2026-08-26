@@ -49,6 +49,10 @@ internal sealed class WindowsTrayIconController : IDisposable
     private const uint LeftButtonUp = 0x0202;
     private const uint LeftButtonDoubleClick = 0x0203;
     private const uint WindowContextMenu = 0x007B;
+    private const uint MenuString = 0x00000000;
+    private const uint TrackPopupRightButton = 0x0002;
+    private const uint TrackPopupReturnCommand = 0x0100;
+    private const uint ExitMenuCommand = 1;
     private const uint WindowGetIcon = 0x007F;
     private const nint IconSmall = 0;
     private const nint IconBig = 1;
@@ -65,6 +69,7 @@ internal sealed class WindowsTrayIconController : IDisposable
     private static readonly Guid TrayIconGuid = new("8B6EF624-2B24-4FB2-B647-4B42221686EA");
 
     private readonly Action<string?> _activateWindow;
+    private readonly Action _exitApplication;
     private readonly WindowProcedure _windowProcedure;
     private readonly string _windowClassName = $"RelayCove.Tray.{Environment.ProcessId}";
     private DispatcherQueue? _dispatcherQueue;
@@ -91,15 +96,17 @@ internal sealed class WindowsTrayIconController : IDisposable
     private bool _flashRequested;
     private bool _hovering;
     private bool _activationQueued;
+    private bool _exitQueued;
     private bool _previewVisibilityQueued;
     private bool _previewVisibilityRequested;
     private bool _disposed;
     private AppMessageNotification? _previewNotification;
     private Uri? _previewAvatarUri;
 
-    internal WindowsTrayIconController(Action<string?> activateWindow)
+    internal WindowsTrayIconController(Action<string?> activateWindow, Action exitApplication)
     {
         _activateWindow = activateWindow ?? throw new ArgumentNullException(nameof(activateWindow));
+        _exitApplication = exitApplication ?? throw new ArgumentNullException(nameof(exitApplication));
         _windowProcedure = OnWindowMessage;
     }
 
@@ -375,7 +382,7 @@ internal sealed class WindowsTrayIconController : IDisposable
                 QueueWindowActivation();
                 break;
             case WindowContextMenu:
-                ReturnFocusToTray();
+                ShowContextMenu();
                 break;
         }
         return 0;
@@ -490,6 +497,8 @@ internal sealed class WindowsTrayIconController : IDisposable
         bool hasUnread) =>
         hasUnread ? previewNotification?.ConversationKey : null;
 
+    internal static bool IsExitMenuCommand(uint command) => command == ExitMenuCommand;
+
     internal static bool TryInvokeCallback(Action callback)
     {
         ArgumentNullException.ThrowIfNull(callback);
@@ -509,6 +518,57 @@ internal sealed class WindowsTrayIconController : IDisposable
         if (!_iconAdded) return;
         var data = CreateIconData(0);
         _ = ShellNotifyIcon(NotifyIconSetFocus, ref data);
+    }
+
+    private void ShowContextMenu()
+    {
+        if (_disposed || _messageWindowHandle == 0) return;
+        var menu = CreatePopupMenu();
+        if (menu == 0) return;
+        try
+        {
+            if (!AppendMenu(menu, MenuString, ExitMenuCommand, "退出 RelayCove") ||
+                !GetCursorPos(out var cursor))
+            {
+                return;
+            }
+
+            _ = SetForegroundWindow(_messageWindowHandle);
+            var command = TrackPopupMenuEx(
+                menu,
+                TrackPopupRightButton | TrackPopupReturnCommand,
+                cursor.X,
+                cursor.Y,
+                _messageWindowHandle,
+                0);
+            if (IsExitMenuCommand(command)) QueueExitApplication();
+        }
+        finally
+        {
+            _ = DestroyMenu(menu);
+            ReturnFocusToTray();
+        }
+    }
+
+    private void QueueExitApplication()
+    {
+        if (_disposed || _exitQueued || _dispatcherQueue is null) return;
+        _exitQueued = true;
+        if (_dispatcherQueue.TryEnqueue(() =>
+            {
+                _exitQueued = false;
+                if (_disposed) return;
+                _ = TryInvokeCallback(() =>
+                {
+                    HidePreview();
+                    _exitApplication();
+                });
+            }))
+        {
+            return;
+        }
+
+        _exitQueued = false;
     }
 
     private void ShowPreview()
@@ -943,4 +1003,28 @@ internal sealed class WindowsTrayIconController : IDisposable
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetCursorPos(out NativePoint point);
+
+    [DllImport("user32.dll")]
+    private static extern nint CreatePopupMenu();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "AppendMenuW")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool AppendMenu(nint menu, uint flags, nuint item, string text);
+
+    [DllImport("user32.dll")]
+    private static extern uint TrackPopupMenuEx(
+        nint menu,
+        uint flags,
+        int x,
+        int y,
+        nint windowHandle,
+        nint parameters);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DestroyMenu(nint menu);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(nint windowHandle);
 }

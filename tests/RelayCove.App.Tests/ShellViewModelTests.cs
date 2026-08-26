@@ -3628,6 +3628,7 @@ public sealed class ShellViewModelTests
         public bool IsForeground { get; set; }
         public void Attach(Window window) { }
         public void TogglePinned() => IsPinned = !IsPinned;
+        public void RequestExit() { }
         public void PublishStateChanged() => StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
