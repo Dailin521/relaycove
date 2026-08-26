@@ -1,6 +1,6 @@
 # RelayCove 重建计划：正式 Web + 原生 MAUI 双前端，Zulip 唯一后端
 
-文档状态：第一版 MAUI 开发周期已于 2026-08-24 结束，Stage 22M 至 Stage 30 均已进入 `main`；Stage 31–36 已按 `v2.1.0` 正式发布。Stage 37–38 增量正在收口为 `v2.2.0`，活动计划为 `docs/ai/tasks/2026-08-25-v2-optimization-plan.md`。Stage 38 的最终 Visual Studio 视觉确认、Stage 21 的最终 MAUI UI 人工密码登录、安装器/签名和干净 Windows 11 VM 门禁仍保留，不因正式发布而误报完成
+文档状态：第一版 MAUI 开发周期已于 2026-08-24 结束，Stage 22M 至 Stage 30 均已进入 `main`；Stage 31–36 已按 `v2.1.0` 正式发布，Stage 37–38 增量已按 `v2.2.0` 正式发布。活动计划为 `docs/ai/tasks/2026-08-25-v2-optimization-plan.md`。Stage 38 的最终 Visual Studio 视觉确认、Stage 21 的最终 MAUI UI 人工密码登录、安装器/签名和干净 Windows 11 VM 门禁仍保留，不因正式发布而误报完成
 目标版本：`2.2.0`
 首发平台：Windows 11 x64
 目标框架：`net10.0-windows10.0.19041.0`

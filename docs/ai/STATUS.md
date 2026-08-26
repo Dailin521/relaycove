@@ -1,13 +1,13 @@
-# RelayCove Status — V2.2 release preparation
+# RelayCove Status — V2.2 released; Stage 38 visual confirmation pending
 
 Updated: 2026-08-26
 Integration basis: Stage 37 delivery `main@b0fb6ee`; Stage 36 delivery `main@f221424`; Stage 32–35 delivery `main@7df99da`; Stage 31 delivery `main@068b1d1`; Stage 30 functional delivery `main@57c8145`; first MAUI release `v2.0.0-alpha.1@83eccf0`
 Integration commits: Web `573a33d`; first MAUI slice `c1c4da9`; native Web-parity follow-up `259e176`
-Current delivery: Stages 31–36 were formally published as `2.1.0`. Stage 37 is delivered on `main@b0fb6ee`, and Stage 38 is committed on `main@a5c84c8`; these two increments are being packaged as formal `2.2.0`. Stage 38 deterministic verification is complete while final Visual Studio visual confirmation remains pending. The saved-message and reaction-picker exact positions also still await final user confirmation. Signing, installer, final password-login and clean-VM acceptance remain open. Stage 25 alone performed authorized production Realm writes; Stages 30–38 and this release operation performed no authenticated Agent read or Realm write. Stage 23 Live remains historical evidence and was not rerun.
+Current delivery: Stages 31–36 were formally published as `2.1.0`; Stage 37–38 are formally published as `2.2.0` from candidate `5d880d7`. Stage 38 deterministic verification is complete while final Visual Studio visual confirmation remains pending. The saved-message and reaction-picker exact positions also still await final user confirmation. Signing, installer, final password-login and clean-VM acceptance remain open. Stage 25 alone performed authorized production Realm writes; Stages 30–38 and this release operation performed no authenticated Agent read or Realm write. Stage 23 Live remains historical evidence and was not rerun.
 
 ## V2.2 release — 2026-08-26
 
-- Planned version/tag: `2.2.0` / `v2.2.0`; assets: `RelayCove-2.2.0-win-x64.zip` and `RelayCove-2.2.0-win-x64.sha256`.
+- Version/tag: [`2.2.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.2.0) / `v2.2.0`; assets: `RelayCove-2.2.0-win-x64.zip` and `RelayCove-2.2.0-win-x64.sha256`.
 - Scope: Stage 37 active-chat realtime follow stability and Stage 38 official presence, invisible mode and personal emoji/text status.
 - Baseline before release preparation: `main@a5c84c839412f4f45fd1aa9330d7d1c97565987e`, equal to `origin/main`; no `v2.2.0` tag or release existed.
 - Release remains Windows 11 x64, self-contained, unpackaged and unsigned. It does not add an installer, updater or background push.
@@ -15,7 +15,8 @@ Current delivery: Stages 31–36 were formally published as `2.1.0`. Stage 37 is
 - Pre-commit `pwsh ./scripts/verify.ps1 -Mode Full` passed: Release build had 0 errors and 7 existing XamlC binding-performance warnings; Core 166/166, Zulip.Client 135/135, Data 35/35 and App 321/321 passed; app-only publish, required runtime/content checks, secret scan, ZIP and manifest generation passed.
 - The online transitive NuGet vulnerability audit reported no vulnerable package in all nine solution projects. The diagnostic pre-commit ZIP contains 661 entries, all required runtime/license files, no unsafe or duplicate path, and ProductVersion `2.2.0+a5c84c839412f4f45fd1aa9330d7d1c97565987e`; it is not the final release artifact because release preparation is not yet committed.
 - Independent read-only review found no remaining P0/P1/P2 after the release notes explicitly listed every open visual, clean-VM, password-login, installer and signing gate.
-- Exact candidate, final package digest and publication evidence remain pending in `tasks/2026-08-26-v2-2-release.md`.
+- Exact candidate and annotated tag target: `5d880d78921f496450d6de409a4946d396d0d3d2`. The quick clean-candidate publish produced 661 files, ProductVersion `2.2.0+5d880d78921f496450d6de409a4946d396d0d3d2`, a 96,765,856-byte ZIP and SHA-256 `E560BA62C26EF882249C4ADD9F180597B79DB6F425425B09957C03890FDF6283`.
+- GitHub reports `isDraft=false`, `isPrerelease=false`; `v2.2.0` is Latest and the uploaded ZIP digest matches the local candidate.
 - No Web, Live, authenticated Realm access, App startup or user-window operation is part of this release.
 
 ## Stage 38 official presence and user status display — 2026-08-25

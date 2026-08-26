@@ -7,17 +7,17 @@ Updated: 2026-08-26
 1. 根目录 `RelayCove_Zulip_MAUI_重建开发计划.md`：产品、架构、安全与验收边界。
 2. `docs/ai/STATUS.md`：当前提交、当前验证证据和仍未关闭的门禁。
 3. `docs/ai/WORKFLOW.md`：开发、测试、复核和外部副作用规则。
-4. 当前活动问题是 `tasks/2026-08-25-stage-38-official-presence-display.md`，父计划是 `tasks/2026-08-25-v2-optimization-plan.md`；当前发布任务是 `tasks/2026-08-26-v2-2-release.md`。已完成的 `v2.1.0` 发布记录仍保留，Stage 38 和 Stage 32/34 的未完成人工确认不因发布而关闭。
+4. 当前活动问题是 `tasks/2026-08-25-stage-38-official-presence-display.md`，父计划是 `tasks/2026-08-25-v2-optimization-plan.md`；已完成的 `v2.2.0` 发布记录是 `tasks/2026-08-26-v2-2-release.md`。Stage 38 和 Stage 32/34 的未完成人工确认不因发布而关闭。
 5. UI 工作再读 `docs/ui/README.md`、`INTERACTION_SPEC.md` 和 `DEVELOPMENT_WORKFLOW.md`。
 
 仓库代码、测试和本轮实际命令证据优先于文档。文档中的历史测试数、分支、包哈希和截图只适用于其明确记录的提交，不能当成当前树证据。
 
 ## Task 状态
 
-- **Active**：Stage 38 Zulip 官方在线状态与个人状态显示，以及 `v2.2.0` 正式发布收口；父计划为 V2 总优化计划。
+- **Active**：Stage 38 Zulip 官方在线状态与个人状态显示的最终 Visual Studio 视觉确认；父计划为 V2 总优化计划。
 - **Pending confirmation**：Stage 34 reaction 表情面板定位与 Stage 32 收藏消息精确锚点仍等待用户最终确认。
 - **Latest completed**：Stage 37 当前会话实时入站消息稳定追加及原生底部偏移动画已通过用户 Visual Studio 人工确认并随 `main@b0fb6ee` 交付；Stage 36 Windows 系统托盘提醒、未读预览与会话点击跳转已随 `main@f221424` 交付。
-- **Latest release**：`2026-08-25-v2-1-release.md` 记录已完成的 `v2.1.0` Windows x64 正式 GitHub Release；`2026-08-24-v2-alpha1-release.md` 保留首版历史。
+- **Latest release**：`2026-08-26-v2-2-release.md` 记录已完成的 `v2.2.0` Windows x64 正式 GitHub Release；V2.1 和首版记录继续作为历史证据。
 - **Earlier completed**：Stage 26 引用显示修复已随 `main@a22b05b` 提交并推送；Stage 25 采用统一私聊/私有群聊模型，其经授权的 Realm 频道归档事实仍只以该任务记录为准。
 - **Earlier completed**：Stage 24.10 已随 `main@3b6f814` 提交并推送；其工作日志仍保留当时实际记录的验证边界，不补写未经记录的人工结果。
 - **Earlier completed**：Stage 24.8 与 Stage 24.9 已随 `main@faa5a5e` 提交并推送。
