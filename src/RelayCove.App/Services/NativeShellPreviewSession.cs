@@ -60,7 +60,7 @@ internal sealed class NativeShellPreviewSession : IClientSession
                     103,
                     uiDesign,
                     CurrentUser,
-                    "@_**Maya Chen|9** [said](https://preview.invalid/#narrow/near/102):\n```quote\n只要搜索、新建和统一会话列表\n```\n\n可以。公开频道和旧多话题频道都不会出现在 RelayCove 会话列表。",
+                    "@_**Maya Chen|9** [said](https://preview.invalid/#narrow/near/102):\n```quote\n只要搜索、新建和统一会话列表\n```\n\n可以。公开频道和旧多话题频道都不会出现在 RichChat 会话列表。",
                     timestamp.AddMinutes(13),
                     isRead: true,
                     senderDisplayName: "林远"),
@@ -336,7 +336,7 @@ internal sealed class NativeShellPreviewSession : IClientSession
                 HistoryPublicToSubscribers: true,
                 TopicsPolicy: ChannelTopicsPolicy.EmptyTopicOnly,
                 CanRemoveSubscribersGroup: ownerGroup)),
-            _ => Task.FromException<ChannelDetails>(new InvalidOperationException("The preview channel is not a RelayCove private group."))
+            _ => Task.FromException<ChannelDetails>(new InvalidOperationException("The preview channel is not a RichChat private group."))
         };
     }
 
@@ -353,7 +353,7 @@ internal sealed class NativeShellPreviewSession : IClientSession
         {
             6 => Task.FromResult<IReadOnlyList<long>>([6, 7, 8, 9]),
             12 => Task.FromResult<IReadOnlyList<long>>([6, 8, 11]),
-            _ => Task.FromException<IReadOnlyList<long>>(new InvalidOperationException("The preview channel is not a RelayCove private group."))
+            _ => Task.FromException<IReadOnlyList<long>>(new InvalidOperationException("The preview channel is not a RichChat private group."))
         };
     }
 

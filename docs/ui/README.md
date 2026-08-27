@@ -1,6 +1,6 @@
-# RelayCove UI 文档
+# RichChat UI 文档
 
-RelayCove 当前只继续开发 Windows MAUI 客户端。代码和用户在 Visual Studio 中看到的真实窗口优先于历史截图或旧文字。
+RichChat 当前只继续开发 Windows MAUI 客户端。源码工程仍使用兼容标识 `RelayCove.App`；代码和用户在 Visual Studio 中看到的真实窗口优先于历史截图或旧文字。
 
 ## 按需阅读
 

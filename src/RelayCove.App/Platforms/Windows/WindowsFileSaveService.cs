@@ -8,6 +8,8 @@ namespace RelayCove.App.Platforms.Windows;
 
 public sealed class WindowsFileSaveService : IFileSaveService
 {
+    internal const string DefaultDownloadFolderName = "RichChat";
+
     private const string DownloadFolderKey = "relaycove.download.folder";
     private const string AskWhereToSaveKey = "relaycove.download.ask-where";
     private readonly string _defaultDownloadFolder = CreateDefaultDownloadFolderPath();
@@ -189,13 +191,16 @@ public sealed class WindowsFileSaveService : IFileSaveService
                 null,
                 RegistryValueOptions.DoNotExpandEnvironmentNames) as string;
             if (!string.IsNullOrWhiteSpace(configured))
-                return Path.Combine(Environment.ExpandEnvironmentVariables(configured), "RelayCove");
+                return Path.Combine(Environment.ExpandEnvironmentVariables(configured), DefaultDownloadFolderName);
         }
         catch
         {
             // Fall back to the conventional per-user Downloads location.
         }
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "RelayCove");
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "Downloads",
+            DefaultDownloadFolderName);
     }
 
     private static void ValidateDownloadedFilePath(string filePath)

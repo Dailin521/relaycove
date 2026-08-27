@@ -1,4 +1,4 @@
-# RelayCove 简化开发工作流
+# RichChat 简化开发工作流
 
 ## 1. 开始前
 

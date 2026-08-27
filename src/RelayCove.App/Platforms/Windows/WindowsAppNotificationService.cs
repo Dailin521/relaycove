@@ -354,7 +354,7 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     private static string DescribeSetting(AppNotificationSetting setting) => setting switch
     {
         AppNotificationSetting.Enabled => "系统通知已接入；实际横幅仍受 Windows 通知设置控制。",
-        AppNotificationSetting.DisabledForApplication => "Windows 已关闭 RelayCove 的系统通知。",
+        AppNotificationSetting.DisabledForApplication => "Windows 已关闭 RichChat 的系统通知。",
         AppNotificationSetting.DisabledForUser => "Windows 已关闭当前用户的系统通知。",
         AppNotificationSetting.DisabledByGroupPolicy => "系统通知已被 Windows 组策略关闭。",
         AppNotificationSetting.DisabledByManifest => "当前应用清单未启用系统通知。",

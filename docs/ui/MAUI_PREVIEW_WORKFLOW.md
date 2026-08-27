@@ -1,4 +1,4 @@
-# RelayCove MAUI 原生 UI 快速预览手册
+# RichChat MAUI 原生 UI 快速预览手册
 
 这份手册记录 Stage 22M 在 Visual Studio 2026、.NET 10 和 Windows 多显示器环境中的实际开发经验。目标是缩短“修改—观察—校正”循环，同时保留原生 XAML、编译绑定、真实 DPI 和正式验收边界。
 
@@ -45,7 +45,7 @@ dotnet workload list
 不要创建带固定 `executablePath` 的自定义预览 profile。MAUI 的 Windows 启动需要 Visual Studio/MSBuild 处理 TFM 和 RID；自定义路径容易寻找不存在的无 RID 输出：
 
 ```text
-bin\Debug\net10.0-windows10.0.19041.0\RelayCove.App.exe
+bin\Debug\net10.0-windows10.0.19041.0\win-x64\RichChat.exe
 ```
 
 当前 Windows 输出位于 `win-x64` 子目录；自包含发布也由验证脚本显式传入 `RuntimeIdentifierOverride=win-x64`。路径应由项目配置生成，不应复制进 launch profile。SDK、MAUI 或 RID 变化后需显式执行一次 `dotnet restore RelayCove.sln -r win-x64 -p:Configuration=Release`，同时准备 Release ReadyToRun 运行包；随后日常 Fast/Full 继续 `--no-restore`。

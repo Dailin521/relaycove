@@ -914,7 +914,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         DetailsPrivateGroupOwnerId is null &&
         !IsDetailsLoading;
     public string PrivateGroupManagementBoundary =>
-        "此群的管理权限不是 RelayCove 单群主结构，仅提供个人设置；不会推断或改写权限。";
+        "此群的管理权限不是 RichChat 单群主结构，仅提供个人设置；不会推断或改写权限。";
     public bool HasPrivateGroupActionStatus => !string.IsNullOrWhiteSpace(PrivateGroupActionStatus);
     public bool CanInvitePrivateGroupMember => CanManagePrivateGroup && SelectedGroupInviteCandidate is not null;
     public bool CanRemovePrivateGroupMember => CanManagePrivateGroup && SelectedGroupRemoveCandidate is not null;
@@ -1076,7 +1076,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             var host = _session.ActiveRealm?.Uri.Host ?? TryGetRealmHost(Realm);
             return string.Equals(host, "preview.invalid", StringComparison.OrdinalIgnoreCase)
                 ? "Acme Workspace"
-                : host ?? "RelayCove";
+                : host ?? "RichChat";
         }
     }
     public bool IsNativePreview => string.Equals(
@@ -3545,7 +3545,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             if (!IsDetailsLoadCurrent(generation, cancellation, expectedKey)) return;
             if (!PrivateGroupPolicy.IsEligible(details) || channel.Topic.Length != 0)
             {
-                DetailsLoadError = "此频道已不再符合 RelayCove 私有群聊规则；未提供管理操作。";
+                DetailsLoadError = "此频道已不再符合 RichChat 私有群聊规则；未提供管理操作。";
                 DetailsChannelAnnouncement = "群公告暂不可用";
                 return;
             }
@@ -7556,7 +7556,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     private static string DescribeGatewayFailure(GatewayException exception) => exception.Kind switch
     {
-        GatewayErrorKind.IncompatibleRealm => "此 Realm 与 RelayCove 不兼容。",
+        GatewayErrorKind.IncompatibleRealm => "此 Realm 与 RichChat 不兼容。",
         GatewayErrorKind.AuthenticationFailed or GatewayErrorKind.ReauthRequired => "邮箱、密码或 API 凭据无效。",
         GatewayErrorKind.RateLimited => "服务器正在限流，请稍后再试。",
         GatewayErrorKind.Offline => "无法连接到服务器，请检查网络和 Realm 地址。",

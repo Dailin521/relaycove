@@ -13,7 +13,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $repoRoot 'src\RelayCove.App\RelayCove.App.csproj'
-$standardExecutable = Join-Path $repoRoot 'src\RelayCove.App\bin\Debug\net10.0-windows10.0.19041.0\win-x64\RelayCove.App.exe'
+$standardExecutable = Join-Path $repoRoot 'src\RelayCove.App\bin\Debug\net10.0-windows10.0.19041.0\win-x64\RichChat.exe'
 $stateDirectory = Join-Path $repoRoot 'artifacts\maui'
 $processFile = Join-Path $stateDirectory 'preview-process.id'
 $executableFile = Join-Path $stateDirectory 'preview-executable.path'
@@ -25,7 +25,7 @@ if (-not $NoBuild)
     New-Item -ItemType Directory -Path $buildDirectory -Force | Out-Null
     dotnet build $project -c Debug --no-restore --nologo -o $buildDirectory
     if ($LASTEXITCODE -ne 0) { throw 'MAUI preview build failed; the existing preview was preserved.' }
-    $executable = Join-Path $buildDirectory 'RelayCove.App.exe'
+    $executable = Join-Path $buildDirectory 'RichChat.exe'
 }
 elseif (Test-Path -LiteralPath $executableFile)
 {

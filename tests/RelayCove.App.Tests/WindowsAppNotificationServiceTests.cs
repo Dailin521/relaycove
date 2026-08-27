@@ -49,10 +49,10 @@ public sealed class WindowsAppNotificationServiceTests
     }
 
     [Theory]
-    [InlineData(0, false, "RelayCove")]
-    [InlineData(1, false, "RelayCove · 1 条未读消息")]
-    [InlineData(120, false, "RelayCove · 99+ 条未读消息")]
-    [InlineData(0, true, "RelayCove · 有未读消息")]
+    [InlineData(0, false, "RichChat")]
+    [InlineData(1, false, "RichChat · 1 条未读消息")]
+    [InlineData(120, false, "RichChat · 99+ 条未读消息")]
+    [InlineData(0, true, "RichChat · 有未读消息")]
     public void TrayTooltip_WhenUnreadVaries_UsesAuthoritativeCount(
         int count,
         bool isTruncated,

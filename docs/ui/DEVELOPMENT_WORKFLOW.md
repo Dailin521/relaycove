@@ -1,4 +1,4 @@
-# RelayCove UI 开发工作流
+# RichChat UI 开发工作流
 
 状态：Active
 最后更新：2026-08-25

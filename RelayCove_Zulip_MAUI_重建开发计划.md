@@ -1,4 +1,4 @@
-# RelayCove MAUI 产品与架构计划
+# RichChat MAUI 产品与架构计划
 
 状态：当前权威计划
 版本：`2.2.0`
@@ -8,9 +8,9 @@
 
 ## 1. 产品方向
 
-RelayCove 是个人使用的 Windows MAUI Zulip 客户端。`RelayCove.App` 是唯一继续开发和发布的产品客户端；历史 `RelayCove.Web` 不再要求功能对齐。
+RichChat 是个人使用的 Windows MAUI Zulip 客户端。为保持升级与源码兼容，工程、命名空间、应用 ID 和本机缓存键继续使用既有 `RelayCove.*` 标识；`RelayCove.App` 是唯一继续开发和发布的产品客户端，历史 `RelayCove.Web` 不再要求功能对齐。
 
-Zulip Realm 始终是账号、权限、成员、消息和实时事件的唯一事实源。不得增加 RelayCove 服务端、代理、BFF、第二消息后端或 WebView UI。
+Zulip Realm 始终是账号、权限、成员、消息和实时事件的唯一事实源。不得增加 RichChat 服务端、代理、BFF、第二消息后端或 WebView UI。
 
 所有 MAUI 修改直接在 `main` 进行，一次只处理用户明确提出的一个问题。UI/交互由用户在 Visual Studio 验证，确认后才提交推送。
 
@@ -29,7 +29,7 @@ Zulip Realm 始终是账号、权限、成员、消息和实时事件的唯一�
 ### 不做
 
 - 公开频道、命名话题、多人私信和旧频道兼容入口。
-- RelayCove Web 新功能或 MAUI/Web 对齐。
+- 历史 RelayCove Web 新功能或 MAUI/Web 对齐。
 - `@` 候选、typing、应用退出后的后台 push、SSO、多账号、AI、自动更新。
 - Android、iOS、Mac Catalyst、Linux、MSIX、安装器和代码签名。
 

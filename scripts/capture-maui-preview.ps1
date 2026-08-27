@@ -15,20 +15,20 @@ $executableFile = Join-Path $stateDirectory 'preview-executable.path'
 
 if (-not (Test-Path -LiteralPath $processFile) -or -not (Test-Path -LiteralPath $executableFile))
 {
-    throw 'No RelayCove preview process is recorded. Run scripts/start-maui-preview.ps1 first.'
+    throw 'No RichChat preview process is recorded. Run scripts/start-maui-preview.ps1 first.'
 }
 
 $previewProcessId = 0
 if (-not [int]::TryParse((Get-Content -LiteralPath $processFile -Raw).Trim(), [ref] $previewProcessId))
 {
-    throw 'The recorded RelayCove preview process ID is invalid.'
+    throw 'The recorded RichChat preview process ID is invalid.'
 }
 
 $expectedExecutable = (Get-Content -LiteralPath $executableFile -Raw).Trim()
 $process = Get-Process -Id $previewProcessId -ErrorAction Stop
 if (-not [string]::Equals($process.Path, $expectedExecutable, [StringComparison]::OrdinalIgnoreCase))
 {
-    throw 'The recorded process is not the RelayCove preview executable started by this worktree.'
+    throw 'The recorded process is not the RichChat preview executable started by this worktree.'
 }
 
 for ($attempt = 0; $attempt -lt 50 -and $process.MainWindowHandle -eq [IntPtr]::Zero; $attempt++)
@@ -36,7 +36,7 @@ for ($attempt = 0; $attempt -lt 50 -and $process.MainWindowHandle -eq [IntPtr]::
     Start-Sleep -Milliseconds 100
     $process.Refresh()
 }
-if ($process.MainWindowHandle -eq [IntPtr]::Zero) { throw 'RelayCove preview did not create a window.' }
+if ($process.MainWindowHandle -eq [IntPtr]::Zero) { throw 'RichChat preview did not create a window.' }
 
 Add-Type @'
 using System;

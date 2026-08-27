@@ -174,10 +174,10 @@ internal sealed class WindowsTrayIconController : IDisposable
 
     internal static string FormatTooltip(int count, bool isTruncated) => count switch
     {
-        > 99 => "RelayCove · 99+ 条未读消息",
-        > 0 => $"RelayCove · {count} 条未读消息",
-        _ when isTruncated => "RelayCove · 有未读消息",
-        _ => "RelayCove"
+        > 99 => "RichChat · 99+ 条未读消息",
+        > 0 => $"RichChat · {count} 条未读消息",
+        _ when isTruncated => "RichChat · 有未读消息",
+        _ => "RichChat"
     };
 
     private bool HasUnread => ShouldShowPreview(_unreadCount, _unreadIsTruncated);
@@ -527,7 +527,7 @@ internal sealed class WindowsTrayIconController : IDisposable
         if (menu == 0) return;
         try
         {
-            if (!AppendMenu(menu, MenuString, ExitMenuCommand, "退出 RelayCove") ||
+            if (!AppendMenu(menu, MenuString, ExitMenuCommand, "退出 RichChat") ||
                 !GetCursorPos(out var cursor))
             {
                 return;
@@ -724,7 +724,7 @@ internal sealed class WindowsTrayIconController : IDisposable
             return;
         }
 
-        var title = HasUnread ? _previewNotification?.Title ?? "RelayCove" : "RelayCove";
+        var title = HasUnread ? _previewNotification?.Title ?? "RichChat" : "RichChat";
         _previewTitle.Text = title;
         _previewBody.Text = HasUnread
             ? _previewNotification?.Body ?? "有未读消息"

@@ -9,7 +9,7 @@
              x:Name="RootPage"
              x:DataType="viewModels:ShellViewModel"
              Style="{StaticResource RelayCovePageStyle}"
-             Title="RelayCove"
+             Title="RichChat"
              Shell.NavBarIsVisible="False">
     <Grid Background="{StaticResource GroundBrush}">
         <Grid IsVisible="{Binding LoginVisible}"
@@ -38,14 +38,14 @@
                             <Border.StrokeShape>
                                 <RoundRectangle CornerRadius="14" />
                             </Border.StrokeShape>
-                            <Image Source="relaycove_mark.png"
+                            <Image Source="richchat_mark.png"
                                    Aspect="AspectFit"
-                                   SemanticProperties.Description="RelayCove" />
+                                   SemanticProperties.Description="RichChat" />
                         </Border>
                         <VerticalStackLayout Grid.Column="1"
                                              Spacing="3"
                                              VerticalOptions="Center">
-                            <Label Text="欢迎使用 RelayCove"
+                            <Label Text="欢迎使用 RichChat"
                                    Style="{StaticResource BaseLabelStyle}"
                                    FontSize="24"
                                    FontAttributes="Bold" />
@@ -1377,7 +1377,7 @@
                         <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
                         <VerticalStackLayout Spacing="12">
                             <Label Text="永久删除消息？" Style="{StaticResource DangerLabelStyle}" FontSize="18" FontAttributes="Bold" />
-                            <Label Text="此操作不可撤销。若网络结果未知，RelayCove 不会自动重试删除。" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" />
+                            <Label Text="此操作不可撤销。若网络结果未知，RichChat 不会自动重试删除。" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" />
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                                 <Button x:Name="DeleteCancelButton" Text="取消" Style="{StaticResource BaseButtonStyle}" Command="{Binding CancelDeleteMessageCommand}" />
                                 <Button Grid.Column="1" Text="永久删除" Style="{StaticResource PrimaryButtonStyle}" BackgroundColor="{StaticResource DangerColor}" Command="{Binding ConfirmDeleteMessageCommand}" />
@@ -1411,7 +1411,7 @@
                 <Grid IsVisible="{Binding IsTopicDeleteConfirmationOpen}">
                     <BoxView Background="{StaticResource OverlayBrush}"><BoxView.GestureRecognizers><TapGestureRecognizer Command="{Binding CancelTopicDeleteCommand}" /></BoxView.GestureRecognizers></BoxView>
                     <Border Style="{StaticResource DialogBorderStyle}" Stroke="{StaticResource DangerColor}">
-                        <VerticalStackLayout Spacing="12"><Label Text="永久删除话题？" Style="{StaticResource DangerLabelStyle}" FontSize="18" FontAttributes="Bold" /><Label Text="此操作不可撤销。若服务器只完成部分删除或网络结果未知，RelayCove 不会自动重试。" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" /><Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><Button Text="取消" Command="{Binding CancelTopicDeleteCommand}" Style="{StaticResource BaseButtonStyle}" /><Button Grid.Column="1" Text="永久删除" Command="{Binding ConfirmTopicDeleteCommand}" Style="{StaticResource PrimaryButtonStyle}" BackgroundColor="{StaticResource DangerColor}" /></Grid></VerticalStackLayout>
+                        <VerticalStackLayout Spacing="12"><Label Text="永久删除话题？" Style="{StaticResource DangerLabelStyle}" FontSize="18" FontAttributes="Bold" /><Label Text="此操作不可撤销。若服务器只完成部分删除或网络结果未知，RichChat 不会自动重试。" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" /><Grid ColumnDefinitions="*,Auto" ColumnSpacing="8"><Button Text="取消" Command="{Binding CancelTopicDeleteCommand}" Style="{StaticResource BaseButtonStyle}" /><Button Grid.Column="1" Text="永久删除" Command="{Binding ConfirmTopicDeleteCommand}" Style="{StaticResource PrimaryButtonStyle}" BackgroundColor="{StaticResource DangerColor}" /></Grid></VerticalStackLayout>
                     </Border>
                 </Grid>
 

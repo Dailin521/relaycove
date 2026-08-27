@@ -9,7 +9,9 @@ public sealed class MainShellLayoutTests
     {
         var source = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
 
-        Assert.Contains("Text=\"欢迎使用 RelayCove\"", source, StringComparison.Ordinal);
+        Assert.Contains("Title=\"RichChat\"", source, StringComparison.Ordinal);
+        Assert.Contains("Source=\"richchat_mark.png\"", source, StringComparison.Ordinal);
+        Assert.Contains("Text=\"欢迎使用 RichChat\"", source, StringComparison.Ordinal);
         Assert.Contains("Text=\"Zulip Realm\"", source, StringComparison.Ordinal);
         Assert.Contains("Text=\"前往 Zulip 官方注册\"", source, StringComparison.Ordinal);
         Assert.Contains("Command=\"{Binding OpenRegistrationCommand}\"", source, StringComparison.Ordinal);
@@ -108,11 +110,34 @@ public sealed class MainShellLayoutTests
     {
         var source = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "Controls", "ProductBarView.xaml"));
         var codeBehind = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "Controls", "ProductBarView.xaml.cs"));
+        var componentStyles = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "Resources", "Styles", "ComponentStyles.xaml"));
+        var nativeButtonBehavior = File.ReadAllText(FindWorkspaceFile(
+            "src", "RelayCove.App", "Platforms", "Windows", "Behaviors", "ProductBarButtonBehavior.cs"));
         var mainPage = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
         var mainDocument = XDocument.Parse(mainPage);
         XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
         XNamespace x = "http://schemas.microsoft.com/winfx/2009/xaml";
 
+        Assert.Contains("Title=\"RichChat\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Subtitle=", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("WorkspaceDisplayName", source, StringComparison.Ordinal);
+        Assert.Equal(4, source.Split("Style=\"{StaticResource ProductBarImageButtonStyle}\"", StringSplitOptions.None).Length - 1);
+        Assert.Contains("<HorizontalStackLayout Spacing=\"6\">", source, StringComparison.Ordinal);
+        Assert.Contains("x:Key=\"ProductBarImageButtonStyle\"", componentStyles, StringComparison.Ordinal);
+        Assert.DoesNotContain("x:Name=\"PointerOver\"", componentStyles, StringComparison.Ordinal);
+        Assert.Equal(4, source.Split("<windowsBehaviors:ProductBarButtonBehavior />", StringSplitOptions.None).Length - 1);
+        Assert.DoesNotContain("PointerGestureRecognizer", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("LightSurfaceSelectedColor", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsDownloadCenterOpen", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsSettingsSection", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsPinned", source, StringComparison.Ordinal);
+        Assert.Contains("platformView.PointerEntered += OnPointerEntered;", nativeButtonBehavior, StringComparison.Ordinal);
+        Assert.Contains("platformView.PointerExited += OnPointerExited;", nativeButtonBehavior, StringComparison.Ordinal);
+        Assert.Contains("NormalOpacity = 0.72d", nativeButtonBehavior, StringComparison.Ordinal);
+        Assert.Contains("HoverOpacity = 1d", nativeButtonBehavior, StringComparison.Ordinal);
+        Assert.Contains("PressedOpacity = 0.55d", nativeButtonBehavior, StringComparison.Ordinal);
+        Assert.Contains("Microsoft.UI.Colors.Transparent", nativeButtonBehavior, StringComparison.Ordinal);
+        Assert.DoesNotContain("button.Resources[", nativeButtonBehavior, StringComparison.Ordinal);
         Assert.Contains("x:Name=\"AccountButton\"", source);
         Assert.Contains("SourceUrl=\"{Binding CurrentUserAvatarUrl}\"", source);
         Assert.Contains("x:Name=\"ProductBarOwnPresenceDot\"", source);
@@ -127,6 +152,7 @@ public sealed class MainShellLayoutTests
         Assert.DoesNotContain("Text=\"R\"", source);
         Assert.Contains("x:Name=\"DownloadButton\"", source);
         Assert.Contains("Source=\"icon_download.png\"", source);
+        Assert.DoesNotContain("<ProgressBar", source, StringComparison.Ordinal);
         Assert.Contains("x:Name=\"CompletedDownloadDot\"", source);
         Assert.Contains("x:Name=\"FailedDownloadDot\"", source);
         Assert.Contains("SemanticProperties.Description=\"存在未查看的下载完成\"", source);
@@ -141,7 +167,6 @@ public sealed class MainShellLayoutTests
             source.IndexOf("x:Name=\"SettingsButton\"", StringComparison.Ordinal));
         Assert.Contains("x:Name=\"SettingsButton\"", source);
         Assert.Contains("Source=\"icon_settings.png\"", source);
-        Assert.Contains("Binding=\"{Binding IsSettingsSection, Source={x:Reference Root}", source);
         Assert.Contains("SettingsButton.Command = viewModel.ToggleSettingsCommand;", codeBehind);
         var accountMenuButton = mainDocument
             .Descendants(maui + "Button")

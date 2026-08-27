@@ -98,6 +98,10 @@
         <Setter Property="BackgroundColor" Value="Transparent" />
     </Style>
 
+    <Style x:Key="ProductBarImageButtonStyle"
+           TargetType="ImageButton"
+           BasedOn="{StaticResource ImageIconButtonStyle}" />
+
     <Style x:Key="MessageQuickImageButtonStyle" TargetType="ImageButton" BasedOn="{StaticResource ImageIconButtonStyle}">
         <Setter Property="WidthRequest" Value="25" />
         <Setter Property="HeightRequest" Value="23" />

@@ -340,18 +340,18 @@ function Invoke-FullVerification {
     Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination $publishRoot
     Copy-Item -LiteralPath (Join-Path $repoRoot "THIRD-PARTY-NOTICES.md") -Destination $publishRoot
 
-    foreach ($required in @("RelayCove.App.exe", "e_sqlite3.dll", "coreclr.dll", "LICENSE", "THIRD-PARTY-NOTICES.md")) {
+    foreach ($required in @("RichChat.exe", "e_sqlite3.dll", "coreclr.dll", "LICENSE", "THIRD-PARTY-NOTICES.md")) {
         if (-not (Get-ChildItem -LiteralPath $publishRoot -Recurse -File -Filter $required)) {
             throw "Required self-contained publish file is missing: $required"
         }
     }
     Assert-NoSecrets -PublishRoot $publishRoot
 
-    $zipPath = Join-Path $packageRoot "RelayCove-$releaseVersion-win-x64.zip"
+    $zipPath = Join-Path $packageRoot "RichChat-$releaseVersion-win-x64.zip"
     Compress-Archive -Path (Join-Path $publishRoot "*") -DestinationPath $zipPath -CompressionLevel Optimal -Force
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash
-    $manifestPath = Join-Path $packageRoot "RelayCove-$releaseVersion-win-x64.sha256"
-    Set-Content -LiteralPath $manifestPath -Encoding ascii -NoNewline -Value "$hash  RelayCove-$releaseVersion-win-x64.zip"
+    $manifestPath = Join-Path $packageRoot "RichChat-$releaseVersion-win-x64.sha256"
+    Set-Content -LiteralPath $manifestPath -Encoding ascii -NoNewline -Value "$hash  RichChat-$releaseVersion-win-x64.zip"
     Write-Host "Windows package: $zipPath"
     Write-Host "SHA-256: $hash"
 }

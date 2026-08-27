@@ -5,6 +5,12 @@ namespace RelayCove.App.Tests;
 public sealed class WindowsFileSaveServiceTests
 {
     [Fact]
+    public void DefaultDownloadFolderName_WhenBrandIsRendered_UsesRichChat()
+    {
+        Assert.Equal("RichChat", WindowsFileSaveService.DefaultDownloadFolderName);
+    }
+
+    [Fact]
     public void SanitizeFileName_WhenPathOrInvalidCharactersArePresent_ReturnsSafeLeafName()
     {
         var result = WindowsFileSaveService.SanitizeFileName(@"folder\report:final?.pdf");

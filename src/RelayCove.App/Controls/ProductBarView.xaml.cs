@@ -9,23 +9,8 @@ public partial class ProductBarView : TitleBar
     private readonly IWindowShellAdapter _windowShellAdapter;
     private ShellViewModel? _viewModel;
 
-    public static readonly BindableProperty IsPinnedProperty = BindableProperty.Create(
-        nameof(IsPinned),
-        typeof(bool),
-        typeof(ProductBarView));
-
     public static readonly BindableProperty IsAccountMenuOpenProperty = BindableProperty.Create(
         nameof(IsAccountMenuOpen),
-        typeof(bool),
-        typeof(ProductBarView));
-
-    public static readonly BindableProperty IsSettingsSectionProperty = BindableProperty.Create(
-        nameof(IsSettingsSection),
-        typeof(bool),
-        typeof(ProductBarView));
-
-    public static readonly BindableProperty IsDownloadCenterOpenProperty = BindableProperty.Create(
-        nameof(IsDownloadCenterOpen),
         typeof(bool),
         typeof(ProductBarView));
 
@@ -33,32 +18,12 @@ public partial class ProductBarView : TitleBar
     {
         _windowShellAdapter = windowShellAdapter ?? throw new ArgumentNullException(nameof(windowShellAdapter));
         InitializeComponent();
-        _windowShellAdapter.StateChanged += OnWindowStateChanged;
-        IsPinned = _windowShellAdapter.IsPinned;
-    }
-
-    public bool IsPinned
-    {
-        get => (bool)GetValue(IsPinnedProperty);
-        set => SetValue(IsPinnedProperty, value);
     }
 
     public bool IsAccountMenuOpen
     {
         get => (bool)GetValue(IsAccountMenuOpenProperty);
         set => SetValue(IsAccountMenuOpenProperty, value);
-    }
-
-    public bool IsSettingsSection
-    {
-        get => (bool)GetValue(IsSettingsSectionProperty);
-        set => SetValue(IsSettingsSectionProperty, value);
-    }
-
-    public bool IsDownloadCenterOpen
-    {
-        get => (bool)GetValue(IsDownloadCenterOpenProperty);
-        set => SetValue(IsDownloadCenterOpenProperty, value);
     }
 
     public void Bind(ShellViewModel viewModel)
@@ -92,12 +57,6 @@ public partial class ProductBarView : TitleBar
         SetBinding(
             IsAccountMenuOpenProperty,
             new Binding(nameof(ShellViewModel.IsAccountMenuOpen), source: viewModel));
-        SetBinding(
-            IsSettingsSectionProperty,
-            new Binding(nameof(ShellViewModel.IsSettingsSection), source: viewModel));
-        SetBinding(
-            IsDownloadCenterOpenProperty,
-            new Binding(nameof(ShellViewModel.IsDownloadCenterOpen), source: viewModel));
         ConnectionStatusLabel.SetBinding(
             Label.TextProperty,
             new Binding(nameof(ShellViewModel.ConnectionStatus), source: viewModel));
@@ -128,9 +87,5 @@ public partial class ProductBarView : TitleBar
     private void OnPinClicked(object? sender, EventArgs eventArgs)
     {
         _windowShellAdapter.TogglePinned();
-        IsPinned = _windowShellAdapter.IsPinned;
     }
-
-    private void OnWindowStateChanged(object? sender, EventArgs eventArgs) =>
-        Dispatcher.Dispatch(() => IsPinned = _windowShellAdapter.IsPinned);
 }

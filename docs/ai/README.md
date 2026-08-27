@@ -1,4 +1,4 @@
-# RelayCove AI 文档索引
+# RichChat AI 文档索引
 
 Updated: 2026-08-26
 
