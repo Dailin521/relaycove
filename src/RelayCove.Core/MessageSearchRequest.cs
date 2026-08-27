@@ -4,4 +4,5 @@ public sealed record MessageSearchRequest(
     CredentialEnvelope Credentials,
     string Query,
     long? BeforeMessageId,
-    int Limit);
+    int Limit,
+    MessageSearchFilter Filter = MessageSearchFilter.Messages);

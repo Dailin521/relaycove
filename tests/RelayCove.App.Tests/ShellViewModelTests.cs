@@ -153,6 +153,49 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task SelectSearchResult_WhenAroundPageLoads_QueuesExactMessageAnchorAndClosesSearch()
+    {
+        var conversation = new DirectMessage([20]);
+        var anchor = new ChatMessage(85, conversation, 20, "matched", DateTimeOffset.UnixEpoch);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 10),
+            CurrentUserId = 10,
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile> { [20] = new UserProfile(20, "Bea") },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        session.OpenMessageAction = (openedConversation, messageId, _) =>
+        {
+            session.Selected = openedConversation;
+            session.HistoryState = new ConversationHistoryState(openedConversation, 3, false, false, false, 81, null);
+            session.StateValue = session.StateValue with
+            {
+                Messages = new Dictionary<long, ChatMessage>
+                {
+                    [84] = new ChatMessage(84, conversation, 20, "before", DateTimeOffset.UnixEpoch),
+                    [anchor.Id] = anchor,
+                    [86] = new ChatMessage(86, conversation, 20, "after", DateTimeOffset.UnixEpoch)
+                }
+            };
+            session.Publish();
+            return Task.CompletedTask;
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenSearchCommand.Execute(null);
+
+        await ((IAsyncRelayCommand<SearchResultItem?>)viewModel.SelectSearchResultCommand).ExecuteAsync(
+            new SearchResultItem("server:85", "服务器消息", "Bea", anchor.Content, conversation, anchor.Id));
+
+        Assert.Equal((conversation, anchor.Id), Assert.Single(session.OpenedMessages));
+        var request = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(anchor.Id, request.TargetMessageId);
+        Assert.Equal(MessageScrollReason.MessageAnchor, request.Reason);
+        Assert.True(viewModel.IsMessagesSection);
+        Assert.False(viewModel.IsSearchOpen);
+    }
+
+    [Fact]
     public async Task LoadOlderSearch_WhenTwoServerPagesExist_KeepsBothPagesVisible()
     {
         var calls = 0;
@@ -1746,6 +1789,29 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public void ComposerHeight_WhenChanged_PersistsAcrossViewModels()
+    {
+        var preferences = new FakeUiPreferencesService
+        {
+            Current = new UiPreferences(ComposerHeight: 224d)
+        };
+        using (var first = CreateViewModel(new FakeSession(), uiPreferencesService: preferences))
+        {
+            Assert.Equal(224d, first.ComposerHeight);
+
+            first.ComposerHeight = 272d;
+
+            Assert.Equal(272d, preferences.Current.ComposerHeight);
+
+            first.SetCompactDensityCommand.Execute(null);
+            Assert.Equal(272d, preferences.Current.ComposerHeight);
+        }
+
+        using var restored = CreateViewModel(new FakeSession(), uiPreferencesService: preferences);
+        Assert.Equal(272d, restored.ComposerHeight);
+    }
+
+    [Fact]
     public void MessageRowMaximumWidth_WhenViewportChanges_MatchesWebResponsiveCaps()
     {
         using var viewModel = CreateViewModel(new FakeSession());
@@ -3046,6 +3112,79 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public void SearchCategory_WhenSelected_FiltersLoadedMessagesByContentType()
+    {
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            ActiveRealm = RealmEndpoint.Parse("https://zulip.example"),
+            CurrentUserId = 7,
+            Recent = [conversation],
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage>
+                {
+                    [1] = new ChatMessage(1, conversation, 8, "plain", DateTimeOffset.UnixEpoch),
+                    [2] = new ChatMessage(2, conversation, 8, "[notes](/user_uploads/1/notes.pdf)", DateTimeOffset.UnixEpoch),
+                    [3] = new ChatMessage(3, conversation, 8, "![shot](/user_uploads/1/shot.png)", DateTimeOffset.UnixEpoch),
+                    [4] = new ChatMessage(4, conversation, 8, "[clip](/user_uploads/1/clip.mp4)", DateTimeOffset.UnixEpoch),
+                    [5] = new ChatMessage(5, conversation, 8, "https://example.test/page", DateTimeOffset.UnixEpoch)
+                },
+                users: new Dictionary<long, UserProfile> { [8] = new UserProfile(8, "Bea") },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
+
+        viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Images));
+        var image = Assert.Single(viewModel.SearchResults);
+        Assert.Equal("message:3", image.Id);
+        Assert.Equal("图片", image.Kind);
+
+        viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Videos));
+        var video = Assert.Single(viewModel.SearchResults);
+        Assert.Equal("message:4", video.Id);
+        Assert.Equal("视频", video.Kind);
+
+        viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Files));
+        var file = Assert.Single(viewModel.SearchResults);
+        Assert.Equal("message:2", file.Id);
+        Assert.Equal("文件", file.Kind);
+
+        viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Links));
+        var link = Assert.Single(viewModel.SearchResults);
+        Assert.Equal("message:5", link.Id);
+        Assert.Equal("链接", link.Kind);
+
+        viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Messages));
+        Assert.All(
+            viewModel.SearchResults.Where(item => item.MessageId is not null),
+            item => Assert.Equal("已加载消息", item.Kind));
+    }
+
+    [Fact]
+    public async Task SearchCategory_WhenMediaFilterHasNoKeyword_RequestsServerFilter()
+    {
+        MessageSearchFilter? requestedFilter = null;
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            SearchMessagesWithFilterAction = (_, _, _, filter, _) =>
+            {
+                requestedFilter = filter;
+                return Task.FromResult(new MessageQueryPage([], true, true, true));
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenSearchCommand.Execute(null);
+        viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Images));
+
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
+
+        Assert.Equal(MessageSearchFilter.Images, requestedFilter);
+    }
+
+    [Fact]
     public void UnifiedConversations_WhenMixedZulipConversationsExist_FiltersAndSortsOnlySupportedRows()
     {
         var account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7);
@@ -3124,11 +3263,15 @@ public sealed class ShellViewModelTests
         };
         using var viewModel = CreateViewModel(session);
 
+        Assert.True(viewModel.ShowConversationSearchIcon);
+
         viewModel.ConversationFilterQuery = "torical frag";
 
+        Assert.False(viewModel.ShowConversationSearchIcon);
         Assert.Equal(2, viewModel.FilteredConversations.Count);
         Assert.All(viewModel.FilteredConversations, result => Assert.Equal(direct, result.Conversation));
         Assert.Equal([secondMatch.Id, firstMatch.Id], viewModel.FilteredConversations.Select(result => result.SearchTargetMessageId));
+        Assert.All(viewModel.FilteredConversations, result => Assert.True(result.IsSearchMessageMatch));
         Assert.Equal(
             ["historical fragment two", "historical fragment one"],
             viewModel.FilteredConversations.Select(result => result.Detail));
@@ -3164,6 +3307,21 @@ public sealed class ShellViewModelTests
                     : Task.FromResult(new MessageQueryPage([olderMatch], true, true, true));
             }
         };
+        session.OpenMessageAction = (openedConversation, messageId, _) =>
+        {
+            session.Selected = openedConversation;
+            session.HistoryState = new ConversationHistoryState(openedConversation, 2, false, false, false, 40, null);
+            session.StateValue = session.StateValue with
+            {
+                Messages = new Dictionary<long, ChatMessage>
+                {
+                    [sameConversationMatch.Id] = sameConversationMatch,
+                    [match.Id] = match
+                }
+            };
+            session.Publish();
+            return Task.CompletedTask;
+        };
         using var viewModel = CreateViewModel(session);
 
         viewModel.ConversationFilterQuery = "archive frag";
@@ -3195,6 +3353,9 @@ public sealed class ShellViewModelTests
         await WaitUntilAsync(() => session.OpenedMessages.Count == 1);
 
         Assert.Equal((direct, match.Id), Assert.Single(session.OpenedMessages));
+        var request = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(match.Id, request.TargetMessageId);
+        Assert.Equal(MessageScrollReason.MessageAnchor, request.Reason);
     }
 
     [Fact]
@@ -4304,6 +4465,7 @@ public sealed class ShellViewModelTests
         public Func<CancellationToken, Task>? LoadOlderAction { get; set; }
         public Func<long?, int, CancellationToken, Task<MessageQueryPage>>? SavedMessagesAction { get; set; }
         public Func<string, long?, int, CancellationToken, Task<MessageQueryPage>>? SearchMessagesAction { get; set; }
+        public Func<string, long?, int, MessageSearchFilter, CancellationToken, Task<MessageQueryPage>>? SearchMessagesWithFilterAction { get; set; }
         public Func<ConversationKey, long, CancellationToken, Task>? OpenMessageAction { get; set; }
         public Func<CancellationToken, Task<IReadOnlyList<ChannelSummary>>>? AvailableChannelsAction { get; set; }
         public Func<UserPresenceStatus, CancellationToken, Task>? SetOwnPresenceAction { get; set; }
@@ -4397,8 +4559,15 @@ public sealed class ShellViewModelTests
         public Task<TopicDeleteResult> DeleteTopicAsync(ChannelTopic topic, CancellationToken cancellationToken = default) => DeleteTopicAction?.Invoke(topic, cancellationToken) ?? Task.FromResult(new TopicDeleteResult(true));
         public Task<MessageQueryPage> LoadSavedMessagesAsync(long? beforeMessageId, int limit, CancellationToken cancellationToken = default) =>
             SavedMessagesAction?.Invoke(beforeMessageId, limit, cancellationToken) ?? Task.FromResult(new MessageQueryPage([], false, true, true));
-        public Task<MessageQueryPage> SearchMessagesAsync(string query, long? beforeMessageId, int limit, CancellationToken cancellationToken = default) =>
-            SearchMessagesAction?.Invoke(query, beforeMessageId, limit, cancellationToken) ?? Task.FromResult(new MessageQueryPage([], false, true, true));
+        public Task<MessageQueryPage> SearchMessagesAsync(
+            string query,
+            long? beforeMessageId,
+            int limit,
+            CancellationToken cancellationToken = default,
+            MessageSearchFilter filter = MessageSearchFilter.Messages) =>
+            SearchMessagesWithFilterAction?.Invoke(query, beforeMessageId, limit, filter, cancellationToken) ??
+            SearchMessagesAction?.Invoke(query, beforeMessageId, limit, cancellationToken) ??
+            Task.FromResult(new MessageQueryPage([], false, true, true));
         public Task OpenMessageAsync(ConversationKey conversation, long messageId, CancellationToken cancellationToken = default)
         {
             OpenedMessages.Add((conversation, messageId));

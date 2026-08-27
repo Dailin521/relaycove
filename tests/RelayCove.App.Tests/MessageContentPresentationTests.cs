@@ -143,4 +143,24 @@ public sealed class MessageContentPresentationTests
         Assert.False(imageWithText.IsImageOnly);
         Assert.False(imageWithFile.IsImageOnly);
     }
+
+    [Fact]
+    public void SearchContentClassifier_WhenMessageContainsMixedContent_ProjectsEveryCategory()
+    {
+        const string content =
+            "[notes](/user_uploads/1/notes.pdf)\n" +
+            "![shot](/user_uploads/1/shot.png)\n" +
+            "[clip](/user_uploads/1/clip.mp4)\n" +
+            "[site](https://example.test/page)";
+
+        var kinds = SearchContentClassifier.Classify(
+            content,
+            RealmEndpoint.Parse("https://chat.example.test/"));
+
+        Assert.True(kinds.HasFlag(SearchContentKind.Message));
+        Assert.True(kinds.HasFlag(SearchContentKind.File));
+        Assert.True(kinds.HasFlag(SearchContentKind.Image));
+        Assert.True(kinds.HasFlag(SearchContentKind.Video));
+        Assert.True(kinds.HasFlag(SearchContentKind.Link));
+    }
 }

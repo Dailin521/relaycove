@@ -17,6 +17,7 @@
                            Placeholder="搜索聊天"
                            SemanticProperties.Description="筛选当前聊天列表；向下键打开首项，Escape 清除" />
                     <Image Source="icon_search.png"
+                           IsVisible="{Binding ShowConversationSearchIcon}"
                            WidthRequest="17"
                            HeightRequest="17"
                            Margin="0,0,10,0"
@@ -150,13 +151,14 @@
                             </Border>
                             <Grid Grid.Column="1" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="5">
                                 <Label Text="📌" IsVisible="{Binding IsPinned}" FontSize="10" VerticalTextAlignment="End" />
-                                <Label Grid.Column="1"
-                                       Text="{Binding Title}"
-                                       Style="{StaticResource BaseLabelStyle}"
-                                       FontSize="14"
-                                       FontAttributes="Bold"
-                                       VerticalTextAlignment="End"
-                                       LineBreakMode="TailTruncation" />
+                                <controls:SearchHighlightLabel Grid.Column="1"
+                                                               SourceText="{Binding Title}"
+                                                               HighlightQuery="{Binding ViewModel.ConversationFilterQuery, Source={x:Reference Root}, x:DataType=controls:ConversationPaneView}"
+                                                               Style="{StaticResource BaseLabelStyle}"
+                                                               FontSize="14"
+                                                               FontAttributes="Bold"
+                                                               VerticalTextAlignment="End"
+                                                               LineBreakMode="TailTruncation" />
                                 <Label Grid.Column="2"
                                        Text="{Binding UserStatusGlyph}"
                                        IsVisible="{Binding HasUserStatusGlyph}"
@@ -171,13 +173,23 @@
                                        FontSize="10"
                                        VerticalTextAlignment="End" />
                             </Grid>
-                            <Label Grid.Row="1"
-                                   Grid.Column="1"
-                                   Text="{Binding Detail}"
-                                   Style="{StaticResource MutedLabelStyle}"
-                                   FontSize="12"
-                                   VerticalTextAlignment="Start"
-                                   LineBreakMode="TailTruncation" />
+                            <Grid Grid.Row="1"
+                                  Grid.Column="1"
+                                  ColumnDefinitions="Auto,*"
+                                  ColumnSpacing="5">
+                                <Label Text="消息"
+                                       IsVisible="{Binding IsSearchMessageMatch}"
+                                       Style="{StaticResource MutedLabelStyle}"
+                                       FontSize="10"
+                                       VerticalTextAlignment="Start" />
+                                <controls:SearchHighlightLabel Grid.Column="1"
+                                                               SourceText="{Binding Detail}"
+                                                               HighlightQuery="{Binding ViewModel.ConversationFilterQuery, Source={x:Reference Root}, x:DataType=controls:ConversationPaneView}"
+                                                               Style="{StaticResource MutedLabelStyle}"
+                                                               FontSize="12"
+                                                               VerticalTextAlignment="Start"
+                                                               LineBreakMode="TailTruncation" />
+                            </Grid>
                             <Border Grid.Column="2"
                                     Grid.RowSpan="2"
                                     Padding="5,1"

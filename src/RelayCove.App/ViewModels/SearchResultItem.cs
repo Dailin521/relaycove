@@ -9,4 +9,5 @@ public sealed record SearchResultItem(
     string Subtitle,
     ConversationKey? Conversation = null,
     long? MessageId = null,
-    long? ChannelId = null);
+    long? ChannelId = null,
+    SearchContentKind ContentKinds = SearchContentKind.Message);

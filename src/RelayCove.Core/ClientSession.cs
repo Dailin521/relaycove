@@ -474,13 +474,18 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
         string query,
         long? beforeMessageId,
         int limit,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        MessageSearchFilter filter = MessageSearchFilter.Messages)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(query);
+        if (string.IsNullOrWhiteSpace(query) && filter == MessageSearchFilter.Messages)
+        {
+            throw new ArgumentException("A search query or content filter is required.", nameof(query));
+        }
+        if (!Enum.IsDefined(filter)) throw new ArgumentOutOfRangeException(nameof(filter));
         return LoadMessageQueryAsync(
             MessageQueryKind.Search,
             (credentials, token) => _gateway.SearchMessagesAsync(
-                new MessageSearchRequest(credentials, query.Trim(), beforeMessageId, limit), token),
+                new MessageSearchRequest(credentials, query.Trim(), beforeMessageId, limit, filter), token),
             cancellationToken);
     }
 

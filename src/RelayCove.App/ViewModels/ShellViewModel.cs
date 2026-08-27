@@ -102,6 +102,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private long? _loadedTopicsChannelId;
     private string? _activeDraftKey;
     private double _composerHeight = DefaultComposerHeight;
+    private double _persistedComposerHeight = DefaultComposerHeight;
     private double _viewportWidth = 1440d;
     private long? _channelUnsubscribeTargetId;
     private long _channelBrowserGeneration;
@@ -175,6 +176,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ChannelSettings = new ChannelSettingsViewModel(_session, _platformInteractions, OpenChannelFromSettingsAsync);
         ChannelSettings.PropertyChanged += OnChannelSettingsPropertyChanged;
         SelectEmojiCategory(EmojiCategories[0]);
+        SelectSearchCategory(SearchCategories[0]);
         Project(_session.State);
     }
 
@@ -199,6 +201,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public ChannelSettingsViewModel ChannelSettings { get; }
     public IReadOnlyList<EmojiChoice> EmojiChoices { get; } = EmojiCatalog.CreateChoices();
     public IReadOnlyList<EmojiCategoryChoice> EmojiCategories { get; } = EmojiCatalog.CreateCategories();
+    public IReadOnlyList<SearchCategoryChoice> SearchCategories { get; } =
+    [
+        new(MessageSearchFilter.Messages, "消息"),
+        new(MessageSearchFilter.Files, "文件"),
+        new(MessageSearchFilter.Images, "图片"),
+        new(MessageSearchFilter.Videos, "视频"),
+        new(MessageSearchFilter.Links, "链接")
+    ];
     public ObservableCollection<EmojiChoice> VisibleEmojiChoices => _visibleEmojiChoices;
 
     [ObservableProperty]
@@ -660,7 +670,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public double ComposerHeight
     {
         get => _composerHeight;
-        set => SetProperty(ref _composerHeight, Math.Clamp(value, MinimumComposerHeight, MaximumComposerHeight));
+        set
+        {
+            var normalized = Math.Clamp(value, MinimumComposerHeight, MaximumComposerHeight);
+            if (!SetProperty(ref _composerHeight, normalized) || _suppressUiPreferenceSave) return;
+            _persistedComposerHeight = normalized;
+            _uiPreferencesService.SaveComposerHeight(normalized);
+        }
     }
 
     public bool LoginVisible => !IsLoggedIn;
@@ -779,6 +795,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         : !string.IsNullOrWhiteSpace(ConversationFilterError)
             ? ConversationFilterError
             : string.IsNullOrWhiteSpace(ConversationFilterQuery) ? "暂无聊天" : "没有匹配聊天";
+    public bool ShowConversationSearchIcon => ConversationFilterQuery.Length == 0;
     public bool HasMoreConversationFilterResults => _conversationFilterBeforeMessageId is not null;
     public bool ShowMoreConversationFilterResults =>
         HasMoreConversationFilterResults &&
@@ -1818,6 +1835,22 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         SelectedSearchResult = null;
     }
 
+    [RelayCommand]
+    private void SelectSearchCategory(SearchCategoryChoice? category)
+    {
+        if (category is null || category.IsSelected) return;
+        foreach (var item in SearchCategories)
+        {
+            item.IsSelected = ReferenceEquals(item, category);
+        }
+        _serverSearchResults = [];
+        _searchBeforeMessageId = null;
+        SelectedSearchResult = null;
+        ProjectSearch();
+        OnPropertyChanged(nameof(HasMoreSearchResults));
+        ScheduleServerSearch(SearchQuery, immediate: false);
+    }
+
     [RelayCommand(AllowConcurrentExecutions = false)]
     private async Task SelectSearchResultAsync(SearchResultItem? result)
     {
@@ -1825,11 +1858,17 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         if (result is null) return;
         if (result.Conversation is not { } conversation ||
             !IsRelayCoveConversation(conversation, _projectedState)) return;
-        var opened = result.MessageId is { } messageId
-            ? await ExecuteSessionActionAsync(() => _session.OpenMessageAsync(conversation, messageId))
+        var targetMessageId = result.MessageId;
+        var opened = targetMessageId is { } openMessageId
+            ? await ExecuteSessionActionAsync(() => _session.OpenMessageAsync(conversation, openMessageId))
             : await ActivateConversationFromNavigationAsync(conversation, null, null, null);
         if (opened)
         {
+            if (targetMessageId is { } anchorMessageId)
+            {
+                ProjectLatestStateImmediately();
+                QueueScrollToMessage(anchorMessageId);
+            }
             SelectedSection = ShellSection.Messages;
             if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
             CloseSearch();
@@ -1843,7 +1882,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private async Task LoadOlderSearchAsync(CancellationToken cancellationToken)
     {
         var query = SearchQuery.Trim();
-        if (_searchBeforeMessageId is null || string.IsNullOrWhiteSpace(query) || !IsSearchOpen) return;
+        var filter = SelectedSearchFilter;
+        if (_searchBeforeMessageId is null ||
+            (string.IsNullOrWhiteSpace(query) && filter == MessageSearchFilter.Messages) ||
+            !IsSearchOpen)
+        {
+            return;
+        }
         CancelSearchInput();
         var generation = ++_searchInputGeneration;
         var accountId = _session.AccountId;
@@ -1852,8 +1897,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             IsSearchBusy = true;
             SearchError = null;
-            var page = await _session.SearchMessagesAsync(query, _searchBeforeMessageId, 50, cancellationToken).ConfigureAwait(false);
-            if (!IsSearchCurrent(generation, accountId.Value) || !IsSearchOpen || !string.Equals(SearchQuery.Trim(), query, StringComparison.Ordinal)) return;
+            var page = await _session.SearchMessagesAsync(
+                query,
+                _searchBeforeMessageId,
+                50,
+                cancellationToken,
+                filter).ConfigureAwait(false);
+            if (!IsSearchCurrent(generation, accountId.Value) ||
+                !IsSearchOpen ||
+                SelectedSearchFilter != filter ||
+                !string.Equals(SearchQuery.Trim(), query, StringComparison.Ordinal)) return;
             if (!page.FoundAnchor)
             {
                 _searchBeforeMessageId = null;
@@ -1865,7 +1918,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             var older = page.Messages
                 .Where(message => IsRelayCoveConversation(message.Conversation, _projectedState))
                 .OrderByDescending(message => message.Id)
-                .Select(ToSearchResult)
+                .Select(message => ToSearchResult(message, filter))
                 .Where(result => existing.Add(result.Id)).ToArray();
             _serverSearchResults = _serverSearchResults.Concat(older).ToArray();
             _searchBeforeMessageId = page.FoundOldest ? null : page.Messages.MinBy(message => message.Id)?.Id;
@@ -2119,7 +2172,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             return;
         }
         foreach (var file in selected) Attachments.Add(new AttachmentDraftItem(file));
-        ComposerHeight = Math.Max(ComposerHeight, 184d);
+        SetComposerHeightWithoutPersistence(Math.Max(ComposerHeight, 184d));
         SaveCurrentAttachmentDrafts();
         NotifyAttachmentProperties();
     }
@@ -3929,7 +3982,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     partial void OnSelectedConversationItemChanged(ConversationListItem? value) =>
         RefreshNavigationSelectionProjection();
 
-    partial void OnConversationFilterQueryChanged(string value) => StartConversationFilterSearch(value);
+    partial void OnConversationFilterQueryChanged(string value)
+    {
+        OnPropertyChanged(nameof(ShowConversationSearchIcon));
+        StartConversationFilterSearch(value);
+    }
 
     partial void OnIsConversationFilterBusyChanged(bool value) =>
         NotifyConversationFilterStatusProperties();
@@ -4025,6 +4082,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         if (!IsRelayCoveConversation(conversation, _projectedState)) return;
         if (await ExecuteSessionActionAsync(() => _session.OpenMessageAsync(conversation, messageId)))
         {
+            ProjectLatestStateImmediately();
+            QueueScrollToMessage(messageId);
             SelectedSection = ShellSection.Messages;
             if (IsNarrowLayout) IsConversationListVisibleOnNarrow = false;
         }
@@ -5108,7 +5167,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void ScheduleServerSearch(string query, bool immediate)
     {
         CancelSearchInput();
-        if (!IsSearchOpen || string.IsNullOrWhiteSpace(query))
+        var filter = SelectedSearchFilter;
+        if (!IsSearchOpen ||
+            (string.IsNullOrWhiteSpace(query) && filter == MessageSearchFilter.Messages))
         {
             _serverSearchResults = [];
             IsSearchBusy = false;
@@ -5125,13 +5186,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             return;
         }
         _searchAccountId = accountId;
-        _ = RunServerSearchCoreAsync(query.Trim(), immediate, generation, accountId.Value, cancellation);
+        _ = RunServerSearchCoreAsync(query.Trim(), filter, immediate, generation, accountId.Value, cancellation);
     }
 
     private async Task RunServerSearchAsync(string query, bool immediate, CancellationToken cancellationToken)
     {
         CancelSearchInput();
-        if (!IsSearchOpen || string.IsNullOrWhiteSpace(query)) return;
+        var filter = SelectedSearchFilter;
+        if (!IsSearchOpen ||
+            (string.IsNullOrWhiteSpace(query) && filter == MessageSearchFilter.Messages)) return;
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _searchInputCancellation = cancellation;
         var accountId = _session.AccountId;
@@ -5141,10 +5204,22 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             return;
         }
         _searchAccountId = accountId;
-        await RunServerSearchCoreAsync(query.Trim(), immediate, ++_searchInputGeneration, accountId.Value, cancellation).ConfigureAwait(false);
+        await RunServerSearchCoreAsync(
+            query.Trim(),
+            filter,
+            immediate,
+            ++_searchInputGeneration,
+            accountId.Value,
+            cancellation).ConfigureAwait(false);
     }
 
-    private async Task RunServerSearchCoreAsync(string query, bool immediate, long generation, AccountId accountId, CancellationTokenSource cancellation)
+    private async Task RunServerSearchCoreAsync(
+        string query,
+        MessageSearchFilter filter,
+        bool immediate,
+        long generation,
+        AccountId accountId,
+        CancellationTokenSource cancellation)
     {
         try
         {
@@ -5153,12 +5228,20 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             IsSearchBusy = true;
             SearchError = null;
             _searchBeforeMessageId = null;
-            var page = await _session.SearchMessagesAsync(query, null, 50, cancellation.Token).ConfigureAwait(false);
-            if (!IsSearchCurrent(generation, accountId) || !IsSearchOpen || !string.Equals(SearchQuery.Trim(), query, StringComparison.Ordinal)) return;
+            var page = await _session.SearchMessagesAsync(
+                query,
+                null,
+                50,
+                cancellation.Token,
+                filter).ConfigureAwait(false);
+            if (!IsSearchCurrent(generation, accountId) ||
+                !IsSearchOpen ||
+                SelectedSearchFilter != filter ||
+                !string.Equals(SearchQuery.Trim(), query, StringComparison.Ordinal)) return;
             _serverSearchResults = page.Messages
                 .Where(message => IsRelayCoveConversation(message.Conversation, _projectedState))
                 .OrderByDescending(message => message.Id)
-                .Select(ToSearchResult)
+                .Select(message => ToSearchResult(message, filter))
                 .ToArray();
             ProjectSearch();
             _searchBeforeMessageId = page.FoundOldest ? null : page.Messages.MinBy(message => message.Id)?.Id;
@@ -5281,10 +5364,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _savedLoadCancellation = null;
     }
 
-    private SearchResultItem ToSearchResult(ChatMessage message)
+    private SearchResultItem ToSearchResult(ChatMessage message, MessageSearchFilter filter)
     {
         var sender = message.SenderDisplayName ?? _projectedState.Users.GetValueOrDefault(message.SenderId)?.FullName ?? $"用户 {message.SenderId}";
-        return new SearchResultItem($"server-message:{message.Id}", "服务器消息", sender, TruncateForSearch(message.Content), message.Conversation, message.Id);
+        var contentKinds = SearchContentClassifier.Classify(message.Content, _session.ActiveRealm);
+        return new SearchResultItem(
+            $"server-message:{message.Id}",
+            DescribeSearchResultKind(filter, "服务器消息"),
+            sender,
+            TruncateForSearch(message.Content),
+            message.Conversation,
+            message.Id,
+            ContentKinds: contentKinds);
     }
 
     private SavedMessageItem ToSavedMessage(ChatMessage message)
@@ -5311,31 +5402,35 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void ProjectSearch()
     {
         var query = SearchQuery.Trim();
+        var filter = SelectedSearchFilter;
         var results = new List<SearchResultItem>();
-        foreach (var conversation in Conversations
-                     .Where(item => query.Length == 0 || Contains(item.Title, query) || Contains(item.Detail, query)))
+        if (filter == MessageSearchFilter.Messages)
         {
-            results.Add(new SearchResultItem(
-                $"conversation:{conversation.Conversation.CanonicalKey}",
-                conversation.IsPrivateGroup ? "群聊" : "私信",
-                conversation.Title,
-                conversation.Detail ?? (conversation.IsPrivateGroup ? "群聊" : "私信"),
-                conversation.Conversation));
-        }
-        foreach (var user in _projectedState.Users.Values
-                     .Where(user => user.IsActive && (query.Length == 0 || Contains(user.FullName, query)))
-                     .OrderBy(user => user.FullName, StringComparer.Ordinal)
-                     .ThenBy(user => user.UserId))
-        {
-            var conversation = user.UserId == _session.CurrentUserId
-                ? new DirectMessage([])
-                : new DirectMessage([user.UserId]);
-            results.Add(new SearchResultItem(
-                $"user:{user.UserId}",
-                user.IsBot ? "机器人" : "联系人",
-                user.FullName,
-                "打开私信",
-                conversation));
+            foreach (var conversation in Conversations
+                         .Where(item => query.Length == 0 || Contains(item.Title, query) || Contains(item.Detail, query)))
+            {
+                results.Add(new SearchResultItem(
+                    $"conversation:{conversation.Conversation.CanonicalKey}",
+                    conversation.IsPrivateGroup ? "群聊" : "私信",
+                    conversation.Title,
+                    conversation.Detail ?? (conversation.IsPrivateGroup ? "群聊" : "私信"),
+                    conversation.Conversation));
+            }
+            foreach (var user in _projectedState.Users.Values
+                         .Where(user => user.IsActive && (query.Length == 0 || Contains(user.FullName, query)))
+                         .OrderBy(user => user.FullName, StringComparer.Ordinal)
+                         .ThenBy(user => user.UserId))
+            {
+                var conversation = user.UserId == _session.CurrentUserId
+                    ? new DirectMessage([])
+                    : new DirectMessage([user.UserId]);
+                results.Add(new SearchResultItem(
+                    $"user:{user.UserId}",
+                    user.IsBot ? "机器人" : "联系人",
+                    user.FullName,
+                    "打开私信",
+                    conversation));
+            }
         }
         foreach (var message in _projectedState.Messages.Values
                      .Where(message => IsRelayCoveConversation(message.Conversation, _projectedState) &&
@@ -5343,25 +5438,51 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                                         Contains(message.SenderDisplayName, query)))
                      .OrderByDescending(message => message.Id))
         {
+            var contentKinds = SearchContentClassifier.Classify(message.Content, _session.ActiveRealm);
+            if (!MatchesSearchFilter(contentKinds, filter)) continue;
             var sender = message.SenderDisplayName ?? _projectedState.Users.GetValueOrDefault(message.SenderId)?.FullName ?? $"用户 {message.SenderId}";
             results.Add(new SearchResultItem(
                 $"message:{message.Id}",
-                "已加载消息",
+                DescribeSearchResultKind(filter, "已加载消息"),
                 sender,
                 TruncateForSearch(message.Content),
                 message.Conversation,
-                message.Id));
+                message.Id,
+                ContentKinds: contentKinds));
         }
 
         Reconcile(
             SearchResults,
             _serverSearchResults
-                .Where(result => IsRelayCoveConversation(result.Conversation, _projectedState))
+                .Where(result => IsRelayCoveConversation(result.Conversation, _projectedState) &&
+                                 MatchesSearchFilter(result.ContentKinds, filter))
                 .Concat(results.Take(50)),
             item => item.Id);
         OnPropertyChanged(nameof(HasSearchResults));
         OnPropertyChanged(nameof(IsSearchEmpty));
     }
+
+    private MessageSearchFilter SelectedSearchFilter =>
+        SearchCategories.FirstOrDefault(category => category.IsSelected)?.Filter ?? MessageSearchFilter.Messages;
+
+    private static bool MatchesSearchFilter(SearchContentKind contentKinds, MessageSearchFilter filter) => filter switch
+    {
+        MessageSearchFilter.Messages => true,
+        MessageSearchFilter.Files => contentKinds.HasFlag(SearchContentKind.File),
+        MessageSearchFilter.Images => contentKinds.HasFlag(SearchContentKind.Image),
+        MessageSearchFilter.Videos => contentKinds.HasFlag(SearchContentKind.Video),
+        MessageSearchFilter.Links => contentKinds.HasFlag(SearchContentKind.Link),
+        _ => false
+    };
+
+    private static string DescribeSearchResultKind(MessageSearchFilter filter, string messageLabel) => filter switch
+    {
+        MessageSearchFilter.Files => "文件",
+        MessageSearchFilter.Images => "图片",
+        MessageSearchFilter.Videos => "视频",
+        MessageSearchFilter.Links => "链接",
+        _ => messageLabel
+    };
 
     private void ProjectNewConversationChoices()
     {
@@ -6550,6 +6671,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             ConversationWidthMode = preferences.ConversationWidth;
             _fontSize = preferences.FontSize ?? FontScaleSliderValue;
             _conversationPaneWidth = preferences.ConversationPaneWidth ?? ConversationWidthSliderValue;
+            _persistedComposerHeight = Math.Clamp(
+                preferences.ComposerHeight ?? DefaultComposerHeight,
+                MinimumComposerHeight,
+                MaximumComposerHeight);
+            ComposerHeight = _persistedComposerHeight;
             AreChannelsExpanded = preferences.ChannelsExpanded;
             AreDirectMessagesExpanded = preferences.DirectMessagesExpanded;
         }
@@ -6570,7 +6696,22 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             AreChannelsExpanded,
             AreDirectMessagesExpanded,
             FontScaleSliderValue,
-            ConversationWidthSliderValue));
+            ConversationWidthSliderValue,
+            _persistedComposerHeight));
+    }
+
+    private void SetComposerHeightWithoutPersistence(double height)
+    {
+        var previous = _suppressUiPreferenceSave;
+        _suppressUiPreferenceSave = true;
+        try
+        {
+            ComposerHeight = height;
+        }
+        finally
+        {
+            _suppressUiPreferenceSave = previous;
+        }
     }
 
     private void ApplyNotificationPreferences(NotificationPreferences preferences)

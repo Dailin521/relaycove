@@ -7,4 +7,5 @@ public sealed record UiPreferences(
     bool ChannelsExpanded = true,
     bool DirectMessagesExpanded = true,
     double? FontSize = null,
-    double? ConversationPaneWidth = null);
+    double? ConversationPaneWidth = null,
+    double? ComposerHeight = null);

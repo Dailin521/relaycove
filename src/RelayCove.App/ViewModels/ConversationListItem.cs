@@ -66,6 +66,7 @@ public sealed class ConversationListItem : ObservableObject
     public bool IsMuted => _isMuted;
     public bool IsPinned => _isPinned;
     public long? SearchTargetMessageId => _searchTargetMessageId;
+    public bool IsSearchMessageMatch => SearchTargetMessageId is not null;
     public string ProjectionKey => SearchTargetMessageId is { } messageId
         ? $"{Conversation.CanonicalKey}|message:{messageId}"
         : Conversation.CanonicalKey;
@@ -134,6 +135,7 @@ public sealed class ConversationListItem : ObservableObject
         if (SetProperty(ref _searchTargetMessageId, candidate.SearchTargetMessageId, nameof(SearchTargetMessageId)))
         {
             OnPropertyChanged(nameof(ProjectionKey));
+            OnPropertyChanged(nameof(IsSearchMessageMatch));
         }
         if (SetProperty(ref _avatarTiles, candidate.AvatarTiles, nameof(AvatarTiles)))
         {

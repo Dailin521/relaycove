@@ -9,6 +9,7 @@ public sealed class MauiUiPreferencesService : IUiPreferencesService
     private const string DirectMessagesExpandedKey = "relaycove.ui.direct-messages-expanded";
     private const string FontSizeKey = "relaycove.ui.font-size";
     private const string ConversationPaneWidthKey = "relaycove.ui.conversation-pane-width";
+    private const string ComposerHeightKey = "relaycove.ui.composer-height";
 
     public MauiUiPreferencesService()
     {
@@ -19,7 +20,8 @@ public sealed class MauiUiPreferencesService : IUiPreferencesService
             Preferences.Default.Get(ChannelsExpandedKey, true),
             Preferences.Default.Get(DirectMessagesExpandedKey, true),
             ReadRange(FontSizeKey, 11d, 18d),
-            ReadRange(ConversationPaneWidthKey, 240d, 380d));
+            ReadRange(ConversationPaneWidthKey, 240d, 380d),
+            ReadRange(ComposerHeightKey, 128d, 300d));
         Apply(Current);
     }
 
@@ -45,7 +47,20 @@ public sealed class MauiUiPreferencesService : IUiPreferencesService
         else Preferences.Default.Remove(FontSizeKey);
         if (preferences.ConversationPaneWidth is { } paneWidth) Preferences.Default.Set(ConversationPaneWidthKey, paneWidth);
         else Preferences.Default.Remove(ConversationPaneWidthKey);
+        if (preferences.ComposerHeight is { } composerHeight) Preferences.Default.Set(ComposerHeightKey, composerHeight);
+        else Preferences.Default.Remove(ComposerHeightKey);
         Apply(preferences);
+    }
+
+    public void SaveComposerHeight(double height)
+    {
+        if (!double.IsFinite(height) || height < 128d || height > 300d)
+        {
+            throw new ArgumentOutOfRangeException(nameof(height));
+        }
+
+        Current = Current with { ComposerHeight = height };
+        Preferences.Default.Set(ComposerHeightKey, height);
     }
 
     public UiPreferences Reset()

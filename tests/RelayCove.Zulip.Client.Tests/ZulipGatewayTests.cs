@@ -499,6 +499,24 @@ public sealed class ZulipGatewayTests
         Assert.True(result.FoundAnchor);
     }
 
+    [Theory]
+    [InlineData(MessageSearchFilter.Files, "attachment")]
+    [InlineData(MessageSearchFilter.Images, "image")]
+    [InlineData(MessageSearchFilter.Videos, "image")]
+    [InlineData(MessageSearchFilter.Links, "link")]
+    public async Task SearchMessages_WhenContentFilterIsSelected_UsesOfficialHasNarrow(
+        MessageSearchFilter filter,
+        string operand)
+    {
+        using var handler = new RecordingHandler(Json("""{"messages":[],"found_oldest":true,"found_newest":true,"found_anchor":true}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        await gateway.SearchMessagesAsync(new MessageSearchRequest(Credentials, string.Empty, null, 50, filter));
+
+        var query = ParseQuery(Assert.Single(handler.Requests).Uri!);
+        Assert.Equal($"[{{\"operator\":\"has\",\"operand\":\"{operand}\"}}]", query["narrow"]);
+    }
+
     [Fact]
     public async Task LoadSavedMessages_UsesStarredNarrowAndSupportsPaging()
     {

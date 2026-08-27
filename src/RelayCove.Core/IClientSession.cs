@@ -23,7 +23,12 @@ public interface IClientSession
     Task LogoutAsync(CancellationToken cancellationToken = default);
     Task SelectConversationAsync(ConversationKey conversation, CancellationToken cancellationToken = default);
     Task LoadOlderAsync(CancellationToken cancellationToken = default);
-    Task<MessageQueryPage> SearchMessagesAsync(string query, long? beforeMessageId, int limit, CancellationToken cancellationToken = default) =>
+    Task<MessageQueryPage> SearchMessagesAsync(
+        string query,
+        long? beforeMessageId,
+        int limit,
+        CancellationToken cancellationToken = default,
+        MessageSearchFilter filter = MessageSearchFilter.Messages) =>
         Task.FromException<MessageQueryPage>(new NotSupportedException("Server message search is not available."));
     Task<MessageQueryPage> LoadSavedMessagesAsync(long? beforeMessageId, int limit, CancellationToken cancellationToken = default) =>
         Task.FromException<MessageQueryPage>(new NotSupportedException("Saved messages are not available."));

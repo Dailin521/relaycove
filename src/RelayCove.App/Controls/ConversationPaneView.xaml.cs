@@ -12,6 +12,14 @@ public partial class ConversationPaneView : ContentView
         ConversationFilterEntry.HandlerChanged += OnConversationFilterHandlerChanged;
     }
 
+    public ShellViewModel? ViewModel => BindingContext as ShellViewModel;
+
+    protected override void OnBindingContextChanged()
+    {
+        base.OnBindingContextChanged();
+        OnPropertyChanged(nameof(ViewModel));
+    }
+
     private void OnConversationFilterHandlerChanged(object? sender, EventArgs eventArgs)
     {
         if (_nativeFilterTextBox is not null) _nativeFilterTextBox.KeyDown -= OnConversationFilterKeyDown;

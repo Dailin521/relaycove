@@ -1,4 +1,5 @@
 using RelayCove.App.Platforms.Windows;
+using Windows.Graphics;
 
 namespace RelayCove.App.Tests;
 
@@ -45,5 +46,25 @@ public sealed class WindowsWindowShellAdapterTests
         Assert.Equal(
             expected,
             WindowsWindowShellAdapter.ShouldCloseToTray(isNativePreviewRequested));
+    }
+
+    [Fact]
+    public void ClampWindowBounds_WhenSavedBoundsAreVisible_PreservesBounds()
+    {
+        var requested = new RectInt32(120, 80, 1280, 800);
+        var workArea = new RectInt32(0, 0, 1920, 1040);
+
+        Assert.Equal(requested, WindowsWindowShellAdapter.ClampWindowBounds(requested, workArea));
+    }
+
+    [Fact]
+    public void ClampWindowBounds_WhenDisplayChanged_KeepsWindowVisible()
+    {
+        var requested = new RectInt32(2200, -200, 2400, 1200);
+        var workArea = new RectInt32(0, 0, 1920, 1040);
+
+        Assert.Equal(
+            new RectInt32(0, 0, 1920, 1040),
+            WindowsWindowShellAdapter.ClampWindowBounds(requested, workArea));
     }
 }

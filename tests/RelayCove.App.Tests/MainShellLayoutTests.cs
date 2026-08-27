@@ -168,11 +168,25 @@ public sealed class MainShellLayoutTests
             var layout = Assert.Single(scroller.Descendants(maui + "HorizontalStackLayout"));
             Assert.Equal("0,3,8,5", layout.Attribute("Padding")?.Value);
         });
-        Assert.Equal(2, source.Descendants().Count(element =>
+        Assert.Equal(3, source.Descendants().Count(element =>
             element.Name.LocalName == "HorizontalDragScrollBehavior"));
         var raw = source.ToString();
         Assert.DoesNotContain("选择后插入光标位置", raw, StringComparison.Ordinal);
         Assert.DoesNotContain("再次选择可移除", raw, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SearchResults_WhenRendered_HighlightTitleAndSubtitleWithCurrentQuery()
+    {
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
+
+        var labels = source.Descendants()
+            .Where(element => element.Name.LocalName == "SearchHighlightLabel")
+            .ToArray();
+
+        Assert.Equal(2, labels.Length);
+        Assert.All(labels, label =>
+            Assert.Contains("SearchQuery", label.Attribute("HighlightQuery")?.Value, StringComparison.Ordinal));
     }
 
     [Fact]

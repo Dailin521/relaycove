@@ -400,10 +400,24 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (string.IsNullOrWhiteSpace(request.Query)) throw new ArgumentException("A search query is required.", nameof(request));
+        if (!Enum.IsDefined(request.Filter)) throw new ArgumentOutOfRangeException(nameof(request));
+        var terms = new List<IReadOnlyDictionary<string, object>>();
+        if (!string.IsNullOrWhiteSpace(request.Query))
+        {
+            terms.Add(NarrowTerm("search", request.Query.Trim()));
+        }
+        var hasOperand = request.Filter switch
+        {
+            MessageSearchFilter.Files => "attachment",
+            MessageSearchFilter.Images or MessageSearchFilter.Videos => "image",
+            MessageSearchFilter.Links => "link",
+            _ => null
+        };
+        if (hasOperand is not null) terms.Add(NarrowTerm("has", hasOperand));
+        if (terms.Count == 0) throw new ArgumentException("A search query or content filter is required.", nameof(request));
         return GetMessagesPageAsync(
             request.Credentials,
-            SerializeTerms([NarrowTerm("search", request.Query)]),
+            SerializeTerms(terms),
             request.BeforeMessageId,
             request.Limit,
             cancellationToken);

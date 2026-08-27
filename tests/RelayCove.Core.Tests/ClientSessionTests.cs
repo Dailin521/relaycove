@@ -1632,6 +1632,34 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task SearchMessagesAsync_WhenContentFilterHasNoKeyword_ForwardsFilter()
+    {
+        MessageSearchRequest? captured = null;
+        var gateway = new FakeGateway
+        {
+            SearchHandler = (request, _) =>
+            {
+                captured = request;
+                return Task.FromResult(new MessageQueryPage([], true, true, true));
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.SearchMessagesAsync(
+            string.Empty,
+            null,
+            50,
+            CancellationToken.None,
+            MessageSearchFilter.Links);
+
+        Assert.NotNull(captured);
+        Assert.Equal(MessageSearchFilter.Links, captured.Filter);
+        Assert.Equal(string.Empty, captured.Query);
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task PresencePolling_WhenMinuteBoundaryPasses_ReplacesSnapshotByOfficialEmailMapping()
     {
         var now = DateTimeOffset.FromUnixTimeSeconds(1_000);

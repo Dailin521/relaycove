@@ -400,11 +400,11 @@
                             VerticalOptions="Start"
                             Margin="24,54,24,24">
                         <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
-                        <Grid RowDefinitions="Auto,Auto,*" RowSpacing="10" MaximumHeightRequest="620">
+                        <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="10" MaximumHeightRequest="620">
                             <Grid ColumnDefinitions="*,Auto">
                                 <VerticalStackLayout>
                                     <Label Text="搜索" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
-                                    <Label Text="当前会话、联系人和已加载消息" Style="{StaticResource MutedLabelStyle}" />
+                                    <Label Text="搜索消息、文件、图片、视频和链接" Style="{StaticResource MutedLabelStyle}" />
                                 </VerticalStackLayout>
                                 <Button Grid.Column="1" Text="×" Style="{StaticResource IconButtonStyle}" Command="{Binding CloseSearchCommand}" />
                             </Grid>
@@ -414,8 +414,37 @@
                                    Text="{Binding SearchQuery, Mode=TwoWay}"
                                    Completed="OnSearchCompleted"
                                    Placeholder="键入以搜索"
-                                   SemanticProperties.Description="搜索当前会话、联系人和已加载消息" />
-                            <Grid Grid.Row="2">
+                                   SemanticProperties.Description="搜索消息并按内容类型筛选" />
+                            <ScrollView Grid.Row="2"
+                                        Orientation="Horizontal"
+                                        HeightRequest="42"
+                                        HorizontalScrollBarVisibility="Never"
+                                        VerticalScrollBarVisibility="Never">
+                                <ScrollView.Behaviors>
+                                    <windowsBehaviors:HorizontalDragScrollBehavior />
+                                </ScrollView.Behaviors>
+                                <HorizontalStackLayout Spacing="6"
+                                                       Padding="0,3,8,5"
+                                                       BindableLayout.ItemsSource="{Binding SearchCategories}">
+                                    <BindableLayout.ItemTemplate>
+                                        <DataTemplate x:DataType="viewModels:SearchCategoryChoice">
+                                            <Button Text="{Binding Label}"
+                                                    Style="{StaticResource EmojiCategoryButtonStyle}"
+                                                    Command="{Binding ViewModel.SelectSearchCategoryCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                    CommandParameter="{Binding .}">
+                                                <Button.Triggers>
+                                                    <DataTrigger TargetType="Button" Binding="{Binding IsSelected}" Value="True">
+                                                        <Setter Property="BackgroundColor" Value="{StaticResource AccentColor}" />
+                                                        <Setter Property="BorderColor" Value="{StaticResource AccentStrongColor}" />
+                                                        <Setter Property="TextColor" Value="White" />
+                                                    </DataTrigger>
+                                                </Button.Triggers>
+                                            </Button>
+                                        </DataTemplate>
+                                    </BindableLayout.ItemTemplate>
+                                </HorizontalStackLayout>
+                            </ScrollView>
+                            <Grid Grid.Row="3">
                                 <CollectionView ItemsSource="{Binding SearchResults}"
                                                 SelectedItem="{Binding SelectedSearchResult, Mode=TwoWay}"
                                                 SelectionMode="Single"
@@ -428,8 +457,17 @@
                                                 </Border.GestureRecognizers>
                                                 <Grid ColumnDefinitions="90,*" RowDefinitions="Auto,Auto">
                                                     <Label Text="{Binding Kind}" Style="{StaticResource MutedLabelStyle}" />
-                                                    <Label Grid.Column="1" Text="{Binding Title}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
-                                                    <Label Grid.Row="1" Grid.Column="1" Text="{Binding Subtitle}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="TailTruncation" />
+                                                    <controls:SearchHighlightLabel Grid.Column="1"
+                                                                                   SourceText="{Binding Title}"
+                                                                                   HighlightQuery="{Binding ViewModel.SearchQuery, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                                                   Style="{StaticResource BaseLabelStyle}"
+                                                                                   FontAttributes="Bold" />
+                                                    <controls:SearchHighlightLabel Grid.Row="1"
+                                                                                   Grid.Column="1"
+                                                                                   SourceText="{Binding Subtitle}"
+                                                                                   HighlightQuery="{Binding ViewModel.SearchQuery, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                                                   Style="{StaticResource MutedLabelStyle}"
+                                                                                   LineBreakMode="TailTruncation" />
                                                 </Grid>
                                             </Border>
                                         </DataTemplate>

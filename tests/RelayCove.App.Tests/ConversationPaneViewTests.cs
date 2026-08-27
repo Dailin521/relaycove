@@ -39,6 +39,23 @@ public sealed class ConversationPaneViewTests
                                element.Attribute("Text")?.Value == "{Binding UserStatusGlyph}");
         Assert.Equal("{Binding HasUserStatusGlyph}", userStatusGlyph.Attribute("IsVisible")?.Value);
         Assert.Equal("{Binding UserStatusDescription}", userStatusGlyph.Attribute("ToolTipProperties.Text")?.Value);
+
+        var searchIcon = source.Descendants()
+            .Single(element => element.Name.LocalName == "Image" && element.Attribute("Source")?.Value == "icon_search.png");
+        Assert.Equal("{Binding ShowConversationSearchIcon}", searchIcon.Attribute("IsVisible")?.Value);
+
+        var highlightedText = source.Descendants()
+            .Where(element => element.Name.LocalName == "SearchHighlightLabel")
+            .ToArray();
+        Assert.Equal(2, highlightedText.Length);
+        Assert.Contains(highlightedText, label => label.Attribute("SourceText")?.Value == "{Binding Title}");
+        Assert.Contains(highlightedText, label => label.Attribute("SourceText")?.Value == "{Binding Detail}");
+        Assert.All(highlightedText, label =>
+            Assert.Contains("ViewModel.ConversationFilterQuery", label.Attribute("HighlightQuery")?.Value, StringComparison.Ordinal));
+        var messageMatchLabel = source.Descendants()
+            .Single(element => element.Name.LocalName == "Label" && element.Attribute("Text")?.Value == "消息");
+        Assert.Equal("{Binding IsSearchMessageMatch}", messageMatchLabel.Attribute("IsVisible")?.Value);
+        Assert.Equal("{StaticResource MutedLabelStyle}", messageMatchLabel.Attribute("Style")?.Value);
     }
 
     private static string FindWorkspaceFile(params string[] parts)
