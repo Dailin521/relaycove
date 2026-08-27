@@ -10,6 +10,7 @@ namespace RelayCove.App.Platforms.Windows;
 public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
 {
     private const uint WindowClose = 0x0010;
+    private static readonly TimeSpan ForcedExitDelay = TimeSpan.FromSeconds(3);
     private const string WindowXKey = "relaycove.window.x";
     private const string WindowYKey = "relaycove.window.y";
     private const string WindowWidthKey = "relaycove.window.width";
@@ -25,12 +26,24 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
     private bool _exitRequested;
     private bool _isRestoringPlacement;
     private bool _placementRestored;
+    private readonly Action<int> _terminateProcess;
+    private int _forcedExitScheduled;
 #if DEBUG
     private bool _previewPlacementApplied;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _previewPlacementTimer;
 #endif
 
     public event EventHandler? StateChanged;
+
+    public WindowsWindowShellAdapter()
+        : this(Environment.Exit)
+    {
+    }
+
+    internal WindowsWindowShellAdapter(Action<int> terminateProcess)
+    {
+        _terminateProcess = terminateProcess ?? throw new ArgumentNullException(nameof(terminateProcess));
+    }
 
     public bool IsPinned => _isPinned;
     public bool IsForeground => IsForegroundWindow(
@@ -77,12 +90,28 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
 
     public void RequestExit()
     {
-        if (_windowHandle == 0) return;
+        if (_exitRequested) return;
         _exitRequested = true;
+        if (Interlocked.Exchange(ref _forcedExitScheduled, 1) == 0)
+        {
+            _ = ForceExitAfterDelayAsync(ForcedExitDelay, _terminateProcess);
+        }
+        if (_windowHandle == 0)
+        {
+            _terminateProcess(0);
+            return;
+        }
         if (!PostMessage(_windowHandle, WindowClose, 0, 0))
         {
-            _exitRequested = false;
+            _terminateProcess(0);
         }
+    }
+
+    internal static async Task ForceExitAfterDelayAsync(TimeSpan delay, Action<int> terminateProcess)
+    {
+        ArgumentNullException.ThrowIfNull(terminateProcess);
+        await Task.Delay(delay).ConfigureAwait(false);
+        terminateProcess(0);
     }
 
     private void OnHandlerChanged(object? sender, EventArgs eventArgs) => TryInitializeNativeWindow();

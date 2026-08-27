@@ -67,4 +67,16 @@ public sealed class WindowsWindowShellAdapterTests
             new RectInt32(0, 0, 1920, 1040),
             WindowsWindowShellAdapter.ClampWindowBounds(requested, workArea));
     }
+
+    [Fact]
+    public async Task ForceExitAfterDelayAsync_WhenGracefulExitDoesNotFinish_TerminatesProcess()
+    {
+        int? exitCode = null;
+
+        await WindowsWindowShellAdapter.ForceExitAfterDelayAsync(
+            TimeSpan.Zero,
+            code => exitCode = code);
+
+        Assert.Equal(0, exitCode);
+    }
 }
