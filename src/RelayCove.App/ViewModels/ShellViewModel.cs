@@ -4871,6 +4871,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 StringComparison.Ordinal));
             if (conversation is null) return;
             _appNotificationService.StopTaskbarFlash();
+            _appNotificationService.StopTrayFlash();
             ShowMessages();
             ActivateConversation(conversation);
         });

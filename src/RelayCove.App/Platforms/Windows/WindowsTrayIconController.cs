@@ -126,8 +126,17 @@ internal sealed class WindowsTrayIconController : IDisposable
     internal void UpdateUnread(int count, bool isTruncated)
     {
         var previousCount = _unreadCount;
+        var previousIsTruncated = _unreadIsTruncated;
         _unreadCount = Math.Max(0, count);
         _unreadIsTruncated = isTruncated;
+        if (ShouldStopFlashingAfterUnreadUpdate(
+                previousCount,
+                previousIsTruncated,
+                _unreadCount,
+                _unreadIsTruncated))
+        {
+            StopFlashing();
+        }
         if (_unreadCount < previousCount)
         {
             _previewNotification = null;
@@ -184,6 +193,14 @@ internal sealed class WindowsTrayIconController : IDisposable
 
     internal static bool ShouldShowPreview(int count, bool isTruncated) =>
         count > 0 || isTruncated;
+
+    internal static bool ShouldStopFlashingAfterUnreadUpdate(
+        int previousCount,
+        bool previousIsTruncated,
+        int currentCount,
+        bool currentIsTruncated) =>
+        ShouldShowPreview(previousCount, previousIsTruncated) &&
+        (currentCount < previousCount || !ShouldShowPreview(currentCount, currentIsTruncated));
 
     private void ResumeFlashing()
     {

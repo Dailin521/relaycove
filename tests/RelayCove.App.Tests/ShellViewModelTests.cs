@@ -620,6 +620,7 @@ public sealed class ShellViewModelTests
         Assert.True(viewModel.IsMessagesSection);
         Assert.Equal(conversation, session.SelectedConversation);
         Assert.True(notifications.StopFlashCalls > 0);
+        Assert.True(notifications.StopTrayFlashCalls > 0);
     }
 
     [Fact]

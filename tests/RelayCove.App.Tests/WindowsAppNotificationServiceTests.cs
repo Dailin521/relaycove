@@ -113,6 +113,26 @@ public sealed class WindowsAppNotificationServiceTests
         Assert.Equal(expected, WindowsTrayIconController.ShouldShowPreview(count, isTruncated));
 
     [Theory]
+    [InlineData(3, false, 2, false, true)]
+    [InlineData(1, true, 0, true, true)]
+    [InlineData(0, true, 0, false, true)]
+    [InlineData(2, false, 2, false, false)]
+    [InlineData(2, false, 3, false, false)]
+    public void TrayFlash_WhenUnreadAuthorityChanges_StopsOnlyAfterAcknowledgement(
+        int previousCount,
+        bool previousIsTruncated,
+        int currentCount,
+        bool currentIsTruncated,
+        bool expected) =>
+        Assert.Equal(
+            expected,
+            WindowsTrayIconController.ShouldStopFlashingAfterUnreadUpdate(
+                previousCount,
+                previousIsTruncated,
+                currentCount,
+                currentIsTruncated));
+
+    [Theory]
     [InlineData(true, false, true)]
     [InlineData(true, true, false)]
     [InlineData(false, true, true)]

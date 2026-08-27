@@ -340,6 +340,7 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
         _ = ShowWindow(_windowHandle, ShowWindowRestore);
         _ = SetForegroundWindow(_windowHandle);
         StopTaskbarFlash();
+        StopTrayFlash();
     }
 
     private void ActivateTrayIcon(string? conversationKey)

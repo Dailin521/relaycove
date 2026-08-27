@@ -31,6 +31,8 @@ Current release: [`v2.3.1`](https://github.com/Dailin521/relaycove/releases/tag/
 
 `v2.3.1` 按相同的个人 MVP 快速发布边界执行：会话悬浮态 Release 定向测试 1/1 通过，编译仅有 7 个既有 XamlC binding-performance warning；继续执行自包含发布、必要文件检查、秘密扫描和 ZIP 校验，不运行 Fast、Full、Live、Web、VM、安装器或真实 Realm 写入。
 
+发布后托盘确认批次修正了“打开对应会话后仍持续闪烁”：点击托盘/系统通知或权威未读数下降会停止本轮托盘闪烁，单纯鼠标悬浮不会确认；剩余未读徽标继续保留。相关 App 定向回归 39/39 通过，尚未重新生成 Release 包。
+
 ## 当前能力摘要
 
 - 登录、凭据恢复、SQLite 缓存、历史分页、实时事件、已读/未读和断线恢复。
