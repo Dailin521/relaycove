@@ -113,23 +113,35 @@
                              Progress="{Binding MediaDownloadProgress}"
                              ProgressColor="{StaticResource AccentColor}"
                              InputTransparent="True" />
-                <Border WidthRequest="8"
+                <Border x:Name="CompletedDownloadDot"
+                        WidthRequest="8"
                         HeightRequest="8"
                         Margin="0,3,3,0"
                         Padding="0"
                         HorizontalOptions="End"
                         VerticalOptions="Start"
-                        IsVisible="{Binding HasDownloadButtonAttention}"
+                        IsVisible="False"
                         Background="{StaticResource AccentBrush}"
                         Stroke="{StaticResource GroundBrush}"
                         StrokeThickness="1"
-                        InputTransparent="True">
+                        InputTransparent="True"
+                        SemanticProperties.Description="存在未查看的下载完成">
                     <Border.StrokeShape><RoundRectangle CornerRadius="4" /></Border.StrokeShape>
-                    <Border.Triggers>
-                        <DataTrigger TargetType="Border" Binding="{Binding HasDownloadFailure}" Value="True">
-                            <Setter Property="Background" Value="{StaticResource DangerBrush}" />
-                        </DataTrigger>
-                    </Border.Triggers>
+                </Border>
+                <Border x:Name="FailedDownloadDot"
+                        WidthRequest="8"
+                        HeightRequest="8"
+                        Margin="0,3,3,0"
+                        Padding="0"
+                        HorizontalOptions="End"
+                        VerticalOptions="Start"
+                        IsVisible="False"
+                        Background="{StaticResource DangerBrush}"
+                        Stroke="{StaticResource GroundBrush}"
+                        StrokeThickness="1"
+                        InputTransparent="True"
+                        SemanticProperties.Description="存在未查看的下载失败">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="4" /></Border.StrokeShape>
                 </Border>
             </Grid>
             <ImageButton x:Name="SettingsButton"

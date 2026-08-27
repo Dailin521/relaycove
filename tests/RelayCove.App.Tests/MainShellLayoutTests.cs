@@ -5,6 +5,19 @@ namespace RelayCove.App.Tests;
 public sealed class MainShellLayoutTests
 {
     [Fact]
+    public void LoginPage_WhenRendered_SeparatesRealmLoginAndOfficialRegistration()
+    {
+        var source = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
+
+        Assert.Contains("Text=\"欢迎使用 RelayCove\"", source, StringComparison.Ordinal);
+        Assert.Contains("Text=\"Zulip Realm\"", source, StringComparison.Ordinal);
+        Assert.Contains("Text=\"前往 Zulip 官方注册\"", source, StringComparison.Ordinal);
+        Assert.Contains("Command=\"{Binding OpenRegistrationCommand}\"", source, StringComparison.Ordinal);
+        Assert.Contains("IsVisible=\"{Binding LoginCommand.IsRunning}\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Stage 21 的人工密码登录", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MainShell_WhenRendered_UsesConversationAndChatWithoutPrimaryNavigationRail()
     {
         var source = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
@@ -114,6 +127,14 @@ public sealed class MainShellLayoutTests
         Assert.DoesNotContain("Text=\"R\"", source);
         Assert.Contains("x:Name=\"DownloadButton\"", source);
         Assert.Contains("Source=\"icon_download.png\"", source);
+        Assert.Contains("x:Name=\"CompletedDownloadDot\"", source);
+        Assert.Contains("x:Name=\"FailedDownloadDot\"", source);
+        Assert.Contains("SemanticProperties.Description=\"存在未查看的下载完成\"", source);
+        Assert.Contains("SemanticProperties.Description=\"存在未查看的下载失败\"", source);
+        Assert.DoesNotContain("IsVisible=\"{Binding HasDownloadButtonAttention}\"", source);
+        Assert.Contains("CompletedDownloadDot.IsVisible = _viewModel?.HasUnseenCompletedDownloads == true;", codeBehind);
+        Assert.Contains("FailedDownloadDot.IsVisible = _viewModel?.HasUnseenDownloadFailure == true;", codeBehind);
+        Assert.Contains("Dispatcher.Dispatch(SynchronizeDownloadAttention);", codeBehind);
         Assert.Contains("DownloadButton.Command = viewModel.ToggleDownloadCenterCommand;", codeBehind);
         Assert.True(
             source.IndexOf("x:Name=\"DownloadButton\"", StringComparison.Ordinal) <

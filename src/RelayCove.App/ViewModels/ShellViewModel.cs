@@ -491,6 +491,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public partial bool HasUnseenCompletedDownloads { get; set; }
 
     [ObservableProperty]
+    public partial bool HasUnseenDownloadFailure { get; set; }
+
+    [ObservableProperty]
     public partial string? DownloadCenterStatus { get; set; }
 
     [ObservableProperty]
@@ -798,7 +801,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool ShowDownloadCenterCurrentTask => IsMediaActionBusy || CanRetryMediaDownload;
     public bool HasRecentDownloads => RecentDownloads.Count > 0;
     public bool IsDownloadCenterEmpty => !ShowDownloadCenterCurrentTask && !HasRecentDownloads;
-    public bool HasDownloadButtonAttention => IsMediaActionBusy || HasUnseenCompletedDownloads || CanRetryMediaDownload;
+    public bool HasDownloadButtonAttention => IsMediaActionBusy || HasUnseenCompletedDownloads || HasUnseenDownloadFailure;
     public bool HasDownloadFailure => CanRetryMediaDownload;
     public bool HasDownloadCenterStatus => !string.IsNullOrWhiteSpace(DownloadCenterStatus);
     public string DownloadButtonDescription => IsMediaActionBusy
@@ -1196,6 +1199,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             case "settings":
                 ShowSettings();
                 break;
+            case "download-center":
+                HasUnseenDownloadFailure = true;
+                ToggleDownloadCenter();
+                break;
             case "details":
                 CloseTransientOverlays();
                 IsDetailsOpen = true;
@@ -1362,6 +1369,26 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             Password = string.Empty;
             Project(_session.State);
             Volatile.Write(ref _loginInFlight, 0);
+        }
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task OpenRegistrationAsync()
+    {
+        LoginError = null;
+        if (!RealmEndpoint.TryParse(Realm, out var endpoint) || endpoint is null)
+        {
+            LoginError = "请先输入有效的 HTTPS Realm 地址。";
+            return;
+        }
+
+        try
+        {
+            await _platformInteractions.OpenUriAsync(new Uri(endpoint.Uri, "register/"));
+        }
+        catch (Exception)
+        {
+            LoginError = "无法打开 Zulip 官方注册页面，请检查系统浏览器设置。";
         }
     }
 
@@ -1762,6 +1789,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IsDownloadCenterOpen = open;
         if (!open) return;
         HasUnseenCompletedDownloads = false;
+        HasUnseenDownloadFailure = false;
         RefreshDownloadAvailability();
     }
 
@@ -3965,6 +3993,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasDownloadButtonAttention));
         OnPropertyChanged(nameof(DownloadButtonDescription));
     }
+
+    partial void OnHasUnseenDownloadFailureChanged(bool value) =>
+        OnPropertyChanged(nameof(HasDownloadButtonAttention));
     partial void OnMessageLoadErrorChanged(string? value)
     {
         OnPropertyChanged(nameof(HasMessageLoadError));
@@ -7135,6 +7166,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         RecentDownloads.Clear();
         HasUnseenCompletedDownloads = false;
+        HasUnseenDownloadFailure = false;
         DownloadCenterStatus = null;
         if (accountId is { } current)
         {
@@ -7196,6 +7228,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         if (Equals(_failedMediaDownloadAttachment, attachment)) return;
         _failedMediaDownloadAttachment = attachment;
+        HasUnseenDownloadFailure = attachment is not null && !IsDownloadCenterOpen;
         OnPropertyChanged(nameof(CanRetryMediaDownload));
         OnPropertyChanged(nameof(ShowDownloadCenterCurrentTask));
         OnPropertyChanged(nameof(IsDownloadCenterEmpty));

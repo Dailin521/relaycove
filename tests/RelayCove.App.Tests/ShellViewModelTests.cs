@@ -262,6 +262,32 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task OpenRegistrationCommand_WhenRealmIsValid_OpensOfficialSameOriginRegistrationPage()
+    {
+        var interactions = new FakePlatformInteractionService();
+        using var viewModel = CreateViewModel(new FakeSession(), platformInteractions: interactions);
+        viewModel.Realm = "https://Chat.Example.Test/";
+
+        await ((IAsyncRelayCommand)viewModel.OpenRegistrationCommand).ExecuteAsync(null);
+
+        Assert.Equal(new Uri("https://chat.example.test/register/"), Assert.Single(interactions.Opened));
+        Assert.Null(viewModel.LoginError);
+    }
+
+    [Fact]
+    public async Task OpenRegistrationCommand_WhenRealmIsInvalid_DoesNotOpenBrowser()
+    {
+        var interactions = new FakePlatformInteractionService();
+        using var viewModel = CreateViewModel(new FakeSession(), platformInteractions: interactions);
+        viewModel.Realm = "http://chat.example.test";
+
+        await ((IAsyncRelayCommand)viewModel.OpenRegistrationCommand).ExecuteAsync(null);
+
+        Assert.Empty(interactions.Opened);
+        Assert.Equal("请先输入有效的 HTTPS Realm 地址。", viewModel.LoginError);
+    }
+
+    [Fact]
     public void SessionStateChanged_WhenSubscribedAndRecentDirectMessage_ProjectsNavigationAndRawMessage()
     {
         var direct = new DirectMessage([8]);
@@ -2261,6 +2287,18 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public void ApplyNativePreviewScene_WhenDownloadCenterRequested_ClearsSeededAttention()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        viewModel.ApplyNativePreviewScene("download-center");
+
+        Assert.True(viewModel.IsDownloadCenterOpen);
+        Assert.False(viewModel.HasUnseenDownloadFailure);
+        Assert.False(viewModel.HasDownloadButtonAttention);
+    }
+
+    [Fact]
     public void UpdateViewport_WhenPreviewDetailsSceneIsRequested_RespectsBuildIsolation()
     {
         var previousPreview = Environment.GetEnvironmentVariable("RELAYCOVE_NATIVE_UI_PREVIEW");
@@ -3850,10 +3888,18 @@ public sealed class ShellViewModelTests
         await ((IAsyncRelayCommand)viewModel.DownloadAttachmentCommand).ExecuteAsync(
             new MessageAttachmentItem("file", "guide.pdf", "/user_uploads/guide.pdf"));
         Assert.True(viewModel.HasDownloadFailure);
+        Assert.True(viewModel.HasUnseenDownloadFailure);
+
+        viewModel.ToggleDownloadCenterCommand.Execute(null);
+
+        Assert.True(viewModel.HasDownloadFailure);
+        Assert.False(viewModel.HasUnseenDownloadFailure);
+        Assert.False(viewModel.HasDownloadButtonAttention);
 
         viewModel.DismissFailedMediaDownloadCommand.Execute(null);
 
         Assert.False(viewModel.HasDownloadFailure);
+        Assert.False(viewModel.HasUnseenDownloadFailure);
         Assert.False(viewModel.HasDownloadButtonAttention);
         Assert.Null(viewModel.MediaDownloadFileName);
     }
@@ -3944,11 +3990,15 @@ public sealed class ShellViewModelTests
             downloadHistoryStore: history);
 
         Assert.Equal("first.pdf", Assert.Single(viewModel.RecentDownloads).FileName);
+        Assert.False(viewModel.HasUnseenCompletedDownloads);
+        Assert.False(viewModel.HasDownloadButtonAttention);
 
         session.Account = secondAccount;
         session.Publish();
 
         Assert.Equal("second.pdf", Assert.Single(viewModel.RecentDownloads).FileName);
+        Assert.False(viewModel.HasUnseenCompletedDownloads);
+        Assert.False(viewModel.HasDownloadButtonAttention);
         viewModel.ClearDownloadHistoryCommand.Execute(null);
         Assert.Empty(history.Load(secondAccount));
         Assert.Single(history.Load(firstAccount));

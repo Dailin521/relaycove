@@ -3,14 +3,14 @@
 Updated: 2026-08-27
 Branch: `main`
 Current baseline: `main`（精确提交以 Git 历史为准）
-Current release: [`v2.2.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.2.0)
+Current release: [`v2.3.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.3.0)
 
 ## 产品状态
 
 - RelayCove 当前只继续维护 Windows MAUI 客户端；历史 Web 不再参与发布或功能对齐。
 - 产品使用统一的一对一/self-DM/私有空话题群聊会话列表。
 - Stage 31–36 已随 `v2.1.0` 发布；Stage 37 当前会话实时追加和 Stage 38 官方 presence/个人状态已随 `v2.2.0` 发布。
-- 用户已经通过 Visual Studio/实际工程确认当前 UI 与交互，Stage 38 不再保留为待确认任务。
+- `v2.3.0` 收录后续 V2 优化、可靠文件传输、下载中心、登录起始页与当前 Realm 官方注册入口；用户已经通过 Visual Studio/实际工程确认当前 UI 与交互。
 - 唯一活动计划是 `tasks/2026-08-25-v2-optimization-plan.md`；后续仍一次只处理一个明确问题。
 
 ## 最近验证证据
@@ -24,7 +24,9 @@ Current release: [`v2.2.0`](https://github.com/Dailin521/relaycove/releases/tag/
 - 发布 ZIP：96,765,856 bytes，SHA-256 `E560BA62C26EF882249C4ADD9F180597B79DB6F425425B09957C03890FDF6283`。
 - GitHub Release 为正式 Latest，上传 ZIP 与本地候选一致。
 
-这些结果只属于 `v2.2.0` 候选。当前文档清理不改代码，因此未重新运行构建或测试。
+这些完整门禁结果只属于 `v2.2.0` 候选。`v2.3.0` 按用户授权采用个人 MVP 快速发布：只运行受影响 App 定向测试、Release 自包含发布、必要文件检查、秘密扫描和 ZIP 校验，不运行 Fast、Full、Live、Web、VM、安装器或真实 Realm 写入。
+
+`v2.3.0` 当前 Release 定向构建通过，App 相关回归 8/8 通过；仅有 7 个既有 XamlC binding-performance warning，无编译错误。用户已通过 Visual Studio/实际工程确认界面与交互。
 
 ## 当前能力摘要
 
@@ -39,6 +41,8 @@ Current release: [`v2.2.0`](https://github.com/Dailin521/relaycove/releases/tag/
 - 私聊与私有群聊保留最多 6 个独立原生消息视图；返回缓存会话不重建消息行和头像，内容未变化时不重复滚动，带回新消息时仍定位到最新消息。
 - 附件下载支持进度、取消、重试、默认下载目录与逐次询问；标题栏下载中心按账号保留最近 20 条成功记录，并可打开文件或所在文件夹。
 - 附件上传显示进度；大文件使用 Zulip 官方 TUS 分块上传，并在连接中断后按服务器权威偏移继续，非幂等创建请求仍不自动重发。
+- 登录起始页区分 Realm、账号和官方注册入口；注册只打开当前 HTTPS Realm 的同源 `/register/`，不把邮箱或密码放入 URL。
+- 下载完成蓝点和失败红点仅表示尚未查看的新结果；打开下载中心立即清除提示，历史记录与失败重试仍保留。
 
 ## 未运行或不在个人 MVP 默认门禁
 

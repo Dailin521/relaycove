@@ -12,60 +12,120 @@
              Title="RelayCove"
              Shell.NavBarIsVisible="False">
     <Grid Background="{StaticResource GroundBrush}">
-        <Grid
-              IsVisible="{Binding LoginVisible}"
-              Padding="24">
-            <Border Padding="28"
-                    MaximumWidthRequest="480"
+        <Grid IsVisible="{Binding LoginVisible}"
+              Padding="32">
+            <Border MaximumWidthRequest="540"
                     HorizontalOptions="Center"
                     VerticalOptions="Center"
                     Background="{StaticResource SurfaceBrush}"
                     Stroke="{StaticResource BorderBrush}"
                     StrokeThickness="1">
                 <Border.StrokeShape>
-                    <RoundRectangle CornerRadius="16" />
+                    <RoundRectangle CornerRadius="20" />
                 </Border.StrokeShape>
-                <VerticalStackLayout Spacing="14">
-                    <Label Text="登录 RelayCove"
-                           Style="{StaticResource BaseLabelStyle}"
-                           FontSize="24"
-                           FontAttributes="Bold" />
-                    <Label Text="使用 Zulip Realm 的邮箱和密码；密码仅用于交换 API Key。"
-                           Style="{StaticResource MutedLabelStyle}"
-                           LineBreakMode="WordWrap" />
-                    <Entry Placeholder="Realm HTTPS origin"
-                           Style="{StaticResource BaseEntryStyle}"
-                           Text="{Binding Realm}"
-                           Keyboard="Url"
-                           SemanticProperties.Description="Zulip Realm HTTPS origin" />
-                    <Entry Placeholder="邮箱"
-                           Style="{StaticResource BaseEntryStyle}"
-                           Text="{Binding Email}"
-                           Keyboard="Email"
-                           SemanticProperties.Description="Zulip 登录邮箱" />
-                    <Entry Placeholder="密码"
-                           Style="{StaticResource BaseEntryStyle}"
-                           Text="{Binding Password}"
-                           IsPassword="True"
-                           ReturnType="Go"
-                           ReturnCommand="{Binding LoginCommand}"
-                           SemanticProperties.Description="Zulip 登录密码" />
-                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                        <Button Text="登录"
-                                Style="{StaticResource PrimaryButtonStyle}"
-                                Command="{Binding LoginCommand}" />
-                        <Button Grid.Column="1"
-                                Text="取消"
-                                Style="{StaticResource BaseButtonStyle}"
-                                Command="{Binding LoginCancelCommand}" />
+                <Grid RowDefinitions="Auto,Auto">
+                    <Grid Padding="28,24"
+                          ColumnDefinitions="56,*"
+                          ColumnSpacing="16"
+                          Background="{StaticResource SurfaceSoftBrush}">
+                        <Border WidthRequest="52"
+                                HeightRequest="52"
+                                Padding="8"
+                                VerticalOptions="Center"
+                                Background="{StaticResource SurfaceBrush}"
+                                Stroke="{StaticResource BorderBrush}"
+                                StrokeThickness="1">
+                            <Border.StrokeShape>
+                                <RoundRectangle CornerRadius="14" />
+                            </Border.StrokeShape>
+                            <Image Source="relaycove_mark.png"
+                                   Aspect="AspectFit"
+                                   SemanticProperties.Description="RelayCove" />
+                        </Border>
+                        <VerticalStackLayout Grid.Column="1"
+                                             Spacing="3"
+                                             VerticalOptions="Center">
+                            <Label Text="欢迎使用 RelayCove"
+                                   Style="{StaticResource BaseLabelStyle}"
+                                   FontSize="24"
+                                   FontAttributes="Bold" />
+                            <Label Text="连接你的 Zulip 组织，继续聊天"
+                                   Style="{StaticResource MutedLabelStyle}"
+                                   FontSize="13" />
+                        </VerticalStackLayout>
                     </Grid>
-                    <Label Text="{Binding LoginError}"
-                           Style="{StaticResource DangerLabelStyle}"
-                           LineBreakMode="WordWrap" />
-                    <Label Text="Stage 21 的人工密码登录与干净 VM 门禁仍未验证。"
-                           Style="{StaticResource MutedLabelStyle}"
-                           LineBreakMode="WordWrap" />
-                </VerticalStackLayout>
+
+                    <VerticalStackLayout Grid.Row="1"
+                                         Padding="28,24,28,28"
+                                         Spacing="16">
+                        <VerticalStackLayout Spacing="7">
+                            <Label Text="Zulip Realm"
+                                   Style="{StaticResource BaseLabelStyle}"
+                                   FontAttributes="Bold" />
+                            <Entry Placeholder="https://your-zulip.example.com"
+                                   Style="{StaticResource BaseEntryStyle}"
+                                   Text="{Binding Realm}"
+                                   Keyboard="Url"
+                                   SemanticProperties.Description="Zulip Realm HTTPS 地址" />
+                        </VerticalStackLayout>
+
+                        <VerticalStackLayout Spacing="7">
+                            <Label Text="账号"
+                                   Style="{StaticResource BaseLabelStyle}"
+                                   FontAttributes="Bold" />
+                            <Entry Placeholder="邮箱"
+                                   Style="{StaticResource BaseEntryStyle}"
+                                   Text="{Binding Email}"
+                                   Keyboard="Email"
+                                   SemanticProperties.Description="Zulip 登录邮箱" />
+                            <Entry Placeholder="密码"
+                                   Style="{StaticResource BaseEntryStyle}"
+                                   Text="{Binding Password}"
+                                   IsPassword="True"
+                                   ReturnType="Go"
+                                   ReturnCommand="{Binding LoginCommand}"
+                                   SemanticProperties.Description="Zulip 登录密码" />
+                        </VerticalStackLayout>
+
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <Button Text="登录"
+                                    Style="{StaticResource PrimaryButtonStyle}"
+                                    Command="{Binding LoginCommand}" />
+                            <Button Grid.Column="1"
+                                    Text="取消"
+                                    Style="{StaticResource BaseButtonStyle}"
+                                    Command="{Binding LoginCancelCommand}"
+                                    IsVisible="{Binding LoginCommand.IsRunning}" />
+                        </Grid>
+
+                        <Label Text="{Binding LoginError}"
+                               IsVisible="{Binding HasLoginError}"
+                               Style="{StaticResource DangerLabelStyle}"
+                               LineBreakMode="WordWrap" />
+
+                        <BoxView HeightRequest="1"
+                                 BackgroundColor="{AppThemeBinding Light={StaticResource LightBorderColor}, Dark={StaticResource DarkBorderColor}}" />
+
+                        <VerticalStackLayout Spacing="8">
+                            <Label Text="还没有这个 Realm 的账号？"
+                                   Style="{StaticResource BaseLabelStyle}"
+                                   HorizontalTextAlignment="Center" />
+                            <Button Text="前往 Zulip 官方注册"
+                                    Style="{StaticResource BaseButtonStyle}"
+                                    Command="{Binding OpenRegistrationCommand}"
+                                    SemanticProperties.Hint="在浏览器中打开当前 Realm 的官方注册页面" />
+                            <Label Text="注册资格、邀请和邮箱限制由当前 Zulip Realm 决定。"
+                                   Style="{StaticResource MutedLabelStyle}"
+                                   HorizontalTextAlignment="Center"
+                                   LineBreakMode="WordWrap" />
+                        </VerticalStackLayout>
+
+                        <Label Text="密码仅用于向当前 Realm 换取 API Key，不会出现在链接中。"
+                               Style="{StaticResource MutedLabelStyle}"
+                               HorizontalTextAlignment="Center"
+                               LineBreakMode="WordWrap" />
+                    </VerticalStackLayout>
+                </Grid>
             </Border>
         </Grid>
 

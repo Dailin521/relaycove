@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using RelayCove.App.Services;
 using RelayCove.App.ViewModels;
 
@@ -6,6 +7,7 @@ namespace RelayCove.App.Controls;
 public partial class ProductBarView : TitleBar
 {
     private readonly IWindowShellAdapter _windowShellAdapter;
+    private ShellViewModel? _viewModel;
 
     public static readonly BindableProperty IsPinnedProperty = BindableProperty.Create(
         nameof(IsPinned),
@@ -62,6 +64,8 @@ public partial class ProductBarView : TitleBar
     public void Bind(ShellViewModel viewModel)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
+        if (_viewModel is not null) _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        _viewModel = viewModel;
         BindingContext = viewModel;
         AccountButton.Command = viewModel.ToggleAccountMenuCommand;
         DownloadButton.Command = viewModel.ToggleDownloadCenterCommand;
@@ -100,6 +104,25 @@ public partial class ProductBarView : TitleBar
         ConnectionStatusBorder.SetBinding(
             IsVisibleProperty,
             new Binding(nameof(ShellViewModel.ShowConnectionStatus), source: viewModel));
+        viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        SynchronizeDownloadAttention();
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs eventArgs)
+    {
+        if (eventArgs.PropertyName is not nameof(ShellViewModel.HasUnseenCompletedDownloads) and
+            not nameof(ShellViewModel.HasUnseenDownloadFailure))
+        {
+            return;
+        }
+
+        Dispatcher.Dispatch(SynchronizeDownloadAttention);
+    }
+
+    private void SynchronizeDownloadAttention()
+    {
+        CompletedDownloadDot.IsVisible = _viewModel?.HasUnseenCompletedDownloads == true;
+        FailedDownloadDot.IsVisible = _viewModel?.HasUnseenDownloadFailure == true;
     }
 
     private void OnPinClicked(object? sender, EventArgs eventArgs)

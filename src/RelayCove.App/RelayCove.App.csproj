@@ -9,9 +9,9 @@
     <ApplicationTitle>RelayCove</ApplicationTitle>
     <ApplicationId>com.relaycove.client</ApplicationId>
     <!-- MAUI Windows resource metadata accepts only numeric major.minor.patch. -->
-    <ApplicationDisplayVersion>2.2.0</ApplicationDisplayVersion>
-    <ApplicationVersion>3</ApplicationVersion>
-    <InformationalVersion>2.2.0</InformationalVersion>
+    <ApplicationDisplayVersion>2.3.0</ApplicationDisplayVersion>
+    <ApplicationVersion>4</ApplicationVersion>
+    <InformationalVersion>2.3.0</InformationalVersion>
     <ApplicationIcon>Resources\AppIcon\RelayCove.ico</ApplicationIcon>
     <WindowsPackageType>None</WindowsPackageType>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
