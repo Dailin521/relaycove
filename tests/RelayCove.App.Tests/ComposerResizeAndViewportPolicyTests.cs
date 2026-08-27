@@ -104,4 +104,18 @@ public sealed class ComposerResizeAndViewportPolicyTests
     {
         Assert.Equal(expected, MessageViewportPolicy.ShouldUseNativeOffsetBeforeTargetRealized(reason));
     }
+
+    [Theory]
+    [InlineData(120, 0d, true)]
+    [InlineData(120, 0.5d, true)]
+    [InlineData(120, 2d, false)]
+    [InlineData(-120, 0d, false)]
+    [InlineData(0, 0d, false)]
+    public void ShouldRequestOlderFromWheel_WhenPointerMoves_RequiresUpwardInputAtTop(
+        int wheelDelta,
+        double verticalOffset,
+        bool expected)
+    {
+        Assert.Equal(expected, MessageViewportPolicy.ShouldRequestOlderFromWheel(wheelDelta, verticalOffset));
+    }
 }

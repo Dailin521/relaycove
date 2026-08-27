@@ -336,6 +336,37 @@ public sealed class MainShellLayoutTests
     }
 
     [Fact]
+    public void MessageListHistory_WhenRendered_UsesScrollPaginationWithoutManualHistoryPrompts()
+    {
+        var source = File.ReadAllText(FindWorkspaceFile(
+            "src",
+            "RelayCove.App",
+            "Controls",
+            "MessageListView.xaml"));
+
+        Assert.DoesNotContain("Text=\"加载更早消息\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Text=\"已到最早消息\"", source, StringComparison.Ordinal);
+        Assert.Contains("Scrolled=\"OnMessageCollectionScrolled\"", source, StringComparison.Ordinal);
+        Assert.Contains("ItemsUpdatingScrollMode=\"KeepScrollOffset\"", source, StringComparison.Ordinal);
+
+        var codeBehind = File.ReadAllText(FindWorkspaceFile(
+            "src",
+            "RelayCove.App",
+            "Controls",
+            "MessageListView.xaml.cs"));
+        Assert.Contains("Properties.MouseWheelDelta", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("if (_topHistoryLoadLatched && wheelDelta != 0)", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("_viewModel.IsLoadingOlder ||", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("ResetTopHistoryLoadState();", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("if (!_viewModel.IsLoadingOlder &&", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("CaptureTopHistoryAnchor();", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("const int anchorIndex = 0;", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("_pendingPrependAnchorId = _firstVisibleMessageId;", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("RestorePrependAnchor(anchorId);", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("RequestOlderFromTopInputAsync", codeBehind, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ConversationFilterLoadMore_WhenSearchEnds_UsesDirectVisibilityBindingOutsideCollectionFooter()
     {
         var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "ConversationPaneView.xaml"));

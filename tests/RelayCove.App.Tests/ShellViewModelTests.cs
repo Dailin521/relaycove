@@ -2553,7 +2553,7 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public async Task MessageViewport_WhenNearTop_DebouncesAutomaticLoadOlder()
+    public async Task MessageViewport_WhenNearTop_WaitsForExplicitUpwardTopInput()
     {
         var conversation = new DirectMessage([8]);
         var session = new FakeSession
@@ -2567,6 +2567,41 @@ public sealed class ShellViewModelTests
         await viewModel.ReportMessageViewportAsync(4, 5, 100, 1_000);
         await viewModel.ReportMessageViewportAsync(3, 5, 100, 1_100);
         await viewModel.ReportMessageViewportAsync(3, 5, 100, 1_400);
+
+        Assert.Equal(0, session.LoadOlderCalls);
+
+        await viewModel.RequestOlderFromTopInputAsync(
+            1_400,
+            conversation.CanonicalKey,
+            session.HistoryState.Generation);
+
+        Assert.Equal(1, session.LoadOlderCalls);
+    }
+
+    [Fact]
+    public async Task MessageViewport_WhenAlreadyAtTopAndWheelContinues_LoadsOlderWithoutScrollMovement()
+    {
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            HistoryState = new ConversationHistoryState(conversation, 1, false, false, true, 50, null),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await viewModel.RequestOlderFromTopInputAsync(
+            1_000,
+            conversation.CanonicalKey,
+            session.HistoryState.Generation);
+        await viewModel.RequestOlderFromTopInputAsync(
+            1_100,
+            conversation.CanonicalKey,
+            session.HistoryState.Generation);
+        await viewModel.RequestOlderFromTopInputAsync(
+            1_400,
+            conversation.CanonicalKey,
+            session.HistoryState.Generation);
 
         Assert.Equal(2, session.LoadOlderCalls);
     }

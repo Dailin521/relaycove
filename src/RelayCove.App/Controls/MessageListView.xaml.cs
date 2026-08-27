@@ -49,6 +49,7 @@ public partial class MessageListView : ContentView
     private double _suspendedScrollViewportHeight;
     private double _suspendedScrollVerticalOffset;
     private bool _keepLatestMessageInView;
+    private bool _topHistoryLoadLatched;
     private WinUiFrameworkElement? _platformLayoutRoot;
     private WinUiListViewBase? _platformMessageList;
     private readonly HashSet<string> _pendingInsertionAnimationIds = new(StringComparer.Ordinal);
@@ -150,6 +151,13 @@ public partial class MessageListView : ContentView
     {
         if (_viewModel is null || MessageItems is null ||
             !string.Equals(_viewModel.CurrentConversationKey, ConversationKey, StringComparison.Ordinal)) return;
+        if (!_viewModel.IsLoadingOlder &&
+            eventArgs.FirstVisibleItemIndex > MessageViewportPolicy.NearTopItemThreshold &&
+            _pendingPrependAnchorId is null &&
+            !_anchorRestoreScheduled)
+        {
+            ResetTopHistoryLoadState();
+        }
 
         // CollectionView raises Scrolled while ScrollTo/ChangeView is realizing and
         // positioning the requested item. Treating those intermediate positions as
@@ -428,6 +436,7 @@ public partial class MessageListView : ContentView
         ClearActiveScrollRequest();
         ClearPendingPrependAnchor();
         ClearStabilizedAnchor();
+        ResetTopHistoryLoadState();
     }
 
     private void OnMessageCollectionHandlerChanged(object? sender, EventArgs eventArgs)
@@ -468,16 +477,20 @@ public partial class MessageListView : ContentView
 
     private void EnsurePlatformMessageListConfigured()
     {
-        if (_platformMessageList is not null || _platformLayoutRoot is null) return;
-        var list = _platformLayoutRoot as WinUiListViewBase ??
-            FindDescendant<WinUiListViewBase>(_platformLayoutRoot);
-        if (list is null) return;
+        if (_platformLayoutRoot is null) return;
+        if (_platformMessageList is null)
+        {
+            var list = _platformLayoutRoot as WinUiListViewBase ??
+                FindDescendant<WinUiListViewBase>(_platformLayoutRoot);
+            if (list is null) return;
 
-        // WinUI's default add transition keeps a newly inserted virtualized row
-        // transparent before its reveal starts. RelayCove owns the immediate
-        // compositor fade, so the platform transition must not run as well.
-        list.ItemContainerTransitions = new WinUiTransitionCollection();
-        _platformMessageList = list;
+            // WinUI's default add transition keeps a newly inserted virtualized row
+            // transparent before its reveal starts. RelayCove owns the immediate
+            // compositor fade, so the platform transition must not run as well.
+            list.ItemContainerTransitions = new WinUiTransitionCollection();
+            _platformMessageList = list;
+        }
+
     }
 
     private void RemovePlatformLayoutHook()
@@ -499,7 +512,77 @@ public partial class MessageListView : ContentView
         _platformMessageList = null;
     }
 
-    private void OnViewportPointerInput(object sender, PointerRoutedEventArgs eventArgs) => ClearViewportAnchorsForUserInput();
+    private void OnViewportPointerInput(object sender, PointerRoutedEventArgs eventArgs)
+    {
+        if (_viewModel is null || _platformLayoutRoot is null ||
+            FindDescendant<WinUiScrollViewer>(_platformLayoutRoot) is not { } scrollViewer)
+        {
+            ClearViewportAnchorsForUserInput();
+            return;
+        }
+
+        var wheelDelta = eventArgs.GetCurrentPoint(_platformLayoutRoot).Properties.MouseWheelDelta;
+        if (_topHistoryLoadLatched && wheelDelta != 0)
+        {
+            if (_viewModel.IsLoadingOlder ||
+                _pendingPrependAnchorId is not null ||
+                _anchorRestoreScheduled)
+            {
+                return;
+            }
+
+            // The first wheel input after the prepend has settled belongs to the
+            // user again. Release the temporary stabilized anchor before WinUI
+            // consumes that same wheel event, otherwise layout maintenance keeps
+            // snapping the viewport back and makes continuous scrolling appear
+            // frozen or jumpy.
+            ResetTopHistoryLoadState();
+            ClearViewportAnchorsForUserInput();
+            return;
+        }
+        if (!MessageViewportPolicy.ShouldRequestOlderFromWheel(wheelDelta, scrollViewer.VerticalOffset))
+        {
+            ClearViewportAnchorsForUserInput();
+            if (scrollViewer.VerticalOffset > MessageViewportPolicy.TopAlignmentToleranceDip)
+            {
+                ResetTopHistoryLoadState();
+            }
+            return;
+        }
+
+        ClearViewportAnchorsForUserInput();
+        CaptureTopHistoryAnchor();
+        _topHistoryLoadLatched = true;
+        _ = _viewModel.RequestOlderFromTopInputAsync(
+            expectedConversationKey: ConversationKey,
+            expectedHistoryGeneration: _viewModel.CurrentHistoryGeneration);
+    }
+
+    private void CaptureTopHistoryAnchor()
+    {
+        if (_viewModel is null || MessageItems is not { Count: > 0 }) return;
+
+        // Capture before starting the asynchronous history request. Waiting for
+        // CollectionChanged is too late on WinUI: the virtualized list may already
+        // have adopted the newly inserted index zero before our handler runs.
+        // This path is entered only while the native ScrollViewer is aligned to
+        // the top, so index zero is authoritative. The last Scrolled callback can
+        // lag behind a fast wheel gesture and still describe the previous page.
+        const int anchorIndex = 0;
+
+        _pendingPrependAnchorId = MessageItems[anchorIndex].MessageId;
+        _pendingPrependAnchorConversationKey = _viewModel.CurrentConversationKey;
+        _pendingPrependAnchorGeneration = _viewModel.CurrentHistoryGeneration;
+        _pendingPrependAnchorOffset = TryGetItemViewportOffset(anchorIndex, out var offset)
+            ? offset
+            : 0d;
+        ClearStabilizedAnchor();
+    }
+
+    private void ResetTopHistoryLoadState()
+    {
+        _topHistoryLoadLatched = false;
+    }
 
     private void OnViewportKeyInput(object sender, KeyRoutedEventArgs eventArgs)
     {
@@ -652,6 +735,7 @@ public partial class MessageListView : ContentView
         }
         ClearPendingPrependAnchor();
         ClearStabilizedAnchor();
+        ResetTopHistoryLoadState();
         _firstVisibleMessageId = null;
         _firstVisibleViewportOffset = 0d;
         _viewportConversationKey = request.ConversationKey;

@@ -1313,7 +1313,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
     }
 
-    internal async Task ReportMessageViewportAsync(
+    internal Task ReportMessageViewportAsync(
         int firstVisibleItemIndex,
         int lastVisibleItemIndex,
         double verticalOffset,
@@ -1323,10 +1323,23 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         string? expectedConversationKey = null,
         long expectedHistoryGeneration = long.MinValue)
     {
-        if (!IsMessageViewportReportCurrent(expectedConversationKey, expectedHistoryGeneration)) return;
+        if (!IsMessageViewportReportCurrent(expectedConversationKey, expectedHistoryGeneration)) return Task.CompletedTask;
         _ = verticalOffset;
         UpdateMessageViewportBottomState(bottomDistanceDip, viewportHeightDip, lastVisibleItemIndex);
+        return Task.CompletedTask;
+    }
 
+    internal async Task RequestOlderFromTopInputAsync(
+        long? timestampMilliseconds = null,
+        string? expectedConversationKey = null,
+        long expectedHistoryGeneration = long.MinValue)
+    {
+        if (!IsMessageViewportReportCurrent(expectedConversationKey, expectedHistoryGeneration)) return;
+        await TryRequestOlderAsync(0, timestampMilliseconds);
+    }
+
+    private async Task TryRequestOlderAsync(int firstVisibleItemIndex, long? timestampMilliseconds)
+    {
         // Programmatic realization and the final native jump both raise viewport
         // callbacks. Starting pagination from those transient positions lets a
         // prepend-anchor restore compete with the authoritative latest request.

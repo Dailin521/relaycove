@@ -1,6 +1,6 @@
 # RelayCove 当前状态
 
-Updated: 2026-08-26
+Updated: 2026-08-27
 Branch: `main`
 Current baseline: `main`（精确提交以 Git 历史为准）
 Current release: [`v2.2.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.2.0)
@@ -40,6 +40,7 @@ Current release: [`v2.2.0`](https://github.com/Dailin521/relaycove/releases/tag/
 
 ## 未运行或不在个人 MVP 默认门禁
 
+- 历史消息滚动批次移除手动“加载更早消息”入口，改为触顶继续上滚时加载；连续跨两页真实副屏验证中，分页前锚点保持原屏幕位置，加载后滚轮继续向更早消息移动且不跳回。App 349/349 通过，独立 Debug 构建 0 warning/0 error，用户已确认可提交。
 - 当前 V2 发送批次定向验证为 Core 168/168、App 330/330，最终 App 独立 Debug 构建 0 warning/0 error；真实发送与动画由用户在 Visual Studio 验证。关闭到托盘与右键退出批次 App 335/335 通过，并由用户确认交互。会话缓存切换批次 App 342/342 通过，私聊无感切换与群聊无冗余滚动已由用户在 Visual Studio 确认。
 - 当前批次未运行 Fast、Full、Live、应用截图或 Agent 发起的 Realm 写入。
 - `Live` 仍只允许显式隔离凭据和真实写授权；普通开发及发布不得隐式运行。

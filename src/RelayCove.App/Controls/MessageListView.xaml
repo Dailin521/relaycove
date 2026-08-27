@@ -9,35 +9,8 @@
              x:DataType="viewModels:ShellViewModel"
              IsClippedToBounds="True"
              Background="{StaticResource SurfaceBrush}">
-    <Grid RowDefinitions="Auto,Auto,*">
-        <HorizontalStackLayout Grid.Row="0"
-                               Margin="18,8,18,0"
-                               Spacing="8"
-                               HorizontalOptions="Center"
-                               IsVisible="{Binding ShowLoadOlderButton}">
-            <Button Text="加载更早消息"
-                    Style="{StaticResource BaseButtonStyle}"
-                    HeightRequest="30"
-                    MinimumHeightRequest="30"
-                    FontSize="11"
-                    Command="{Binding LoadOlderCommand}"
-                    IsEnabled="{Binding HasSelectedConversation}"
-                    SemanticProperties.Description="加载更早的 50 条消息" />
-            <ActivityIndicator IsVisible="{Binding IsLoadingOlder}"
-                               IsRunning="{Binding IsLoadingOlder}"
-                               WidthRequest="22"
-                               SemanticProperties.Description="正在加载更早消息" />
-        </HorizontalStackLayout>
-
-        <Label Grid.Row="0"
-               Margin="18,10,18,0"
-               HorizontalOptions="Center"
-               Text="已到最早消息"
-               Style="{StaticResource MutedLabelStyle}"
-               IsVisible="{Binding HasReachedOldestMessage}"
-               SemanticProperties.Description="已经到达当前会话的最早消息" />
-
-        <Border Grid.Row="1"
+    <Grid RowDefinitions="Auto,*">
+        <Border Grid.Row="0"
                 Margin="18,6,18,0"
                 Padding="10,7"
                 IsVisible="{Binding HasMessageLoadError}"
@@ -55,7 +28,7 @@
         </Border>
 
         <CollectionView x:Name="MessageCollection"
-                        Grid.Row="2"
+                        Grid.Row="1"
                         Margin="0"
                         ItemsSource="{Binding MessageItems, Source={x:Reference Root}, x:DataType=controls:MessageListView}"
                         IsVisible="{Binding IsMessageCollectionVisible}"

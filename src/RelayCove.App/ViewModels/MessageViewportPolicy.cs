@@ -6,6 +6,7 @@ internal static class MessageViewportPolicy
     internal const int NearBottomItemThreshold = 2;
     internal const double NearBottomDistanceDip = 96d;
     internal const double BottomAlignmentToleranceDip = 2d;
+    internal const double TopAlignmentToleranceDip = 1d;
     internal const double JumpToLatestViewportMultiplier = 2d;
     internal const long AutomaticLoadDebounceMilliseconds = 350;
 
@@ -65,4 +66,9 @@ internal static class MessageViewportPolicy
         !hasError &&
         (lastRequestMilliseconds == long.MinValue ||
          nowMilliseconds - lastRequestMilliseconds >= AutomaticLoadDebounceMilliseconds);
+
+    internal static bool ShouldRequestOlderFromWheel(int wheelDelta, double verticalOffset) =>
+        wheelDelta > 0 &&
+        double.IsFinite(verticalOffset) &&
+        Math.Max(0d, verticalOffset) <= TopAlignmentToleranceDip;
 }
