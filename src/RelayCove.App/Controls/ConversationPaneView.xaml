@@ -67,9 +67,19 @@
                             Opacity="{Binding ItemOpacity}">
                         <Border.GestureRecognizers>
                             <TapGestureRecognizer Tapped="OnConversationTapped" CommandParameter="{Binding .}" />
+                            <PointerGestureRecognizer
+                                PointerEntered="OnConversationPointerEntered"
+                                PointerExited="OnConversationPointerExited" />
                         </Border.GestureRecognizers>
                         <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
                         <Border.Triggers>
+                            <MultiTrigger TargetType="Border">
+                                <MultiTrigger.Conditions>
+                                    <BindingCondition Binding="{Binding IsPointerOver}" Value="True" />
+                                    <BindingCondition Binding="{Binding IsSelected}" Value="False" />
+                                </MultiTrigger.Conditions>
+                                <Setter Property="Background" Value="{StaticResource SurfaceHoverBrush}" />
+                            </MultiTrigger>
                             <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
                                 <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
                             </DataTrigger>

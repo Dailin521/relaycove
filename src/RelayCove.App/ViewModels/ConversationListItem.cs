@@ -14,6 +14,7 @@ public sealed class ConversationListItem : ObservableObject
     private string? _timestamp;
     private DateTimeOffset? _latestMessageTimestamp;
     private bool _isSelected;
+    private bool _isPointerOver;
     private bool _isMuted;
     private bool _isPinned;
     private long? _searchTargetMessageId;
@@ -103,6 +104,12 @@ public sealed class ConversationListItem : ObservableObject
     {
         get => _isSelected;
         internal set => SetProperty(ref _isSelected, value);
+    }
+
+    public bool IsPointerOver
+    {
+        get => _isPointerOver;
+        internal set => SetProperty(ref _isPointerOver, value);
     }
 
     public bool HasUnread => UnreadCount > 0;

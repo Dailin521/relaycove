@@ -3,7 +3,7 @@
 Updated: 2026-08-27
 Branch: `main`
 Current baseline: `main`（精确提交以 Git 历史为准）
-Current release: [`v2.3.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.3.0)
+Current release: [`v2.3.1`](https://github.com/Dailin521/relaycove/releases/tag/v2.3.1)
 
 ## 产品状态
 
@@ -11,6 +11,7 @@ Current release: [`v2.3.0`](https://github.com/Dailin521/relaycove/releases/tag/
 - 产品使用统一的一对一/self-DM/私有空话题群聊会话列表。
 - Stage 31–36 已随 `v2.1.0` 发布；Stage 37 当前会话实时追加和 Stage 38 官方 presence/个人状态已随 `v2.2.0` 发布。
 - `v2.3.0` 收录后续 V2 优化、可靠文件传输、下载中心、登录起始页与当前 Realm 官方注册入口；用户已经通过 Visual Studio/实际工程确认当前 UI 与交互。
+- `v2.3.1` 将产品显示名称统一为 RichChat，并补齐左侧会话行的鼠标悬浮态；选中态保持优先且不会被悬浮态覆盖。
 - 唯一活动计划是 `tasks/2026-08-25-v2-optimization-plan.md`；后续仍一次只处理一个明确问题。
 
 ## 最近验证证据
@@ -27,6 +28,8 @@ Current release: [`v2.3.0`](https://github.com/Dailin521/relaycove/releases/tag/
 这些完整门禁结果只属于 `v2.2.0` 候选。`v2.3.0` 按用户授权采用个人 MVP 快速发布：只运行受影响 App 定向测试、Release 自包含发布、必要文件检查、秘密扫描和 ZIP 校验，不运行 Fast、Full、Live、Web、VM、安装器或真实 Realm 写入。
 
 `v2.3.0` 当前 Release 定向构建通过，App 相关回归 8/8 通过；仅有 7 个既有 XamlC binding-performance warning，无编译错误。用户已通过 Visual Studio/实际工程确认界面与交互。
+
+`v2.3.1` 按相同的个人 MVP 快速发布边界执行：会话悬浮态 Release 定向测试 1/1 通过，编译仅有 7 个既有 XamlC binding-performance warning；继续执行自包含发布、必要文件检查、秘密扫描和 ZIP 校验，不运行 Fast、Full、Live、Web、VM、安装器或真实 Realm 写入。
 
 ## 当前能力摘要
 

@@ -56,6 +56,32 @@ public sealed class ConversationPaneViewTests
             .Single(element => element.Name.LocalName == "Label" && element.Attribute("Text")?.Value == "消息");
         Assert.Equal("{Binding IsSearchMessageMatch}", messageMatchLabel.Attribute("IsVisible")?.Value);
         Assert.Equal("{StaticResource MutedLabelStyle}", messageMatchLabel.Attribute("Style")?.Value);
+
+        var conversationRow = conversationList.Descendants()
+            .First(element => element.Name.LocalName == "Border" &&
+                              element.Attribute("Opacity")?.Value == "{Binding ItemOpacity}");
+        var hoverTrigger = conversationRow.Descendants()
+            .Single(element => element.Name.LocalName == "MultiTrigger");
+        var hoverConditions = hoverTrigger.Descendants()
+            .Where(element => element.Name.LocalName == "BindingCondition")
+            .ToArray();
+        Assert.Contains(hoverConditions, condition =>
+            condition.Attribute("Binding")?.Value == "{Binding IsPointerOver}" && condition.Attribute("Value")?.Value == "True");
+        Assert.Contains(hoverConditions, condition =>
+            condition.Attribute("Binding")?.Value == "{Binding IsSelected}" && condition.Attribute("Value")?.Value == "False");
+        Assert.Equal("{StaticResource SurfaceHoverBrush}", hoverTrigger.Descendants()
+            .Single(element => element.Name.LocalName == "Setter" && element.Attribute("Property")?.Value == "Background")
+            .Attribute("Value")?.Value);
+        var selectedTrigger = conversationRow.Descendants()
+            .Single(element => element.Name.LocalName == "DataTrigger" &&
+                               element.Attribute("Binding")?.Value == "{Binding IsSelected}");
+        Assert.Equal("{StaticResource SurfaceSelectedBrush}", selectedTrigger.Descendants()
+            .Single(element => element.Name.LocalName == "Setter" && element.Attribute("Property")?.Value == "Background")
+            .Attribute("Value")?.Value);
+        var pointerGesture = conversationRow.Descendants()
+            .Single(element => element.Name.LocalName == "PointerGestureRecognizer");
+        Assert.Equal("OnConversationPointerEntered", pointerGesture.Attribute("PointerEntered")?.Value);
+        Assert.Equal("OnConversationPointerExited", pointerGesture.Attribute("PointerExited")?.Value);
     }
 
     private static string FindWorkspaceFile(params string[] parts)

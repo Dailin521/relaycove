@@ -2,7 +2,7 @@
 
 RichChat 是一个直接连接 Zulip Realm 的 Windows 原生 .NET MAUI 客户端。Zulip 是账号、权限、成员、消息和实时事件的唯一事实源；项目不包含自研聊天服务端、代理、BFF 或第二消息后端。
 
-当前正式版本为 [`2.3.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.3.0)，目标平台为 Windows 11 x64，使用 .NET SDK `10.0.400`、MAUI `10.0.20` 和 `win-x64`。`RelayCove.Web` 只保留为历史源码，不再参与产品开发或 Windows 发布。
+当前正式版本为 [`2.3.1`](https://github.com/Dailin521/relaycove/releases/tag/v2.3.1)，目标平台为 Windows 11 x64，使用 .NET SDK `10.0.400`、MAUI `10.0.20` 和 `win-x64`。`RelayCove.Web` 只保留为历史源码，不再参与产品开发或 Windows 发布。
 
 ## 下载
 

@@ -48,6 +48,18 @@ public partial class ConversationPaneView : ContentView
             viewModel.ActivateConversation(conversation);
     }
 
+    private static void OnConversationPointerEntered(object? sender, PointerEventArgs eventArgs)
+    {
+        if (sender is BindableObject { BindingContext: ConversationListItem conversation })
+            conversation.IsPointerOver = true;
+    }
+
+    private static void OnConversationPointerExited(object? sender, PointerEventArgs eventArgs)
+    {
+        if (sender is BindableObject { BindingContext: ConversationListItem conversation })
+            conversation.IsPointerOver = false;
+    }
+
     public void FocusConversationFilter() => ConversationFilterEntry.Focus();
 
     public void FocusChannelMenuButton() => NewConversationButton.Focus();
