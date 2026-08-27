@@ -41,6 +41,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<IRealmMediaService, RealmMediaService>();
         builder.Services.AddSingleton<INotificationAvatarFileStore, NotificationAvatarFileStore>();
         builder.Services.AddSingleton<IFileSaveService, WindowsFileSaveService>();
+        builder.Services.AddSingleton<IDownloadHistoryStore, MauiDownloadHistoryStore>();
         builder.Services.AddSingleton<IWindowShellAdapter, WindowsWindowShellAdapter>();
         builder.Services.AddSingleton<IAppNotificationService, WindowsAppNotificationService>();
         builder.Services.AddSingleton<IAccountStore>(_ => new SqliteAccountStore(FileSystem.AppDataDirectory));

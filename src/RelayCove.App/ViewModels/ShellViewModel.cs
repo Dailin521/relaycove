@@ -24,6 +24,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private const double MaximumComposerHeight = 300d;
     private const int MessageItemConversationCacheLimit = 12;
     private const int MessagePresentationCacheLimit = 6;
+    private const int RecentDownloadLimit = 20;
 
     private readonly IClientSession _session;
     private readonly ILastRealmStore _lastRealmStore;
@@ -38,6 +39,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private readonly IFileSelectionService _fileSelectionService;
     private readonly IRealmMediaService _realmMediaService;
     private readonly IFileSaveService _fileSaveService;
+    private readonly IDownloadHistoryStore _downloadHistoryStore;
     private readonly IConversationPreferencesStore _conversationPreferencesStore;
     private readonly Dictionary<string, string> _drafts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<AttachmentDraftItem>> _attachmentDrafts = new(StringComparer.Ordinal);
@@ -91,6 +93,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private long? _conversationFilterBeforeMessageId;
     private long? _savedBeforeMessageId;
     private CancellationTokenSource? _savedLoadCancellation;
+    private CancellationTokenSource? _mediaStatusClearCancellation;
+    private MessageAttachmentItem? _failedMediaDownloadAttachment;
+    private AccountId? _downloadHistoryAccountId;
     private long _savedLoadGeneration;
     private AccountId? _savedAccountId;
     private AccountId? _messageItemCacheAccountId;
@@ -146,7 +151,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         INotificationPreferencesService? notificationPreferencesService = null,
         IAppNotificationService? appNotificationService = null,
         IWindowShellAdapter? windowShellAdapter = null,
-        INotificationAvatarFileStore? notificationAvatarFileStore = null)
+        INotificationAvatarFileStore? notificationAvatarFileStore = null,
+        IDownloadHistoryStore? downloadHistoryStore = null)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
         _lastRealmStore = lastRealmStore ?? throw new ArgumentNullException(nameof(lastRealmStore));
@@ -157,12 +163,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _fileSelectionService = fileSelectionService ?? throw new ArgumentNullException(nameof(fileSelectionService));
         _realmMediaService = realmMediaService ?? throw new ArgumentNullException(nameof(realmMediaService));
         _fileSaveService = fileSaveService ?? throw new ArgumentNullException(nameof(fileSaveService));
+        _downloadHistoryStore = downloadHistoryStore ?? new InMemoryDownloadHistoryStore();
         _conversationPreferencesStore = conversationPreferencesStore ?? new InMemoryConversationPreferencesStore();
         _notificationPreferencesService = notificationPreferencesService ?? new InMemoryNotificationPreferencesService();
         _appNotificationService = appNotificationService ?? new NullAppNotificationService();
         _windowShellAdapter = windowShellAdapter;
         _notificationAvatarFileStore = notificationAvatarFileStore;
         Realm = _lastRealmStore.Get();
+        AskWhereToSaveDownloads = _fileSaveService.AskWhereToSave;
         AppearanceMode = _appearanceService.Current;
         ApplyUiPreferences(_uiPreferencesService.Current);
         ApplyNotificationPreferences(_notificationPreferencesService.Current);
@@ -194,6 +202,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public ObservableCollection<SavedMessageItem> SavedMessages { get; } = [];
     public ObservableCollection<AvailableChannelItem> AvailableChannels { get; } = [];
     public ObservableCollection<AttachmentDraftItem> Attachments { get; } = [];
+    public ObservableCollection<DownloadHistoryItem> RecentDownloads { get; } = [];
     public ObservableCollection<ConversationContactChoice> NewConversationChoices { get; } = [];
     public ObservableCollection<ConversationSettingsMemberItem> DetailsMembers { get; } = [];
     public ObservableCollection<ConversationSettingsMemberItem> GroupInviteCandidates { get; } = [];
@@ -456,6 +465,33 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial string? MediaActionStatus { get; set; }
+
+    [ObservableProperty]
+    public partial string? MediaDownloadFileName { get; set; }
+
+    [ObservableProperty]
+    public partial double MediaDownloadProgress { get; set; }
+
+    [ObservableProperty]
+    public partial bool HasKnownMediaDownloadLength { get; set; }
+
+    [ObservableProperty]
+    public partial string? MediaDownloadProgressText { get; set; }
+
+    [ObservableProperty]
+    public partial bool AskWhereToSaveDownloads { get; set; }
+
+    [ObservableProperty]
+    public partial string? DownloadSettingsStatus { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsDownloadCenterOpen { get; set; }
+
+    [ObservableProperty]
+    public partial bool HasUnseenCompletedDownloads { get; set; }
+
+    [ObservableProperty]
+    public partial string? DownloadCenterStatus { get; set; }
 
     [ObservableProperty]
     public partial bool IsConversationLoading { get; set; }
@@ -735,12 +771,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IsMessagesSection && (!IsNarrowLayout || !IsConversationListVisibleOnNarrow);
     public bool IsInlineDetailsVisible => IsMessagesSection && IsWideLayout && IsDetailsOpen;
     public bool IsOverlayDetailsVisible => IsMessagesSection && !IsWideLayout && IsDetailsOpen;
-    public bool IsModalOverlayVisible => IsOverlayDetailsVisible || IsSearchOpen || IsMessageMenuOpen || IsChannelMenuOpen || IsTopicMenuOpen || IsAccountMenuOpen ||
+    public bool IsModalOverlayVisible => IsOverlayDetailsVisible || IsSearchOpen || IsMessageMenuOpen || IsChannelMenuOpen || IsTopicMenuOpen || IsAccountMenuOpen || IsDownloadCenterOpen ||
         IsComposerEmojiPickerOpen || IsReactionPickerOpen || IsEditDialogOpen ||
         IsDeleteConfirmationOpen || IsChannelUnsubscribeConfirmationOpen || IsImageViewerOpen ||
         IsNewConversationOpen || IsChannelBrowserOpen || ChannelSettings.IsOpen || IsTopicMoveDialogOpen || IsTopicDeleteConfirmationOpen || IsTopicResolutionConfirmationOpen || LogoutConfirmationVisible;
     public bool IsPrimaryShellEnabled => !IsModalOverlayVisible || IsMessageMenuOpen || IsChannelMenuOpen ||
-        IsTopicMenuOpen && !IsTopicMoveDialogOpen && !IsTopicDeleteConfirmationOpen && !IsTopicResolutionConfirmationOpen || IsAccountMenuOpen ||
+        IsTopicMenuOpen && !IsTopicMoveDialogOpen && !IsTopicDeleteConfirmationOpen && !IsTopicResolutionConfirmationOpen || IsAccountMenuOpen || IsDownloadCenterOpen ||
         IsComposerEmojiPickerOpen || IsReactionPickerOpen;
     public bool CanCompose =>
         IsConversationContentVisible &&
@@ -755,6 +791,25 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool HasAttachmentError => !string.IsNullOrWhiteSpace(AttachmentError);
     public bool HasActiveMessageAttachment => ActiveMessageAttachment?.IsImage == true;
     public bool HasMediaActionStatus => !string.IsNullOrWhiteSpace(MediaActionStatus);
+    public bool IsMediaDownloadStatusVisible => IsMediaActionBusy || HasMediaActionStatus;
+    public bool IsMediaDownloadIndeterminate => IsMediaActionBusy && !HasKnownMediaDownloadLength;
+    public bool CanStartMediaDownload => !IsMediaActionBusy;
+    public bool CanRetryMediaDownload => !IsMediaActionBusy && _failedMediaDownloadAttachment is not null;
+    public bool ShowDownloadCenterCurrentTask => IsMediaActionBusy || CanRetryMediaDownload;
+    public bool HasRecentDownloads => RecentDownloads.Count > 0;
+    public bool IsDownloadCenterEmpty => !ShowDownloadCenterCurrentTask && !HasRecentDownloads;
+    public bool HasDownloadButtonAttention => IsMediaActionBusy || HasUnseenCompletedDownloads || CanRetryMediaDownload;
+    public bool HasDownloadFailure => CanRetryMediaDownload;
+    public bool HasDownloadCenterStatus => !string.IsNullOrWhiteSpace(DownloadCenterStatus);
+    public string DownloadButtonDescription => IsMediaActionBusy
+        ? $"正在下载 {MediaDownloadProgress:P0}"
+        : CanRetryMediaDownload
+            ? "下载失败，打开下载内容"
+            : HasUnseenCompletedDownloads
+                ? "下载已完成，打开下载内容"
+                : "打开下载内容";
+    public string DownloadFolderPath => _fileSaveService.DownloadFolderPath;
+    public bool HasDownloadSettingsStatus => !string.IsNullOrWhiteSpace(DownloadSettingsStatus);
     public bool HasMessageLoadError => !string.IsNullOrWhiteSpace(MessageLoadError);
     public bool HasTopicActionStatus => !string.IsNullOrWhiteSpace(TopicActionStatus);
     public bool ActiveTopicHasMessages => ActiveTopicAction?.MaxMessageId is > 0;
@@ -1500,18 +1555,22 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 {
                     throw new InvalidOperationException("An attachment upload must be explicitly retried.");
                 }
-                attachment.Status = AttachmentUploadStatus.Uploading;
+                attachment.BeginUpload();
                 OnPropertyChanged(nameof(CanSend));
                 try
                 {
                     await using var stream = await attachment.File.OpenReadAsync(cancellationToken);
+                    var progress = new InlineProgress<RealmMediaTransferProgress>(value =>
+                        _dispatcher.Dispatch(() => attachment.ReportUploadProgress(value)));
                     attachment.Uploaded = await _session.UploadAttachmentAsync(
                         new AttachmentUpload(
                             attachment.FileName,
                             attachment.File.ContentType,
                             attachment.Length,
-                            stream),
+                            stream,
+                            progress),
                         cancellationToken);
+                    attachment.ReportUploadProgress(new RealmMediaTransferProgress(attachment.Length, attachment.Length));
                     attachment.Status = AttachmentUploadStatus.Uploaded;
                 }
                 catch (GatewayException exception)
@@ -1567,7 +1626,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 Reconcile(Attachments, [], item => item.Id);
                 NotifyAttachmentProperties();
             }
-        });
+        }, suppressGatewayFailureWhenAttachmentError: true);
 
         if (!succeeded && !messageSendStarted)
         {
@@ -1694,6 +1753,20 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     private void CloseAccountMenu() => IsAccountMenuOpen = false;
+
+    [RelayCommand]
+    private void ToggleDownloadCenter()
+    {
+        var open = !IsDownloadCenterOpen;
+        CloseTransientOverlays();
+        IsDownloadCenterOpen = open;
+        if (!open) return;
+        HasUnseenCompletedDownloads = false;
+        RefreshDownloadAvailability();
+    }
+
+    [RelayCommand]
+    private void CloseDownloadCenter() => IsDownloadCenterOpen = false;
 
     [RelayCommand(AllowConcurrentExecutions = false)]
     private Task SetOwnPresenceOnlineAsync() => SetOwnPresenceCoreAsync(UserPresenceStatus.Active);
@@ -2201,7 +2274,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         if (attachment?.IsImage != true) return;
         CloseTransientOverlays();
-        MediaActionStatus = null;
+        if (!IsMediaActionBusy) MediaActionStatus = null;
         ActiveImageAttachment = attachment;
         IsImageViewerOpen = true;
     }
@@ -2211,7 +2284,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         IsImageViewerOpen = false;
         ActiveImageAttachment = null;
-        MediaActionStatus = null;
+        if (!IsMediaActionBusy) MediaActionStatus = null;
         MessageActionFocusRequest++;
     }
 
@@ -2222,29 +2295,192 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         if (attachment is null || IsMediaActionBusy) return;
         if (IsMessageMenuOpen && Equals(attachment, ActiveMessageAttachment)) CloseMessageMenu();
+        if (IsImageViewerOpen && Equals(attachment, ActiveImageAttachment)) CloseImageViewer();
+        var downloadAccountId = _session.AccountId;
+        long downloadedLength = 0;
+        CancelMediaStatusClear();
+        SetFailedMediaDownload(null);
+        MediaDownloadFileName = attachment.Name;
+        MediaDownloadProgress = 0;
+        HasKnownMediaDownloadLength = false;
+        MediaDownloadProgressText = null;
         IsMediaActionBusy = true;
-        MediaActionStatus = $"正在下载 {attachment.Name}…";
+        MediaActionStatus = AskWhereToSaveDownloads ? "请选择保存位置…" : "准备下载…";
         try
         {
-            var result = await _realmMediaService.GetFileAsync(attachment.SourceUrl, cancellationToken);
-            var saved = await _fileSaveService.SaveAsync(attachment.Name, result.Content, cancellationToken);
-            MediaActionStatus = saved ? $"已保存 {attachment.Name}。" : "已取消保存。";
+            var progress = new InlineProgress<RealmMediaTransferProgress>(value =>
+                _dispatcher.Dispatch(() => UpdateMediaDownloadProgress(value)));
+            var saved = await _fileSaveService.SaveDownloadAsync(
+                attachment.Name,
+                async (destination, token) =>
+                {
+                    MediaActionStatus = "正在下载…";
+                    var result = await _realmMediaService.DownloadFileAsync(
+                        attachment.SourceUrl,
+                        destination,
+                        progress,
+                        token);
+                    downloadedLength = result.Length;
+                },
+                cancellationToken);
+            MediaDownloadProgress = saved.Saved ? 1d : 0d;
+            MediaActionStatus = saved.Saved ? $"已保存 {attachment.Name}" : "已取消保存";
+            if (saved.Saved && saved.FilePath is { Length: > 0 } filePath && downloadAccountId is { } accountId)
+            {
+                RecordCompletedDownload(
+                    accountId,
+                    new DownloadHistoryEntry(
+                        Guid.NewGuid(),
+                        attachment.Name,
+                        filePath,
+                        downloadedLength,
+                        DateTimeOffset.Now));
+            }
+            ScheduleMediaStatusClear();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            MediaActionStatus = "下载已取消。";
+            MediaActionStatus = "下载已取消";
+            ScheduleMediaStatusClear();
         }
         catch (GatewayException)
         {
-            MediaActionStatus = "无法安全下载附件；请检查连接、权限或文件限制。";
+            SetFailedMediaDownload(attachment);
+            MediaActionStatus = "下载失败；请检查连接、权限或文件限制";
+        }
+        catch (DirectoryNotFoundException)
+        {
+            SetFailedMediaDownload(attachment);
+            MediaActionStatus = "下载位置不可用，请在设置中重新选择";
         }
         catch
         {
-            MediaActionStatus = "无法保存附件；未泄露远端错误正文。";
+            SetFailedMediaDownload(attachment);
+            MediaActionStatus = "无法保存附件；可重新下载";
         }
         finally
         {
             IsMediaActionBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private void RetryMediaDownload()
+    {
+        if (_failedMediaDownloadAttachment is { } attachment)
+            DownloadAttachmentCommand.Execute(attachment);
+    }
+
+    [RelayCommand]
+    private void DismissFailedMediaDownload()
+    {
+        if (IsMediaActionBusy || _failedMediaDownloadAttachment is null) return;
+        SetFailedMediaDownload(null);
+        MediaActionStatus = null;
+        MediaDownloadFileName = null;
+        MediaDownloadProgress = 0;
+        MediaDownloadProgressText = null;
+        HasKnownMediaDownloadLength = false;
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task OpenRecentDownloadAsync(DownloadHistoryItem? item)
+    {
+        if (item is null) return;
+        DownloadCenterStatus = null;
+        try
+        {
+            await _fileSaveService.OpenDownloadedFileAsync(item.FilePath, _lifetimeCancellation.Token);
+            IsDownloadCenterOpen = false;
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (FileNotFoundException)
+        {
+            item.IsMissing = true;
+        }
+        catch
+        {
+            DownloadCenterStatus = "无法打开该文件";
+        }
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ShowRecentDownloadInFolderAsync(DownloadHistoryItem? item)
+    {
+        if (item is null) return;
+        DownloadCenterStatus = null;
+        try
+        {
+            await _fileSaveService.ShowDownloadedFileInFolderAsync(item.FilePath, _lifetimeCancellation.Token);
+            IsDownloadCenterOpen = false;
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch (FileNotFoundException)
+        {
+            item.IsMissing = true;
+        }
+        catch
+        {
+            DownloadCenterStatus = "无法定位该文件";
+        }
+    }
+
+    [RelayCommand]
+    private void RemoveRecentDownload(DownloadHistoryItem? item)
+    {
+        if (item is null || !RecentDownloads.Remove(item)) return;
+        PersistCurrentDownloadHistory();
+        NotifyDownloadHistoryProperties();
+    }
+
+    [RelayCommand]
+    private void ClearDownloadHistory()
+    {
+        RecentDownloads.Clear();
+        PersistCurrentDownloadHistory();
+        DownloadCenterStatus = null;
+        NotifyDownloadHistoryProperties();
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task ChangeDownloadFolderAsync()
+    {
+        DownloadSettingsStatus = null;
+        try
+        {
+            if (await _fileSaveService.ChooseDownloadFolderAsync(_lifetimeCancellation.Token))
+            {
+                OnPropertyChanged(nameof(DownloadFolderPath));
+                DownloadSettingsStatus = "下载位置已更新。";
+            }
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch
+        {
+            DownloadSettingsStatus = "无法更改下载位置。";
+        }
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task OpenDownloadFolderAsync()
+    {
+        DownloadSettingsStatus = null;
+        try
+        {
+            await _fileSaveService.OpenDownloadFolderAsync(_lifetimeCancellation.Token);
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
+        {
+        }
+        catch
+        {
+            DownloadSettingsStatus = "下载位置不可用，请重新选择。";
         }
     }
 
@@ -3563,6 +3799,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ChannelSettings.Close();
         IsSearchOpen = false;
         IsAccountMenuOpen = false;
+        IsDownloadCenterOpen = false;
         IsFileDragActive = false;
         IsComposerEmojiPickerOpen = false;
         IsReactionPickerOpen = false;
@@ -3582,7 +3819,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IsNewConversationOpen = false;
         IsChannelBrowserOpen = false;
         ActiveImageAttachment = null;
-        MediaActionStatus = null;
         ActiveMessageAction = null;
         ActiveMessageAttachment = null;
     }
@@ -3689,8 +3925,46 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ComposerPlaceholder));
     partial void OnAttachmentErrorChanged(string? value) =>
         OnPropertyChanged(nameof(HasAttachmentError));
-    partial void OnMediaActionStatusChanged(string? value) =>
+    partial void OnMediaActionStatusChanged(string? value)
+    {
         OnPropertyChanged(nameof(HasMediaActionStatus));
+        OnPropertyChanged(nameof(IsMediaDownloadStatusVisible));
+    }
+
+    partial void OnIsMediaActionBusyChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsMediaDownloadStatusVisible));
+        OnPropertyChanged(nameof(IsMediaDownloadIndeterminate));
+        OnPropertyChanged(nameof(CanStartMediaDownload));
+        OnPropertyChanged(nameof(CanRetryMediaDownload));
+        OnPropertyChanged(nameof(ShowDownloadCenterCurrentTask));
+        OnPropertyChanged(nameof(IsDownloadCenterEmpty));
+        OnPropertyChanged(nameof(HasDownloadButtonAttention));
+        OnPropertyChanged(nameof(DownloadButtonDescription));
+    }
+
+    partial void OnMediaDownloadProgressChanged(double value) =>
+        OnPropertyChanged(nameof(DownloadButtonDescription));
+
+    partial void OnHasKnownMediaDownloadLengthChanged(bool value) =>
+        OnPropertyChanged(nameof(IsMediaDownloadIndeterminate));
+
+    partial void OnAskWhereToSaveDownloadsChanged(bool value) =>
+        _fileSaveService.AskWhereToSave = value;
+
+    partial void OnDownloadSettingsStatusChanged(string? value) =>
+        OnPropertyChanged(nameof(HasDownloadSettingsStatus));
+
+    partial void OnDownloadCenterStatusChanged(string? value) =>
+        OnPropertyChanged(nameof(HasDownloadCenterStatus));
+
+    partial void OnIsDownloadCenterOpenChanged(bool value) => NotifyOverlayProperties();
+
+    partial void OnHasUnseenCompletedDownloadsChanged(bool value)
+    {
+        OnPropertyChanged(nameof(HasDownloadButtonAttention));
+        OnPropertyChanged(nameof(DownloadButtonDescription));
+    }
     partial void OnMessageLoadErrorChanged(string? value)
     {
         OnPropertyChanged(nameof(HasMessageLoadError));
@@ -4372,7 +4646,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _retainedActivationLatestMessageId = 0;
     }
 
-    private async Task<bool> ExecuteSessionActionAsync(Func<Task> action, string? failureMessage = null)
+    private async Task<bool> ExecuteSessionActionAsync(
+        Func<Task> action,
+        string? failureMessage = null,
+        bool suppressGatewayFailureWhenAttachmentError = false)
     {
         var wasCanceled = false;
         LoginError = null;
@@ -4387,7 +4664,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
         catch (GatewayException exception)
         {
-            LoginError = DescribeGatewayFailure(exception);
+            if (!suppressGatewayFailureWhenAttachmentError || !HasAttachmentError)
+                LoginError = DescribeGatewayFailure(exception);
         }
         catch (OperationCanceledException)
         {
@@ -4596,6 +4874,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(HasSavedMessages));
             OnPropertyChanged(nameof(HasMoreSavedMessages));
             OnPropertyChanged(nameof(IsSavedEmpty));
+        }
+        if (_downloadHistoryAccountId != _session.AccountId)
+        {
+            _downloadHistoryAccountId = _session.AccountId;
+            LoadDownloadHistory(_downloadHistoryAccountId);
         }
         if (SavedMessages.Count > 0)
         {
@@ -6811,6 +7094,152 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanSend));
     }
 
+    private void UpdateMediaDownloadProgress(RealmMediaTransferProgress progress)
+    {
+        var transferred = Math.Max(0, progress.BytesTransferred);
+        var total = progress.TotalBytes is > 0 ? progress.TotalBytes : null;
+        HasKnownMediaDownloadLength = total is not null;
+        MediaDownloadProgress = total is { } length
+            ? Math.Clamp(transferred / (double)length, 0d, 1d)
+            : 0d;
+        MediaDownloadProgressText = total is { } knownLength
+            ? $"{MediaDownloadProgress:P0} · {AttachmentDraftItem.FormatBytes(transferred)} / {AttachmentDraftItem.FormatBytes(knownLength)}"
+            : $"已下载 {AttachmentDraftItem.FormatBytes(transferred)}";
+    }
+
+    private void RecordCompletedDownload(AccountId accountId, DownloadHistoryEntry entry)
+    {
+        try
+        {
+            var persisted = _downloadHistoryStore.Load(accountId)
+                .Where(existing => existing.Id != entry.Id)
+                .Prepend(entry)
+                .Take(RecentDownloadLimit)
+                .ToArray();
+            _downloadHistoryStore.Save(accountId, persisted);
+        }
+        catch
+        {
+        }
+
+        if (_session.AccountId != accountId || _downloadHistoryAccountId != accountId) return;
+        var existingItem = RecentDownloads.FirstOrDefault(item => item.Id == entry.Id);
+        if (existingItem is not null) RecentDownloads.Remove(existingItem);
+        RecentDownloads.Insert(0, new DownloadHistoryItem(entry, !DownloadedFileExists(entry.FilePath)));
+        while (RecentDownloads.Count > RecentDownloadLimit) RecentDownloads.RemoveAt(RecentDownloads.Count - 1);
+        if (!IsDownloadCenterOpen) HasUnseenCompletedDownloads = true;
+        NotifyDownloadHistoryProperties();
+    }
+
+    private void LoadDownloadHistory(AccountId? accountId)
+    {
+        RecentDownloads.Clear();
+        HasUnseenCompletedDownloads = false;
+        DownloadCenterStatus = null;
+        if (accountId is { } current)
+        {
+            try
+            {
+                foreach (var entry in _downloadHistoryStore.Load(current).Take(RecentDownloadLimit))
+                {
+                    RecentDownloads.Add(new DownloadHistoryItem(entry, !DownloadedFileExists(entry.FilePath)));
+                }
+            }
+            catch
+            {
+                DownloadCenterStatus = "无法读取本机下载记录";
+            }
+        }
+        NotifyDownloadHistoryProperties();
+    }
+
+    private void RefreshDownloadAvailability()
+    {
+        foreach (var item in RecentDownloads)
+        {
+            item.IsMissing = !DownloadedFileExists(item.FilePath);
+        }
+    }
+
+    private bool DownloadedFileExists(string path)
+    {
+        try
+        {
+            return _fileSaveService.DownloadedFileExists(path);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void PersistCurrentDownloadHistory()
+    {
+        if (_downloadHistoryAccountId is not { } accountId || _session.AccountId != accountId) return;
+        try
+        {
+            _downloadHistoryStore.Save(accountId, RecentDownloads.Select(item => item.Entry).ToArray());
+        }
+        catch
+        {
+            DownloadCenterStatus = "无法更新本机下载记录";
+        }
+    }
+
+    private void NotifyDownloadHistoryProperties()
+    {
+        OnPropertyChanged(nameof(HasRecentDownloads));
+        OnPropertyChanged(nameof(IsDownloadCenterEmpty));
+    }
+
+    private void SetFailedMediaDownload(MessageAttachmentItem? attachment)
+    {
+        if (Equals(_failedMediaDownloadAttachment, attachment)) return;
+        _failedMediaDownloadAttachment = attachment;
+        OnPropertyChanged(nameof(CanRetryMediaDownload));
+        OnPropertyChanged(nameof(ShowDownloadCenterCurrentTask));
+        OnPropertyChanged(nameof(IsDownloadCenterEmpty));
+        OnPropertyChanged(nameof(HasDownloadButtonAttention));
+        OnPropertyChanged(nameof(HasDownloadFailure));
+        OnPropertyChanged(nameof(DownloadButtonDescription));
+    }
+
+    private void CancelMediaStatusClear()
+    {
+        var cancellation = Interlocked.Exchange(ref _mediaStatusClearCancellation, null);
+        if (cancellation is null) return;
+        cancellation.Cancel();
+        cancellation.Dispose();
+    }
+
+    private void ScheduleMediaStatusClear()
+    {
+        CancelMediaStatusClear();
+        var cancellation = new CancellationTokenSource();
+        _mediaStatusClearCancellation = cancellation;
+        _ = ClearMediaStatusAfterDelayAsync(cancellation);
+    }
+
+    private async Task ClearMediaStatusAfterDelayAsync(CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellation.Token);
+            _dispatcher.Dispatch(() =>
+            {
+                if (!ReferenceEquals(_mediaStatusClearCancellation, cancellation)) return;
+                _mediaStatusClearCancellation = null;
+                MediaActionStatus = null;
+                MediaDownloadFileName = null;
+                MediaDownloadProgressText = null;
+                cancellation.Dispose();
+            });
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+    }
+
     private static void Reconcile<T, TKey>(
         ObservableCollection<T> target,
         IEnumerable<T> items,
@@ -7397,6 +7826,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         cancellation.Dispose();
     }
 
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
@@ -7412,6 +7846,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         CancelDetailsLoad();
         CancelSearchInput();
         CancelConversationFilterSearch();
+        CancelMediaStatusClear();
         ClearNewConversationChoices();
         ChannelSettings.PropertyChanged -= OnChannelSettingsPropertyChanged;
         ChannelSettings.Dispose();

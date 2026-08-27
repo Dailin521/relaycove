@@ -1539,18 +1539,30 @@ public sealed class ClientSessionTests
     {
         var gateway = new FakeGateway
         {
-            RegisterHandler = (_, _) => Task.FromResult(Register(maxFileUploadSizeMiB: 1))
+            RegisterHandler = (_, _) => Task.FromResult(Register(maxFileUploadSizeMiB: 1)),
+            UploadAttachmentHandler = (request, _) =>
+            {
+                request.Upload.Progress?.Report(new RealmMediaTransferProgress(request.Upload.Length, request.Upload.Length));
+                return Task.FromResult(new UploadedAttachment(request.Upload.FileName, "https://zulip.example/user_uploads/note.txt"));
+            }
         };
         await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
         await using var acceptedStream = new MemoryStream([1, 2, 3]);
+        var reports = new List<RealmMediaTransferProgress>();
 
         var uploaded = await session.UploadAttachmentAsync(
-            new AttachmentUpload("note.txt", "text/plain", 3, acceptedStream));
+            new AttachmentUpload(
+                "note.txt",
+                "text/plain",
+                3,
+                acceptedStream,
+                new InlineProgress<RealmMediaTransferProgress>(reports.Add)));
 
         Assert.Equal(1024 * 1024, session.MaxFileUploadBytes);
         Assert.Equal(1, gateway.UploadCalls);
         Assert.Equal("note.txt", uploaded.FileName);
+        Assert.Equal(new RealmMediaTransferProgress(3, 3), Assert.Single(reports));
         await using var tooLarge = new MemoryStream(new byte[1]);
         await Assert.ThrowsAsync<ArgumentException>(() => session.UploadAttachmentAsync(
             new AttachmentUpload("large.bin", null, 1024 * 1024 + 1L, tooLarge)));
@@ -1628,6 +1640,40 @@ public sealed class ClientSessionTests
 
         Assert.Single(gateway.PreferenceRequests);
         Assert.True(session.State.Subscriptions[7].IsPinned);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task DownloadRealmMediaAsync_WhenLoggedIn_StreamsThroughGatewayWithRegisterLimit()
+    {
+        GetRealmMediaRequest? captured = null;
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(maxFileUploadSizeMiB: 1)),
+            DownloadRealmMediaHandler = async (request, destination, progress, cancellationToken) =>
+            {
+                captured = request;
+                progress?.Report(new RealmMediaTransferProgress(0, 3));
+                await destination.WriteAsync(new byte[] { 4, 5, 6 }, cancellationToken);
+                progress?.Report(new RealmMediaTransferProgress(3, 3));
+                return new RealmMediaDownloadResult(3, "application/pdf");
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await using var destination = new MemoryStream();
+        var reports = new List<RealmMediaTransferProgress>();
+
+        var result = await session.DownloadRealmMediaAsync(
+            new RealmMediaRequest("/user_uploads/7/guide.pdf", RealmMediaKind.File, 1024 * 1024),
+            destination,
+            new InlineProgress<RealmMediaTransferProgress>(reports.Add));
+
+        Assert.Equal([4, 5, 6], destination.ToArray());
+        Assert.Equal(3, result.Length);
+        Assert.NotNull(captured);
+        Assert.Equal(1024 * 1024, captured.Media.MaximumBytes);
+        Assert.Equal(new RealmMediaTransferProgress(3, 3), reports[^1]);
         await session.StopAsync();
     }
 
@@ -3131,6 +3177,11 @@ public sealed class ClientSessionTests
         }
     }
 
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
+    }
+
     private sealed class FakeGateway(List<string>? log = null) : IZulipGateway
     {
         public int ProbeCalls { get; private set; }
@@ -3187,6 +3238,7 @@ public sealed class ClientSessionTests
         public Func<SetMessageStarredRequest, CancellationToken, Task>? SetMessageStarredHandler { get; set; }
         public Func<UploadAttachmentRequest, CancellationToken, Task<UploadedAttachment>>? UploadAttachmentHandler { get; set; }
         public Func<GetRealmMediaRequest, CancellationToken, Task<RealmMediaResult>>? GetRealmMediaHandler { get; set; }
+        public Func<GetRealmMediaRequest, Stream, IProgress<RealmMediaTransferProgress>?, CancellationToken, Task<RealmMediaDownloadResult>>? DownloadRealmMediaHandler { get; set; }
         public Func<UnsubscribeChannelRequest, CancellationToken, Task<UnsubscribeChannelResult>>? UnsubscribeChannelHandler { get; set; }
         public Func<AvailableChannelsRequest, CancellationToken, Task<IReadOnlyList<ChannelSummary>>>? AvailableChannelsHandler { get; set; }
         public Func<SubscribeChannelRequest, CancellationToken, Task<SubscribeChannelResult>>? SubscribeChannelHandler { get; set; }
@@ -3315,6 +3367,14 @@ public sealed class ClientSessionTests
         public Task<RealmMediaResult> GetRealmMediaAsync(GetRealmMediaRequest request, CancellationToken cancellationToken = default) =>
             GetRealmMediaHandler?.Invoke(request, cancellationToken) ??
             Task.FromResult(new RealmMediaResult([1], "image/png"));
+
+        public Task<RealmMediaDownloadResult> DownloadRealmMediaAsync(
+            GetRealmMediaRequest request,
+            Stream destination,
+            IProgress<RealmMediaTransferProgress>? progress = null,
+            CancellationToken cancellationToken = default) =>
+            DownloadRealmMediaHandler?.Invoke(request, destination, progress, cancellationToken) ??
+            Task.FromResult(new RealmMediaDownloadResult(0, "application/octet-stream"));
 
         public Task<UnsubscribeChannelResult> UnsubscribeChannelAsync(
             UnsubscribeChannelRequest request,

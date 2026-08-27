@@ -220,8 +220,39 @@
                     <VerticalStackLayout Spacing="3">
                         <Label Text="STORAGE" TextColor="{StaticResource AccentColor}" FontSize="10" FontAttributes="Bold" CharacterSpacing="3" />
                         <Label Text="存储" Style="{StaticResource BaseLabelStyle}" FontSize="24" FontAttributes="Bold" />
-                        <Label Text="当前账户的本地缓存" Style="{StaticResource MutedLabelStyle}" />
+                        <Label Text="下载位置与当前账户的本地缓存" Style="{StaticResource MutedLabelStyle}" />
                     </VerticalStackLayout>
+                    <Border Style="{StaticResource CardBorderStyle}" Padding="0">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                        <VerticalStackLayout Spacing="0">
+                            <Grid Padding="16,13" ColumnDefinitions="*,Auto" ColumnSpacing="12" MinimumHeightRequest="76">
+                                <VerticalStackLayout VerticalOptions="Center" Spacing="3">
+                                    <Label Text="下载位置" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                    <Label Text="{Binding DownloadFolderPath}"
+                                           Style="{StaticResource MutedLabelStyle}"
+                                           LineBreakMode="MiddleTruncation"
+                                           MaxLines="2" />
+                                </VerticalStackLayout>
+                                <HorizontalStackLayout Grid.Column="1" VerticalOptions="Center" Spacing="6">
+                                    <Button Text="更改位置" Style="{StaticResource BaseButtonStyle}" Command="{Binding ChangeDownloadFolderCommand}" />
+                                    <Button Text="打开文件夹" Style="{StaticResource BaseButtonStyle}" Command="{Binding OpenDownloadFolderCommand}" />
+                                </HorizontalStackLayout>
+                            </Grid>
+                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
+                            <Grid Padding="16,13" ColumnDefinitions="*,Auto" MinimumHeightRequest="76">
+                                <VerticalStackLayout VerticalOptions="Center" Spacing="2">
+                                    <Label Text="每次下载前询问保存位置" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                    <Label Text="关闭时，文件会自动保存到上方目录；同名文件不会覆盖" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
+                                <Switch Grid.Column="1"
+                                        IsToggled="{Binding AskWhereToSaveDownloads, Mode=TwoWay}"
+                                        OnColor="{StaticResource AccentColor}" />
+                            </Grid>
+                        </VerticalStackLayout>
+                    </Border>
+                    <Label Text="{Binding DownloadSettingsStatus}"
+                           IsVisible="{Binding HasDownloadSettingsStatus}"
+                           Style="{StaticResource MutedLabelStyle}" />
                     <Border Style="{StaticResource CardBorderStyle}">
                         <VerticalStackLayout Spacing="12">
                             <Label Text="SQLite 是本地缓存，不是第二消息后端，也不等同磁盘加密。" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" />

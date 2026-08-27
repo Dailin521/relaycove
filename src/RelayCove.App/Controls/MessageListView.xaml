@@ -290,6 +290,7 @@
                                                                     <Label Grid.Row="1" Grid.Column="1" Text="{Binding KindLabel}" Style="{StaticResource MutedLabelStyle}" />
                                                                     <Button Grid.Column="2" Grid.RowSpan="2" Text="下载" Style="{StaticResource BaseButtonStyle}"
                                                                             HeightRequest="30" MinimumHeightRequest="30"
+                                                                            IsEnabled="{Binding ViewModel.CanStartMediaDownload, Source={x:Reference Root}, x:DataType=controls:MessageListView}"
                                                                             Clicked="OnDownloadAttachmentClicked" />
                                                                 </Grid>
                                                             </VerticalStackLayout>

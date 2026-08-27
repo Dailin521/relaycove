@@ -13,6 +13,11 @@ namespace RelayCove.Zulip.Client;
 public sealed class ZulipGateway : IZulipGateway, IDisposable
 {
     private const string ApiRoot = "api/v1/";
+    private const string TusVersion = "1.0.0";
+    private const long ResumableUploadThresholdBytes = 25L * 1024 * 1024;
+    private const long TusChunkSizeBytes = 5L * 1024 * 1024;
+    private const int TusRecoveryAttempts = 3;
+    private const int TusConsecutivePatchRecoveryLimit = 3;
     private static readonly string[] DefaultEventTypes =
     [
         "message", "subscription", "realm_user", "stream", "update_message",
@@ -627,9 +632,23 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (request.Upload.Length >= ResumableUploadThresholdBytes && request.Upload.Content.CanSeek)
+        {
+            return await UploadAttachmentResumablyAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        return await UploadAttachmentMultipartAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<UploadedAttachment> UploadAttachmentMultipartAsync(
+        UploadAttachmentRequest request,
+        CancellationToken cancellationToken)
+    {
         var fileName = SanitizeUploadFileName(request.Upload.FileName);
         using var multipart = new MultipartFormDataContent();
-        var streamContent = new StreamContent(request.Upload.Content);
+        var uploadStream = request.Upload.Progress is { } progress
+            ? new ProgressReadStream(request.Upload.Content, request.Upload.Length, progress)
+            : request.Upload.Content;
+        var streamContent = new StreamContent(uploadStream);
         if (request.Upload.ContentType is { } contentType &&
             MediaTypeHeaderValue.TryParse(contentType, out var parsedContentType))
         {
@@ -653,9 +672,109 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         return new UploadedAttachment(returnedName, url.AbsoluteUri);
     }
 
+    private async Task<UploadedAttachment> UploadAttachmentResumablyAsync(
+        UploadAttachmentRequest request,
+        CancellationToken cancellationToken)
+    {
+        var upload = request.Upload;
+        var fileName = SanitizeUploadFileName(upload.FileName);
+        var initialPosition = upload.Content.Position;
+        upload.Progress?.Report(new RealmMediaTransferProgress(0, upload.Length));
+        var uploadUri = await CreateTusUploadAsync(
+            request.Credentials,
+            fileName,
+            upload.ContentType,
+            upload.Length,
+            cancellationToken).ConfigureAwait(false);
+        long offset = 0;
+        var consecutiveRecoveries = 0;
+        while (offset < upload.Length)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var chunkLength = Math.Min(TusChunkSizeBytes, upload.Length - offset);
+            try
+            {
+                using var response = await SendTusPatchAsync(
+                    request.Credentials,
+                    uploadUri,
+                    upload.Content,
+                    initialPosition,
+                    offset,
+                    chunkLength,
+                    upload.Length,
+                    upload.Progress,
+                    cancellationToken).ConfigureAwait(false);
+                var confirmedOffset = GetTusOffset(response);
+                if (confirmedOffset <= offset || confirmedOffset > upload.Length)
+                    throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, (int)response.StatusCode);
+                offset = confirmedOffset;
+                consecutiveRecoveries = 0;
+                if (response.StatusCode == HttpStatusCode.OK)
+                {
+                    if (offset != upload.Length)
+                        throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, (int)response.StatusCode);
+                    return await ReadTusUploadResultAsync(
+                        response,
+                        request.Credentials.Realm,
+                        fileName,
+                        cancellationToken).ConfigureAwait(false);
+                }
+                if (response.StatusCode != HttpStatusCode.NoContent)
+                    throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, (int)response.StatusCode);
+            }
+            catch (GatewayException exception) when (IsRecoverableTusFailure(exception))
+            {
+                if (++consecutiveRecoveries > TusConsecutivePatchRecoveryLimit)
+                    throw;
+                offset = await RecoverTusOffsetAsync(
+                    request.Credentials,
+                    uploadUri,
+                    upload.Length,
+                    cancellationToken).ConfigureAwait(false);
+                upload.Progress?.Report(new RealmMediaTransferProgress(offset, upload.Length));
+            }
+        }
+
+        return BuildTusUploadResultFromLocation(request.Credentials.Realm, uploadUri, fileName);
+    }
+
     public async Task<RealmMediaResult> GetRealmMediaAsync(
         GetRealmMediaRequest request,
         CancellationToken cancellationToken = default)
+    {
+        var transfer = await OpenRealmMediaResponseAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = transfer.Response;
+        var bytes = await ReadBytesWithLimitAsync(
+            response.Content,
+            transfer.MaximumBytes,
+            cancellationToken).ConfigureAwait(false);
+        return new RealmMediaResult(bytes, transfer.ContentType);
+    }
+
+    public async Task<RealmMediaDownloadResult> DownloadRealmMediaAsync(
+        GetRealmMediaRequest request,
+        Stream destination,
+        IProgress<RealmMediaTransferProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(destination);
+        if (request.Media.Kind != RealmMediaKind.File || !destination.CanWrite)
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        var transfer = await OpenRealmMediaResponseAsync(request, cancellationToken).ConfigureAwait(false);
+        using var response = transfer.Response;
+        var length = await CopyToWithLimitAsync(
+            response.Content,
+            destination,
+            transfer.MaximumBytes,
+            progress,
+            cancellationToken).ConfigureAwait(false);
+        return new RealmMediaDownloadResult(length, transfer.ContentType);
+    }
+
+    private async Task<(HttpResponseMessage Response, long MaximumBytes, string ContentType)> OpenRealmMediaResponseAsync(
+        GetRealmMediaRequest request,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         var hardLimit = request.Media.Kind == RealmMediaKind.File
@@ -699,7 +818,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             }
         }
 
-        using var response = await SendAbsoluteMediaAsync(
+        var response = await SendAbsoluteMediaAsync(
             fetchUrl,
             fetchCredentials,
             request.Media.Kind,
@@ -707,10 +826,10 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         var contentType = response.Content.Headers.ContentType?.MediaType?.Trim().ToLowerInvariant();
         if (request.Media.Kind != RealmMediaKind.File && !IsPreviewImageContentType(contentType))
         {
+            response.Dispose();
             throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, (int)response.StatusCode);
         }
-        var bytes = await ReadBytesWithLimitAsync(response.Content, maximumBytes, cancellationToken).ConfigureAwait(false);
-        return new RealmMediaResult(bytes, contentType ?? "application/octet-stream");
+        return (response, maximumBytes, contentType ?? "application/octet-stream");
     }
 
     public async Task<UnsubscribeChannelResult> UnsubscribeChannelAsync(
@@ -1281,6 +1400,33 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
         }
         return destination.ToArray();
+    }
+
+    private static async Task<long> CopyToWithLimitAsync(
+        HttpContent content,
+        Stream destination,
+        long maximumBytes,
+        IProgress<RealmMediaTransferProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var declared = content.Headers.ContentLength;
+        if (declared is { } declaredLength && declaredLength > maximumBytes)
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        progress?.Report(new RealmMediaTransferProgress(0, declared));
+        await using var source = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        var buffer = new byte[81920];
+        long total = 0;
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            if (read == 0) break;
+            total += read;
+            if (total > maximumBytes)
+                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+            await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+            progress?.Report(new RealmMediaTransferProgress(total, declared));
+        }
+        return total;
     }
 
     private async Task<GatewayException> ToGatewayExceptionAsync(HttpResponseMessage response, CancellationToken cancellationToken)
@@ -2028,6 +2174,211 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             return false;
         }
     }
+
+    private async Task<Uri> CreateTusUploadAsync(
+        CredentialEnvelope credentials,
+        string fileName,
+        string? contentType,
+        long length,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, BuildUri(credentials.Realm, "tus/", null))
+        {
+            Content = new ByteArrayContent([])
+        };
+        ApplyTusHeaders(request, credentials);
+        request.Headers.TryAddWithoutValidation("Upload-Length", length.ToString(CultureInfo.InvariantCulture));
+        var metadata = new List<string>
+        {
+            $"filename {Convert.ToBase64String(Encoding.UTF8.GetBytes(fileName))}"
+        };
+        if (!string.IsNullOrWhiteSpace(contentType))
+            metadata.Add($"filetype {Convert.ToBase64String(Encoding.UTF8.GetBytes(contentType))}");
+        request.Headers.TryAddWithoutValidation("Upload-Metadata", string.Join(',', metadata));
+
+        using var response = await SendTusRequestAsync(request, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode != HttpStatusCode.Created ||
+            response.Headers.Location is not { } location ||
+            !TryResolveTusUploadUri(credentials.Realm, request.RequestUri!, location, out var uploadUri))
+        {
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, (int)response.StatusCode);
+        }
+        return uploadUri;
+    }
+
+    private async Task<HttpResponseMessage> SendTusPatchAsync(
+        CredentialEnvelope credentials,
+        Uri uploadUri,
+        Stream source,
+        long initialPosition,
+        long offset,
+        long chunkLength,
+        long totalLength,
+        IProgress<RealmMediaTransferProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        var slice = new TusUploadSliceStream(
+            source,
+            initialPosition + offset,
+            chunkLength,
+            offset,
+            totalLength,
+            progress);
+        using var content = new StreamContent(slice);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/offset+octet-stream");
+        content.Headers.ContentLength = chunkLength;
+        using var request = new HttpRequestMessage(HttpMethod.Patch, uploadUri) { Content = content };
+        ApplyTusHeaders(request, credentials);
+        request.Headers.TryAddWithoutValidation("Upload-Offset", offset.ToString(CultureInfo.InvariantCulture));
+        return await SendTusRequestAsync(request, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<long> RecoverTusOffsetAsync(
+        CredentialEnvelope credentials,
+        Uri uploadUri,
+        long totalLength,
+        CancellationToken cancellationToken)
+    {
+        GatewayException? lastFailure = null;
+        for (var attempt = 0; attempt < TusRecoveryAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (attempt > 0)
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * (1 << (attempt - 1))), cancellationToken).ConfigureAwait(false);
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Head, uploadUri);
+                ApplyTusHeaders(request, credentials);
+                using var response = await SendTusRequestAsync(request, cancellationToken).ConfigureAwait(false);
+                if (response.StatusCode is not HttpStatusCode.OK and not HttpStatusCode.NoContent)
+                    throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, (int)response.StatusCode);
+                var offset = GetTusOffset(response);
+                if (offset < 0 || offset > totalLength)
+                    throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, (int)response.StatusCode);
+                return offset;
+            }
+            catch (GatewayException exception) when (IsRecoverableTusFailure(exception))
+            {
+                lastFailure = exception;
+            }
+        }
+        throw lastFailure ?? new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError);
+    }
+
+    private async Task<HttpResponseMessage> SendTusRequestAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        var started = _timeProvider.GetTimestamp();
+        try
+        {
+            var response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken).ConfigureAwait(false);
+            _logger.LogInformation(
+                "Zulip operation upload_attachment_resumable completed with status {StatusCode} in {ElapsedMilliseconds} ms.",
+                (int)response.StatusCode,
+                _timeProvider.GetElapsedTime(started).TotalMilliseconds);
+            if (response.IsSuccessStatusCode) return response;
+            var error = await ToGatewayExceptionAsync(response, cancellationToken).ConfigureAwait(false);
+            response.Dispose();
+            throw error;
+        }
+        catch (GatewayException)
+        {
+            throw;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (OperationCanceledException exception)
+        {
+            throw new GatewayException(
+                GatewayErrorKind.Offline,
+                GatewayErrorCode.RequestTimedOut,
+                innerException: exception);
+        }
+        catch (HttpRequestException exception)
+        {
+            throw new GatewayException(
+                GatewayErrorKind.Offline,
+                GatewayErrorCode.NetworkError,
+                innerException: exception);
+        }
+    }
+
+    private static async Task<UploadedAttachment> ReadTusUploadResultAsync(
+        HttpResponseMessage response,
+        RealmEndpoint realm,
+        string fallbackFileName,
+        CancellationToken cancellationToken)
+    {
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        var rawUrl = GetString(document.RootElement, "url", "uri");
+        if (!TryResolveRealmUploadUrl(realm, rawUrl, out var url))
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, (int)response.StatusCode);
+        var returnedName = SanitizeUploadFileName(GetString(document.RootElement, "filename") ?? fallbackFileName);
+        return new UploadedAttachment(returnedName, url.AbsoluteUri);
+    }
+
+    private static UploadedAttachment BuildTusUploadResultFromLocation(
+        RealmEndpoint realm,
+        Uri uploadUri,
+        string fileName)
+    {
+        var prefix = new Uri(realm.Uri, ApiRoot + "tus/").AbsolutePath;
+        if (!uploadUri.AbsolutePath.StartsWith(prefix, StringComparison.Ordinal) || uploadUri.AbsolutePath.Length <= prefix.Length)
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        var pathId = uploadUri.AbsolutePath[prefix.Length..];
+        var fileUrl = new Uri(realm.Uri, "/user_uploads/" + pathId);
+        return new UploadedAttachment(fileName, fileUrl.AbsoluteUri);
+    }
+
+    private static long GetTusOffset(HttpResponseMessage response)
+    {
+        if (!response.Headers.TryGetValues("Upload-Offset", out var values))
+        {
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, (int)response.StatusCode);
+        }
+        var offsetValues = values.ToArray();
+        if (offsetValues.Length != 1 ||
+            !long.TryParse(offsetValues[0], NumberStyles.None, CultureInfo.InvariantCulture, out var offset))
+        {
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, (int)response.StatusCode);
+        }
+        return offset;
+    }
+
+    private static bool TryResolveTusUploadUri(
+        RealmEndpoint realm,
+        Uri creationUri,
+        Uri location,
+        out Uri uploadUri)
+    {
+        uploadUri = location.IsAbsoluteUri ? location : new Uri(creationUri, location);
+        var expectedPrefix = new Uri(realm.Uri, ApiRoot + "tus/").AbsolutePath;
+        return string.Equals(uploadUri.Scheme, realm.Uri.Scheme, StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(uploadUri.Host, realm.Uri.Host, StringComparison.OrdinalIgnoreCase) &&
+               uploadUri.Port == realm.Uri.Port &&
+               string.IsNullOrEmpty(uploadUri.UserInfo) &&
+               string.IsNullOrEmpty(uploadUri.Query) &&
+               string.IsNullOrEmpty(uploadUri.Fragment) &&
+               uploadUri.AbsolutePath.StartsWith(expectedPrefix, StringComparison.Ordinal) &&
+               uploadUri.AbsolutePath.Length > expectedPrefix.Length;
+    }
+
+    private static void ApplyTusHeaders(HttpRequestMessage request, CredentialEnvelope credentials)
+    {
+        request.Headers.Authorization = new AuthenticationHeaderValue(
+            "Basic",
+            Convert.ToBase64String(Encoding.UTF8.GetBytes($"{credentials.Email}:{credentials.ApiKey}")));
+        request.Headers.TryAddWithoutValidation("Tus-Resumable", TusVersion);
+    }
+
+    private static bool IsRecoverableTusFailure(GatewayException exception) =>
+        exception.Kind == GatewayErrorKind.Offline || exception.StatusCode == 409;
 
     private static bool TryGetOptionalString(JsonElement value, string name, out string result)
     {

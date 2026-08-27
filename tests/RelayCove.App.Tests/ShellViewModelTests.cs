@@ -2507,6 +2507,43 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task SendCommand_WhenAttachmentUploadDisconnects_ShowsAttachmentErrorWithoutGlobalServerBanner()
+    {
+        var conversation = new DirectMessage([8]);
+        var filePicker = new FakeFileSelectionService
+        {
+            Files =
+            [
+                new SelectedAttachmentFile(
+                    "large.bin",
+                    "application/octet-stream",
+                    3,
+                    _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3])))
+            ]
+        };
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            Recent = [conversation],
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            UploadAction = (_, _) => Task.FromException<UploadedAttachment>(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError))
+        };
+        using var viewModel = CreateViewModel(session, fileSelectionService: filePicker);
+        session.Publish();
+        await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
+        viewModel.ComposerText = "keep this caption";
+
+        await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
+
+        Assert.Equal("keep this caption", viewModel.ComposerText);
+        Assert.Contains("附件上传结果未知", viewModel.AttachmentError, StringComparison.Ordinal);
+        Assert.Null(viewModel.LoginError);
+        Assert.Equal(AttachmentUploadStatus.Uncertain, Assert.Single(viewModel.Attachments).Status);
+        Assert.Empty(session.SentContents);
+    }
+
+    [Fact]
     public async Task SendCommand_WhenDraftIsUnchanged_ClearsOnlyConfirmedSnapshot()
     {
         var conversation = new DirectMessage([8]);
@@ -3587,6 +3624,53 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task SendCommand_WhenAttachmentUploadIsInProgress_ProjectsPerFilePercentage()
+    {
+        var conversation = new DirectMessage([8]);
+        var uploadReported = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseUpload = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var filePicker = new FakeFileSelectionService
+        {
+            Files =
+            [
+                new SelectedAttachmentFile(
+                    "archive.zip",
+                    "application/zip",
+                    4,
+                    _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3, 4])))
+            ]
+        };
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            UploadAction = async (upload, cancellationToken) =>
+            {
+                upload.Progress?.Report(new RealmMediaTransferProgress(2, 4));
+                uploadReported.SetResult(true);
+                await releaseUpload.Task.WaitAsync(cancellationToken);
+                upload.Progress?.Report(new RealmMediaTransferProgress(4, 4));
+                return new UploadedAttachment(upload.FileName, "https://example.test/user_uploads/archive.zip");
+            }
+        };
+        using var viewModel = CreateViewModel(session, fileSelectionService: filePicker);
+        session.Publish();
+        await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
+
+        var send = ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
+        await uploadReported.Task;
+        var attachment = Assert.Single(viewModel.Attachments);
+
+        Assert.Equal(AttachmentUploadStatus.Uploading, attachment.Status);
+        Assert.Equal(0.5d, attachment.UploadProgress);
+        Assert.Equal("正在上传 50%", attachment.StatusLabel);
+
+        releaseUpload.SetResult(true);
+        await send;
+        Assert.Empty(viewModel.Attachments);
+    }
+
+    [Fact]
     public void AddPastedImage_WhenClipboardProvidesPng_UsesValidatedAttachmentDraftPath()
     {
         using var viewModel = CreateViewModel(new FakeSession());
@@ -3703,7 +3787,216 @@ public sealed class ShellViewModelTests
         Assert.Equal(1, media.FileCalls);
         Assert.Equal("guide.pdf", save.FileName);
         Assert.Equal([4, 5, 6], save.Content);
-        Assert.Equal("已保存 guide.pdf。", viewModel.MediaActionStatus);
+        Assert.Equal("已保存 guide.pdf", viewModel.MediaActionStatus);
+        Assert.True(viewModel.HasKnownMediaDownloadLength);
+        Assert.Equal(1d, viewModel.MediaDownloadProgress);
+        Assert.Contains("3 B / 3 B", viewModel.MediaDownloadProgressText);
+    }
+
+    [Fact]
+    public async Task DownloadAttachmentCommand_WhenSavePickerIsCancelled_DoesNotStartNetworkRead()
+    {
+        var media = new FakeRealmMediaService();
+        var save = new FakeFileSaveService { Result = false };
+        using var viewModel = CreateViewModel(
+            new FakeSession(),
+            realmMediaService: media,
+            fileSaveService: save);
+        var attachment = new MessageAttachmentItem("file", "guide.pdf", "/user_uploads/guide.pdf");
+
+        await ((IAsyncRelayCommand)viewModel.DownloadAttachmentCommand).ExecuteAsync(attachment);
+
+        Assert.Equal(0, media.FileCalls);
+        Assert.Equal("已取消保存", viewModel.MediaActionStatus);
+    }
+
+    [Fact]
+    public async Task DownloadAttachmentCommand_WhenDownloadFails_ExposesRetryAndRetrySucceeds()
+    {
+        var media = new FakeRealmMediaService
+        {
+            DownloadFailure = new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError)
+        };
+        using var viewModel = CreateViewModel(
+            new FakeSession(),
+            realmMediaService: media,
+            fileSaveService: new FakeFileSaveService());
+        var attachment = new MessageAttachmentItem("file", "guide.pdf", "/user_uploads/guide.pdf");
+
+        await ((IAsyncRelayCommand)viewModel.DownloadAttachmentCommand).ExecuteAsync(attachment);
+
+        Assert.True(viewModel.CanRetryMediaDownload);
+        media.DownloadFailure = null;
+        viewModel.RetryMediaDownloadCommand.Execute(null);
+        await WaitUntilAsync(() => media.FileCalls == 2 && !viewModel.IsMediaActionBusy);
+
+        Assert.Equal(2, media.FileCalls);
+        Assert.False(viewModel.CanRetryMediaDownload);
+        Assert.Equal("已保存 guide.pdf", viewModel.MediaActionStatus);
+    }
+
+    [Fact]
+    public async Task DownloadCenter_WhenFailedDownloadIsRemoved_ClearsFailureAttention()
+    {
+        var media = new FakeRealmMediaService
+        {
+            DownloadFailure = new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError)
+        };
+        using var viewModel = CreateViewModel(
+            new FakeSession(),
+            realmMediaService: media,
+            fileSaveService: new FakeFileSaveService());
+
+        await ((IAsyncRelayCommand)viewModel.DownloadAttachmentCommand).ExecuteAsync(
+            new MessageAttachmentItem("file", "guide.pdf", "/user_uploads/guide.pdf"));
+        Assert.True(viewModel.HasDownloadFailure);
+
+        viewModel.DismissFailedMediaDownloadCommand.Execute(null);
+
+        Assert.False(viewModel.HasDownloadFailure);
+        Assert.False(viewModel.HasDownloadButtonAttention);
+        Assert.Null(viewModel.MediaDownloadFileName);
+    }
+
+    [Fact]
+    public async Task DownloadSettingsCommands_UpdateFolderAndOpenIt()
+    {
+        var save = new FakeFileSaveService();
+        using var viewModel = CreateViewModel(new FakeSession(), fileSaveService: save);
+
+        await ((IAsyncRelayCommand)viewModel.ChangeDownloadFolderCommand).ExecuteAsync(null);
+        await ((IAsyncRelayCommand)viewModel.OpenDownloadFolderCommand).ExecuteAsync(null);
+        viewModel.AskWhereToSaveDownloads = true;
+
+        Assert.Equal(@"D:\RelayCove", viewModel.DownloadFolderPath);
+        Assert.Equal(1, save.ChooseFolderCalls);
+        Assert.Equal(1, save.OpenFolderCalls);
+        Assert.True(save.AskWhereToSave);
+    }
+
+    [Fact]
+    public async Task DownloadCenter_WhenDownloadCompletes_PersistsOpensRevealsAndRemovesRecord()
+    {
+        var accountId = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7);
+        var session = new FakeSession
+        {
+            Account = accountId,
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        var history = new InMemoryDownloadHistoryStore();
+        var save = new FakeFileSaveService();
+        using var viewModel = CreateViewModel(
+            session,
+            realmMediaService: new FakeRealmMediaService
+            {
+                FileResult = new RealmMediaResult([1, 2, 3], "application/pdf")
+            },
+            fileSaveService: save,
+            downloadHistoryStore: history);
+        session.Publish();
+        var attachment = new MessageAttachmentItem("file", "guide.pdf", "/user_uploads/guide.pdf");
+
+        await ((IAsyncRelayCommand)viewModel.DownloadAttachmentCommand).ExecuteAsync(attachment);
+
+        var item = Assert.Single(viewModel.RecentDownloads);
+        Assert.Equal("guide.pdf", item.FileName);
+        Assert.False(item.IsMissing);
+        Assert.True(viewModel.HasUnseenCompletedDownloads);
+        Assert.Single(history.Load(accountId));
+
+        viewModel.ToggleDownloadCenterCommand.Execute(null);
+        Assert.True(viewModel.IsDownloadCenterOpen);
+        Assert.False(viewModel.HasUnseenCompletedDownloads);
+        await ((IAsyncRelayCommand)viewModel.OpenRecentDownloadCommand).ExecuteAsync(item);
+        Assert.Equal([item.FilePath], save.OpenedFiles);
+        Assert.False(viewModel.IsDownloadCenterOpen);
+
+        viewModel.ToggleDownloadCenterCommand.Execute(null);
+        await ((IAsyncRelayCommand)viewModel.ShowRecentDownloadInFolderCommand).ExecuteAsync(item);
+        Assert.Equal([item.FilePath], save.RevealedFiles);
+
+        viewModel.RemoveRecentDownloadCommand.Execute(item);
+        Assert.Empty(viewModel.RecentDownloads);
+        Assert.Empty(history.Load(accountId));
+    }
+
+    [Fact]
+    public void DownloadCenter_WhenAccountChanges_LoadsOnlyThatAccountsRecentFiles()
+    {
+        var realm = RealmEndpoint.Parse("https://zulip.example");
+        var firstAccount = AccountId.Create(realm, 7);
+        var secondAccount = AccountId.Create(realm, 8);
+        var firstPath = @"C:\Downloads\RelayCove\first.pdf";
+        var secondPath = @"C:\Downloads\RelayCove\second.pdf";
+        var history = new InMemoryDownloadHistoryStore();
+        history.Save(firstAccount, [new DownloadHistoryEntry(Guid.NewGuid(), "first.pdf", firstPath, 10, DateTimeOffset.Now)]);
+        history.Save(secondAccount, [new DownloadHistoryEntry(Guid.NewGuid(), "second.pdf", secondPath, 20, DateTimeOffset.Now)]);
+        var save = new FakeFileSaveService();
+        save.ExistingFiles.UnionWith([firstPath, secondPath]);
+        var session = new FakeSession
+        {
+            Account = firstAccount,
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(
+            session,
+            fileSaveService: save,
+            downloadHistoryStore: history);
+
+        Assert.Equal("first.pdf", Assert.Single(viewModel.RecentDownloads).FileName);
+
+        session.Account = secondAccount;
+        session.Publish();
+
+        Assert.Equal("second.pdf", Assert.Single(viewModel.RecentDownloads).FileName);
+        viewModel.ClearDownloadHistoryCommand.Execute(null);
+        Assert.Empty(history.Load(secondAccount));
+        Assert.Single(history.Load(firstAccount));
+    }
+
+    [Fact]
+    public async Task DownloadCenter_WhenRecordedFileIsMissing_MarksItemWithoutRemovingHistory()
+    {
+        var accountId = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7);
+        var path = @"C:\Downloads\RelayCove\missing.pdf";
+        var history = new InMemoryDownloadHistoryStore();
+        history.Save(accountId, [new DownloadHistoryEntry(Guid.NewGuid(), "missing.pdf", path, 10, DateTimeOffset.Now)]);
+        var session = new FakeSession { Account = accountId };
+        using var viewModel = CreateViewModel(
+            session,
+            fileSaveService: new FakeFileSaveService(),
+            downloadHistoryStore: history);
+        var item = Assert.Single(viewModel.RecentDownloads);
+
+        await ((IAsyncRelayCommand)viewModel.OpenRecentDownloadCommand).ExecuteAsync(item);
+
+        Assert.True(item.IsMissing);
+        Assert.Single(history.Load(accountId));
+    }
+
+    [Fact]
+    public void DownloadCenter_WhenHistoryIsLarge_ShowsOnlyNewestTwentyEntries()
+    {
+        var accountId = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7);
+        var history = new InMemoryDownloadHistoryStore();
+        var now = DateTimeOffset.Now;
+        history.Save(accountId, Enumerable.Range(0, 25)
+            .Select(index => new DownloadHistoryEntry(
+                Guid.NewGuid(),
+                $"file-{index}.bin",
+                $@"C:\Downloads\RelayCove\file-{index}.bin",
+                index,
+                now.AddMinutes(index)))
+            .ToArray());
+        var session = new FakeSession { Account = accountId };
+
+        using var viewModel = CreateViewModel(
+            session,
+            fileSaveService: new FakeFileSaveService(),
+            downloadHistoryStore: history);
+
+        Assert.Equal(20, viewModel.RecentDownloads.Count);
+        Assert.Equal("file-24.bin", viewModel.RecentDownloads[0].FileName);
     }
 
     [Fact]
@@ -3730,6 +4023,23 @@ public sealed class ShellViewModelTests
         Assert.False(viewModel.IsMessageMenuOpen);
         Assert.Null(viewModel.ActiveMessageAttachment);
         Assert.Equal(1, media.FileCalls);
+    }
+
+    [Fact]
+    public async Task DownloadAttachmentCommand_WhenStartedFromImageViewer_ClosesViewerForGlobalProgress()
+    {
+        var image = new MessageAttachmentItem("image", "preview.png", "/user_uploads/preview.png");
+        using var viewModel = CreateViewModel(
+            new FakeSession(),
+            realmMediaService: new FakeRealmMediaService(),
+            fileSaveService: new FakeFileSaveService());
+        viewModel.OpenImageViewerCommand.Execute(image);
+
+        await ((IAsyncRelayCommand)viewModel.DownloadAttachmentCommand).ExecuteAsync(image);
+
+        Assert.False(viewModel.IsImageViewerOpen);
+        Assert.Null(viewModel.ActiveImageAttachment);
+        Assert.True(viewModel.IsMediaDownloadStatusVisible);
     }
 
     [Fact]
@@ -3979,7 +4289,8 @@ public sealed class ShellViewModelTests
         IConversationPreferencesStore? conversationPreferencesStore = null,
         INotificationPreferencesService? notificationPreferencesService = null,
         IAppNotificationService? appNotificationService = null,
-        IWindowShellAdapter? windowShellAdapter = null) =>
+        IWindowShellAdapter? windowShellAdapter = null,
+        IDownloadHistoryStore? downloadHistoryStore = null) =>
         new(
             session,
             lastRealmStore ?? new FakeLastRealmStore(),
@@ -3993,7 +4304,9 @@ public sealed class ShellViewModelTests
             conversationPreferencesStore,
             notificationPreferencesService,
             appNotificationService,
-            windowShellAdapter);
+            windowShellAdapter,
+            null,
+            downloadHistoryStore);
 
     private sealed class FakeUiPreferencesService : IUiPreferencesService
     {
@@ -4069,6 +4382,7 @@ public sealed class ShellViewModelTests
     private sealed class FakeRealmMediaService : IRealmMediaService
     {
         public RealmMediaResult FileResult { get; set; } = new([1, 2, 3], "application/octet-stream");
+        public Exception? DownloadFailure { get; set; }
         public int FileCalls { get; private set; }
 
         public Task<Microsoft.Maui.Controls.ImageSource> GetImageAsync(
@@ -4085,6 +4399,20 @@ public sealed class ShellViewModelTests
             FileCalls++;
             return Task.FromResult(FileResult);
         }
+
+        public async Task<RealmMediaDownloadResult> DownloadFileAsync(
+            string sourceUrl,
+            Stream destination,
+            IProgress<RealmMediaTransferProgress>? progress = null,
+            CancellationToken cancellationToken = default)
+        {
+            FileCalls++;
+            if (DownloadFailure is not null) throw DownloadFailure;
+            progress?.Report(new RealmMediaTransferProgress(0, FileResult.Content.LongLength));
+            await destination.WriteAsync(FileResult.Content, cancellationToken);
+            progress?.Report(new RealmMediaTransferProgress(FileResult.Content.LongLength, FileResult.Content.LongLength));
+            return new RealmMediaDownloadResult(FileResult.Content.LongLength, FileResult.ContentType);
+        }
     }
 
     private sealed class FakeFileSaveService : IFileSaveService
@@ -4092,15 +4420,56 @@ public sealed class ShellViewModelTests
         public bool Result { get; set; } = true;
         public string? FileName { get; private set; }
         public byte[]? Content { get; private set; }
+        public string DownloadFolderPath { get; set; } = @"C:\Downloads\RelayCove";
+        public bool AskWhereToSave { get; set; }
+        public int ChooseFolderCalls { get; private set; }
+        public int OpenFolderCalls { get; private set; }
+        public HashSet<string> ExistingFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<string> OpenedFiles { get; } = [];
+        public List<string> RevealedFiles { get; } = [];
 
-        public Task<bool> SaveAsync(
+        public Task<bool> ChooseDownloadFolderAsync(CancellationToken cancellationToken = default)
+        {
+            ChooseFolderCalls++;
+            DownloadFolderPath = @"D:\RelayCove";
+            return Task.FromResult(Result);
+        }
+
+        public Task OpenDownloadFolderAsync(CancellationToken cancellationToken = default)
+        {
+            OpenFolderCalls++;
+            return Task.CompletedTask;
+        }
+
+        public bool DownloadedFileExists(string filePath) => ExistingFiles.Contains(filePath);
+
+        public Task OpenDownloadedFileAsync(string filePath, CancellationToken cancellationToken = default)
+        {
+            if (!DownloadedFileExists(filePath)) throw new FileNotFoundException();
+            OpenedFiles.Add(filePath);
+            return Task.CompletedTask;
+        }
+
+        public Task ShowDownloadedFileInFolderAsync(string filePath, CancellationToken cancellationToken = default)
+        {
+            if (!DownloadedFileExists(filePath)) throw new FileNotFoundException();
+            RevealedFiles.Add(filePath);
+            return Task.CompletedTask;
+        }
+
+        public async Task<DownloadSaveResult> SaveDownloadAsync(
             string fileName,
-            byte[] content,
+            Func<Stream, CancellationToken, Task> writeAsync,
             CancellationToken cancellationToken = default)
         {
             FileName = fileName;
-            Content = content;
-            return Task.FromResult(Result);
+            if (!Result) return DownloadSaveResult.Cancelled;
+            await using var destination = new MemoryStream();
+            await writeAsync(destination, cancellationToken);
+            Content = destination.ToArray();
+            var path = Path.Combine(DownloadFolderPath, fileName);
+            ExistingFiles.Add(path);
+            return new DownloadSaveResult(true, path);
         }
     }
 

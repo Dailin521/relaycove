@@ -19,6 +19,19 @@ public sealed class SettingsPageViewTests
         Assert.DoesNotContain("通知、presence 与在线状态尚未进入当前原生能力门", source);
     }
 
+    [Fact]
+    public void Storage_WhenRendered_ExposesDownloadLocationAndAskEachTimeControls()
+    {
+        var source = File.ReadAllText(FindWorkspaceFile(
+            "src", "RelayCove.App", "Controls", "SettingsPageView.xaml"));
+
+        Assert.Contains("DownloadFolderPath", source);
+        Assert.Contains("ChangeDownloadFolderCommand", source);
+        Assert.Contains("OpenDownloadFolderCommand", source);
+        Assert.Contains("AskWhereToSaveDownloads, Mode=TwoWay", source);
+        Assert.Contains("同名文件不会覆盖", source);
+    }
+
     private static string FindWorkspaceFile(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

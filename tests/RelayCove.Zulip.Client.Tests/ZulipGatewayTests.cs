@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -982,10 +983,16 @@ public sealed class ZulipGatewayTests
             """));
         using var gateway = new ZulipGateway(handler);
         await using var stream = new MemoryStream([1, 2, 3]);
+        var reports = new List<RealmMediaTransferProgress>();
 
         var result = await gateway.UploadAttachmentAsync(new UploadAttachmentRequest(
             Credentials,
-            new AttachmentUpload("design.png", "image/png", 3, stream)));
+            new AttachmentUpload(
+                "design.png",
+                "image/png",
+                3,
+                stream,
+                new InlineProgress<RealmMediaTransferProgress>(reports.Add))));
 
         var request = Assert.Single(handler.Requests);
         Assert.Equal(HttpMethod.Post, request.Method);
@@ -993,6 +1000,8 @@ public sealed class ZulipGatewayTests
         Assert.Contains("name=filename", request.Body, StringComparison.Ordinal);
         Assert.Contains("filename=design.png", request.Body, StringComparison.Ordinal);
         Assert.Equal("https://chat.example.test/user_uploads/7/ab/design.png", result.Url);
+        Assert.Equal(new RealmMediaTransferProgress(0, 3), reports[0]);
+        Assert.Equal(new RealmMediaTransferProgress(3, 3), reports[^1]);
     }
 
     [Fact]
@@ -1404,6 +1413,120 @@ public sealed class ZulipGatewayTests
     }
 
     [Fact]
+    public async Task UploadAttachment_WhenLargeTransferDisconnects_ResumesFromAuthoritativeTusOffset()
+    {
+        const long length = 25L * 1024 * 1024;
+        using var handler = new ResumableUploadHandler(length, disconnectFirstPatch: true);
+        using var gateway = new ZulipGateway(handler);
+        await using var stream = new FixedLengthReadStream(length);
+        var reports = new List<RealmMediaTransferProgress>();
+
+        var result = await gateway.UploadAttachmentAsync(new UploadAttachmentRequest(
+            Credentials,
+            new AttachmentUpload(
+                "large.bin",
+                "application/octet-stream",
+                length,
+                stream,
+                new InlineProgress<RealmMediaTransferProgress>(reports.Add))));
+
+        Assert.Equal("https://chat.example.test/user_uploads/7/ab/large.bin", result.Url);
+        Assert.Equal(1, handler.CreationCount);
+        Assert.Equal(1, handler.HeadCount);
+        Assert.Equal(0, handler.PatchOffsets[0]);
+        Assert.Equal(1024 * 1024, handler.PatchOffsets[1]);
+        Assert.Equal(new RealmMediaTransferProgress(length, length), reports[^1]);
+        Assert.Contains(reports, report => report.BytesTransferred == 2L * 1024 * 1024);
+        Assert.Contains(reports, report => report.BytesTransferred == 1024L * 1024);
+        Assert.Equal("1.0.0", handler.TusVersion);
+        Assert.Contains("filename bGFyZ2UuYmlu", handler.UploadMetadata, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UploadAttachment_WhenTusCreationReturnsCrossRealmLocation_FailsClosedWithoutRetry()
+    {
+        const long length = 25L * 1024 * 1024;
+        using var response = new HttpResponseMessage(HttpStatusCode.Created);
+        response.Headers.Location = new Uri("https://evil.example/api/v1/tus/7/ab/large.bin");
+        using var handler = new RecordingHandler(response);
+        using var gateway = new ZulipGateway(handler);
+        await using var stream = new FixedLengthReadStream(length);
+
+        var error = await Assert.ThrowsAsync<GatewayException>(() => gateway.UploadAttachmentAsync(
+            new UploadAttachmentRequest(
+                Credentials,
+                new AttachmentUpload("large.bin", "application/octet-stream", length, stream))));
+
+        Assert.Equal(GatewayErrorKind.Protocol, error.Kind);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task UploadAttachment_WhenTusPatchKeepsDisconnecting_StopsAfterBoundedRecovery()
+    {
+        const long length = 25L * 1024 * 1024;
+        using var handler = new AlwaysDisconnectTusHandler();
+        using var gateway = new ZulipGateway(handler);
+        await using var stream = new FixedLengthReadStream(length);
+
+        var error = await Assert.ThrowsAsync<GatewayException>(() => gateway.UploadAttachmentAsync(
+            new UploadAttachmentRequest(
+                Credentials,
+                new AttachmentUpload("large.bin", "application/octet-stream", length, stream))));
+
+        Assert.Equal(GatewayErrorKind.Offline, error.Kind);
+        Assert.Equal(1, handler.CreationCount);
+        Assert.Equal(4, handler.PatchCount);
+        Assert.Equal(3, handler.HeadCount);
+    }
+
+    [Fact]
+    public async Task DownloadRealmMedia_File_StreamsExactBytesAndReportsLengthProgress()
+    {
+        using var handler = new RecordingHandler(
+            Json("""{"result":"success","url":"/user_uploads/temporary/7/guide.pdf"}"""),
+            Binary([1, 2, 3, 4], "application/pdf"));
+        using var gateway = new ZulipGateway(handler);
+        await using var destination = new MemoryStream();
+        var reports = new List<RealmMediaTransferProgress>();
+
+        var result = await gateway.DownloadRealmMediaAsync(
+            new GetRealmMediaRequest(
+                Credentials,
+                new RealmMediaRequest("/user_uploads/7/guide.pdf", RealmMediaKind.File, 1024)),
+            destination,
+            new InlineProgress<RealmMediaTransferProgress>(reports.Add));
+
+        Assert.Equal([1, 2, 3, 4], destination.ToArray());
+        Assert.Equal(4, result.Length);
+        Assert.Equal("application/pdf", result.ContentType);
+        Assert.Equal(new RealmMediaTransferProgress(0, 4), reports[0]);
+        Assert.Equal(new RealmMediaTransferProgress(4, 4), reports[^1]);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal("Basic", handler.Requests[0].Authorization!.Scheme);
+        Assert.Null(handler.Requests[1].Authorization);
+    }
+
+    [Fact]
+    public async Task DownloadRealmMedia_WhenDeclaredLengthExceedsLimit_FailsBeforeWriting()
+    {
+        using var handler = new RecordingHandler(
+            Json("""{"result":"success","url":"/user_uploads/temporary/7/guide.pdf"}"""),
+            Binary([1, 2, 3, 4], "application/pdf"));
+        using var gateway = new ZulipGateway(handler);
+        await using var destination = new MemoryStream();
+
+        var error = await Assert.ThrowsAsync<GatewayException>(() => gateway.DownloadRealmMediaAsync(
+            new GetRealmMediaRequest(
+                Credentials,
+                new RealmMediaRequest("/user_uploads/7/guide.pdf", RealmMediaKind.File, 3)),
+            destination));
+
+        Assert.Equal(GatewayErrorKind.Protocol, error.Kind);
+        Assert.Equal(0, destination.Length);
+    }
+
+    [Fact]
     public async Task GetRealmUsers_WhenResponseIsValid_ReturnsStrictUserProfiles()
     {
         using var handler = new RecordingHandler(Json("""{"members":[{"user_id":7,"full_name":"Ada Lovelace","email":"ada@example.test","is_active":true,"is_bot":false,"avatar_url":"https://example.test/a.png","avatar_version":2},{"user_id":8,"full_name":"Build Bot","email":"bot@example.test","is_active":false,"is_bot":true}]}"""));
@@ -1657,6 +1780,170 @@ public sealed class ZulipGatewayTests
     }
 
     private sealed record CapturedRequest(HttpMethod Method, Uri? Uri, AuthenticationHeaderValue? Authorization, string Body);
+
+    private sealed class ResumableUploadHandler(long totalLength, bool disconnectFirstPatch) : HttpMessageHandler
+    {
+        private bool _disconnectFirstPatch = disconnectFirstPatch;
+        private long _serverOffset;
+
+        public int CreationCount { get; private set; }
+        public int HeadCount { get; private set; }
+        public List<long> PatchOffsets { get; } = [];
+        public string? TusVersion { get; private set; }
+        public string? UploadMetadata { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            TusVersion ??= Assert.Single(request.Headers.GetValues("Tus-Resumable"));
+            if (request.Method == HttpMethod.Post)
+            {
+                CreationCount++;
+                UploadMetadata = Assert.Single(request.Headers.GetValues("Upload-Metadata"));
+                Assert.Equal(totalLength.ToString(CultureInfo.InvariantCulture), Assert.Single(request.Headers.GetValues("Upload-Length")));
+                var created = new HttpResponseMessage(HttpStatusCode.Created);
+                created.Headers.Location = new Uri("/api/v1/tus/7/ab/large.bin", UriKind.Relative);
+                return created;
+            }
+
+            if (request.Method == HttpMethod.Head)
+            {
+                HeadCount++;
+                return WithTusOffset(new HttpResponseMessage(HttpStatusCode.OK), _serverOffset);
+            }
+
+            Assert.Equal(HttpMethod.Patch, request.Method);
+            var patchOffset = long.Parse(
+                Assert.Single(request.Headers.GetValues("Upload-Offset")),
+                CultureInfo.InvariantCulture);
+            PatchOffsets.Add(patchOffset);
+            Assert.Equal(_serverOffset, patchOffset);
+            if (_disconnectFirstPatch)
+            {
+                _disconnectFirstPatch = false;
+                await ReadExactlyAsync(request.Content!, 2 * 1024 * 1024, cancellationToken);
+                _serverOffset = 1024 * 1024;
+                throw new HttpRequestException("simulated connection loss");
+            }
+
+            await request.Content!.CopyToAsync(Stream.Null, cancellationToken);
+            _serverOffset += request.Content.Headers.ContentLength!.Value;
+            var isComplete = _serverOffset == totalLength;
+            var response = isComplete
+                ? Json("""{"url":"/user_uploads/7/ab/large.bin","filename":"large.bin"}""")
+                : new HttpResponseMessage(HttpStatusCode.NoContent);
+            return WithTusOffset(response, _serverOffset);
+        }
+
+        private static HttpResponseMessage WithTusOffset(HttpResponseMessage response, long offset)
+        {
+            response.Headers.TryAddWithoutValidation("Upload-Offset", offset.ToString(CultureInfo.InvariantCulture));
+            return response;
+        }
+
+        private static async Task ReadExactlyAsync(
+            HttpContent content,
+            int byteCount,
+            CancellationToken cancellationToken)
+        {
+            await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+            var buffer = new byte[64 * 1024];
+            var remaining = byteCount;
+            while (remaining > 0)
+            {
+                var read = await stream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length, remaining)), cancellationToken);
+                Assert.True(read > 0);
+                remaining -= read;
+            }
+        }
+    }
+
+    private sealed class FixedLengthReadStream(long length) : Stream
+    {
+        private long _position;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length => length;
+        public override long Position
+        {
+            get => _position;
+            set
+            {
+                if (value < 0 || value > length) throw new ArgumentOutOfRangeException(nameof(value));
+                _position = value;
+            }
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer)
+        {
+            var read = (int)Math.Min(buffer.Length, length - _position);
+            buffer[..read].Clear();
+            _position += read;
+            return read;
+        }
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(Read(buffer.Span));
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            var target = origin switch
+            {
+                SeekOrigin.Begin => offset,
+                SeekOrigin.Current => _position + offset,
+                SeekOrigin.End => length + offset,
+                _ => throw new ArgumentOutOfRangeException(nameof(origin))
+            };
+            Position = target;
+            return _position;
+        }
+
+        public override void Flush() { }
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class AlwaysDisconnectTusHandler : HttpMessageHandler
+    {
+        public int CreationCount { get; private set; }
+        public int PatchCount { get; private set; }
+        public int HeadCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.Method == HttpMethod.Post)
+            {
+                CreationCount++;
+                var response = new HttpResponseMessage(HttpStatusCode.Created);
+                response.Headers.Location = new Uri("/api/v1/tus/7/ab/large.bin", UriKind.Relative);
+                return Task.FromResult(response);
+            }
+            if (request.Method == HttpMethod.Head)
+            {
+                HeadCount++;
+                var response = new HttpResponseMessage(HttpStatusCode.OK);
+                response.Headers.TryAddWithoutValidation("Upload-Offset", "0");
+                return Task.FromResult(response);
+            }
+            PatchCount++;
+            throw new HttpRequestException("simulated persistent connection loss");
+        }
+    }
+
+    private sealed class InlineProgress<T>(Action<T> report) : IProgress<T>
+    {
+        public void Report(T value) => report(value);
+    }
 
     private sealed class FixedTimeProvider : TimeProvider
     {

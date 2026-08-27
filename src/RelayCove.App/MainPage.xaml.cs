@@ -148,6 +148,9 @@ public partial class MainPage : ContentPage
             case nameof(ShellViewModel.IsAccountMenuOpen) when _viewModel.IsAccountMenuOpen:
                 Dispatcher.Dispatch(() => FirstAccountMenuButton.Focus());
                 break;
+            case nameof(ShellViewModel.IsDownloadCenterOpen) when _viewModel.IsDownloadCenterOpen:
+                Dispatcher.Dispatch(() => DownloadCenterCloseButton.Focus());
+                break;
             case nameof(ShellViewModel.IsNewConversationOpen) when _viewModel.IsNewConversationOpen:
                 Dispatcher.Dispatch(() => NewConversationSearchEntry.Focus());
                 break;
@@ -238,6 +241,10 @@ public partial class MainPage : ContentPage
         else if (_viewModel.IsMessageMenuOpen) _viewModel.CloseMessageMenuCommand.Execute(null);
         else if (_viewModel.IsTopicMenuOpen) _viewModel.CloseTopicMenuCommand.Execute(null);
         else if (_viewModel.IsChannelMenuOpen) _viewModel.CloseChannelMenuCommand.Execute(null);
+        else if (_viewModel.IsDownloadCenterOpen)
+        {
+            _viewModel.CloseDownloadCenterCommand.Execute(null);
+        }
         else if (_viewModel.IsAccountMenuOpen)
         {
             _viewModel.CloseAccountMenuCommand.Execute(null);

@@ -112,6 +112,12 @@ public sealed class MainShellLayoutTests
         var accountButtonIndex = source.IndexOf("x:Name=\"AccountButtonBorder\"", StringComparison.Ordinal);
         Assert.InRange(accountButtonIndex, leadingContentStart, leadingContentEnd);
         Assert.DoesNotContain("Text=\"R\"", source);
+        Assert.Contains("x:Name=\"DownloadButton\"", source);
+        Assert.Contains("Source=\"icon_download.png\"", source);
+        Assert.Contains("DownloadButton.Command = viewModel.ToggleDownloadCenterCommand;", codeBehind);
+        Assert.True(
+            source.IndexOf("x:Name=\"DownloadButton\"", StringComparison.Ordinal) <
+            source.IndexOf("x:Name=\"SettingsButton\"", StringComparison.Ordinal));
         Assert.Contains("x:Name=\"SettingsButton\"", source);
         Assert.Contains("Source=\"icon_settings.png\"", source);
         Assert.Contains("Binding=\"{Binding IsSettingsSection, Source={x:Reference Root}", source);
@@ -120,6 +126,22 @@ public sealed class MainShellLayoutTests
             .Descendants(maui + "Button")
             .Single(element => element.Attribute(x + "Name")?.Value == "FirstAccountMenuButton");
         Assert.Equal("Start", accountMenuButton.Ancestors(maui + "Border").First().Attribute("HorizontalOptions")?.Value);
+    }
+
+    [Fact]
+    public void DownloadCenter_WhenRendered_ProvidesBrowserStyleProgressHistoryAndFileActions()
+    {
+        var source = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
+
+        Assert.Contains("IsVisible=\"{Binding IsDownloadCenterOpen}\"", source, StringComparison.Ordinal);
+        Assert.Contains("Text=\"下载内容\"", source, StringComparison.Ordinal);
+        Assert.Contains("IsVisible=\"{Binding ShowDownloadCenterCurrentTask}\"", source, StringComparison.Ordinal);
+        Assert.Contains("ItemsSource=\"{Binding RecentDownloads}\"", source, StringComparison.Ordinal);
+        Assert.Contains("Text=\"打开下载文件夹\"", source, StringComparison.Ordinal);
+        Assert.Contains("Text=\"清除记录\"", source, StringComparison.Ordinal);
+        Assert.Contains("Text=\"在文件夹中显示\"", source, StringComparison.Ordinal);
+        Assert.Contains("Text=\"从记录中移除\"", source, StringComparison.Ordinal);
+        Assert.Contains("FlyoutBase.ContextFlyout", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -323,6 +345,40 @@ public sealed class MainShellLayoutTests
             source.Descendants(),
             element => element.Name.LocalName == "SelectableTextBehavior");
         Assert.Equal("None", messageCollection.Attribute("SelectionMode")?.Value);
+    }
+
+    [Fact]
+    public void DownloadStatus_WhenRendered_ExposesProgressCancelAndRetryWithoutBlockingComposer()
+    {
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
+        XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+
+        var status = source.Descendants(maui + "Border")
+            .Single(element => element.Attribute("IsVisible")?.Value == "{Binding IsMediaDownloadStatusVisible}");
+
+        Assert.Contains(status.Descendants(maui + "ProgressBar"), progress =>
+            progress.Attribute("Progress")?.Value == "{Binding MediaDownloadProgress}");
+        Assert.Contains(status.Descendants(maui + "ActivityIndicator"), indicator =>
+            indicator.Attribute("IsRunning")?.Value == "{Binding IsMediaDownloadIndeterminate}");
+        Assert.Contains(status.Descendants(maui + "Button"), button =>
+            button.Attribute("Command")?.Value == "{Binding DownloadAttachmentCancelCommand}");
+        Assert.Contains(status.Descendants(maui + "Button"), button =>
+            button.Attribute("Command")?.Value == "{Binding RetryMediaDownloadCommand}");
+        Assert.Contains(source.Descendants(), element => element.Name.LocalName == "ComposerView" &&
+            element.Attribute("Grid.Row")?.Value == "3");
+    }
+
+    [Fact]
+    public void ComposerAttachments_WhenUploading_ShowPerFileProgress()
+    {
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "ComposerView.xaml"));
+        XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+
+        var progress = source.Descendants(maui + "ProgressBar")
+            .Single(element => element.Attribute("Progress")?.Value == "{Binding UploadProgress}");
+
+        Assert.Equal("{Binding IsUploading}", progress.Attribute("IsVisible")?.Value);
+        Assert.Equal("{StaticResource AccentColor}", progress.Attribute("ProgressColor")?.Value);
     }
 
     [Fact]

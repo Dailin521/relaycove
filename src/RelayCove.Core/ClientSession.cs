@@ -1212,6 +1212,37 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
         }
     }
 
+    public async Task<RealmMediaDownloadResult> DownloadRealmMediaAsync(
+        RealmMediaRequest request,
+        Stream destination,
+        IProgress<RealmMediaTransferProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(destination);
+        if (request.Kind != RealmMediaKind.File || request.MaximumBytes <= 0 || !destination.CanWrite)
+            throw new ArgumentException("A writable file download destination is required.", nameof(destination));
+        ThrowIfDisposed();
+        CredentialEnvelope credentials;
+        lock (_stateGate)
+        {
+            credentials = _credentials ?? throw new InvalidOperationException("No credentials are available.");
+        }
+        try
+        {
+            return await _gateway.DownloadRealmMediaAsync(
+                new GetRealmMediaRequest(credentials, request),
+                destination,
+                progress,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (GatewayException exception) when (IsUnauthorized(exception))
+        {
+            await HandleUnauthorizedAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
     public async Task SetTopicVisibilityPolicyAsync(ChannelTopic topic, TopicVisibilityPolicy policy, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(topic);

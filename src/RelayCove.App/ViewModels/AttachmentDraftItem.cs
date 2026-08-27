@@ -38,10 +38,17 @@ public sealed partial class AttachmentDraftItem : ObservableObject
     [ObservableProperty]
     public partial UploadedAttachment? Uploaded { get; set; }
 
+    [ObservableProperty]
+    public partial double UploadProgress { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StatusLabel))]
+    public partial string? UploadProgressLabel { get; set; }
+
     public string StatusLabel => Status switch
     {
         AttachmentUploadStatus.Pending => "等待上传",
-        AttachmentUploadStatus.Uploading => "正在上传…",
+        AttachmentUploadStatus.Uploading => $"正在上传 {UploadProgressLabel ?? "0%"}",
         AttachmentUploadStatus.Uploaded => "已上传；发送失败时会复用此链接",
         AttachmentUploadStatus.Uncertain => "上传结果未知；不会自动重试",
         AttachmentUploadStatus.Failed => "上传失败；可显式重试",
@@ -49,6 +56,24 @@ public sealed partial class AttachmentDraftItem : ObservableObject
     };
     public bool CanRetry => Status is AttachmentUploadStatus.Uncertain or AttachmentUploadStatus.Failed;
     public bool CanRemove => Status != AttachmentUploadStatus.Uploading;
+    public bool IsUploading => Status == AttachmentUploadStatus.Uploading;
+
+    partial void OnStatusChanged(AttachmentUploadStatus value) =>
+        OnPropertyChanged(nameof(IsUploading));
+
+    public void BeginUpload()
+    {
+        UploadProgress = 0;
+        UploadProgressLabel = "0%";
+        Status = AttachmentUploadStatus.Uploading;
+    }
+
+    public void ReportUploadProgress(RealmMediaTransferProgress progress)
+    {
+        var total = progress.TotalBytes is > 0 ? progress.TotalBytes.Value : Length;
+        UploadProgress = Math.Clamp(progress.BytesTransferred / (double)total, 0d, 1d);
+        UploadProgressLabel = $"{UploadProgress:P0}";
+    }
 
     public static string FormatBytes(long bytes)
     {

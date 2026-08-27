@@ -89,6 +89,49 @@
 
     <TitleBar.TrailingContent>
         <HorizontalStackLayout Spacing="2">
+            <Grid WidthRequest="32"
+                  HeightRequest="32"
+                  IsVisible="{Binding MainVisible}">
+                <ImageButton x:Name="DownloadButton"
+                             Source="icon_download.png"
+                             Style="{StaticResource ImageIconButtonStyle}"
+                             WidthRequest="32"
+                             HeightRequest="32"
+                             Padding="8"
+                             ToolTipProperties.Text="{Binding DownloadButtonDescription}"
+                             SemanticProperties.Description="{Binding DownloadButtonDescription}">
+                    <ImageButton.Triggers>
+                        <DataTrigger TargetType="ImageButton"
+                                     Binding="{Binding IsDownloadCenterOpen, Source={x:Reference Root}, x:DataType=controls:ProductBarView}"
+                                     Value="True">
+                            <Setter Property="BackgroundColor" Value="{AppThemeBinding Light={StaticResource LightSurfaceSelectedColor}, Dark={StaticResource DarkSurfaceSelectedColor}}" />
+                        </DataTrigger>
+                    </ImageButton.Triggers>
+                </ImageButton>
+                <ProgressBar Margin="5,27,5,2"
+                             IsVisible="{Binding IsMediaActionBusy}"
+                             Progress="{Binding MediaDownloadProgress}"
+                             ProgressColor="{StaticResource AccentColor}"
+                             InputTransparent="True" />
+                <Border WidthRequest="8"
+                        HeightRequest="8"
+                        Margin="0,3,3,0"
+                        Padding="0"
+                        HorizontalOptions="End"
+                        VerticalOptions="Start"
+                        IsVisible="{Binding HasDownloadButtonAttention}"
+                        Background="{StaticResource AccentBrush}"
+                        Stroke="{StaticResource GroundBrush}"
+                        StrokeThickness="1"
+                        InputTransparent="True">
+                    <Border.StrokeShape><RoundRectangle CornerRadius="4" /></Border.StrokeShape>
+                    <Border.Triggers>
+                        <DataTrigger TargetType="Border" Binding="{Binding HasDownloadFailure}" Value="True">
+                            <Setter Property="Background" Value="{StaticResource DangerBrush}" />
+                        </DataTrigger>
+                    </Border.Triggers>
+                </Border>
+            </Grid>
             <ImageButton x:Name="SettingsButton"
                          Source="icon_settings.png"
                          Style="{StaticResource ImageIconButtonStyle}"

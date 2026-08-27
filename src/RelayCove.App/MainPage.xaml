@@ -91,11 +91,59 @@
                               IsVisible="{Binding IsWorkspaceContentPaneVisible}"
                               Background="{StaticResource SurfaceBrush}">
                             <Grid IsVisible="{Binding IsMessagesSection}"
-                                  RowDefinitions="Auto,*,Auto">
+                                  RowDefinitions="Auto,*,Auto,Auto">
                                 <controls:ChatHeaderView x:Name="ChatHeader" Grid.Row="0" />
                                 <controls:ConversationMessageHost Grid.Row="1"
                                                                   Presentations="{Binding MessagePresentations}" />
-                                <controls:ComposerView Grid.Row="2" />
+                                <Border Grid.Row="2"
+                                        Margin="14,4,14,0"
+                                        Padding="12,9"
+                                        IsVisible="{Binding IsMediaDownloadStatusVisible}"
+                                        Background="{StaticResource SurfaceSoftBrush}"
+                                        Stroke="{StaticResource BorderBrush}"
+                                        StrokeThickness="1">
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="9" /></Border.StrokeShape>
+                                    <Grid RowDefinitions="Auto,Auto" RowSpacing="7">
+                                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="9">
+                                            <Image Source="icon_attachment.png" WidthRequest="18" HeightRequest="18" VerticalOptions="Center" />
+                                            <VerticalStackLayout Grid.Column="1" Spacing="1">
+                                                <Label Text="{Binding MediaDownloadFileName}"
+                                                       Style="{StaticResource BaseLabelStyle}"
+                                                       FontAttributes="Bold"
+                                                       LineBreakMode="MiddleTruncation" />
+                                                <Label Text="{Binding MediaActionStatus}"
+                                                       Style="{StaticResource MutedLabelStyle}" />
+                                            </VerticalStackLayout>
+                                            <HorizontalStackLayout Grid.Column="2" Spacing="6">
+                                                <Button Text="重试"
+                                                        IsVisible="{Binding CanRetryMediaDownload}"
+                                                        Style="{StaticResource BaseButtonStyle}"
+                                                        Command="{Binding RetryMediaDownloadCommand}" />
+                                                <Button Text="取消"
+                                                        IsVisible="{Binding IsMediaActionBusy}"
+                                                        Style="{StaticResource BaseButtonStyle}"
+                                                        Command="{Binding DownloadAttachmentCancelCommand}" />
+                                            </HorizontalStackLayout>
+                                        </Grid>
+                                        <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                                            <ActivityIndicator IsVisible="{Binding IsMediaDownloadIndeterminate}"
+                                                               IsRunning="{Binding IsMediaDownloadIndeterminate}"
+                                                               WidthRequest="16"
+                                                               HeightRequest="16" />
+                                            <ProgressBar Grid.Column="1"
+                                                         IsVisible="{Binding HasKnownMediaDownloadLength}"
+                                                         Progress="{Binding MediaDownloadProgress}"
+                                                         ProgressColor="{StaticResource AccentColor}"
+                                                         VerticalOptions="Center" />
+                                            <Label Grid.Column="2"
+                                                   Text="{Binding MediaDownloadProgressText}"
+                                                   Style="{StaticResource MutedLabelStyle}"
+                                                   FontSize="11"
+                                                   VerticalTextAlignment="Center" />
+                                        </Grid>
+                                    </Grid>
+                                </Border>
+                                <controls:ComposerView Grid.Row="3" />
                             </Grid>
 
                             <Grid IsVisible="{Binding IsSavedSection}"
@@ -387,6 +435,193 @@
                                 <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
                             </Button>
                         </VerticalStackLayout>
+                    </Border>
+                </Grid>
+
+                <Grid IsVisible="{Binding IsDownloadCenterOpen}">
+                    <BoxView Background="Transparent">
+                        <BoxView.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding CloseDownloadCenterCommand}" />
+                        </BoxView.GestureRecognizers>
+                    </BoxView>
+                    <Border WidthRequest="380"
+                            MaximumHeightRequest="540"
+                            Margin="0,8,8,0"
+                            Style="{StaticResource PopoverBorderStyle}"
+                            HorizontalOptions="End"
+                            VerticalOptions="Start">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+                        <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="6">
+                            <Grid Margin="8,5,5,5" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <VerticalStackLayout Spacing="1" VerticalOptions="Center">
+                                    <Label Text="下载内容"
+                                           Style="{StaticResource BaseLabelStyle}"
+                                           FontSize="17"
+                                           FontAttributes="Bold" />
+                                    <Label Text="最近下载的文件"
+                                           Style="{StaticResource MutedLabelStyle}"
+                                           FontSize="11" />
+                                </VerticalStackLayout>
+                                <Button x:Name="DownloadCenterCloseButton"
+                                        Grid.Column="1"
+                                        Text="×"
+                                        Style="{StaticResource IconButtonStyle}"
+                                        Command="{Binding CloseDownloadCenterCommand}"
+                                        SemanticProperties.Description="关闭下载内容" />
+                            </Grid>
+
+                            <Border Grid.Row="1"
+                                    Margin="4,0"
+                                    Padding="10"
+                                    IsVisible="{Binding ShowDownloadCenterCurrentTask}"
+                                    Background="{StaticResource SurfaceSoftBrush}"
+                                    Stroke="{StaticResource BorderBrush}"
+                                    StrokeThickness="1">
+                                <Border.StrokeShape><RoundRectangle CornerRadius="9" /></Border.StrokeShape>
+                                <Grid RowDefinitions="Auto,Auto" RowSpacing="7">
+                                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="9">
+                                        <Image Source="icon_download.png" WidthRequest="20" HeightRequest="20" VerticalOptions="Center" />
+                                        <VerticalStackLayout Grid.Column="1" Spacing="1">
+                                            <Label Text="{Binding MediaDownloadFileName}"
+                                                   Style="{StaticResource BaseLabelStyle}"
+                                                   FontAttributes="Bold"
+                                                   LineBreakMode="MiddleTruncation" />
+                                            <Label Text="{Binding MediaActionStatus}"
+                                                   Style="{StaticResource MutedLabelStyle}"
+                                                   FontSize="11" />
+                                        </VerticalStackLayout>
+                                        <HorizontalStackLayout Grid.Column="2" Spacing="5">
+                                            <Button Text="重试"
+                                                    IsVisible="{Binding CanRetryMediaDownload}"
+                                                    Style="{StaticResource BaseButtonStyle}"
+                                                    Command="{Binding RetryMediaDownloadCommand}" />
+                                            <Button Text="移除"
+                                                    IsVisible="{Binding CanRetryMediaDownload}"
+                                                    Style="{StaticResource BaseButtonStyle}"
+                                                    Command="{Binding DismissFailedMediaDownloadCommand}" />
+                                            <Button Text="取消"
+                                                    IsVisible="{Binding IsMediaActionBusy}"
+                                                    Style="{StaticResource BaseButtonStyle}"
+                                                    Command="{Binding DownloadAttachmentCancelCommand}" />
+                                        </HorizontalStackLayout>
+                                    </Grid>
+                                    <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="7">
+                                        <ActivityIndicator IsVisible="{Binding IsMediaDownloadIndeterminate}"
+                                                           IsRunning="{Binding IsMediaDownloadIndeterminate}"
+                                                           WidthRequest="15"
+                                                           HeightRequest="15" />
+                                        <ProgressBar Grid.Column="1"
+                                                     IsVisible="{Binding HasKnownMediaDownloadLength}"
+                                                     Progress="{Binding MediaDownloadProgress}"
+                                                     ProgressColor="{StaticResource AccentColor}" />
+                                        <Label Grid.Column="2"
+                                               Text="{Binding MediaDownloadProgressText}"
+                                               Style="{StaticResource MutedLabelStyle}"
+                                               FontSize="10" />
+                                    </Grid>
+                                </Grid>
+                            </Border>
+
+                            <Grid Grid.Row="2" MinimumHeightRequest="110" MaximumHeightRequest="390">
+                                <CollectionView ItemsSource="{Binding RecentDownloads}"
+                                                SelectionMode="None"
+                                                IsVisible="{Binding HasRecentDownloads}">
+                                    <CollectionView.ItemTemplate>
+                                        <DataTemplate x:DataType="viewModels:DownloadHistoryItem">
+                                            <Border Margin="4,2"
+                                                    Padding="10,8"
+                                                    Background="Transparent"
+                                                    Stroke="Transparent"
+                                                    StrokeThickness="0">
+                                                <Border.StrokeShape><RoundRectangle CornerRadius="8" /></Border.StrokeShape>
+                                                <Border.GestureRecognizers>
+                                                    <TapGestureRecognizer Command="{Binding ViewModel.OpenRecentDownloadCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                                          CommandParameter="{Binding .}" />
+                                                </Border.GestureRecognizers>
+                                                <FlyoutBase.ContextFlyout>
+                                                    <MenuFlyout>
+                                                        <MenuFlyoutItem Text="打开"
+                                                                        Command="{Binding ViewModel.OpenRecentDownloadCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                                        CommandParameter="{Binding .}" />
+                                                        <MenuFlyoutItem Text="在文件夹中显示"
+                                                                        Command="{Binding ViewModel.ShowRecentDownloadInFolderCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                                        CommandParameter="{Binding .}" />
+                                                        <MenuFlyoutSeparator />
+                                                        <MenuFlyoutItem Text="从记录中移除"
+                                                                        Command="{Binding ViewModel.RemoveRecentDownloadCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                                        CommandParameter="{Binding .}" />
+                                                    </MenuFlyout>
+                                                </FlyoutBase.ContextFlyout>
+                                                <Grid ColumnDefinitions="34,*,Auto" ColumnSpacing="9">
+                                                    <Border WidthRequest="34"
+                                                            HeightRequest="34"
+                                                            Padding="7"
+                                                            Background="{StaticResource SurfaceSoftBrush}"
+                                                            StrokeThickness="0">
+                                                        <Border.StrokeShape><RoundRectangle CornerRadius="8" /></Border.StrokeShape>
+                                                        <Image Source="icon_download.png" />
+                                                    </Border>
+                                                    <VerticalStackLayout Grid.Column="1" Spacing="2" VerticalOptions="Center">
+                                                        <Label Text="{Binding FileName}"
+                                                               Style="{StaticResource BaseLabelStyle}"
+                                                               FontAttributes="Bold"
+                                                               LineBreakMode="MiddleTruncation" />
+                                                        <Label Text="{Binding StatusLabel}"
+                                                               Style="{StaticResource MutedLabelStyle}"
+                                                               FontSize="11">
+                                                            <Label.Triggers>
+                                                                <DataTrigger TargetType="Label" Binding="{Binding IsMissing}" Value="True">
+                                                                    <Setter Property="TextColor" Value="{StaticResource DangerColor}" />
+                                                                </DataTrigger>
+                                                            </Label.Triggers>
+                                                        </Label>
+                                                    </VerticalStackLayout>
+                                                    <HorizontalStackLayout Grid.Column="2" Spacing="2" VerticalOptions="Center">
+                                                        <Button Text="打开"
+                                                                Style="{StaticResource MessageQuickButtonStyle}"
+                                                                Command="{Binding ViewModel.OpenRecentDownloadCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                                CommandParameter="{Binding .}" />
+                                                        <Button Text="定位"
+                                                                Style="{StaticResource MessageQuickButtonStyle}"
+                                                                Command="{Binding ViewModel.ShowRecentDownloadInFolderCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                                CommandParameter="{Binding .}" />
+                                                        <Button Text="×"
+                                                                Style="{StaticResource MessageQuickButtonStyle}"
+                                                                Command="{Binding ViewModel.RemoveRecentDownloadCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                                CommandParameter="{Binding .}"
+                                                                SemanticProperties.Description="从下载记录移除" />
+                                                    </HorizontalStackLayout>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </CollectionView.ItemTemplate>
+                                </CollectionView>
+                                <VerticalStackLayout IsVisible="{Binding IsDownloadCenterEmpty}"
+                                                     Spacing="6"
+                                                     HorizontalOptions="Center"
+                                                     VerticalOptions="Center">
+                                    <Image Source="icon_download.png" WidthRequest="28" HeightRequest="28" Opacity="0.7" />
+                                    <Label Text="还没有下载内容" Style="{StaticResource MutedLabelStyle}" />
+                                </VerticalStackLayout>
+                            </Grid>
+
+                            <Grid Grid.Row="3" RowDefinitions="Auto,Auto" Margin="4,2,4,4" RowSpacing="5">
+                                <Label Text="{Binding DownloadCenterStatus}"
+                                       IsVisible="{Binding HasDownloadCenterStatus}"
+                                       Style="{StaticResource DangerLabelStyle}"
+                                       FontSize="11" />
+                                <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                    <Button Text="打开下载文件夹"
+                                            Style="{StaticResource BaseButtonStyle}"
+                                            Command="{Binding OpenDownloadFolderCommand}" />
+                                    <Button Grid.Column="1"
+                                            Text="清除记录"
+                                            IsVisible="{Binding HasRecentDownloads}"
+                                            Style="{StaticResource BaseButtonStyle}"
+                                            Command="{Binding ClearDownloadHistoryCommand}" />
+                                </Grid>
+                            </Grid>
+                        </Grid>
                     </Border>
                 </Grid>
 
@@ -892,6 +1127,7 @@
                                 <Button Grid.Column="2"
                                         Text="下载原文件"
                                         Style="{StaticResource BaseButtonStyle}"
+                                        IsEnabled="{Binding CanStartMediaDownload}"
                                         Command="{Binding DownloadAttachmentCommand}"
                                         CommandParameter="{Binding ActiveImageAttachment}" />
                             </Grid>

@@ -22,6 +22,11 @@ public partial class ProductBarView : TitleBar
         typeof(bool),
         typeof(ProductBarView));
 
+    public static readonly BindableProperty IsDownloadCenterOpenProperty = BindableProperty.Create(
+        nameof(IsDownloadCenterOpen),
+        typeof(bool),
+        typeof(ProductBarView));
+
     public ProductBarView(IWindowShellAdapter windowShellAdapter)
     {
         _windowShellAdapter = windowShellAdapter ?? throw new ArgumentNullException(nameof(windowShellAdapter));
@@ -48,11 +53,18 @@ public partial class ProductBarView : TitleBar
         set => SetValue(IsSettingsSectionProperty, value);
     }
 
+    public bool IsDownloadCenterOpen
+    {
+        get => (bool)GetValue(IsDownloadCenterOpenProperty);
+        set => SetValue(IsDownloadCenterOpenProperty, value);
+    }
+
     public void Bind(ShellViewModel viewModel)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
         BindingContext = viewModel;
         AccountButton.Command = viewModel.ToggleAccountMenuCommand;
+        DownloadButton.Command = viewModel.ToggleDownloadCenterCommand;
         SettingsButton.Command = viewModel.ToggleSettingsCommand;
         ThemeButton.Command = viewModel.ToggleThemeCommand;
         AccountButtonBorder.SetBinding(
@@ -79,6 +91,9 @@ public partial class ProductBarView : TitleBar
         SetBinding(
             IsSettingsSectionProperty,
             new Binding(nameof(ShellViewModel.IsSettingsSection), source: viewModel));
+        SetBinding(
+            IsDownloadCenterOpenProperty,
+            new Binding(nameof(ShellViewModel.IsDownloadCenterOpen), source: viewModel));
         ConnectionStatusLabel.SetBinding(
             Label.TextProperty,
             new Binding(nameof(ShellViewModel.ConnectionStatus), source: viewModel));

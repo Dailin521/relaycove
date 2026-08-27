@@ -72,7 +72,7 @@
             <VerticalStackLayout Grid.Row="1" Margin="10,0,10,4" Spacing="3">
                 <CollectionView ItemsSource="{Binding Attachments}"
                                 IsVisible="{Binding HasAttachments}"
-                                HeightRequest="58"
+                                HeightRequest="66"
                                 SelectionMode="None"
                                 ItemsUpdatingScrollMode="KeepItemsInView">
                     <CollectionView.ItemsLayout><LinearItemsLayout Orientation="Horizontal" ItemSpacing="6" /></CollectionView.ItemsLayout>
@@ -84,8 +84,8 @@
                                     Stroke="{StaticResource BorderBrush}"
                                     StrokeThickness="1">
                                 <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
-                                <Grid ColumnDefinitions="34,*,28" RowDefinitions="Auto,Auto" ColumnSpacing="7">
-                                    <Border Grid.RowSpan="2" WidthRequest="34" HeightRequest="34" Padding="0"
+                                <Grid ColumnDefinitions="34,*,28" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="7" RowSpacing="2">
+                                    <Border Grid.RowSpan="3" WidthRequest="34" HeightRequest="34" Padding="0"
                                             VerticalOptions="Center" Background="{StaticResource SurfaceSelectedBrush}" StrokeThickness="0">
                                         <Border.StrokeShape><RoundRectangle CornerRadius="6" /></Border.StrokeShape>
                                         <Grid>
@@ -109,7 +109,13 @@
                                                 Command="{Binding ViewModel.RetryAttachmentCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
                                                 CommandParameter="{Binding .}" />
                                     </HorizontalStackLayout>
-                                    <ImageButton Grid.Column="2" Grid.RowSpan="2" Source="icon_close.png"
+                                    <ProgressBar Grid.Row="2"
+                                                 Grid.Column="1"
+                                                 HeightRequest="3"
+                                                 IsVisible="{Binding IsUploading}"
+                                                 Progress="{Binding UploadProgress}"
+                                                 ProgressColor="{StaticResource AccentColor}" />
+                                    <ImageButton Grid.Column="2" Grid.RowSpan="3" Source="icon_close.png"
                                                  Style="{StaticResource MessageQuickImageButtonStyle}"
                                                  IsEnabled="{Binding CanRemove}"
                                                  Command="{Binding ViewModel.RemoveAttachmentCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"

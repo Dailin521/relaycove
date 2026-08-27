@@ -34,6 +34,12 @@ public interface IZulipGateway
     Task SetMessageStarredAsync(SetMessageStarredRequest request, CancellationToken cancellationToken = default);
     Task<UploadedAttachment> UploadAttachmentAsync(UploadAttachmentRequest request, CancellationToken cancellationToken = default);
     Task<RealmMediaResult> GetRealmMediaAsync(GetRealmMediaRequest request, CancellationToken cancellationToken = default);
+    Task<RealmMediaDownloadResult> DownloadRealmMediaAsync(
+        GetRealmMediaRequest request,
+        Stream destination,
+        IProgress<RealmMediaTransferProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException<RealmMediaDownloadResult>(new NotSupportedException("Streaming media downloads are not available."));
     Task<UnsubscribeChannelResult> UnsubscribeChannelAsync(UnsubscribeChannelRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(AvailableChannelsRequest request, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ChannelSummary>>([]);
     Task<SubscribeChannelResult> SubscribeToChannelAsync(SubscribeChannelRequest request, CancellationToken cancellationToken = default) => Task.FromException<SubscribeChannelResult>(new NotSupportedException());

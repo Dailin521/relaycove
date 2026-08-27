@@ -50,6 +50,20 @@ public sealed class RealmMediaService : IRealmMediaService, IDisposable
                 Math.Min(100L * 1024 * 1024, _session.MaxFileUploadBytes)),
             cancellationToken);
 
+    public Task<RealmMediaDownloadResult> DownloadFileAsync(
+        string sourceUrl,
+        Stream destination,
+        IProgress<RealmMediaTransferProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        _session.DownloadRealmMediaAsync(
+            new RealmMediaRequest(
+                sourceUrl,
+                RealmMediaKind.File,
+                Math.Min(100L * 1024 * 1024, _session.MaxFileUploadBytes)),
+            destination,
+            progress,
+            cancellationToken);
+
     private bool TryGet(string key, out ImageSource source)
     {
         lock (_gate)

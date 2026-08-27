@@ -51,6 +51,12 @@ public interface IClientSession
     Task SetMessageStarredAsync(long messageId, bool isStarred, CancellationToken cancellationToken = default);
     Task<UploadedAttachment> UploadAttachmentAsync(AttachmentUpload upload, CancellationToken cancellationToken = default);
     Task<RealmMediaResult> GetRealmMediaAsync(RealmMediaRequest request, CancellationToken cancellationToken = default);
+    Task<RealmMediaDownloadResult> DownloadRealmMediaAsync(
+        RealmMediaRequest request,
+        Stream destination,
+        IProgress<RealmMediaTransferProgress>? progress = null,
+        CancellationToken cancellationToken = default) =>
+        Task.FromException<RealmMediaDownloadResult>(new NotSupportedException("Streaming media downloads are not available."));
     Task UnsubscribeChannelAsync(long channelId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ChannelSummary>>([]);
     Task SubscribeToChannelAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException());
