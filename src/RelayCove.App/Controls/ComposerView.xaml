@@ -8,7 +8,7 @@
              x:Name="Root"
              x:DataType="viewModels:ShellViewModel">
     <Border Margin="15,0,15,14"
-            HeightRequest="{Binding ComposerHeight}"
+            HeightRequest="{Binding ComposerDisplayHeight}"
             MinimumHeightRequest="128"
             Background="{StaticResource SurfaceSoftBrush}"
             Stroke="{StaticResource BorderBrush}"
@@ -38,6 +38,7 @@
                 </Button.Behaviors>
             </Button>
             <controls:ComposerEditor x:Name="ComposerEditor"
+                                     AutomationId="ComposerEditor"
                                      Grid.Row="2"
                                      Margin="0"
                                      MinimumHeightRequest="64"
@@ -110,6 +111,7 @@
                                                 CommandParameter="{Binding .}" />
                                     </HorizontalStackLayout>
                                     <ProgressBar Grid.Row="2"
+                                                 AutomationId="AttachmentUploadProgress"
                                                  Grid.Column="1"
                                                  HeightRequest="3"
                                                  IsVisible="{Binding IsUploading}"
@@ -141,6 +143,7 @@
                              Clicked="OnEmojiPickerClicked"
                              SemanticProperties.Description="打开表情选择器" />
                 <ImageButton Grid.Column="1"
+                             AutomationId="AttachFileButton"
                              Source="icon_attachment.png"
                              Style="{StaticResource ImageIconButtonStyle}"
                              WidthRequest="34" HeightRequest="32" Padding="8,7"
@@ -148,16 +151,17 @@
                              IsEnabled="{Binding CanCompose}"
                              SemanticProperties.Description="选择最多 10 个图片或文件附件" />
                 <Label Grid.Column="2"
-                       Text="粘贴或拖放图片与文件 · Enter 发送 · Ctrl+Enter 换行"
+                       Text="Enter 发送 · Ctrl+Enter 换行"
                        Style="{StaticResource MutedLabelStyle}"
                        FontSize="10"
                        VerticalTextAlignment="Center"
                        LineBreakMode="TailTruncation" />
                 <Button Grid.Column="3"
+                        AutomationId="ComposerSendButton"
                         Text="发送"
                         ImageSource="icon_send.png"
                         ContentLayout="Left,5"
-                        Style="{StaticResource PrimaryButtonStyle}"
+                        Style="{StaticResource ComposerSendButtonStyle}"
                         HeightRequest="32"
                         MinimumHeightRequest="32"
                         Padding="12,0"

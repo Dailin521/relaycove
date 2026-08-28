@@ -92,9 +92,12 @@ pwsh ./scripts/start-maui-preview.ps1 -Scene settings -NoBuild
 pwsh ./scripts/start-maui-preview.ps1 -Scene details -Width 1024 -Height 768 -NoBuild
 pwsh ./scripts/start-maui-preview.ps1 -Scene narrow-list -Width 640 -Height 900 -NoBuild
 pwsh ./scripts/start-maui-preview.ps1 -Scene narrow-chat -Width 640 -Height 900 -NoBuild
+pwsh ./scripts/start-maui-preview.ps1 -Scene composer-uploading -Theme dark -Width 1024 -Height 768 -NoBuild
+pwsh ./scripts/start-maui-preview.ps1 -Scene search-flow -Width 1024 -Height 768 -NoBuild
+pwsh ./scripts/start-maui-preview.ps1 -Scene outbox-states -Theme light -Width 1024 -Height 768 -NoBuild
 ```
 
-固定场景为 `shell`、`details`、`message-menu`、`composer-emoji`、`reaction-picker`、`account-menu`、`settings`、`narrow-list`、`narrow-chat`；主题为 `light`、`dark` 或 `system`。首次修改后省略 `-NoBuild`，脚本会先把 App-only Debug build 输出到忽略的 `artifacts/maui/preview-builds/<timestamp>/`；只有构建成功才替换它自己记录的旧预览进程。每个预览 EXE 必须以自身输出目录作为工作目录，否则 WinUI 可能因找不到本地运行时资源而在创建 HWND 前退出。仅切换场景时使用 `-NoBuild`，通常一秒内即可重新打开。双击根目录的 `start-maui-preview.cmd` 会打开默认 `shell` 场景。
+固定场景另包括 `shell-avatars`、`composer-empty`、`composer-uploading`、`composer-uploaded`、`search-flow`、`message-quick-actions` 与 `outbox-states`；主题为 `light`、`dark` 或 `system`。首次修改后省略 `-NoBuild`，脚本会先完成 App-only Debug build；每次启动使用唯一运行目录记录 PID、进程启动时间、EXE 绝对路径与 SHA-256。每个预览 EXE 必须以自身输出目录作为工作目录，否则 WinUI 可能因找不到本地运行时资源而在创建 HWND 前退出。仅切换场景时使用 `-NoBuild`。双击根目录的 `start-maui-preview.cmd` 会打开默认 `shell` 场景。
 
 场景、主题和窗口大小分别由 `RELAYCOVE_NATIVE_UI_PREVIEW_SCENE`、`RELAYCOVE_NATIVE_UI_PREVIEW_THEME`、`RELAYCOVE_NATIVE_UI_PREVIEW_WIDTH`、`RELAYCOVE_NATIVE_UI_PREVIEW_HEIGHT` 选择，并且只有 `Debug`、`RELAYCOVE_NATIVE_UI_PREVIEW=1` 和内存 `NativeShellPreviewSession` 同时成立时才应用。正式 Debug、Release 与真实 `ClientSession` 不读取这些场景。
 
@@ -102,11 +105,18 @@ pwsh ./scripts/start-maui-preview.ps1 -Scene narrow-chat -Width 640 -Height 900 
 
 ```powershell
 pwsh ./scripts/capture-maui-preview.ps1 `
+  -RunDirectory artifacts/maui/runs/<runId>/<scene> `
   -DipWidth 1440 -DipHeight 900 `
   -OutputPath artifacts/maui/screenshots/parity-polish/shell-1440-light.png
 ```
 
-该链路不会移动鼠标、发送点击或键盘输入，也不会按进程名误抓另一个 worktree。截图进入被忽略的 `artifacts/maui/screenshots/parity-polish/`；正式交付在 STATUS/task 记录路径、目标 DIP、实际像素和 SHA-256。
+正式自主矩阵使用统一入口：
+
+```powershell
+pwsh ./scripts/verify-maui-preview.ps1
+```
+
+该链路不会移动鼠标、发送点击或键盘输入，也不会按进程名误抓另一个 worktree。它强制选择非主显示器；没有副屏、最终 HWND 不在目标副屏、DWM 尺寸未收敛到目标物理尺寸 ±1 px、进程身份复核失败或 UIA 语义断言失败都会失败关闭，不允许退回主屏冒充通过。每张完整 HWND 截图使用 `PrintWindow(PW_RENDERFULLCONTENT)`，旁车证据记录 DPI、DIP/像素尺寸、副屏、窗口矩形、进程身份和 SHA-256；总报告位于 `artifacts/maui/runs/<runId>/report.json` 并明确标注 `Live not run`。
 
 ## 5. 推荐验证节奏
 
@@ -128,7 +138,7 @@ dotnet test tests/RelayCove.App.Tests/RelayCove.App.Tests.csproj -c Debug --no-b
 
 ## 6. 副屏与 DPI 经验
 
-- Debug 离线预览每次启动只选择一个非主显示器；未连接副屏时安全保留在主屏。生产启动不强制移动窗口。
+- Debug 离线人工预览优先选择一个非主显示器；正式 `verify-maui-preview.ps1` 验收不存在副屏时直接失败。生产启动不强制移动窗口。
 - MAUI 的目标大小使用 DIP；`AppWindow.MoveAndResize` 和 DWM 捕获边界使用物理像素。换算公式为 `physical = DIP × scale / 100`。
 - 150% 副屏上，1440×900 DIP 应对应约 2160×1350 物理像素。
 - 窗口刚移动到另一个 DPI 的显示器时，`GetDpiForWindow` 可能仍返回原显示器 DPI。副屏初始化使用目标 monitor 的 `GetScaleFactorForMonitor`，再延迟一次 `MoveAndResize`。

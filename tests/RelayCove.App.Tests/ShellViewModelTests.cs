@@ -1896,46 +1896,7 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public async Task OwnPresence_WhenBusyAndOfflineAreSelected_UsesSessionAndUpdatesMenuState()
-    {
-        var state = new ClientState(
-            users: new Dictionary<long, UserProfile> { [7] = new(7, "Ada") },
-            connection: new ConnectionState(ConnectionStatus.Connected),
-            presence: new PresenceState(true, new Dictionary<long, UserPresence>
-            {
-                [7] = new UserPresence(7, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow)
-            }));
-        var session = new FakeSession
-        {
-            StateValue = state,
-            Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
-            CurrentUserId = 7,
-            CanSetOwnPresenceValue = true,
-            OwnPresenceStatusValue = UserPresenceStatus.Active
-        };
-        session.SetOwnPresenceAction = (status, _) =>
-        {
-            session.OwnPresenceStatusValue = status;
-            return Task.CompletedTask;
-        };
-        using var viewModel = CreateViewModel(session);
-
-        await viewModel.SetOwnPresenceIdleCommand.ExecuteAsync(null);
-        Assert.Equal(UserPresenceStatus.Idle, session.OwnPresenceStatusValue);
-        Assert.Equal("忙碌", viewModel.OwnPresenceLabel);
-        Assert.True(viewModel.IsOwnPresenceIdle);
-        Assert.True(viewModel.HasOwnPresenceStatus);
-
-        await viewModel.SetOwnPresenceOfflineCommand.ExecuteAsync(null);
-        Assert.Equal(UserPresenceStatus.Offline, session.OwnPresenceStatusValue);
-        Assert.Equal("离线", viewModel.OwnPresenceLabel);
-        Assert.True(viewModel.IsOwnPresenceOffline);
-        Assert.True(viewModel.HasOwnPresenceStatus);
-        Assert.Null(viewModel.OwnPresenceError);
-    }
-
-    [Fact]
-    public void OwnPresence_WhenStatusIsKnownButSettingIsUnavailable_StillShowsAvatarStatus()
+    public void OwnStatus_WhenPresenceAndPersonalStatusAreKnown_ProjectsReadOnlySummary()
     {
         var session = new FakeSession
         {
@@ -1943,76 +1904,26 @@ public sealed class ShellViewModelTests
             Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
             CurrentUserId = 7,
             CanSetOwnPresenceValue = false,
-            OwnPresenceStatusValue = UserPresenceStatus.Active
+            OwnPresenceStatusValue = UserPresenceStatus.Active,
+            CanSetOwnUserStatusValue = false,
+            IsOwnUserStatusConfirmedValue = true,
+            OwnUserStatusValue = new UserStatusContent(
+                "会议中",
+                new EmojiReactionIdentity("calendar", "1f4c5", "unicode_emoji"))
         };
         using var viewModel = CreateViewModel(session);
 
         Assert.True(viewModel.HasOwnPresenceStatus);
-        Assert.False(viewModel.ShowOwnPresenceControls);
         Assert.True(viewModel.IsOwnPresenceOnline);
+        Assert.True(viewModel.HasOwnUserStatus);
+        Assert.True(viewModel.HasOwnStatusSummary);
+        Assert.Equal("在线 · 📅 会议中", viewModel.OwnStatusSummary);
+        Assert.Equal("在线状态：在线", viewModel.OwnPresenceStatusText);
+        Assert.Equal("个人状态：📅 会议中", viewModel.OwnUserStatusStatusText);
     }
 
     [Fact]
-    public async Task OwnPresence_WhenCurrentStatusIsSelected_DoesNotRepeatWrite()
-    {
-        var writes = 0;
-        var session = new FakeSession
-        {
-            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
-            Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
-            CurrentUserId = 7,
-            CanSetOwnPresenceValue = true,
-            OwnPresenceStatusValue = UserPresenceStatus.Active,
-            SetOwnPresenceAction = (_, _) =>
-            {
-                writes++;
-                return Task.CompletedTask;
-            }
-        };
-        using var viewModel = CreateViewModel(session);
-
-        await viewModel.SetOwnPresenceOnlineCommand.ExecuteAsync(null);
-
-        Assert.Equal(0, writes);
-        Assert.False(viewModel.CanSetOwnPresenceOnline);
-        Assert.True(viewModel.CanSetOwnPresenceIdle);
-    }
-
-    [Fact]
-    public async Task OwnPresence_WhileServerConfirmationIsPending_ShowsImmediateProgress()
-    {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var session = new FakeSession
-        {
-            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
-            Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
-            CurrentUserId = 7,
-            CanSetOwnPresenceValue = true,
-            OwnPresenceStatusValue = UserPresenceStatus.Active
-        };
-        session.SetOwnPresenceAction = async (status, _) =>
-        {
-            await completion.Task;
-            session.OwnPresenceStatusValue = status;
-        };
-        using var viewModel = CreateViewModel(session);
-
-        var operation = viewModel.SetOwnPresenceIdleCommand.ExecuteAsync(null);
-        Assert.True(viewModel.IsOwnPresenceBusy);
-        Assert.Equal(UserPresenceStatus.Idle, viewModel.PendingOwnPresenceStatus);
-        Assert.Equal("正在切换为忙碌…", viewModel.OwnPresenceStatusText);
-        Assert.False(viewModel.CanSetOwnPresenceIdle);
-
-        completion.SetResult();
-        await operation;
-
-        Assert.False(viewModel.IsOwnPresenceBusy);
-        Assert.Null(viewModel.PendingOwnPresenceStatus);
-        Assert.Equal("在线状态：忙碌", viewModel.OwnPresenceStatusText);
-    }
-
-    [Fact]
-    public async Task OwnPresence_WhenWriteResultIsUncertain_ShowsUnconfirmedState()
+    public void OwnStatus_WhenServerHasNoKnownStatus_HidesSummary()
     {
         var session = new FakeSession
         {
@@ -2020,53 +1931,13 @@ public sealed class ShellViewModelTests
             Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
             CurrentUserId = 7,
             CanSetOwnPresenceValue = true,
-            OwnPresenceStatusValue = UserPresenceStatus.Active
-        };
-        session.SetOwnPresenceAction = (_, _) =>
-        {
-            session.OwnPresenceStatusValue = null;
-            return Task.FromException(
-                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
-        };
-        using var viewModel = CreateViewModel(session);
-
-        await viewModel.SetOwnPresenceOfflineCommand.ExecuteAsync(null);
-
-        Assert.Equal("状态结果未确认", viewModel.OwnPresenceLabel);
-        Assert.True(viewModel.ShowOwnPresenceControls);
-        Assert.True(viewModel.HasOwnPresenceError);
-    }
-
-    [Fact]
-    public async Task OwnUserStatus_WhenOfficialPresetAndClearAreSelected_UsesIndependentSessionSetting()
-    {
-        var session = new FakeSession
-        {
-            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
-            Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
-            CurrentUserId = 7,
             CanSetOwnUserStatusValue = true,
             IsOwnUserStatusConfirmedValue = true
         };
-        session.SetOwnUserStatusAction = (status, _) =>
-        {
-            session.OwnUserStatusValue = status.IsEmpty ? null : status;
-            return Task.CompletedTask;
-        };
         using var viewModel = CreateViewModel(session);
 
-        await viewModel.SetOwnUserStatusRemoteCommand.ExecuteAsync(null);
-
-        Assert.Equal("远程办公", session.OwnUserStatusValue!.StatusText);
-        Assert.Equal("house", session.OwnUserStatusValue.Emoji!.EmojiName);
-        Assert.Equal("个人状态：🏠 远程办公", viewModel.OwnUserStatusStatusText);
-        Assert.True(viewModel.CanClearOwnUserStatus);
-
-        await viewModel.ClearOwnUserStatusCommand.ExecuteAsync(null);
-
-        Assert.Null(session.OwnUserStatusValue);
-        Assert.Equal("个人状态：未设置", viewModel.OwnUserStatusStatusText);
-        Assert.False(viewModel.CanClearOwnUserStatus);
+        Assert.False(viewModel.HasOwnStatusSummary);
+        Assert.Equal(string.Empty, viewModel.OwnStatusSummary);
     }
 
     [Fact]
@@ -2468,6 +2339,8 @@ public sealed class ShellViewModelTests
         using var viewModel = CreateViewModel(session);
         session.Publish();
         viewModel.ComposerText = "original";
+        Assert.True(viewModel.CanSend);
+        Assert.True(viewModel.SendCommand.CanExecute(null));
 
         var send = ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
         await started.Task;
@@ -2511,7 +2384,7 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public async Task SendCommand_WhenAttachmentUploadFailsBeforeMessageSend_RestoresSubmittedText()
+    public async Task AttachmentSelection_WhenImmediateUploadFails_DisablesSendAndKeepsCaption()
     {
         var conversation = new DirectMessage([8]);
         var filePicker = new FakeFileSelectionService
@@ -2538,15 +2411,17 @@ public sealed class ShellViewModelTests
         await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
         viewModel.ComposerText = "keep this caption";
 
-        await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Failed);
 
         Assert.Equal("keep this caption", viewModel.ComposerText);
         Assert.Single(viewModel.Attachments);
+        Assert.False(viewModel.CanSend);
+        Assert.False(viewModel.SendCommand.CanExecute(null));
         Assert.Empty(session.SentContents);
     }
 
     [Fact]
-    public async Task SendCommand_WhenAttachmentUploadDisconnects_ShowsAttachmentErrorWithoutGlobalServerBanner()
+    public async Task AttachmentSelection_WhenImmediateUploadResultIsUnknown_ShowsAttachmentWarningOnly()
     {
         var conversation = new DirectMessage([8]);
         var filePicker = new FakeFileSelectionService
@@ -2573,13 +2448,49 @@ public sealed class ShellViewModelTests
         await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
         viewModel.ComposerText = "keep this caption";
 
-        await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uncertain);
 
         Assert.Equal("keep this caption", viewModel.ComposerText);
         Assert.Contains("附件上传结果未知", viewModel.AttachmentError, StringComparison.Ordinal);
         Assert.Null(viewModel.LoginError);
         Assert.Equal(AttachmentUploadStatus.Uncertain, Assert.Single(viewModel.Attachments).Status);
+        Assert.False(viewModel.CanSend);
         Assert.Empty(session.SentContents);
+    }
+
+    [Fact]
+    public async Task SendCommand_WhenFailedAttachmentWasRemoved_DoesNotHideLaterMessageFailure()
+    {
+        var filePicker = new FakeFileSelectionService
+        {
+            Files =
+            [
+                new SelectedAttachmentFile(
+                    "broken.txt",
+                    "text/plain",
+                    3,
+                    _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3])))
+            ]
+        };
+        var session = new FakeSession
+        {
+            Selected = new DirectMessage([8]),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            UploadAction = (_, _) => Task.FromException<UploadedAttachment>(new InvalidOperationException("upload failed")),
+            SendAction = (_, _) => throw new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError)
+        };
+        using var viewModel = CreateViewModel(session, fileSelectionService: filePicker);
+        session.Publish();
+
+        await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Failed);
+        viewModel.RemoveAttachmentCommand.Execute(viewModel.Attachments.Single());
+        viewModel.ComposerText = "send text after removing failed upload";
+
+        await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
+
+        Assert.NotNull(viewModel.LoginError);
+        Assert.Equal("send text after removing failed upload", Assert.Single(session.SentContents));
     }
 
     [Fact]
@@ -2937,7 +2848,40 @@ public sealed class ShellViewModelTests
 
         Assert.True(message.CanRecover);
         Assert.Equal("recover this raw text", viewModel.ComposerText);
-        Assert.Contains("可能产生重复消息", message.DeliveryState, StringComparison.Ordinal);
+        Assert.Contains("再次发送可能重复", message.DeliveryState, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SessionStateChanged_WhenOutboxStatesAreProjected_HidesWaitingAndClassifiesFailureVersusUnknown()
+    {
+        var conversation = new DirectMessage([8]);
+        var waiting = new OutboxEntry("waiting", conversation, "waiting content", DateTimeOffset.UnixEpoch, OutboxState.Waiting);
+        var failed = new OutboxEntry("failed", conversation, "failed content", DateTimeOffset.UnixEpoch.AddMinutes(1), OutboxState.Failed, OutboxFailureKind.Rejected);
+        var unknown = new OutboxEntry("unknown", conversation, "unknown content", DateTimeOffset.UnixEpoch.AddMinutes(2), OutboxState.WaitExpired, OutboxFailureKind.NetworkResultUnknown);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            StateValue = new ClientState(
+                outbox: new Dictionary<string, OutboxEntry>
+                {
+                    [waiting.LocalId] = waiting,
+                    [failed.LocalId] = failed,
+                    [unknown.LocalId] = unknown
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        var rows = viewModel.Messages.ToDictionary(message => message.Content, StringComparer.Ordinal);
+
+        Assert.False(rows["waiting content"].HasDeliveryState);
+        Assert.False(rows["waiting content"].CanRecover);
+        Assert.Equal("发送失败；恢复内容后可手动重试", rows["failed content"].DeliveryState);
+        Assert.True(rows["failed content"].IsDeliveryFailure);
+        Assert.True(rows["failed content"].CanRecover);
+        Assert.Equal("发送结果未确认；再次发送可能重复", rows["unknown content"].DeliveryState);
+        Assert.False(rows["unknown content"].IsDeliveryFailure);
+        Assert.True(rows["unknown content"].CanRecover);
     }
 
     [Fact]
@@ -3211,27 +3155,32 @@ public sealed class ShellViewModelTests
         };
         using var viewModel = CreateViewModel(session);
         session.Publish();
+        viewModel.SearchQuery = "shot";
 
         viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Images));
         var image = Assert.Single(viewModel.SearchResults);
         Assert.Equal("message:3", image.Id);
         Assert.Equal("图片", image.Kind);
 
+        viewModel.SearchQuery = "clip";
         viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Videos));
         var video = Assert.Single(viewModel.SearchResults);
         Assert.Equal("message:4", video.Id);
         Assert.Equal("视频", video.Kind);
 
+        viewModel.SearchQuery = "notes";
         viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Files));
         var file = Assert.Single(viewModel.SearchResults);
         Assert.Equal("message:2", file.Id);
         Assert.Equal("文件", file.Kind);
 
+        viewModel.SearchQuery = "example";
         viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Links));
         var link = Assert.Single(viewModel.SearchResults);
         Assert.Equal("message:5", link.Id);
         Assert.Equal("链接", link.Kind);
 
+        viewModel.SearchQuery = "plain";
         viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Messages));
         Assert.All(
             viewModel.SearchResults.Where(item => item.MessageId is not null),
@@ -3239,7 +3188,7 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public async Task SearchCategory_WhenMediaFilterHasNoKeyword_RequestsServerFilter()
+    public async Task SearchCategory_WhenMediaFilterHasNoKeyword_DoesNotRequestServer()
     {
         MessageSearchFilter? requestedFilter = null;
         var session = new FakeSession
@@ -3257,6 +3206,34 @@ public sealed class ShellViewModelTests
 
         await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
 
+        Assert.Null(requestedFilter);
+        Assert.Equal("输入内容开始搜索", viewModel.SearchEmptyText);
+        Assert.Empty(viewModel.SearchResults);
+    }
+
+    [Fact]
+    public async Task SearchCategory_WhenMediaFilterHasKeyword_RequestsServerFilter()
+    {
+        MessageSearchFilter? requestedFilter = null;
+        string? requestedQuery = null;
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            SearchMessagesWithFilterAction = (query, _, _, filter, _) =>
+            {
+                requestedQuery = query;
+                requestedFilter = filter;
+                return Task.FromResult(new MessageQueryPage([], true, true, true));
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenSearchCommand.Execute(null);
+        viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Images));
+        viewModel.SearchQuery = "design";
+
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
+
+        Assert.Equal("design", requestedQuery);
         Assert.Equal(MessageSearchFilter.Images, requestedFilter);
     }
 
@@ -3612,9 +3589,15 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public void AddDroppedAttachments_WhenWindowsDropSuppliesFiles_UsesTheSameValidatedDraftPath()
+    public async Task AddDroppedAttachments_WhenWindowsDropSuppliesFiles_StartsImmediateUpload()
     {
-        using var viewModel = CreateViewModel(new FakeSession());
+        var session = new FakeSession
+        {
+            Selected = new DirectMessage([8]),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
         var dropped = new SelectedAttachmentFile(
             "notes.txt",
             "text/plain",
@@ -3623,10 +3606,12 @@ public sealed class ShellViewModelTests
         viewModel.IsFileDragActive = true;
 
         viewModel.AddDroppedAttachmentsCommand.Execute(new[] { dropped });
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uploaded);
 
         Assert.False(viewModel.IsFileDragActive);
         Assert.Equal("notes.txt", Assert.Single(viewModel.Attachments).FileName);
         Assert.True(viewModel.HasAttachments);
+        Assert.Equal(1, session.UploadCalls);
     }
 
     [Fact]
@@ -3653,6 +3638,7 @@ public sealed class ShellViewModelTests
         session.Publish();
 
         await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uploaded);
         viewModel.ComposerText = "caption";
         await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
 
@@ -3660,6 +3646,167 @@ public sealed class ShellViewModelTests
         Assert.Equal("caption\n![design\\[1\\].png](https://example.test/user_uploads/design[1].png)", Assert.Single(session.SentContents));
         Assert.Empty(viewModel.Attachments);
         Assert.Equal(string.Empty, viewModel.ComposerText);
+    }
+
+    [Fact]
+    public async Task SendCommand_WhenOnlyAttachmentExists_EnablesOnlyAfterImmediateUploadCompletes()
+    {
+        var releaseUpload = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var filePicker = new FakeFileSelectionService
+        {
+            Files =
+            [
+                new SelectedAttachmentFile(
+                    "only.txt",
+                    "text/plain",
+                    3,
+                    _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3])))
+            ]
+        };
+        var session = new FakeSession
+        {
+            Selected = new DirectMessage([8]),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            UploadAction = async (upload, cancellationToken) =>
+            {
+                await releaseUpload.Task.WaitAsync(cancellationToken);
+                return new UploadedAttachment(upload.FileName, "https://example.test/user_uploads/only.txt");
+            }
+        };
+        using var viewModel = CreateViewModel(session, fileSelectionService: filePicker);
+        session.Publish();
+
+        await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uploading);
+        Assert.False(viewModel.CanSend);
+        Assert.False(viewModel.SendCommand.CanExecute(null));
+
+        releaseUpload.SetResult(true);
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uploaded);
+        Assert.True(viewModel.CanSend);
+        Assert.True(viewModel.SendCommand.CanExecute(null));
+
+        await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
+
+        Assert.Equal("[only.txt](https://example.test/user_uploads/only.txt)", Assert.Single(session.SentContents));
+    }
+
+    [Fact]
+    public async Task RetryAttachment_WhenImmediateUploadFailed_RetriesOnlyAfterExplicitCommand()
+    {
+        var attempt = 0;
+        var filePicker = new FakeFileSelectionService
+        {
+            Files =
+            [
+                new SelectedAttachmentFile(
+                    "retry.txt",
+                    "text/plain",
+                    3,
+                    _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3])))
+            ]
+        };
+        var session = new FakeSession
+        {
+            Selected = new DirectMessage([8]),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            UploadAction = (upload, _) => ++attempt == 1
+                ? Task.FromException<UploadedAttachment>(new InvalidOperationException("first attempt failed"))
+                : Task.FromResult(new UploadedAttachment(upload.FileName, "https://example.test/user_uploads/retry.txt"))
+        };
+        using var viewModel = CreateViewModel(session, fileSelectionService: filePicker);
+        session.Publish();
+
+        await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Failed);
+        Assert.Equal(1, session.UploadCalls);
+
+        viewModel.RetryAttachmentCommand.Execute(viewModel.Attachments.Single());
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uploaded);
+
+        Assert.Equal(2, session.UploadCalls);
+        Assert.True(viewModel.CanSend);
+    }
+
+    [Fact]
+    public async Task AttachmentSelection_WhenAccountChangesBeforeUploadCall_DoesNotUploadWithNewAccount()
+    {
+        FakeSession? session = null;
+        var otherAccount = RelayCove.Core.AccountId.Create(RealmEndpoint.Parse("https://other.example.test"), 99);
+        var filePicker = new FakeFileSelectionService
+        {
+            Files =
+            [
+                new SelectedAttachmentFile(
+                    "account-bound.txt",
+                    "text/plain",
+                    3,
+                    _ =>
+                    {
+                        session!.Account = otherAccount;
+                        return Task.FromResult<Stream>(new MemoryStream([1, 2, 3]));
+                    })
+            ]
+        };
+        session = new FakeSession
+        {
+            Selected = new DirectMessage([8]),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session, fileSelectionService: filePicker);
+        session.Publish();
+
+        await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
+        await WaitUntilAsync(() => session.Account == otherAccount);
+        await Task.Delay(50);
+
+        Assert.Equal(0, session.UploadCalls);
+    }
+
+    [Fact]
+    public async Task RecoverOutbox_WhenUploadedAttachmentIsStillInDraft_SendsItsMarkdownExactlyOnce()
+    {
+        var conversation = new DirectMessage([8]);
+        var uploadedMarkdown = "[notes.txt](https://example.test/user_uploads/notes.txt)";
+        var filePicker = new FakeFileSelectionService
+        {
+            Files =
+            [
+                new SelectedAttachmentFile(
+                    "notes.txt",
+                    "text/plain",
+                    3,
+                    _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3])))
+            ]
+        };
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session, fileSelectionService: filePicker);
+        session.Publish();
+        await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uploaded);
+
+        var outbox = new OutboxEntry(
+            "attachment-recovery",
+            conversation,
+            uploadedMarkdown,
+            DateTimeOffset.UnixEpoch,
+            OutboxState.WaitExpired,
+            OutboxFailureKind.NetworkResultUnknown);
+        session.StateValue = new ClientState(
+            outbox: new Dictionary<string, OutboxEntry> { [outbox.LocalId] = outbox },
+            connection: new ConnectionState(ConnectionStatus.Connected));
+        session.Publish();
+
+        viewModel.RecoverOutboxCommand.Execute(viewModel.Messages.Single(message => message.Id == "local-attachment-recovery"));
+        Assert.Equal(string.Empty, viewModel.ComposerText);
+        await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
+
+        Assert.Equal(1, session.UploadCalls);
+        Assert.Equal(uploadedMarkdown, Assert.Single(session.SentContents));
     }
 
     [Fact]
@@ -3695,24 +3842,35 @@ public sealed class ShellViewModelTests
         using var viewModel = CreateViewModel(session, fileSelectionService: filePicker);
         session.Publish();
         await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
+        viewModel.ComposerText = "caption";
 
-        var send = ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
         await uploadReported.Task;
         var attachment = Assert.Single(viewModel.Attachments);
 
         Assert.Equal(AttachmentUploadStatus.Uploading, attachment.Status);
         Assert.Equal(0.5d, attachment.UploadProgress);
         Assert.Equal("正在上传 50%", attachment.StatusLabel);
+        Assert.False(viewModel.CanSend);
+        Assert.False(viewModel.SendCommand.CanExecute(null));
 
         releaseUpload.SetResult(true);
-        await send;
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uploaded);
+        Assert.True(viewModel.CanSend);
+        Assert.True(viewModel.SendCommand.CanExecute(null));
+        await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
         Assert.Empty(viewModel.Attachments);
     }
 
     [Fact]
-    public void AddPastedImage_WhenClipboardProvidesPng_UsesValidatedAttachmentDraftPath()
+    public async Task AddPastedImage_WhenClipboardProvidesPng_StartsImmediateUpload()
     {
-        using var viewModel = CreateViewModel(new FakeSession());
+        var session = new FakeSession
+        {
+            Selected = new DirectMessage([8]),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
         var screenshot = new SelectedAttachmentFile(
             "screenshot-20260826-120000.png",
             "image/png",
@@ -3721,12 +3879,14 @@ public sealed class ShellViewModelTests
             openPreviewStream: () => new MemoryStream([1, 2, 3]));
 
         viewModel.AddPastedImageCommand.Execute(screenshot);
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uploaded);
 
         var draft = Assert.Single(viewModel.Attachments);
         Assert.True(draft.IsImage);
         Assert.True(draft.HasPreview);
         Assert.Equal("screenshot-20260826-120000.png", draft.FileName);
         Assert.True(viewModel.HasAttachments);
+        Assert.Equal(1, session.UploadCalls);
     }
 
     [Fact]
@@ -3767,6 +3927,7 @@ public sealed class ShellViewModelTests
         using var viewModel = CreateViewModel(session, fileSelectionService: filePicker);
         session.Publish();
         await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uploaded);
 
         await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
         failSend = false;
@@ -4871,8 +5032,28 @@ public sealed class ShellViewModelTests
 
     private sealed class FakeSession : IClientSession, IRealtimeMessageObserver
     {
+        private ConversationKey? _selected;
+
         public ClientState StateValue { get; set; } = ClientState.Empty;
-        public ConversationKey? Selected { get; set; }
+        public ConversationKey? Selected
+        {
+            get => _selected;
+            set
+            {
+                _selected = value;
+                if (value is null) return;
+                Account ??= RelayCove.Core.AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7);
+                if (HistoryState.Conversation is not null) return;
+                HistoryState = new ConversationHistoryState(
+                    value,
+                    HistoryState.Generation + 1,
+                    false,
+                    true,
+                    false,
+                    null,
+                    null);
+            }
+        }
         public IReadOnlyList<ConversationKey> Recent { get; set; } = [];
         public AccountId? Account { get; set; }
         public Func<string, string, string, CancellationToken, Task>? LoginAction { get; set; }
@@ -5048,7 +5229,25 @@ public sealed class ShellViewModelTests
             ClearConversationCacheAction?.Invoke(expectedConversation, cancellationToken) ?? Task.CompletedTask;
         public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-        public void Publish() => StateChanged?.Invoke(this, new ClientStateChangedEventArgs(StateValue));
+        public void Publish()
+        {
+            if (Selected is { } selected && HistoryState.Conversation is null)
+            {
+                HistoryState = new ConversationHistoryState(
+                    selected,
+                    HistoryState.Generation + 1,
+                    false,
+                    true,
+                    false,
+                    StateValue.Messages.Values
+                        .Where(message => message.Conversation == selected)
+                        .Select(message => (long?)message.Id)
+                        .DefaultIfEmpty()
+                        .Min(),
+                    null);
+            }
+            StateChanged?.Invoke(this, new ClientStateChangedEventArgs(StateValue));
+        }
 
         public void PublishRealtime(ChatMessage message) =>
             RealtimeMessageReceived?.Invoke(this, new RealtimeMessageReceivedEventArgs(message));

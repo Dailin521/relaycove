@@ -57,41 +57,21 @@ public sealed class MainShellLayoutTests
     }
 
     [Fact]
-    public void AccountMenu_WhenPresenceIsAvailable_OffersOnlineBusyAndInvisibleActions()
+    public void AccountMenu_WhenStatusIsAvailable_ShowsReadOnlySummaryWithoutWriteActions()
     {
         var source = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
 
-        Assert.Contains("Text=\"在线\"", source, StringComparison.Ordinal);
-        Assert.Contains("Command=\"{Binding SetOwnPresenceOnlineCommand}\"", source, StringComparison.Ordinal);
-        Assert.Contains("Text=\"忙碌\"", source, StringComparison.Ordinal);
-        Assert.Contains("Command=\"{Binding SetOwnPresenceIdleCommand}\"", source, StringComparison.Ordinal);
-        Assert.Contains("Text=\"离线\"", source, StringComparison.Ordinal);
-        Assert.Contains("Command=\"{Binding SetOwnPresenceOfflineCommand}\"", source, StringComparison.Ordinal);
-        Assert.Contains("开启隐身模式，对其他用户显示离线", source, StringComparison.Ordinal);
-        Assert.Contains("Text=\"{Binding OwnPresenceStatusText}\"", source, StringComparison.Ordinal);
-        Assert.Contains("IsRunning=\"{Binding IsOwnPresenceBusy}\"", source, StringComparison.Ordinal);
-        Assert.Contains("IsEnabled=\"{Binding CanSetOwnPresenceOnline}\"", source, StringComparison.Ordinal);
-        Assert.Contains("IsEnabled=\"{Binding CanSetOwnPresenceIdle}\"", source, StringComparison.Ordinal);
-        Assert.Contains("IsEnabled=\"{Binding CanSetOwnPresenceOffline}\"", source, StringComparison.Ordinal);
+        Assert.Contains("AutomationId=\"AccountStatusSummary\"", source, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{Binding OwnStatusSummary}\"", source, StringComparison.Ordinal);
+        Assert.Contains("IsVisible=\"{Binding HasOwnStatusSummary}\"", source, StringComparison.Ordinal);
         Assert.Contains("x:Name=\"AccountMenuOwnPresenceDot\"", source, StringComparison.Ordinal);
         Assert.Contains("IsVisible=\"{Binding HasOwnPresenceStatus}\"", source, StringComparison.Ordinal);
         Assert.Contains("Background=\"{Binding OwnPresenceBrush}\"", source, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void AccountMenu_WhenUserStatusIsAvailable_OffersAllOfficialPresetIconsAndClear()
-    {
-        var source = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
-
-        Assert.Contains("Text=\"🛠️ 忙碌\"", source, StringComparison.Ordinal);
-        Assert.Contains("Text=\"📅 会议中\"", source, StringComparison.Ordinal);
-        Assert.Contains("Text=\"🚌 通勤中\"", source, StringComparison.Ordinal);
-        Assert.Contains("Text=\"🤕 病假\"", source, StringComparison.Ordinal);
-        Assert.Contains("Text=\"🌴 休假\"", source, StringComparison.Ordinal);
-        Assert.Contains("Text=\"🏠 远程办公\"", source, StringComparison.Ordinal);
-        Assert.Contains("Text=\"🏢 在办公室\"", source, StringComparison.Ordinal);
-        Assert.Contains("Command=\"{Binding ClearOwnUserStatusCommand}\"", source, StringComparison.Ordinal);
-        Assert.Contains("IsRunning=\"{Binding IsOwnUserStatusBusy}\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SetOwnPresence", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SetOwnUserStatus", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ClearOwnUserStatus", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("正在更新我的状态", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("正在更新个人状态", source, StringComparison.Ordinal);
     }
 
     [Fact]

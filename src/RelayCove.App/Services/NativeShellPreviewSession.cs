@@ -112,7 +112,24 @@ internal sealed class NativeShellPreviewSession : IClientSession
                 }),
             connection: new ConnectionState(ConnectionStatus.Connected, "native_ui_preview"));
         _selectedConversation = uiDesign;
+        if (RequestedScene is "account-menu" or "composer-empty" or "composer-uploading" or "composer-uploaded" or "search-flow")
+        {
+            _selectedConversation = windowsClient;
+        }
         _recentDirectMessages = [mayaDirect, alexDirect, danielDirect, sarahDirect, self];
+        if (string.Equals(RequestedScene, "outbox-states", StringComparison.Ordinal))
+        {
+            var outbox = new Dictionary<string, OutboxEntry>
+            {
+                ["preview-waiting"] = new OutboxEntry(
+                    "preview-waiting", uiDesign, "这是一条正在投递的消息。", timestamp.AddMinutes(21), OutboxState.Waiting),
+                ["preview-failed"] = new OutboxEntry(
+                    "preview-failed", uiDesign, "这条消息被服务器明确拒绝。", timestamp.AddMinutes(22), OutboxState.Failed, OutboxFailureKind.Rejected),
+                ["preview-unknown"] = new OutboxEntry(
+                    "preview-unknown", uiDesign, "这条消息的发送结果未知。", timestamp.AddMinutes(23), OutboxState.WaitExpired, OutboxFailureKind.NetworkResultUnknown)
+            };
+            _state = _state with { Outbox = outbox };
+        }
         if (string.Equals(RequestedScene, "dm-cache-switch", StringComparison.Ordinal))
         {
             SeedCacheSwitchConversation(mayaDirect, 9, "Maya Chen", 6000, today, "缓存会话 A");
@@ -147,6 +164,9 @@ internal sealed class NativeShellPreviewSession : IClientSession
 
     public RealmEndpoint? ActiveRealm { get; } = RealmEndpoint.Parse("https://preview.invalid");
     public long? CurrentUserId => CurrentUser;
+    public UserPresenceStatus? OwnPresenceStatus => UserPresenceStatus.Active;
+    public UserStatusContent? OwnUserStatus { get; } = new("专注开发");
+    public bool IsOwnUserStatusConfirmed => true;
     public bool CanCreatePrivateGroup => true;
     public long MaxFileUploadBytes => 10L * 1024 * 1024;
 

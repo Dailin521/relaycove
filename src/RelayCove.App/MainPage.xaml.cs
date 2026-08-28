@@ -54,6 +54,9 @@ public partial class MainPage : ContentPage
             await Task.Delay(300);
             _viewModel.ApplyNativePreviewTheme(NativeShellPreviewSession.RequestedTheme);
             _viewModel.ApplyNativePreviewScene(NativeShellPreviewSession.RequestedScene);
+            await Task.Delay(100);
+            _platformRoot?.InvalidateMeasure();
+            _platformRoot?.UpdateLayout();
         }
 #endif
     }
@@ -123,9 +126,10 @@ public partial class MainPage : ContentPage
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs eventArgs)
     {
 #if DEBUG
-        // Deterministic preview scenes are state-driven and intentionally avoid
-        // synthesizing focus/input while the screenshot harness resizes HWNDs.
-        if (NativeShellPreviewSession.IsRequested) return;
+        // Preview acceptance needs the same search-focus contract as production.
+        // Other overlay focus remains suppressed so HWND resizing stays input-free.
+        if (NativeShellPreviewSession.IsRequested &&
+            eventArgs.PropertyName != nameof(ShellViewModel.IsSearchOpen)) return;
 #endif
         switch (eventArgs.PropertyName)
         {

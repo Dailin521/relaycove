@@ -43,6 +43,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private readonly IConversationPreferencesStore _conversationPreferencesStore;
     private readonly Dictionary<string, string> _drafts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<AttachmentDraftItem>> _attachmentDrafts = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _attachmentUploadGate = new(1, 1);
     private readonly Dictionary<string, long> _draftVersions = new(StringComparer.Ordinal);
     private readonly List<ConversationContactChoice> _allNewConversationChoices = [];
     private readonly Dictionary<long, IReadOnlyList<UserProfile>> _privateGroupMembers = [];
@@ -57,6 +58,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private readonly object _projectionGate = new();
     private readonly object _autoMarkReadSync = new();
     private readonly CancellationTokenSource _lifetimeCancellation = new();
+    private CancellationTokenSource _attachmentUploadsCancellation = new();
     private readonly Dictionary<string, long> _autoMarkReadAttemptedThrough = new(StringComparer.Ordinal);
     private ClientState? _pendingProjectionState;
     private bool _projectionDispatchScheduled;
@@ -291,24 +293,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial bool IsAccountMenuOpen { get; set; }
-
-    [ObservableProperty]
-    public partial bool IsOwnPresenceBusy { get; set; }
-
-    [ObservableProperty]
-    public partial UserPresenceStatus? PendingOwnPresenceStatus { get; set; }
-
-    [ObservableProperty]
-    public partial string? OwnPresenceError { get; set; }
-
-    [ObservableProperty]
-    public partial bool IsOwnUserStatusBusy { get; set; }
-
-    [ObservableProperty]
-    public partial UserStatusContent? PendingOwnUserStatus { get; set; }
-
-    [ObservableProperty]
-    public partial string? OwnUserStatusError { get; set; }
 
     [ObservableProperty]
     public partial string NewConversationQuery { get; set; } = string.Empty;
@@ -712,11 +696,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         set
         {
             var normalized = Math.Clamp(value, MinimumComposerHeight, MaximumComposerHeight);
-            if (!SetProperty(ref _composerHeight, normalized) || _suppressUiPreferenceSave) return;
+            if (!SetProperty(ref _composerHeight, normalized)) return;
+            OnPropertyChanged(nameof(ComposerDisplayHeight));
+            if (_suppressUiPreferenceSave) return;
             _persistedComposerHeight = normalized;
             _uiPreferencesService.SaveComposerHeight(normalized);
         }
     }
+
+    public double ComposerDisplayHeight => ComposerHeight + (HasAttachments ? 66d : 0d);
 
     public bool LoginVisible => !IsLoggedIn;
     public bool MainVisible => IsLoggedIn;
@@ -786,7 +774,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         !HasConversationActivationError &&
         _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
     public bool CanSend => CanCompose && (!string.IsNullOrWhiteSpace(ComposerText) || HasAttachments) &&
-        Attachments.All(attachment => attachment.Status != AttachmentUploadStatus.Uploading);
+        Attachments.All(attachment => attachment.Status == AttachmentUploadStatus.Uploaded);
     public bool CanMarkRead => CanCompose;
     public bool HasUnavailableFeatureMessage => !string.IsNullOrWhiteSpace(UnavailableFeatureMessage);
     public bool HasLoginError => !string.IsNullOrWhiteSpace(LoginError);
@@ -842,6 +830,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool ShowHistoryRetry => HasMessageLoadError && !HasConversationActivationError;
     public bool HasSearchResults => SearchResults.Count > 0;
     public bool IsSearchEmpty => !HasSearchResults;
+    public string SearchEmptyText => string.IsNullOrWhiteSpace(SearchQuery)
+        ? "输入内容开始搜索"
+        : "没有匹配结果。";
     public bool HasSearchError => !string.IsNullOrWhiteSpace(SearchError);
     public bool HasConversationFilterStatus =>
         IsConversationFilterBusy || !string.IsNullOrWhiteSpace(ConversationFilterError);
@@ -1025,13 +1016,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _projectedState.Users.TryGetValue(currentUserId, out var currentUser)
             ? currentUser.AvatarUrl
             : null;
-    public bool ShowOwnPresenceControls => _session.CanSetOwnPresence;
-    public bool CanSetOwnPresence => ShowOwnPresenceControls &&
-        _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected &&
-        !IsOwnPresenceBusy;
-    public bool CanSetOwnPresenceOnline => CanSetOwnPresence && !IsOwnPresenceOnline;
-    public bool CanSetOwnPresenceIdle => CanSetOwnPresence && !IsOwnPresenceIdle;
-    public bool CanSetOwnPresenceOffline => CanSetOwnPresence && !IsOwnPresenceOffline;
     public UserPresenceStatus? OwnPresenceStatus => _session.OwnPresenceStatus;
     public bool HasOwnPresenceStatus => OwnPresenceStatus is not null;
     public string OwnPresenceLabel => OwnPresenceStatus switch
@@ -1039,7 +1023,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         UserPresenceStatus.Active => "在线",
         UserPresenceStatus.Idle => "忙碌",
         UserPresenceStatus.Offline => "离线",
-        _ => ShowOwnPresenceControls ? "状态结果未确认" : "不可用"
+        _ => "状态未确认"
     };
     public bool IsOwnPresenceOnline => OwnPresenceStatus == UserPresenceStatus.Active;
     public bool IsOwnPresenceIdle => OwnPresenceStatus == UserPresenceStatus.Idle;
@@ -1050,25 +1034,22 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         UserPresenceStatus.Idle => IdlePresenceBrush,
         _ => OfflinePresenceBrush
     };
-    public string OwnPresenceStatusText => IsOwnPresenceBusy && PendingOwnPresenceStatus is { } pending
-        ? $"正在切换为{DescribeOwnPresenceStatus(pending)}…"
-        : $"在线状态：{OwnPresenceLabel}";
-    public bool HasOwnPresenceError => !string.IsNullOrWhiteSpace(OwnPresenceError);
-    public bool ShowOwnUserStatusControls => _session.CanSetOwnUserStatus;
-    public bool CanSetOwnUserStatus => ShowOwnUserStatusControls &&
-        _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected &&
-        !IsOwnUserStatusBusy;
+    public string OwnPresenceStatusText => $"在线状态：{OwnPresenceLabel}";
     public UserStatusContent? OwnUserStatus => _session.OwnUserStatus;
     public bool HasOwnUserStatus => OwnUserStatus is not null;
     public bool IsOwnUserStatusConfirmed => _session.IsOwnUserStatusConfirmed;
     public string OwnUserStatusLabel => !IsOwnUserStatusConfirmed
         ? "结果未确认"
         : DescribeUserStatus(OwnUserStatus) ?? "未设置";
-    public string OwnUserStatusStatusText => IsOwnUserStatusBusy && PendingOwnUserStatus is { } pending
-        ? $"正在设置：{DescribeUserStatus(pending) ?? "清除状态"}…"
-        : $"个人状态：{OwnUserStatusLabel}";
-    public bool CanClearOwnUserStatus => CanSetOwnUserStatus && HasOwnUserStatus;
-    public bool HasOwnUserStatusError => !string.IsNullOrWhiteSpace(OwnUserStatusError);
+    public string OwnUserStatusStatusText => $"个人状态：{OwnUserStatusLabel}";
+    public string OwnStatusSummary => string.Join(
+        " · ",
+        new[]
+        {
+            HasOwnPresenceStatus ? OwnPresenceLabel : null,
+            HasOwnUserStatus ? DescribeUserStatus(OwnUserStatus) : null
+        }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    public bool HasOwnStatusSummary => OwnStatusSummary.Length > 0;
     public string WorkspaceDisplayName
     {
         get
@@ -1172,6 +1153,29 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         switch (scene?.Trim().ToLowerInvariant())
         {
+            case "shell-avatars":
+                CloseTransientOverlays();
+                break;
+            case "composer-empty":
+                ApplyNativeComposerPreview(null);
+                break;
+            case "composer-uploading":
+                ApplyNativeComposerPreview(AttachmentUploadStatus.Uploading);
+                break;
+            case "composer-uploaded":
+                ApplyNativeComposerPreview(AttachmentUploadStatus.Uploaded);
+                break;
+            case "search-flow":
+                OpenSearch();
+                break;
+            case "message-quick-actions":
+                foreach (var message in Messages) message.SetQuickActionsPreviewVisible(false);
+                Messages.FirstOrDefault(message => message.IsOwn)?.SetQuickActionsPreviewVisible(true);
+                Messages.LastOrDefault(message => message.IsOther)?.SetQuickActionsPreviewVisible(true);
+                break;
+            case "outbox-states":
+                CloseTransientOverlays();
+                break;
             case "composer-emoji":
                 OpenComposerEmojiPickerAt(new PopoverAnchorRequest(402d, 820d));
                 break;
@@ -1372,6 +1376,43 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
     }
 
+    private void ApplyNativeComposerPreview(AttachmentUploadStatus? status)
+    {
+        SetComposerTextWithoutTracking(string.Empty);
+        Attachments.Clear();
+        if (_activeDraftKey is { } key) _attachmentDrafts[key] = [];
+        if (status is null)
+        {
+            NotifyAttachmentProperties();
+            return;
+        }
+
+        var file = new SelectedAttachmentFile(
+            "preview-upload.png",
+            "image/png",
+            100,
+            _ => Task.FromResult<Stream>(new MemoryStream(new byte[100])));
+        var attachment = new AttachmentDraftItem(file);
+        if (status == AttachmentUploadStatus.Uploading)
+        {
+            attachment.BeginUpload();
+            attachment.ReportUploadProgress(new RealmMediaTransferProgress(58, 100));
+        }
+        else
+        {
+            attachment.Uploaded = new UploadedAttachment(
+                file.FileName,
+                "https://preview.invalid/user_uploads/preview-upload.png");
+            attachment.UploadProgress = 1d;
+            attachment.UploadProgressLabel = "100%";
+            attachment.Status = AttachmentUploadStatus.Uploaded;
+        }
+
+        Attachments.Add(attachment);
+        if (_activeDraftKey is { } activeKey) _attachmentDrafts[activeKey] = [attachment];
+        NotifyAttachmentProperties();
+    }
+
     [RelayCommand(AllowConcurrentExecutions = false)]
     private async Task OpenRegistrationAsync()
     {
@@ -1559,14 +1600,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
     }
 
-    [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
+    [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false, CanExecute = nameof(CanSend))]
     private async Task SendAsync(CancellationToken cancellationToken)
     {
         var conversation = _session.SelectedConversation;
         if (conversation is null) return;
         var content = ComposerText;
         var attachmentSnapshot = Attachments.ToArray();
-        if (string.IsNullOrWhiteSpace(content) && attachmentSnapshot.Length == 0) return;
+        if (!CanSend || attachmentSnapshot.Any(attachment => attachment.Uploaded is null)) return;
         CancelActivationScrollForUserInteraction(conversation);
 
         var key = conversation.CanonicalKey;
@@ -1574,60 +1615,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         var messageSendStarted = false;
         var succeeded = await ExecuteSessionActionAsync(async () =>
         {
-            AttachmentError = null;
-            foreach (var attachment in attachmentSnapshot)
-            {
-                if (attachment.Uploaded is not null) continue;
-                if (attachment.Status == AttachmentUploadStatus.Uncertain)
-                {
-                    throw new InvalidOperationException("An attachment upload must be explicitly retried.");
-                }
-                attachment.BeginUpload();
-                OnPropertyChanged(nameof(CanSend));
-                try
-                {
-                    await using var stream = await attachment.File.OpenReadAsync(cancellationToken);
-                    var progress = new InlineProgress<RealmMediaTransferProgress>(value =>
-                        _dispatcher.Dispatch(() => attachment.ReportUploadProgress(value)));
-                    attachment.Uploaded = await _session.UploadAttachmentAsync(
-                        new AttachmentUpload(
-                            attachment.FileName,
-                            attachment.File.ContentType,
-                            attachment.Length,
-                            stream,
-                            progress),
-                        cancellationToken);
-                    attachment.ReportUploadProgress(new RealmMediaTransferProgress(attachment.Length, attachment.Length));
-                    attachment.Status = AttachmentUploadStatus.Uploaded;
-                }
-                catch (GatewayException exception)
-                {
-                    attachment.Status = exception.Kind is GatewayErrorKind.Offline or GatewayErrorKind.Server or GatewayErrorKind.Protocol
-                        ? AttachmentUploadStatus.Uncertain
-                        : AttachmentUploadStatus.Failed;
-                    AttachmentError = attachment.Status == AttachmentUploadStatus.Uncertain
-                        ? "附件上传结果未知；不会自动重试。请确认后显式重试或移除。"
-                        : "附件上传失败；请检查限制或权限后显式重试。";
-                    throw;
-                }
-                catch (OperationCanceledException)
-                {
-                    attachment.Status = AttachmentUploadStatus.Uncertain;
-                    AttachmentError = "附件上传已取消且结果未知；不会自动重试。";
-                    throw;
-                }
-                catch
-                {
-                    attachment.Status = AttachmentUploadStatus.Failed;
-                    AttachmentError = "无法读取或上传附件。";
-                    throw;
-                }
-                finally
-                {
-                    OnPropertyChanged(nameof(CanSend));
-                }
-            }
-
             var uploadedMarkdown = attachmentSnapshot
                 .Select(attachment => attachment.Uploaded is { } uploaded
                     ? BuildUploadedAttachmentMarkdown(uploaded, attachment.IsImage)
@@ -1653,7 +1640,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 Reconcile(Attachments, [], item => item.Id);
                 NotifyAttachmentProperties();
             }
-        }, suppressGatewayFailureWhenAttachmentError: true);
+        });
 
         if (!succeeded && !messageSendStarted)
         {
@@ -1703,7 +1690,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         if (message?.CanRecover == true)
         {
-            ComposerText = message.Content;
+            var uploadedMarkdown = Attachments
+                .Where(attachment => attachment.Uploaded is not null)
+                .Select(attachment => BuildUploadedAttachmentMarkdown(attachment.Uploaded!, attachment.IsImage))
+                .ToHashSet(StringComparer.Ordinal);
+            ComposerText = uploadedMarkdown.Count == 0
+                ? message.Content
+                : string.Join(
+                    "\n",
+                    message.Content.Split('\n').Where(line => !uploadedMarkdown.Contains(line)));
         }
     }
 
@@ -1796,107 +1791,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void CloseDownloadCenter() => IsDownloadCenterOpen = false;
 
-    [RelayCommand(AllowConcurrentExecutions = false)]
-    private Task SetOwnPresenceOnlineAsync() => SetOwnPresenceCoreAsync(UserPresenceStatus.Active);
-
-    [RelayCommand(AllowConcurrentExecutions = false)]
-    private Task SetOwnPresenceIdleAsync() => SetOwnPresenceCoreAsync(UserPresenceStatus.Idle);
-
-    [RelayCommand(AllowConcurrentExecutions = false)]
-    private Task SetOwnPresenceOfflineAsync() => SetOwnPresenceCoreAsync(UserPresenceStatus.Offline);
-
-    private async Task SetOwnPresenceCoreAsync(UserPresenceStatus status)
-    {
-        if (!CanSetOwnPresence || OwnPresenceStatus == status) return;
-        PendingOwnPresenceStatus = status;
-        IsOwnPresenceBusy = true;
-        OwnPresenceError = null;
-        try
-        {
-            await _session.SetOwnPresenceAsync(status, _lifetimeCancellation.Token);
-        }
-        catch (GatewayException exception)
-        {
-            OwnPresenceError = DescribeGatewayFailure(exception);
-        }
-        catch (InvalidOperationException)
-        {
-            OwnPresenceError = "当前状态暂时不可设置，请稍后重试。";
-        }
-        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
-        {
-        }
-        catch (OperationCanceledException)
-        {
-            OwnPresenceError = "状态设置已取消。";
-        }
-        finally
-        {
-            IsOwnPresenceBusy = false;
-            PendingOwnPresenceStatus = null;
-            NotifyOwnPresenceProperties();
-        }
-    }
-
-    [RelayCommand(AllowConcurrentExecutions = false)]
-    private Task SetOwnUserStatusBusyAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Busy);
-
-    [RelayCommand(AllowConcurrentExecutions = false)]
-    private Task SetOwnUserStatusMeetingAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Meeting);
-
-    [RelayCommand(AllowConcurrentExecutions = false)]
-    private Task SetOwnUserStatusCommutingAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Commuting);
-
-    [RelayCommand(AllowConcurrentExecutions = false)]
-    private Task SetOwnUserStatusSickAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Sick);
-
-    [RelayCommand(AllowConcurrentExecutions = false)]
-    private Task SetOwnUserStatusVacationAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Vacation);
-
-    [RelayCommand(AllowConcurrentExecutions = false)]
-    private Task SetOwnUserStatusRemoteAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Remote);
-
-    [RelayCommand(AllowConcurrentExecutions = false)]
-    private Task SetOwnUserStatusOfficeAsync() => SetOwnUserStatusCoreAsync(UserStatusPresets.Office);
-
-    [RelayCommand(AllowConcurrentExecutions = false)]
-    private Task ClearOwnUserStatusAsync() => SetOwnUserStatusCoreAsync(new UserStatusContent());
-
-    private async Task SetOwnUserStatusCoreAsync(UserStatusContent status)
-    {
-        if (!CanSetOwnUserStatus || IsOwnUserStatusConfirmed && Equals(OwnUserStatus, status.IsEmpty ? null : status))
-            return;
-
-        PendingOwnUserStatus = status;
-        IsOwnUserStatusBusy = true;
-        OwnUserStatusError = null;
-        try
-        {
-            await _session.SetOwnUserStatusAsync(status, _lifetimeCancellation.Token);
-        }
-        catch (GatewayException exception)
-        {
-            OwnUserStatusError = DescribeGatewayFailure(exception);
-        }
-        catch (InvalidOperationException)
-        {
-            OwnUserStatusError = "当前个人状态暂时不可设置，请稍后重试。";
-        }
-        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested)
-        {
-        }
-        catch (OperationCanceledException)
-        {
-            OwnUserStatusError = "个人状态设置已取消。";
-        }
-        finally
-        {
-            IsOwnUserStatusBusy = false;
-            PendingOwnUserStatus = null;
-            NotifyOwnUserStatusProperties();
-        }
-    }
-
     [RelayCommand]
     private void ToggleChannels() => AreChannelsExpanded = !AreChannelsExpanded;
 
@@ -1922,9 +1816,16 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void OpenSearch()
     {
         CloseTransientOverlays();
+        CancelSearchInput();
+        _serverSearchResults = [];
+        _searchBeforeMessageId = null;
+        SearchError = null;
+        IsSearchBusy = false;
+        SelectedSearchResult = null;
+        SearchQuery = string.Empty;
         IsSearchOpen = true;
         ProjectSearch();
-        ScheduleServerSearch(SearchQuery, immediate: false);
+        OnPropertyChanged(nameof(HasMoreSearchResults));
     }
 
     [RelayCommand]
@@ -1985,7 +1886,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         var query = SearchQuery.Trim();
         var filter = SelectedSearchFilter;
         if (_searchBeforeMessageId is null ||
-            (string.IsNullOrWhiteSpace(query) && filter == MessageSearchFilter.Messages) ||
+            string.IsNullOrWhiteSpace(query) ||
             !IsSearchOpen)
         {
             return;
@@ -2272,10 +2173,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             AttachmentError = error;
             return;
         }
-        foreach (var file in selected) Attachments.Add(new AttachmentDraftItem(file));
+        var added = selected.Select(file => new AttachmentDraftItem(file)).ToArray();
+        foreach (var attachment in added) Attachments.Add(attachment);
         SetComposerHeightWithoutPersistence(Math.Max(ComposerHeight, 184d));
         SaveCurrentAttachmentDrafts();
         NotifyAttachmentProperties();
+        if (_activeDraftKey is { } key && _session.AccountId is { } accountId)
+        {
+            _ = UploadAttachmentsAsync(key, accountId, added, _attachmentUploadsCancellation.Token);
+        }
     }
 
     [RelayCommand]
@@ -2289,12 +2195,117 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void RetryAttachment(AttachmentDraftItem? attachment)
     {
-        if (attachment?.CanRetry != true) return;
+        if (attachment?.CanRetry != true || _activeDraftKey is not { } key || _session.AccountId is not { } accountId) return;
         attachment.Status = AttachmentUploadStatus.Pending;
         attachment.Uploaded = null;
         AttachmentError = null;
         SaveCurrentAttachmentDrafts();
         NotifyAttachmentProperties();
+        _ = UploadAttachmentsAsync(key, accountId, [attachment], _attachmentUploadsCancellation.Token);
+    }
+
+    private async Task UploadAttachmentsAsync(
+        string draftKey,
+        AccountId accountId,
+        IReadOnlyList<AttachmentDraftItem> attachments,
+        CancellationToken sessionCancellationToken)
+    {
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            _lifetimeCancellation.Token,
+            sessionCancellationToken);
+        var gateEntered = false;
+        try
+        {
+            await _attachmentUploadGate.WaitAsync(cancellation.Token);
+            gateEntered = true;
+            foreach (var attachment in attachments)
+            {
+                if (!IsAttachmentUploadCurrent(draftKey, accountId, attachment) ||
+                    attachment.Status != AttachmentUploadStatus.Pending)
+                {
+                    continue;
+                }
+
+                attachment.BeginUpload();
+                NotifyAttachmentPropertiesForDraft(draftKey);
+                try
+                {
+                    await using var stream = await attachment.File.OpenReadAsync(cancellation.Token);
+                    var progress = new InlineProgress<RealmMediaTransferProgress>(value =>
+                        _dispatcher.Dispatch(() =>
+                        {
+                            if (IsAttachmentUploadCurrent(draftKey, accountId, attachment))
+                            {
+                                attachment.ReportUploadProgress(value);
+                            }
+                        }));
+                    if (!IsAttachmentUploadCurrent(draftKey, accountId, attachment)) return;
+                    var uploaded = await _session.UploadAttachmentAsync(
+                        new AttachmentUpload(
+                            attachment.FileName,
+                            attachment.File.ContentType,
+                            attachment.Length,
+                            stream,
+                            progress),
+                        cancellation.Token);
+                    if (!IsAttachmentUploadCurrent(draftKey, accountId, attachment)) continue;
+                    attachment.Uploaded = uploaded;
+                    attachment.ReportUploadProgress(new RealmMediaTransferProgress(attachment.Length, attachment.Length));
+                    attachment.Status = AttachmentUploadStatus.Uploaded;
+                }
+                catch (GatewayException exception)
+                {
+                    if (!IsAttachmentUploadCurrent(draftKey, accountId, attachment)) return;
+                    attachment.Status = exception.Kind is GatewayErrorKind.Offline or GatewayErrorKind.Server or GatewayErrorKind.Protocol
+                        ? AttachmentUploadStatus.Uncertain
+                        : AttachmentUploadStatus.Failed;
+                    SetAttachmentErrorForDraft(
+                        draftKey,
+                        attachment.Status == AttachmentUploadStatus.Uncertain
+                            ? "附件上传结果未知；不会自动重试。请确认后显式重试或移除。"
+                            : "附件上传失败；请检查限制或权限后显式重试。");
+                }
+                catch (OperationCanceledException)
+                {
+                    if (!IsAttachmentUploadCurrent(draftKey, accountId, attachment)) return;
+                    attachment.Status = AttachmentUploadStatus.Uncertain;
+                    SetAttachmentErrorForDraft(draftKey, "附件上传已取消且结果未知；不会自动重试。");
+                    return;
+                }
+                catch
+                {
+                    if (!IsAttachmentUploadCurrent(draftKey, accountId, attachment)) return;
+                    attachment.Status = AttachmentUploadStatus.Failed;
+                    SetAttachmentErrorForDraft(draftKey, "无法读取或上传附件。");
+                }
+                finally
+                {
+                    NotifyAttachmentPropertiesForDraft(draftKey);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            if (gateEntered) _attachmentUploadGate.Release();
+        }
+    }
+
+    private bool IsAttachmentUploadCurrent(string draftKey, AccountId accountId, AttachmentDraftItem attachment) =>
+        _session.AccountId == accountId &&
+        _attachmentDrafts.TryGetValue(draftKey, out var draft) &&
+        draft.Contains(attachment);
+
+    private void SetAttachmentErrorForDraft(string draftKey, string message)
+    {
+        if (string.Equals(_activeDraftKey, draftKey, StringComparison.Ordinal)) AttachmentError = message;
+    }
+
+    private void NotifyAttachmentPropertiesForDraft(string draftKey)
+    {
+        if (string.Equals(_activeDraftKey, draftKey, StringComparison.Ordinal)) NotifyAttachmentProperties();
     }
 
     [RelayCommand]
@@ -3932,7 +3943,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             _draftVersions[_activeDraftKey] = _draftVersions.GetValueOrDefault(_activeDraftKey) + 1;
         }
 
-        OnPropertyChanged(nameof(CanSend));
+        NotifyCanSendChanged();
         ComposerCursorPosition = Math.Clamp(ComposerCursorPosition, 0, value.Length);
         ComposerSelectionLength = Math.Clamp(ComposerSelectionLength, 0, value.Length - ComposerCursorPosition);
     }
@@ -3941,6 +3952,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         ProjectSearch();
         ScheduleServerSearch(value, immediate: false);
+        OnPropertyChanged(nameof(SearchEmptyText));
     }
     partial void OnSearchErrorChanged(string? value) => OnPropertyChanged(nameof(HasSearchError));
     partial void OnSavedErrorChanged(string? value)
@@ -4020,23 +4032,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         NotifyOverlayProperties();
     }
     partial void OnIsAccountMenuOpenChanged(bool value) => NotifyOverlayProperties();
-    partial void OnIsOwnPresenceBusyChanged(bool value)
-    {
-        OnPropertyChanged(nameof(CanSetOwnPresence));
-        OnPropertyChanged(nameof(CanSetOwnPresenceOnline));
-        OnPropertyChanged(nameof(CanSetOwnPresenceIdle));
-        OnPropertyChanged(nameof(CanSetOwnPresenceOffline));
-        OnPropertyChanged(nameof(OwnPresenceStatusText));
-    }
-    partial void OnPendingOwnPresenceStatusChanged(UserPresenceStatus? value) =>
-        OnPropertyChanged(nameof(OwnPresenceStatusText));
-    partial void OnOwnPresenceErrorChanged(string? value) =>
-        OnPropertyChanged(nameof(HasOwnPresenceError));
-    partial void OnIsOwnUserStatusBusyChanged(bool value) => NotifyOwnUserStatusProperties();
-    partial void OnPendingOwnUserStatusChanged(UserStatusContent? value) =>
-        OnPropertyChanged(nameof(OwnUserStatusStatusText));
-    partial void OnOwnUserStatusErrorChanged(string? value) =>
-        OnPropertyChanged(nameof(HasOwnUserStatusError));
     partial void OnIsNewConversationOpenChanged(bool value)
     {
         if (!value) ClearNewConversationChoices();
@@ -4679,8 +4674,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     private async Task<bool> ExecuteSessionActionAsync(
         Func<Task> action,
-        string? failureMessage = null,
-        bool suppressGatewayFailureWhenAttachmentError = false)
+        string? failureMessage = null)
     {
         var wasCanceled = false;
         LoginError = null;
@@ -4695,8 +4689,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
         catch (GatewayException exception)
         {
-            if (!suppressGatewayFailureWhenAttachmentError || !HasAttachmentError)
-                LoginError = DescribeGatewayFailure(exception);
+            LoginError = DescribeGatewayFailure(exception);
         }
         catch (OperationCanceledException)
         {
@@ -5351,7 +5344,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 senderAvatarUrl: currentUser?.AvatarUrl,
                 showDateDivider: previousDate != date,
                 dateDividerLabel: DescribeDate(date, localTime),
-                deliveryState: DescribeOutbox(entry.State),
+                deliveryState: DescribeOutbox(entry),
+                isDeliveryFailure: IsOutboxDeliveryFailure(entry),
                 canRecover: entry.State is OutboxState.WaitExpired or OutboxState.Failed,
                 recoverCommand: RecoverOutboxCommand,
                 realm: _session.ActiveRealm,
@@ -5483,8 +5477,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         CancelSearchInput();
         var filter = SelectedSearchFilter;
-        if (!IsSearchOpen ||
-            (string.IsNullOrWhiteSpace(query) && filter == MessageSearchFilter.Messages))
+        if (!IsSearchOpen || string.IsNullOrWhiteSpace(query))
         {
             _serverSearchResults = [];
             IsSearchBusy = false;
@@ -5508,8 +5501,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         CancelSearchInput();
         var filter = SelectedSearchFilter;
-        if (!IsSearchOpen ||
-            (string.IsNullOrWhiteSpace(query) && filter == MessageSearchFilter.Messages)) return;
+        if (!IsSearchOpen || string.IsNullOrWhiteSpace(query)) return;
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _searchInputCancellation = cancellation;
         var accountId = _session.AccountId;
@@ -5718,11 +5710,18 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         var query = SearchQuery.Trim();
         var filter = SelectedSearchFilter;
+        if (query.Length == 0)
+        {
+            Reconcile(SearchResults, [], item => item.Id);
+            OnPropertyChanged(nameof(HasSearchResults));
+            OnPropertyChanged(nameof(IsSearchEmpty));
+            return;
+        }
         var results = new List<SearchResultItem>();
         if (filter == MessageSearchFilter.Messages)
         {
             foreach (var conversation in Conversations
-                         .Where(item => query.Length == 0 || Contains(item.Title, query) || Contains(item.Detail, query)))
+                         .Where(item => Contains(item.Title, query) || Contains(item.Detail, query)))
             {
                 results.Add(new SearchResultItem(
                     $"conversation:{conversation.Conversation.CanonicalKey}",
@@ -5732,7 +5731,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                     conversation.Conversation));
             }
             foreach (var user in _projectedState.Users.Values
-                         .Where(user => user.IsActive && (query.Length == 0 || Contains(user.FullName, query)))
+                         .Where(user => user.IsActive && Contains(user.FullName, query))
                          .OrderBy(user => user.FullName, StringComparer.Ordinal)
                          .ThenBy(user => user.UserId))
             {
@@ -5749,7 +5748,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
         foreach (var message in _projectedState.Messages.Values
                      .Where(message => IsRelayCoveConversation(message.Conversation, _projectedState) &&
-                                       (query.Length == 0 || Contains(message.Content, query) ||
+                                        (Contains(message.Content, query) ||
                                         Contains(message.SenderDisplayName, query)))
                      .OrderByDescending(message => message.Id))
         {
@@ -6607,7 +6606,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ShowEmptyChannelTopicState));
         OnPropertyChanged(nameof(HasKnownContacts));
         OnPropertyChanged(nameof(CanCompose));
-        OnPropertyChanged(nameof(CanSend));
+        NotifyCanSendChanged();
         OnPropertyChanged(nameof(CanMarkRead));
         OnPropertyChanged(nameof(CanUnsubscribeSelectedChannel));
         OnPropertyChanged(nameof(CanManageSelectedChannel));
@@ -6641,11 +6640,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     private void NotifyOwnPresenceProperties()
     {
-        OnPropertyChanged(nameof(CanSetOwnPresence));
-        OnPropertyChanged(nameof(CanSetOwnPresenceOnline));
-        OnPropertyChanged(nameof(CanSetOwnPresenceIdle));
-        OnPropertyChanged(nameof(CanSetOwnPresenceOffline));
-        OnPropertyChanged(nameof(ShowOwnPresenceControls));
         OnPropertyChanged(nameof(OwnPresenceStatus));
         OnPropertyChanged(nameof(HasOwnPresenceStatus));
         OnPropertyChanged(nameof(OwnPresenceLabel));
@@ -6654,40 +6648,19 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(IsOwnPresenceOffline));
         OnPropertyChanged(nameof(OwnPresenceBrush));
         OnPropertyChanged(nameof(OwnPresenceStatusText));
+        OnPropertyChanged(nameof(OwnStatusSummary));
+        OnPropertyChanged(nameof(HasOwnStatusSummary));
     }
-
-    private static string DescribeOwnPresenceStatus(UserPresenceStatus status) => status switch
-    {
-        UserPresenceStatus.Active => "在线",
-        UserPresenceStatus.Idle => "忙碌",
-        UserPresenceStatus.Offline => "离线",
-        _ => throw new ArgumentOutOfRangeException(nameof(status))
-    };
 
     private void NotifyOwnUserStatusProperties()
     {
-        OnPropertyChanged(nameof(ShowOwnUserStatusControls));
-        OnPropertyChanged(nameof(CanSetOwnUserStatus));
         OnPropertyChanged(nameof(OwnUserStatus));
         OnPropertyChanged(nameof(HasOwnUserStatus));
         OnPropertyChanged(nameof(IsOwnUserStatusConfirmed));
         OnPropertyChanged(nameof(OwnUserStatusLabel));
         OnPropertyChanged(nameof(OwnUserStatusStatusText));
-        OnPropertyChanged(nameof(CanClearOwnUserStatus));
-    }
-
-    private static UserStatusContent CreatePresetStatus(string text, string emojiName, string emojiCode) =>
-        new(text, new EmojiReactionIdentity(emojiName, emojiCode, "unicode_emoji"));
-
-    private static class UserStatusPresets
-    {
-        internal static UserStatusContent Busy { get; } = CreatePresetStatus("忙碌", "working_on_it", "1f6e0");
-        internal static UserStatusContent Meeting { get; } = CreatePresetStatus("会议中", "calendar", "1f4c5");
-        internal static UserStatusContent Commuting { get; } = CreatePresetStatus("通勤中", "bus", "1f68c");
-        internal static UserStatusContent Sick { get; } = CreatePresetStatus("病假", "hurt", "1f915");
-        internal static UserStatusContent Vacation { get; } = CreatePresetStatus("休假", "palm_tree", "1f334");
-        internal static UserStatusContent Remote { get; } = CreatePresetStatus("远程办公", "house", "1f3e0");
-        internal static UserStatusContent Office { get; } = CreatePresetStatus("在办公室", "office", "1f3e2");
+        OnPropertyChanged(nameof(OwnStatusSummary));
+        OnPropertyChanged(nameof(HasOwnStatusSummary));
     }
 
     private static string? DescribeUserStatus(UserStatusContent? status)
@@ -6936,7 +6909,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ShowConversationLoadingIndicator));
         OnPropertyChanged(nameof(ShowEmptyChannelTopicState));
         OnPropertyChanged(nameof(CanCompose));
-        OnPropertyChanged(nameof(CanSend));
+        NotifyCanSendChanged();
         OnPropertyChanged(nameof(CanMarkRead));
         OnPropertyChanged(nameof(HasMessageLoadError));
         OnPropertyChanged(nameof(ShowHistoryRetry));
@@ -7102,6 +7075,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     private void ResetDrafts()
     {
+        CancelAttachmentUploads(createReplacement: true);
         _drafts.Clear();
         _attachmentDrafts.Clear();
         _draftVersions.Clear();
@@ -7123,7 +7097,22 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     private void NotifyAttachmentProperties()
     {
         OnPropertyChanged(nameof(HasAttachments));
+        OnPropertyChanged(nameof(ComposerDisplayHeight));
+        NotifyCanSendChanged();
+    }
+
+    private void NotifyCanSendChanged()
+    {
         OnPropertyChanged(nameof(CanSend));
+        SendCommand.NotifyCanExecuteChanged();
+    }
+
+    private void CancelAttachmentUploads(bool createReplacement)
+    {
+        var cancellation = _attachmentUploadsCancellation;
+        cancellation.Cancel();
+        cancellation.Dispose();
+        if (createReplacement) _attachmentUploadsCancellation = new CancellationTokenSource();
     }
 
     private void UpdateMediaDownloadProgress(RealmMediaTransferProgress progress)
@@ -7843,13 +7832,17 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         return timestamp.ToString("M/d");
     }
 
-    private static string DescribeOutbox(OutboxState state) => state switch
+    private static string DescribeOutbox(OutboxEntry entry) => entry.State switch
     {
-        OutboxState.Waiting => "正在等待服务器事件",
-        OutboxState.WaitExpired => "结果不确定；手动重试可能产生重复消息",
-        OutboxState.Failed => "发送失败；恢复内容后手动重试可能产生重复消息",
+        OutboxState.WaitExpired => "发送结果未确认；再次发送可能重复",
+        OutboxState.Failed when entry.Failure == OutboxFailureKind.NetworkResultUnknown =>
+            "发送结果未确认；再次发送可能重复",
+        OutboxState.Failed => "发送失败；恢复内容后可手动重试",
         _ => string.Empty
     };
+
+    private static bool IsOutboxDeliveryFailure(OutboxEntry entry) =>
+        entry.State == OutboxState.Failed && entry.Failure != OutboxFailureKind.NetworkResultUnknown;
 
     private void CancelNavigation()
     {
@@ -7876,6 +7869,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
         CancelAutoMarkReadOperation(allowRetry: false);
         _lifetimeCancellation.Cancel();
+        CancelAttachmentUploads(createReplacement: false);
         CancelNavigation();
         CancelDetailsLoad();
         CancelSearchInput();

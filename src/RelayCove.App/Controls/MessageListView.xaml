@@ -148,6 +148,7 @@
                                                    SemanticProperties.Description="已收藏" />
                                         </HorizontalStackLayout>
                                         <Border x:Name="QuickActions"
+                                                AutomationId="MessageQuickActions"
                                                 Grid.Column="1"
                                                 Padding="1"
                                                 FlowDirection="LeftToRight"
@@ -156,31 +157,22 @@
                                                 Background="{StaticResource SurfaceRaisedBrush}"
                                                 Stroke="{StaticResource BorderBrush}"
                                                 StrokeThickness="1">
+                                            <Border.Triggers>
+                                                <DataTrigger TargetType="Border" Binding="{Binding IsQuickActionsPreviewVisible}" Value="True">
+                                                    <Setter Property="Opacity" Value="1" />
+                                                    <Setter Property="IsEnabled" Value="True" />
+                                                </DataTrigger>
+                                            </Border.Triggers>
                                             <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
                                             <HorizontalStackLayout Spacing="0">
-                                                <ImageButton Source="icon_smile.png"
-                                                             Style="{StaticResource MessageQuickImageButtonStyle}"
-                                                             IsVisible="{Binding IsOther}"
-                                                             Clicked="OnOpenReactionPickerClicked"
-                                                             SemanticProperties.Description="添加表情反应" />
                                                 <ImageButton Source="icon_edit.png"
+                                                             AutomationId="MessageEditButton"
                                                              Style="{StaticResource MessageQuickImageButtonStyle}"
                                                              IsVisible="{Binding CanEditOrDelete}"
                                                              Clicked="OnEditMessageClicked"
                                                              SemanticProperties.Description="编辑消息" />
-                                                <ImageButton Source="icon_star.png"
-                                                             Style="{StaticResource MessageQuickImageButtonStyle}"
-                                                             Clicked="OnToggleMessageStarClicked"
-                                                             SemanticProperties.Description="收藏或取消收藏消息" />
-                                                <ImageButton Source="icon_quote.png"
-                                                             Style="{StaticResource MessageQuickImageButtonStyle}"
-                                                             Clicked="OnQuoteMessageClicked"
-                                                             SemanticProperties.Description="引用消息" />
-                                                <ImageButton Source="icon_copy.png"
-                                                             Style="{StaticResource MessageQuickImageButtonStyle}"
-                                                             Clicked="OnCopyMessageClicked"
-                                                             SemanticProperties.Description="复制消息" />
                                                 <ImageButton Source="icon_more.png"
+                                                             AutomationId="MessageMoreButton"
                                                              Style="{StaticResource MessageQuickImageButtonStyle}"
                                                              Clicked="OnOpenMessageMenuClicked"
                                                              SemanticProperties.Description="打开消息操作菜单" />
@@ -327,9 +319,17 @@
 
                                             <Label Text="{Binding MutationState}" IsVisible="{Binding HasMutationState}"
                                                    Style="{StaticResource MutedLabelStyle}" TextColor="{StaticResource WarningColor}" LineBreakMode="WordWrap" />
-                                            <Label Text="{Binding DeliveryState}" IsVisible="{Binding HasDeliveryState}"
-                                                   Style="{StaticResource MutedLabelStyle}" TextColor="{StaticResource WarningColor}" LineBreakMode="WordWrap" />
+                                            <Label AutomationId="MessageDeliveryState"
+                                                   Text="{Binding DeliveryState}" IsVisible="{Binding HasDeliveryState}"
+                                                   Style="{StaticResource MutedLabelStyle}" TextColor="{StaticResource WarningColor}" LineBreakMode="WordWrap">
+                                                <Label.Triggers>
+                                                    <DataTrigger TargetType="Label" Binding="{Binding IsDeliveryFailure}" Value="True">
+                                                        <Setter Property="TextColor" Value="{StaticResource DangerColor}" />
+                                                    </DataTrigger>
+                                                </Label.Triggers>
+                                            </Label>
                                             <Button Text="恢复到输入框" IsVisible="{Binding CanRecover}"
+                                                    AutomationId="RecoverOutboxButton"
                                                     Style="{StaticResource BaseButtonStyle}" HorizontalOptions="Start"
                                                     Command="{Binding RecoverCommand}" CommandParameter="{Binding .}"
                                                     SemanticProperties.Description="恢复失败消息到输入框；再次发送可能重复" />

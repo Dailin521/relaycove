@@ -82,6 +82,17 @@ public sealed class ConversationPaneViewTests
             .Single(element => element.Name.LocalName == "PointerGestureRecognizer");
         Assert.Equal("OnConversationPointerEntered", pointerGesture.Attribute("PointerEntered")?.Value);
         Assert.Equal("OnConversationPointerExited", pointerGesture.Attribute("PointerExited")?.Value);
+
+        var rowGrid = conversationRow.Descendants()
+            .First(element => element.Name.LocalName == "Grid" &&
+                              element.Attribute("RowDefinitions")?.Value == "Auto,Auto");
+        Assert.Equal("42,*,38", rowGrid.Attribute("ColumnDefinitions")?.Value);
+        Assert.Equal("9", rowGrid.Attribute("ColumnSpacing")?.Value);
+        var avatarFrame = rowGrid.Elements()
+            .First(element => element.Name.LocalName == "Border" &&
+                              element.Attribute("Grid.RowSpan")?.Value == "2");
+        Assert.Equal("40", avatarFrame.Attribute("WidthRequest")?.Value);
+        Assert.Equal("End", avatarFrame.Attribute("HorizontalOptions")?.Value);
     }
 
     private static string FindWorkspaceFile(params string[] parts)

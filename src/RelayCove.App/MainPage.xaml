@@ -363,128 +363,16 @@
                                 <VerticalStackLayout Grid.Column="1" Spacing="1" VerticalOptions="Center">
                                     <Label Text="{Binding CurrentUserDisplayName}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
                                     <Label Text="{Binding WorkspaceDisplayName}" Style="{StaticResource MutedLabelStyle}" />
+                                    <Label AutomationId="AccountStatusSummary"
+                                           Text="{Binding OwnStatusSummary}"
+                                           IsVisible="{Binding HasOwnStatusSummary}"
+                                           Style="{StaticResource MutedLabelStyle}"
+                                           FontSize="11"
+                                           LineBreakMode="TailTruncation"
+                                           SemanticProperties.Description="{Binding OwnStatusSummary, StringFormat='当前状态 {0}'}" />
                                 </VerticalStackLayout>
                             </Grid>
                             <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}" />
-                            <VerticalStackLayout Padding="6,4" Spacing="6"
-                                                 IsVisible="{Binding ShowOwnPresenceControls}">
-                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                    <Label Text="{Binding OwnPresenceStatusText}"
-                                           Style="{StaticResource MutedLabelStyle}"
-                                           VerticalTextAlignment="Center"
-                                           SemanticProperties.HeadingLevel="Level3" />
-                                    <ActivityIndicator Grid.Column="1"
-                                                       WidthRequest="16"
-                                                       HeightRequest="16"
-                                                       IsRunning="{Binding IsOwnPresenceBusy}"
-                                                       Color="{StaticResource AccentColor}"
-                                                       SemanticProperties.Description="正在更新我的状态" />
-                                </Grid>
-                                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="6">
-                                    <Button Grid.Column="0" Text="在线" FontSize="12" Padding="6,5"
-                                            Style="{StaticResource BaseButtonStyle}"
-                                            IsEnabled="{Binding CanSetOwnPresenceOnline}"
-                                            Command="{Binding SetOwnPresenceOnlineCommand}"
-                                            SemanticProperties.Description="设置我的状态为在线">
-                                        <Button.Triggers>
-                                            <DataTrigger TargetType="Button" Binding="{Binding IsOwnPresenceOnline}" Value="True">
-                                                <Setter Property="BackgroundColor" Value="#DCFCE7" />
-                                                <Setter Property="BorderColor" Value="#22C55E" />
-                                            </DataTrigger>
-                                        </Button.Triggers>
-                                    </Button>
-                                    <Button Grid.Column="1" Text="忙碌" FontSize="12" Padding="6,5"
-                                            Style="{StaticResource BaseButtonStyle}"
-                                            IsEnabled="{Binding CanSetOwnPresenceIdle}"
-                                            Command="{Binding SetOwnPresenceIdleCommand}"
-                                            SemanticProperties.Description="设置我的状态为忙碌">
-                                        <Button.Triggers>
-                                            <DataTrigger TargetType="Button" Binding="{Binding IsOwnPresenceIdle}" Value="True">
-                                                <Setter Property="BackgroundColor" Value="#FEF3C7" />
-                                                <Setter Property="BorderColor" Value="#F59E0B" />
-                                            </DataTrigger>
-                                        </Button.Triggers>
-                                    </Button>
-                                    <Button Grid.Column="2" Text="离线" FontSize="12" Padding="6,5"
-                                            Style="{StaticResource BaseButtonStyle}"
-                                            IsEnabled="{Binding CanSetOwnPresenceOffline}"
-                                            Command="{Binding SetOwnPresenceOfflineCommand}"
-                                            SemanticProperties.Description="开启隐身模式，对其他用户显示离线">
-                                        <Button.Triggers>
-                                            <DataTrigger TargetType="Button" Binding="{Binding IsOwnPresenceOffline}" Value="True">
-                                                <Setter Property="BackgroundColor" Value="#F3F4F6" />
-                                                <Setter Property="BorderColor" Value="#9CA3AF" />
-                                            </DataTrigger>
-                                        </Button.Triggers>
-                                    </Button>
-                                </Grid>
-                                <Label Text="{Binding OwnPresenceError}"
-                                       IsVisible="{Binding HasOwnPresenceError}"
-                                       Style="{StaticResource DangerLabelStyle}"
-                                       FontSize="11" />
-                            </VerticalStackLayout>
-                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}"
-                                     IsVisible="{Binding ShowOwnPresenceControls}" />
-                            <VerticalStackLayout Padding="6,4" Spacing="6"
-                                                 IsVisible="{Binding ShowOwnUserStatusControls}">
-                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                                    <Label Text="{Binding OwnUserStatusStatusText}"
-                                           Style="{StaticResource MutedLabelStyle}"
-                                           VerticalTextAlignment="Center"
-                                           LineBreakMode="TailTruncation"
-                                           SemanticProperties.HeadingLevel="Level3" />
-                                    <ActivityIndicator Grid.Column="1"
-                                                       WidthRequest="16"
-                                                       HeightRequest="16"
-                                                       IsRunning="{Binding IsOwnUserStatusBusy}"
-                                                       Color="{StaticResource AccentColor}"
-                                                       SemanticProperties.Description="正在更新个人状态" />
-                                </Grid>
-                                <Grid ColumnDefinitions="*,*"
-                                      RowDefinitions="Auto,Auto,Auto,Auto"
-                                      ColumnSpacing="6"
-                                      RowSpacing="6">
-                                    <Button Grid.Row="0" Grid.Column="0" Text="🛠️ 忙碌" FontSize="12" Padding="6,5"
-                                            Style="{StaticResource BaseButtonStyle}"
-                                            IsEnabled="{Binding CanSetOwnUserStatus}"
-                                            Command="{Binding SetOwnUserStatusBusyCommand}" />
-                                    <Button Grid.Row="0" Grid.Column="1" Text="📅 会议中" FontSize="12" Padding="6,5"
-                                            Style="{StaticResource BaseButtonStyle}"
-                                            IsEnabled="{Binding CanSetOwnUserStatus}"
-                                            Command="{Binding SetOwnUserStatusMeetingCommand}" />
-                                    <Button Grid.Row="1" Grid.Column="0" Text="🚌 通勤中" FontSize="12" Padding="6,5"
-                                            Style="{StaticResource BaseButtonStyle}"
-                                            IsEnabled="{Binding CanSetOwnUserStatus}"
-                                            Command="{Binding SetOwnUserStatusCommutingCommand}" />
-                                    <Button Grid.Row="1" Grid.Column="1" Text="🤕 病假" FontSize="12" Padding="6,5"
-                                            Style="{StaticResource BaseButtonStyle}"
-                                            IsEnabled="{Binding CanSetOwnUserStatus}"
-                                            Command="{Binding SetOwnUserStatusSickCommand}" />
-                                    <Button Grid.Row="2" Grid.Column="0" Text="🌴 休假" FontSize="12" Padding="6,5"
-                                            Style="{StaticResource BaseButtonStyle}"
-                                            IsEnabled="{Binding CanSetOwnUserStatus}"
-                                            Command="{Binding SetOwnUserStatusVacationCommand}" />
-                                    <Button Grid.Row="2" Grid.Column="1" Text="🏠 远程办公" FontSize="12" Padding="6,5"
-                                            Style="{StaticResource BaseButtonStyle}"
-                                            IsEnabled="{Binding CanSetOwnUserStatus}"
-                                            Command="{Binding SetOwnUserStatusRemoteCommand}" />
-                                    <Button Grid.Row="3" Grid.Column="0" Text="🏢 在办公室" FontSize="12" Padding="6,5"
-                                            Style="{StaticResource BaseButtonStyle}"
-                                            IsEnabled="{Binding CanSetOwnUserStatus}"
-                                            Command="{Binding SetOwnUserStatusOfficeCommand}" />
-                                    <Button Grid.Row="3" Grid.Column="1" Text="清除状态" FontSize="12" Padding="6,5"
-                                            Style="{StaticResource BaseButtonStyle}"
-                                            IsEnabled="{Binding CanClearOwnUserStatus}"
-                                            Command="{Binding ClearOwnUserStatusCommand}" />
-                                </Grid>
-                                <Label Text="{Binding OwnUserStatusError}"
-                                       IsVisible="{Binding HasOwnUserStatusError}"
-                                       Style="{StaticResource DangerLabelStyle}"
-                                       FontSize="11"
-                                       LineBreakMode="WordWrap" />
-                            </VerticalStackLayout>
-                            <BoxView HeightRequest="1" Background="{StaticResource BorderBrush}"
-                                     IsVisible="{Binding ShowOwnUserStatusControls}" />
                             <Button x:Name="FirstAccountMenuButton" Text="收藏的消息" ImageSource="icon_star.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding ShowSavedCommand}">
                                 <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
                             </Button>
@@ -705,6 +593,7 @@
                             </Grid>
                             <Entry Grid.Row="1"
                                    x:Name="SearchEntry"
+                                   AutomationId="SearchEntry"
                                    Style="{StaticResource BaseEntryStyle}"
                                    Text="{Binding SearchQuery, Mode=TwoWay}"
                                    Completed="OnSearchCompleted"
@@ -774,7 +663,8 @@
                                                 Style="{StaticResource BaseButtonStyle}" />
                                     </CollectionView.Footer>
                                 </CollectionView>
-                                <Label Text="没有匹配结果。"
+                                <Label AutomationId="SearchEmptyState"
+                                       Text="{Binding SearchEmptyText}"
                                        IsVisible="{Binding IsSearchEmpty}"
                                        Style="{StaticResource MutedLabelStyle}"
                                        HorizontalOptions="Center"
@@ -1228,7 +1118,7 @@
                             <Button Text="{Binding ActiveMessageStarActionLabel}" ImageSource="icon_star.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding ToggleMessageStarCommand}" IsEnabled="{Binding CanStarActiveMessage}">
                                 <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
                             </Button>
-                            <Button Text="引用回复" ImageSource="icon_quote.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding QuoteMessageCommand}">
+                            <Button AutomationId="QuoteMessageMenuItem" Text="引用回复" ImageSource="icon_quote.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding QuoteMessageCommand}">
                                 <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
                             </Button>
                             <Button Text="编辑消息" ImageSource="icon_edit.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding OpenEditDialogCommand}" IsVisible="{Binding CanEditActiveMessage}">

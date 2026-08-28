@@ -54,6 +54,19 @@
         <Setter Property="FontAttributes" Value="Bold" />
     </Style>
 
+    <Style x:Key="ComposerSendButtonStyle" TargetType="Button" BasedOn="{StaticResource PrimaryButtonStyle}">
+        <Style.Triggers>
+            <Trigger TargetType="Button" Property="IsEnabled" Value="False">
+                <Setter Property="BackgroundColor"
+                        Value="{AppThemeBinding Light={StaticResource LightTertiaryColor}, Dark={StaticResource DarkStrongBorderColor}}" />
+                <Setter Property="BorderColor"
+                        Value="{AppThemeBinding Light={StaticResource LightTertiaryColor}, Dark={StaticResource DarkStrongBorderColor}}" />
+                <Setter Property="TextColor"
+                        Value="{AppThemeBinding Light={StaticResource LightSurfaceSoftColor}, Dark={StaticResource DarkMutedColor}}" />
+            </Trigger>
+        </Style.Triggers>
+    </Style>
+
     <Style x:Key="JumpToLatestButtonStyle" TargetType="Button" BasedOn="{StaticResource BaseButtonStyle}">
         <Setter Property="HeightRequest" Value="42" />
         <Setter Property="MinimumHeightRequest" Value="42" />

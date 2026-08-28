@@ -27,12 +27,14 @@ public sealed class MessageItem : ObservableObject
     private string? _mutationState;
     private bool _mutationBlocksActions;
     private string? _deliveryState;
+    private bool _isDeliveryFailure;
     private bool _canRecover;
     private ICommand? _recoverCommand;
     private RealmEndpoint? _realm;
     private IReadOnlyList<MessageQuote> _quotes;
     private IReadOnlyList<MessageAttachmentItem> _attachments;
     private bool _animateInsertion;
+    private bool _isQuickActionsPreviewVisible;
 
     public MessageItem(
         string id,
@@ -55,6 +57,7 @@ public sealed class MessageItem : ObservableObject
         string? mutationState = null,
         bool mutationBlocksActions = false,
         string? deliveryState = null,
+        bool isDeliveryFailure = false,
         bool canRecover = false,
         ICommand? recoverCommand = null,
         RealmEndpoint? realm = null,
@@ -83,6 +86,7 @@ public sealed class MessageItem : ObservableObject
         _mutationState = mutationState;
         _mutationBlocksActions = mutationBlocksActions;
         _deliveryState = deliveryState;
+        _isDeliveryFailure = isDeliveryFailure;
         _canRecover = canRecover;
         _recoverCommand = recoverCommand;
         _realm = realm;
@@ -118,6 +122,7 @@ public sealed class MessageItem : ObservableObject
     public string? MutationState => _mutationState;
     public bool MutationBlocksActions => _mutationBlocksActions;
     public string? DeliveryState => _deliveryState;
+    public bool IsDeliveryFailure => _isDeliveryFailure;
     public bool CanRecover => _canRecover;
     public ICommand? RecoverCommand => _recoverCommand;
     public RealmEndpoint? Realm => _realm;
@@ -133,6 +138,7 @@ public sealed class MessageItem : ObservableObject
     public bool HasDeliveryState => !string.IsNullOrWhiteSpace(DeliveryState);
     public bool CanMutate => MessageId is not null && !MutationBlocksActions;
     public bool CanEditOrDelete => CanMutate && IsOwn;
+    public bool IsQuickActionsPreviewVisible => _isQuickActionsPreviewVisible;
     public int AvatarColumn => IsOwn ? 2 : 0;
     public Brush ToneBrush => new SolidColorBrush(
         Color.FromArgb(TonePalette[(int)(Math.Abs((SenderId ?? 0) % TonePalette.Length))]));
@@ -140,6 +146,9 @@ public sealed class MessageItem : ObservableObject
     public string AccessibleLabel => $"{Sender}，{Timestamp}。{Content}";
 
     internal bool IsInsertionAnimationPending => _animateInsertion;
+
+    internal void SetQuickActionsPreviewVisible(bool value) =>
+        SetProperty(ref _isQuickActionsPreviewVisible, value, nameof(IsQuickActionsPreviewVisible));
 
     internal bool TryConsumeInsertionAnimation()
     {
@@ -216,6 +225,7 @@ public sealed class MessageItem : ObservableObject
         {
             OnPropertyChanged(nameof(HasDeliveryState));
         }
+        SetProperty(ref _isDeliveryFailure, candidate.IsDeliveryFailure, nameof(IsDeliveryFailure));
         SetProperty(ref _canRecover, candidate.CanRecover, nameof(CanRecover));
         SetProperty(ref _recoverCommand, candidate.RecoverCommand, nameof(RecoverCommand));
 

@@ -1,6 +1,6 @@
 # RichChat 当前状态
 
-Updated: 2026-08-27
+Updated: 2026-08-28
 Branch: `main`
 Current baseline: `main`（精确提交以 Git 历史为准）
 Current release: [`v2.3.1`](https://github.com/Dailin521/relaycove/releases/tag/v2.3.1)
@@ -15,6 +15,10 @@ Current release: [`v2.3.1`](https://github.com/Dailin521/relaycove/releases/tag/
 - 唯一活动计划是 `tasks/2026-08-25-v2-optimization-plan.md`；后续仍一次只处理一个明确问题。
 
 ## 最近验证证据
+
+2026-08-28 八项交互优化已完成本机自主验收：左侧头像右移、账户状态只读、Composer 提示/发送灰态、三入口即时顺序上传、空搜索零查询、最小消息快捷栏、圆圈双引号引用图标、outbox Waiting 隐藏与失败/未知分色均已落地。`RelayCove.App.Tests` 392/392 通过；`pwsh ./scripts/verify.ps1 -Mode Fast` 通过 Core 170、Zulip.Client 144、Data 35、App 392，共 741 项；独立 Debug App 构建 0 warning/0 error。独立只读复核提出的发送失败提示抑制、上传前账号再核对、UIA 身份校验顺序及恢复附件 Markdown 直接覆盖均已收口并回归验证。
+
+最终离线副屏矩阵报告为 `artifacts/maui/runs/20260828T041940836Z-519576fb078346a7891fdd894cbe4e7d/report.json`：15/15 场景通过，全部位于非主显示器 `\\.\DISPLAY2`（144 DPI），1440×900 DIP 为 2160×1350 px，640×900 DIP 为 960×1350 px，其余 1024×768 DIP 为 1536×1152 px；DWM 尺寸、进程 PID/启动时间/路径/哈希、UIA 语义断言和每图 SHA-256 均已记录，且 UIA 只在捕获链路确认受跟踪进程、副屏与尺寸后执行。Debug-only 预览在主题和场景注入后强制完成一次 WinUI 布局，避免 `PrintWindow` 捕获到未完成测量的文字；主 Agent 与独立只读复核均已逐张视觉确认，无阻塞问题。预览仅使用 `preview.invalid` 内存数据，`Live not run`，未登录、访问或写入真实 Realm。
 
 `v2.2.0` 候选提交为 `5d880d78921f496450d6de409a4946d396d0d3d2`。
 

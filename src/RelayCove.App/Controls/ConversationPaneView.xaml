@@ -84,11 +84,12 @@
                                 <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
                             </DataTrigger>
                         </Border.Triggers>
-                        <Grid ColumnDefinitions="40,*,38" RowDefinitions="Auto,Auto" ColumnSpacing="11">
+                        <Grid ColumnDefinitions="42,*,38" RowDefinitions="Auto,Auto" ColumnSpacing="9">
                             <Border Grid.RowSpan="2"
                                     WidthRequest="40"
                                     HeightRequest="40"
                                     Padding="0"
+                                    HorizontalOptions="End"
                                     VerticalOptions="Center"
                                     Background="{Binding ToneBrush}"
                                     StrokeThickness="0">

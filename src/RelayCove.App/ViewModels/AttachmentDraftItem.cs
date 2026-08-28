@@ -47,9 +47,9 @@ public sealed partial class AttachmentDraftItem : ObservableObject
 
     public string StatusLabel => Status switch
     {
-        AttachmentUploadStatus.Pending => "等待上传",
+        AttachmentUploadStatus.Pending => string.Empty,
         AttachmentUploadStatus.Uploading => $"正在上传 {UploadProgressLabel ?? "0%"}",
-        AttachmentUploadStatus.Uploaded => "已上传；发送失败时会复用此链接",
+        AttachmentUploadStatus.Uploaded => "已上传",
         AttachmentUploadStatus.Uncertain => "上传结果未知；不会自动重试",
         AttachmentUploadStatus.Failed => "上传失败；可显式重试",
         _ => string.Empty

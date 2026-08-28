@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory)]
     [string] $OutputPath,
+    [Parameter(Mandatory)]
+    [string] $RunDirectory,
     [ValidateRange(480, 3840)]
     [int] $DipWidth = 1440,
     [ValidateRange(560, 2160)]
@@ -9,11 +11,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$stateDirectory = Join-Path $repoRoot 'artifacts\maui'
+$stateDirectory = [IO.Path]::GetFullPath($RunDirectory, $repoRoot)
 $processFile = Join-Path $stateDirectory 'preview-process.id'
 $executableFile = Join-Path $stateDirectory 'preview-executable.path'
+$runFile = Join-Path $stateDirectory 'preview-run.json'
 
-if (-not (Test-Path -LiteralPath $processFile) -or -not (Test-Path -LiteralPath $executableFile))
+if (-not (Test-Path -LiteralPath $processFile) -or -not (Test-Path -LiteralPath $executableFile) -or -not (Test-Path -LiteralPath $runFile))
 {
     throw 'No RichChat preview process is recorded. Run scripts/start-maui-preview.ps1 first.'
 }
@@ -25,10 +28,20 @@ if (-not [int]::TryParse((Get-Content -LiteralPath $processFile -Raw).Trim(), [r
 }
 
 $expectedExecutable = (Get-Content -LiteralPath $executableFile -Raw).Trim()
+$runState = Get-Content -LiteralPath $runFile -Raw | ConvertFrom-Json
 $process = Get-Process -Id $previewProcessId -ErrorAction Stop
 if (-not [string]::Equals($process.Path, $expectedExecutable, [StringComparison]::OrdinalIgnoreCase))
 {
     throw 'The recorded process is not the RichChat preview executable started by this worktree.'
+}
+if ($process.StartTime.ToUniversalTime().Ticks -ne [long]$runState.ProcessStartTimeUtcTicks)
+{
+    throw 'The recorded PID was reused by a process with a different start time.'
+}
+$currentExecutableHash = (Get-FileHash -LiteralPath $process.Path -Algorithm SHA256).Hash
+if (-not [string]::Equals($currentExecutableHash, [string]$runState.ExecutableSha256, [StringComparison]::OrdinalIgnoreCase))
+{
+    throw 'The tracked preview executable hash changed after launch.'
 }
 
 for ($attempt = 0; $attempt -lt 50 -and $process.MainWindowHandle -eq [IntPtr]::Zero; $attempt++)
@@ -67,7 +80,7 @@ Add-Type -AssemblyName System.Drawing
 
 $screens = [System.Windows.Forms.Screen]::AllScreens
 $targetScreen = $screens | Where-Object { -not $_.Primary } | Select-Object -First 1
-if (-not $targetScreen) { $targetScreen = [System.Windows.Forms.Screen]::FromHandle($process.MainWindowHandle) }
+if (-not $targetScreen) { throw 'A non-primary display is required for autonomous preview acceptance.' }
 
 # The HWND can still carry the primary monitor's DPI during startup. Move it to
 # the target display without resizing, then query the per-monitor DPI used for
@@ -134,6 +147,15 @@ if ($dwmResult -ne 0) { throw "DwmGetWindowAttribute failed: $dwmResult" }
 
 $actualWidth = $rect.Right - $rect.Left
 $actualHeight = $rect.Bottom - $rect.Top
+if ([Math]::Abs($actualWidth - $pixelWidth) -gt 1 -or [Math]::Abs($actualHeight - $pixelHeight) -gt 1)
+{
+    throw "Preview window did not converge within +/-1 px. Expected $pixelWidth x $pixelHeight; actual $actualWidth x $actualHeight."
+}
+$finalScreen = [System.Windows.Forms.Screen]::FromHandle($process.MainWindowHandle)
+if ($finalScreen.Primary -or -not [string]::Equals($finalScreen.DeviceName, $targetScreen.DeviceName, [StringComparison]::OrdinalIgnoreCase))
+{
+    throw "Preview HWND is not on the required non-primary display. Expected $($targetScreen.DeviceName); actual $($finalScreen.DeviceName)."
+}
 $resolvedOutput = [IO.Path]::GetFullPath($OutputPath, $repoRoot)
 $directory = Split-Path -Parent $resolvedOutput
 New-Item -ItemType Directory -Force -Path $directory | Out-Null
@@ -156,13 +178,24 @@ finally
 $bitmap.Save($resolvedOutput, [System.Drawing.Imaging.ImageFormat]::Png)
 $bitmap.Dispose()
 
-[pscustomobject]@{
+$evidence = [ordered]@{
     ProcessId = $previewProcessId
+    ProcessStartTimeUtc = $runState.ProcessStartTimeUtc
+    ExecutablePath = $process.Path
+    ExecutableSha256 = $currentExecutableHash
+    Scene = $runState.Scene
+    Theme = $runState.Theme
     Dpi = $dpi
-    DipSize = "$DipWidth x $DipHeight"
-    PixelSize = "$actualWidth x $actualHeight"
-    Screen = $targetScreen.DeviceName
+    DipWidth = $DipWidth
+    DipHeight = $DipHeight
+    PixelWidth = $actualWidth
+    PixelHeight = $actualHeight
+    Screen = $finalScreen.DeviceName
+    ScreenPrimary = $finalScreen.Primary
+    WindowRect = [ordered]@{ Left = $rect.Left; Top = $rect.Top; Right = $rect.Right; Bottom = $rect.Bottom }
     OutputPath = $resolvedOutput
     Sha256 = (Get-FileHash $resolvedOutput -Algorithm SHA256).Hash
     InputAutomation = 'None'
 }
+$evidence | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath ([IO.Path]::ChangeExtension($resolvedOutput, '.evidence.json')) -Encoding utf8
+[pscustomobject]$evidence
