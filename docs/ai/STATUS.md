@@ -36,11 +36,11 @@ Current release: [`v2.4.0`](https://github.com/Dailin521/relaycove/releases/tag/
 
 `v2.3.1` 按相同的个人 MVP 快速发布边界执行：会话悬浮态 Release 定向测试 1/1 通过，编译仅有 7 个既有 XamlC binding-performance warning；继续执行自包含发布、必要文件检查、秘密扫描和 ZIP 校验，不运行 Fast、Full、Live、Web、VM、安装器或真实 Realm 写入。
 
-`v2.4.0` 的精确二进制候选为 `7a387bc0999deb5347b66e705795471bfd483efe`。`pwsh ./scripts/verify.ps1 -Mode Full` 通过：Release 构建 0 error、7 个既有 XamlC binding-performance warning；Core 170/170、Zulip.Client 144/144、Data 35/35、App 392/392，共 741 项；自包含 publish、必要运行文件、秘密扫描、ZIP 与 manifest 均通过。正式 ZIP 为 97,084,727 bytes，SHA-256 `219CE1DE1CE2A39D2F7ABD6F921AF83CA7863BB184B12B41F076FDEDBF7FAF24`；远端 `main`、带注释 tag 的 peeled commit 与 Release 资产均已复核一致，GitHub Release 为非草稿、非预发布的 Latest。未运行 Live、Web、干净 VM、安装器、签名或真实 Realm 写入。
+`v2.4.0` 的精确二进制候选为 `7a387bc0999deb5347b66e705795471bfd483efe`。`pwsh ./scripts/verify.ps1 -Mode Full` 通过：Release 构建 0 error、7 个既有 XamlC binding-performance warning；Core 170/170、Zulip.Client 144/144、Data 35/35、App 392/392，共 741 项；自包含 publish、必要运行文件、秘密扫描、ZIP 与 manifest 均通过。正式 ZIP 为 97,084,727 bytes，SHA-256 `219CE1DE1CE2A39D2F7ABD6F921AF83CA7863BB184B12B41F076FDEDBF7FAF24`；带注释 tag 的 peeled commit 精确指向该候选，Release 资产与本地包一致，GitHub Release 为非草稿、非预发布的 Latest。发布后的 `main` 仅增加证据文档，不移动二进制 tag。未运行 Live、Web、干净 VM、安装器、签名或真实 Realm 写入。
 
-发布后托盘确认批次修正了“打开对应会话后仍持续闪烁”：点击托盘/系统通知或权威未读数下降会停止本轮托盘闪烁，单纯鼠标悬浮不会确认；剩余未读徽标继续保留。相关 App 定向回归 39/39 通过，尚未重新生成 Release 包。
+发布后托盘确认批次修正了“打开对应会话后仍持续闪烁”：点击托盘/系统通知或权威未读数下降会停止本轮托盘闪烁，单纯鼠标悬浮不会确认；剩余未读徽标继续保留。相关 App 定向回归 39/39 通过，并已随 `v2.4.0` 发布。
 
-Windows 生命周期批次使用 App SDK `AppInstance` 固定键强制单实例：重复启动只恢复已有窗口并退出第二个进程；托盘显式退出保留正常资源清理，并在 3 秒后提供进程级兜底。相关 App 定向回归 15/15 通过，尚未重新生成 Release 包。
+Windows 生命周期批次使用 App SDK `AppInstance` 固定键强制单实例：重复启动只恢复已有窗口并退出第二个进程；托盘显式退出保留正常资源清理，并在 3 秒后提供进程级兜底。相关 App 定向回归 15/15 通过，并已随 `v2.4.0` 发布。
 
 ## 当前能力摘要
 
