@@ -1,6 +1,6 @@
 # RichChat AI 文档索引
 
-Updated: 2026-08-26
+Updated: 2026-09-03
 
 ## 每次必读
 
@@ -14,8 +14,8 @@ UI 问题按需再读 `docs/ui/README.md`、`INTERACTION_SPEC.md` 或 `MAUI_PREV
 ## 当前状态
 
 - 当前产品：Windows MAUI-only 个人 MVP。
-- 当前正式版本：`2.2.0`。
-- 当前 `main` 基线：`a916791`。
+- 当前正式版本：`2.4.0`。
+- 当前 `main` 基线：精确提交以 Git 历史为准。
 - Stage 38 官方 presence 与个人状态已经实现、由用户在工程中验证并交付；不再是活动任务。
 - 旧 Stage/Release 临时日志已删除，历史证据以 Git commit、tag、GitHub Release 和 `docs/releases/` 为准。
 - 工作树中的 `.verify/` 是本机验证输出，必须保留且永不提交。

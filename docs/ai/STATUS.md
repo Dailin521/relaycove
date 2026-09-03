@@ -1,9 +1,9 @@
 # RichChat 当前状态
 
-Updated: 2026-08-28
+Updated: 2026-09-03
 Branch: `main`
 Current baseline: `main`（精确提交以 Git 历史为准）
-Current release: [`v2.3.1`](https://github.com/Dailin521/relaycove/releases/tag/v2.3.1)
+Current release: [`v2.4.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.4.0)
 
 ## 产品状态
 
@@ -12,6 +12,7 @@ Current release: [`v2.3.1`](https://github.com/Dailin521/relaycove/releases/tag/
 - Stage 31–36 已随 `v2.1.0` 发布；Stage 37 当前会话实时追加和 Stage 38 官方 presence/个人状态已随 `v2.2.0` 发布。
 - `v2.3.0` 收录后续 V2 优化、可靠文件传输、下载中心、登录起始页与当前 Realm 官方注册入口；用户已经通过 Visual Studio/实际工程确认当前 UI 与交互。
 - `v2.3.1` 将产品显示名称统一为 RichChat，并补齐左侧会话行的鼠标悬浮态；选中态保持优先且不会被悬浮态覆盖。
+- `v2.4.0` 收录托盘确认与单实例退出加固，以及头像、账户状态、附件上传、搜索、消息操作、引用图标和 outbox 提示等八项交互优化。
 - 唯一活动计划是 `tasks/2026-08-25-v2-optimization-plan.md`；后续仍一次只处理一个明确问题。
 
 ## 最近验证证据
