@@ -14,6 +14,11 @@ $version = $project.SelectSingleNode("/Project/PropertyGroup/ApplicationDisplayV
 if ($version -notmatch '^\d+\.\d+\.\d+$') {
     throw "The application version must contain three numeric components."
 }
+$buildNumber = 0
+$buildNode = $project.SelectSingleNode("/Project/PropertyGroup/ApplicationVersion")
+if ($null -eq $buildNode -or -not [int]::TryParse($buildNode.InnerText, [ref]$buildNumber) -or $buildNumber -le 0) {
+    throw "ApplicationVersion must be a positive integer build number."
+}
 
 $compiler = (Get-Item -LiteralPath $IsccPath).FullName
 $packageRoot = Join-Path $repoRoot "artifacts/package"
@@ -34,6 +39,18 @@ if ([IO.File]::ReadAllText($manifestPath).Trim() -cne "$archiveHash  $archiveNam
 $stageRoot = Join-Path $repoRoot ("artifacts/installer-stage/" + [Guid]::NewGuid().ToString("N"))
 $payloadRoot = Join-Path $stageRoot "payload"
 [IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $payloadRoot)
+# Read the verified payload's PE version resource without loading or executing the app.
+# The fourth file-version component is emitted from the same ApplicationVersion as
+# the runtime RichChatBuildNumber attribute; an old ZIP cannot acquire a new build.
+$appAssemblyPath = Join-Path $payloadRoot "RichChat.dll"
+if (-not (Test-Path -LiteralPath $appAssemblyPath -PathType Leaf)) {
+    throw "The verified ZIP is missing RichChat.dll. Rebuild with Full before packaging."
+}
+$payloadVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($appAssemblyPath)
+$payloadDisplayVersion = "$($payloadVersion.FileMajorPart).$($payloadVersion.FileMinorPart).$($payloadVersion.FileBuildPart)"
+if ($payloadDisplayVersion -cne $version -or $payloadVersion.FilePrivatePart -ne $buildNumber) {
+    throw "The ZIP payload version/build differs from the project. Rebuild with Full before packaging."
+}
 foreach ($required in @("RichChat.exe", "Assets/RichChat-R.ico", "coreclr.dll", "Microsoft.UI.Xaml.dll", "e_sqlite3.dll", "LICENSE", "THIRD-PARTY-NOTICES.md")) {
     if (-not (Test-Path -LiteralPath (Join-Path $payloadRoot $required) -PathType Leaf)) {
         throw "Required self-contained runtime file is missing: $required"
@@ -71,24 +88,42 @@ if (-not (Test-Path -LiteralPath $compiledInstaller -PathType Leaf) -or
 $installerHash = (Get-FileHash -LiteralPath $compiledInstaller -Algorithm SHA256).Hash
 $stagedManifest = Join-Path $stageRoot "installer.sha256"
 Set-Content -LiteralPath $stagedManifest -Encoding ascii -Value "$installerHash  $installerName"
+$stagedUpdateManifest = Join-Path $stageRoot "update-win-x64.json"
+& (Join-Path $PSScriptRoot "write-update-manifest.ps1") -InstallerPath $compiledInstaller `
+    -OutputPath $stagedUpdateManifest -Version $version -BuildNumber $buildNumber
 $installerPath = Join-Path $packageRoot $installerName
 $installerManifestPath = Join-Path $packageRoot "RichChat-$version-win-x64-Setup.sha256"
+$updateManifestPath = Join-Path $packageRoot "update-win-x64.json"
 $previousInstaller = Join-Path $stageRoot "previous-installer.exe"
 $hadPreviousInstaller = Test-Path -LiteralPath $installerPath -PathType Leaf
 if ($hadPreviousInstaller) { Copy-Item -LiteralPath $installerPath -Destination $previousInstaller }
-if (Test-Path -LiteralPath $installerManifestPath -PathType Leaf) {
+$hadPreviousManifest = Test-Path -LiteralPath $installerManifestPath -PathType Leaf
+if ($hadPreviousManifest) {
     Copy-Item -LiteralPath $installerManifestPath -Destination (Join-Path $stageRoot "previous-installer.sha256")
 }
 # Same-volume rename publishes only a successful compile. A locked old EXE stays intact.
 [IO.File]::Move($compiledInstaller, $installerPath, $true)
 try {
     [IO.File]::Move($stagedManifest, $installerManifestPath, $true)
+    # Publish discovery metadata last, after both installer and checksum succeeded.
+    [IO.File]::Move($stagedUpdateManifest, $updateManifestPath, $true)
 }
 catch {
     # Restore the previous pair if publishing its manifest fails (for example, a locked file).
     if ($hadPreviousInstaller) { [IO.File]::Move($previousInstaller, $installerPath, $true) }
     else { [IO.File]::Move($installerPath, $compiledInstaller) }
+    if ($hadPreviousManifest) {
+        # An unchanged, locked checksum already contains the previous value.
+        $previousManifest = Join-Path $stageRoot "previous-installer.sha256"
+        if ([IO.File]::ReadAllText($installerManifestPath) -cne [IO.File]::ReadAllText($previousManifest)) {
+            [IO.File]::Move($previousManifest, $installerManifestPath, $true)
+        }
+    }
+    elseif (Test-Path -LiteralPath $installerManifestPath -PathType Leaf) {
+        Remove-Item -LiteralPath $installerManifestPath
+    }
     throw
 }
 Write-Host "Windows installer: $installerPath"
 Write-Host "SHA-256: $installerHash"
+Write-Host "GitHub Release update manifest: $updateManifestPath"

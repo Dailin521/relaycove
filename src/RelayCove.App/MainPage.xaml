@@ -1460,5 +1460,29 @@
                 </Border>
             </Grid>
         </Grid>
+        <Border IsVisible="{Binding Updates.IsPromptVisible}"
+                HorizontalOptions="End" VerticalOptions="Start" MaximumWidthRequest="420"
+                Margin="16,54,16,16" Padding="18" ZIndex="200"
+                Background="{StaticResource SurfaceRaisedBrush}" Stroke="{StaticResource BorderBrush}" StrokeThickness="1">
+            <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
+            <VerticalStackLayout Spacing="10">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                    <Label Text="{Binding Updates.UpdateTitle}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" VerticalOptions="Center" />
+                    <Button Grid.Column="1" Text="×" Style="{StaticResource IconButtonStyle}" Command="{Binding Updates.DismissPromptCommand}" SemanticProperties.Description="关闭更新提醒" />
+                </Grid>
+                <Label Text="{Binding Updates.Status}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                <ScrollView MaximumHeightRequest="160" IsVisible="{Binding Updates.HasReleaseNotes}">
+                    <Label Text="{Binding Updates.ReleaseNotes}" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" />
+                </ScrollView>
+                <ProgressBar Progress="{Binding Updates.DownloadProgress}" IsVisible="{Binding Updates.IsDownloading}" ProgressColor="{StaticResource AccentColor}" />
+                <Label Text="{Binding Updates.DownloadProgressText}" IsVisible="{Binding Updates.IsDownloading}" Style="{StaticResource MutedLabelStyle}" />
+                <HorizontalStackLayout Spacing="8">
+                    <Button Text="下载更新" Style="{StaticResource PrimaryButtonStyle}" Command="{Binding Updates.DownloadCommand}" />
+                    <Button Text="取消下载" IsVisible="{Binding Updates.IsDownloading}" Style="{StaticResource BaseButtonStyle}" Command="{Binding Updates.CancelDownloadCommand}" />
+                    <Button Text="打开安装包" IsVisible="{Binding Updates.HasDownloadedInstaller}" Style="{StaticResource PrimaryButtonStyle}" Command="{Binding Updates.OpenInstallerCommand}" />
+                    <Button Text="稍后" Style="{StaticResource BaseButtonStyle}" Command="{Binding Updates.DismissPromptCommand}" />
+                </HorizontalStackLayout>
+            </VerticalStackLayout>
+        </Border>
     </Grid>
 </ContentPage>

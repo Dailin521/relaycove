@@ -2,17 +2,21 @@
 
 RichChat 是一个直接连接 Zulip Realm 的 Windows 原生 .NET MAUI 客户端。Zulip 是账号、权限、成员、消息和实时事件的唯一事实源；项目不包含自研聊天服务端、代理、BFF 或第二消息后端。
 
-当前正式版本为 [`2.4.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.4.0)，目标平台为 Windows 11 x64，使用 .NET SDK `10.0.400`、MAUI `10.0.20` 和 `win-x64`。`RelayCove.Web` 只保留为历史源码，不再参与产品开发或 Windows 发布。
+当前版本为 [`1.0.5`](https://github.com/Dailin521/relaycove/releases/tag/v1.0.5)，目标平台为 Windows 11 x64，使用 .NET SDK `10.0.400`、MAUI `10.0.20` 和 `win-x64`。`RelayCove.Web` 只保留为历史源码，不再参与产品开发或 Windows 发布。
 
-当前源码版本为 `1.0.4`，尚未发布；重新运行 `publish-installer.cmd` 将生成对应版本的安装包。
+本版本沿用 SVN 主线的 `1.0.x` 版本系列，构建号为 `12`；历史 GitHub `2.4.0` 不属于新的更新渠道。运行 `publish-installer.cmd` 会生成当前源码版本的安装包及更新清单。
 
 ## 下载
 
 从 [GitHub Releases](https://github.com/Dailin521/relaycove/releases) 下载当前正式版本。`v2.3.0` 是更名前发布的历史包，因此仍使用 `RelayCove-2.3.0-win-x64.zip` 和 `RelayCove.App.exe`；后续版本统一使用 `RichChat-<version>-win-x64.zip` 和 `RichChat.exe`。
 
-GitHub 上的现有版本提供自包含、未签名的 ZIP。本地也支持生成 `RichChat-<version>-win-x64-Setup.exe` 中文安装器：默认安装到当前用户的 `%LOCALAPPDATA%\Programs\RichChat`，不需要管理员权限，提供开始菜单、桌面快捷方式和 Windows 卸载入口。升级或卸载前请从托盘右键退出 RichChat；卸载保留已有账号凭据和聊天缓存，如需移除凭据请先在应用中注销。
+GitHub Release 提供自包含、未签名的 ZIP 和 `RichChat-<version>-win-x64-Setup.exe` 中文安装器：默认安装到当前用户的 `%LOCALAPPDATA%\Programs\RichChat`，不需要管理员权限，提供开始菜单、桌面快捷方式和 Windows 卸载入口。升级或卸载前请从托盘右键退出 RichChat；卸载保留已有账号凭据和聊天缓存，如需移除凭据请先在应用中注销。
 
-应用退出后不会接收消息，也不包含后台推送、自动更新、MSIX 或代码签名。
+应用退出后不会接收消息，也不包含后台推送、静默安装更新、MSIX 或代码签名。
+
+在“设置 → 通用”可开启或关闭“启动时检查更新”，默认开启，每个新版只提醒一次。“设置 → 关于”可以手动检查 GitHub 正式 Release、下载更新并打开安装包；下载完成后不会自动安装或重启。下载文件经过大小和 SHA-256 校验，打开安装包前请先处理未发送的草稿。
+
+更新渠道只接受 `Dailin521/relaycove` 正式 Release 中配套的 `update-win-x64.json` 和 `RichChat-<version>-win-x64-Setup.exe`，按递增的 `ApplicationVersion` 构建号判断更新。旧 Release 没有清单时不会提示更新，以免将历史 `2.4.0` 误认作当前 `1.0.x` 源码的新版。安装器打包脚本自动生成清单，并核对 ZIP 内程序的版本与构建号；正式发布时需将清单和安装包上传到同一个 Release，且每次发布必须递增构建号。
 
 ## 当前范围
 

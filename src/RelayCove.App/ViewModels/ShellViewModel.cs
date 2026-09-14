@@ -176,8 +176,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         INotificationAvatarFileStore? notificationAvatarFileStore = null,
         IDownloadHistoryStore? downloadHistoryStore = null,
         TimeProvider? timeProvider = null,
-        IStartupService? startupService = null)
+        IStartupService? startupService = null,
+        AppUpdateViewModel? updates = null)
     {
+        Updates = updates;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _startupService = startupService;
         RefreshStartupSettings();
@@ -235,6 +237,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public ObservableCollection<ConversationSettingsMemberItem> GroupInviteCandidates { get; } = [];
     public ObservableCollection<ConversationSettingsMemberItem> GroupMemberActionCandidates { get; } = [];
     public ChannelSettingsViewModel ChannelSettings { get; }
+    public AppUpdateViewModel? Updates { get; }
     public IReadOnlyList<EmojiChoice> EmojiChoices { get; private set; } = [];
     public IReadOnlyList<EmojiCategoryChoice> EmojiCategories { get; } = [new("custom", "自定义")];
     public double EmojiPickerWidth => Math.Min(420d, Math.Max(0d, _viewportWidth - 24d));
@@ -1257,6 +1260,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         if (Interlocked.Exchange(ref _initialized, 1) != 0) return;
+        if (!IsNativePreview && Updates is not null) _ = Updates.CheckOnStartupAsync();
         _activateInitialConversationWhenAvailable = !IsNativePreview;
         try
         {
@@ -1473,6 +1477,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     internal void SetWindowActive(bool isActive)
     {
         if (_disposed) return;
+        Updates?.SetWindowActive(isActive);
         if (_isWindowActive == isActive)
         {
             if (!isActive) return;
@@ -8394,6 +8399,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        Updates?.Dispose();
         _messageActionTimer?.Dispose();
         lock (_projectionGate)
         {

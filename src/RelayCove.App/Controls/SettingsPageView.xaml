@@ -301,6 +301,18 @@
                             <Button Text="注销" HorizontalOptions="Start" Style="{StaticResource BaseButtonStyle}" Command="{Binding RequestLogoutCommand}" />
                         </VerticalStackLayout>
                     </Border>
+                    <Border Style="{StaticResource CardBorderStyle}" Padding="0">
+                        <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                        <Grid Padding="16,13" ColumnDefinitions="*,Auto" ColumnSpacing="12" MinimumHeightRequest="76">
+                            <VerticalStackLayout VerticalOptions="Center" Spacing="3">
+                                <Label Text="启动时检查更新" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                                <Label Text="从 GitHub 获取正式版，每个新版只提醒一次" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                            </VerticalStackLayout>
+                            <Switch Grid.Column="1" IsToggled="{Binding Updates.CheckOnStartup, Mode=TwoWay}"
+                                    VerticalOptions="Center" OnColor="{StaticResource AccentColor}"
+                                    SemanticProperties.Description="启动时检查更新" />
+                        </Grid>
+                    </Border>
                 </VerticalStackLayout>
 
                 <VerticalStackLayout IsVisible="{Binding IsAboutSettings}" Spacing="20">
@@ -317,6 +329,28 @@
                                        Style="{StaticResource MutedLabelStyle}" />
                             </VerticalStackLayout>
                         </HorizontalStackLayout>
+                    </Border>
+                    <Border Style="{StaticResource CardBorderStyle}">
+                        <VerticalStackLayout Spacing="12">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                <Label Text="软件更新" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" VerticalOptions="Center" />
+                                <Button Grid.Column="1" Text="检查更新" Style="{StaticResource BaseButtonStyle}"
+                                        Command="{Binding Updates.CheckCommand}" />
+                            </Grid>
+                            <Label Text="{Binding Updates.Status}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                            <ActivityIndicator IsRunning="{Binding Updates.IsChecking}" IsVisible="{Binding Updates.IsChecking}" HorizontalOptions="Start" WidthRequest="24" HeightRequest="24" />
+                            <Label Text="{Binding Updates.UpdateTitle}" IsVisible="{Binding Updates.HasUpdate}" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                            <ScrollView MaximumHeightRequest="220" IsVisible="{Binding Updates.HasReleaseNotes}">
+                                <Label Text="{Binding Updates.ReleaseNotes}" Style="{StaticResource BaseLabelStyle}" LineBreakMode="WordWrap" />
+                            </ScrollView>
+                            <ProgressBar Progress="{Binding Updates.DownloadProgress}" IsVisible="{Binding Updates.IsDownloading}" ProgressColor="{StaticResource AccentColor}" />
+                            <Label Text="{Binding Updates.DownloadProgressText}" IsVisible="{Binding Updates.IsDownloading}" Style="{StaticResource MutedLabelStyle}" />
+                            <HorizontalStackLayout Spacing="8">
+                                <Button Text="下载更新" IsVisible="{Binding Updates.HasUpdate}" Style="{StaticResource PrimaryButtonStyle}" Command="{Binding Updates.DownloadCommand}" />
+                                <Button Text="取消下载" IsVisible="{Binding Updates.IsDownloading}" Style="{StaticResource BaseButtonStyle}" Command="{Binding Updates.CancelDownloadCommand}" />
+                                <Button Text="打开安装包" IsVisible="{Binding Updates.HasDownloadedInstaller}" Style="{StaticResource PrimaryButtonStyle}" Command="{Binding Updates.OpenInstallerCommand}" />
+                            </HorizontalStackLayout>
+                        </VerticalStackLayout>
                     </Border>
                 </VerticalStackLayout>
             </Grid>

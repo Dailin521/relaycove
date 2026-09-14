@@ -10,7 +10,8 @@ public sealed class SettingsPageViewTests
         System.Xml.Linq.XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
         var general = Assert.Single(document.Descendants(maui + "VerticalStackLayout"),
             element => (string?)element.Attribute("IsVisible") == "{Binding IsGeneralSettings}");
-        var toggle = Assert.Single(general.Descendants(maui + "Switch"));
+        var toggle = Assert.Single(general.Descendants(maui + "Switch"),
+            element => (string?)element.Attribute("IsToggled") == "{Binding StartWithWindows, Mode=TwoWay}");
 
         Assert.Equal("{Binding StartWithWindows, Mode=TwoWay}", (string?)toggle.Attribute("IsToggled"));
         Assert.Equal("{Binding CanChangeStartup}", (string?)toggle.Attribute("IsEnabled"));

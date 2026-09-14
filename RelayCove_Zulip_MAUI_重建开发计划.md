@@ -1,10 +1,10 @@
 # RichChat MAUI 产品与架构计划
 
 状态：当前权威计划
-源码版本：`1.0.4`（尚未发布）
+源码版本：`1.0.5`（构建号 `12`）
 平台：Windows 11 x64
 框架：`net10.0-windows10.0.19041.0`
-更新：2026-09-11
+更新：2026-09-14
 
 ## 1. 产品方向
 
@@ -30,7 +30,7 @@ Zulip Realm 始终是账号、权限、成员、消息和实时事件的唯一�
 
 - 公开频道、命名话题、多人私信和旧频道兼容入口。
 - 历史 RelayCove Web 新功能或 MAUI/Web 对齐。
-- `@` 候选、typing、应用退出后的后台 push、SSO、多账号、AI、自动更新。
+- `@` 候选、typing、应用退出后的后台 push、SSO、多账号、AI、静默安装更新。
 - Android、iOS、Mac Catalyst、Linux、MSIX 和代码签名。
 
 ## 3. 架构边界
@@ -91,6 +91,10 @@ MAUI UI 只通过 `IClientSession` 使用业务状态。网络和数据库 I/O �
 更细的现有交互以 `docs/ui/INTERACTION_SPEC.md` 为准；代码和当前运行结果优先于旧文档措辞。
 
 ## 7. 验证与发布
+
+客户端默认在每次完整启动后异步检查 GitHub `Dailin521/relaycove` 的正式 Release，不依赖 Realm 登录。每个新构建只在窗口可见时提醒一次，可在通用设置关闭，关于页保留手动检查、下载和打开安装包入口；下载完成不自动安装或重启。
+
+更新使用独立、无 Realm 凭据的 HTTP 客户端，禁用自动重定向并逐跳校验 GitHub HTTPS 下载域名。仅接受同一正式 Release 中匹配的 `update-win-x64.json` 和 Windows x64 安装器，核对产品、版本、构建号、文件名、长度和 SHA-256；构建号使用 `ApplicationVersion`，不按历史 `2.4.0` 与当前 `1.0.x` 显示版本比较。安装器脚本从已验证 ZIP 内程序的文件版本核对构建号，拒绝把旧载荷标成新构建。每次正式发布递增构建号并上传配套清单。
 
 ```powershell
 pwsh ./scripts/verify.ps1 -Mode Fast

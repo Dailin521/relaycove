@@ -37,6 +37,15 @@ public static class MauiProgram
         builder.Services.AddSingleton<IAppearanceService, MauiAppearanceService>();
         builder.Services.AddSingleton<IUiPreferencesService, MauiUiPreferencesService>();
         builder.Services.AddSingleton<IStartupService, WindowsStartupService>();
+        builder.Services.AddSingleton<IAppUpdatePreferences, MauiAppUpdatePreferences>();
+        builder.Services.AddSingleton<IAppUpdateService, GitHubAppUpdateService>();
+        builder.Services.AddSingleton(provider => new AppUpdateViewModel(
+            provider.GetRequiredService<IAppUpdateService>(),
+            provider.GetRequiredService<IAppUpdatePreferences>(),
+            provider.GetRequiredService<IUiDispatcher>(),
+            provider.GetRequiredService<IFileSaveService>(),
+            Path.Combine(FileSystem.AppDataDirectory, "updates"),
+            AppUpdateViewModel.ReadCurrentBuildNumber()));
         builder.Services.AddSingleton<INotificationPreferencesService, MauiNotificationPreferencesService>();
         builder.Services.AddSingleton<IConversationPreferencesStore, MauiConversationPreferencesStore>();
         builder.Services.AddSingleton<IPlatformInteractionService, MauiPlatformInteractionService>();

@@ -10,9 +10,10 @@
     <ApplicationTitle>RichChat</ApplicationTitle>
     <ApplicationId>com.relaycove.client</ApplicationId>
     <!-- MAUI Windows resource metadata accepts only numeric major.minor.patch. -->
-    <ApplicationDisplayVersion>1.0.4</ApplicationDisplayVersion>
-    <ApplicationVersion>11</ApplicationVersion>
-    <InformationalVersion>1.0.4</InformationalVersion>
+    <ApplicationDisplayVersion>1.0.5</ApplicationDisplayVersion>
+    <ApplicationVersion>12</ApplicationVersion>
+    <InformationalVersion>1.0.5</InformationalVersion>
+    <FileVersion>$(ApplicationDisplayVersion).$(ApplicationVersion)</FileVersion>
     <ApplicationIcon>Resources\AppIcon\RelayCove.ico</ApplicationIcon>
     <WindowsPackageType>None</WindowsPackageType>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
@@ -24,6 +25,10 @@
     <RuntimeIdentifier Condition="'$(RuntimeIdentifierOverride)' == ''">win-x64</RuntimeIdentifier>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifierOverride)' != ''">$(RuntimeIdentifierOverride)</RuntimeIdentifier>
   </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="RichChatBuildNumber" Value="$(ApplicationVersion)" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
