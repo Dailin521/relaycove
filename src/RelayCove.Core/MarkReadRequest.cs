@@ -4,33 +4,22 @@ public sealed class MarkReadRequest
 {
     public MarkReadRequest(
         CredentialEnvelope credentials,
-        ConversationKey conversation,
-        long? anchorMessageId = null,
-        int limit = 50)
+        IReadOnlyCollection<long> messageIds)
     {
         ArgumentNullException.ThrowIfNull(credentials);
-        ArgumentNullException.ThrowIfNull(conversation);
-        if (anchorMessageId is <= 0)
+        ArgumentNullException.ThrowIfNull(messageIds);
+        if (messageIds.Count is < 1 or > 50 || messageIds.Any(static id => id <= 0))
         {
-            throw new ArgumentOutOfRangeException(nameof(anchorMessageId));
-        }
-
-        if (limit is < 1 or > 50)
-        {
-            throw new ArgumentOutOfRangeException(nameof(limit));
+            throw new ArgumentOutOfRangeException(nameof(messageIds));
         }
 
         Credentials = credentials;
-        Conversation = conversation;
-        AnchorMessageId = anchorMessageId;
-        Limit = limit;
+        MessageIds = Array.AsReadOnly(messageIds.Distinct().ToArray());
     }
 
     public CredentialEnvelope Credentials { get; }
-    public ConversationKey Conversation { get; }
-    public long? AnchorMessageId { get; }
-    public int Limit { get; }
+    public IReadOnlyList<long> MessageIds { get; }
 
     public override string ToString() =>
-        $"MarkReadRequest {{ Credentials = [redacted], Conversation = [redacted], AnchorMessageId = [redacted], Limit = {Limit} }}";
+        $"MarkReadRequest {{ Credentials = [redacted], MessageIds = [redacted], Count = {MessageIds.Count} }}";
 }

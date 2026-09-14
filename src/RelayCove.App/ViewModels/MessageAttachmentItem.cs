@@ -4,6 +4,7 @@ public sealed record MessageAttachmentItem(string Kind, string Name, string Sour
 {
     public bool IsImage => string.Equals(Kind, "image", StringComparison.Ordinal);
     public bool IsFile => !IsImage;
+    public string? ImageSourceUrl => IsImage ? SourceUrl : null;
     public string KindLabel => IsImage ? "图片" : "文件";
     public string AccessibleLabel => $"{KindLabel}附件 {Name}";
 }

@@ -1,3 +1,4 @@
+using RelayCove.App.Platforms.Windows;
 using RelayCove.Core;
 
 namespace RelayCove.App.Services;
@@ -7,15 +8,29 @@ public sealed class RealmMediaService : IRealmMediaService, IDisposable
     private const long CacheBudgetBytes = 64L * 1024 * 1024;
     private const long ImageLimitBytes = 25L * 1024 * 1024;
     private readonly IClientSession _session;
+    private readonly AvatarCache _avatars;
     private readonly SemaphoreSlim _reads = new(4, 4);
     private readonly object _gate = new();
     private readonly Dictionary<string, CacheEntry> _cache = new(StringComparer.Ordinal);
     private long _cacheBytes;
     private bool _disposed;
 
-    public RealmMediaService(IClientSession session)
+    public event EventHandler<AvatarChangedEventArgs>? AvatarChanged;
+
+    public RealmMediaService(IClientSession session, AvatarCache avatars)
     {
         _session = session ?? throw new ArgumentNullException(nameof(session));
+        _avatars = avatars;
+        _avatars.AvatarChanged += OnAvatarChanged;
+        _session.StateChanged += OnSessionStateChanged;
+    }
+
+    private void OnAvatarChanged(object? sender, AvatarChangedEventArgs args) => AvatarChanged?.Invoke(this, args);
+
+    private void OnSessionStateChanged(object? sender, ClientStateChangedEventArgs args)
+    {
+        if (_session.AccountId is not null) return;
+        lock (_gate) { _cache.Clear(); _cacheBytes = 0; }
     }
 
     public async Task<ImageSource> GetImageAsync(
@@ -26,6 +41,12 @@ public sealed class RealmMediaService : IRealmMediaService, IDisposable
         if (kind == RealmMediaKind.File) throw new ArgumentOutOfRangeException(nameof(kind));
         var accountId = _session.AccountId ?? throw new InvalidOperationException("No account is active.");
         var key = CreateCacheKey(accountId, kind, sourceUrl);
+        if (kind == RealmMediaKind.Avatar)
+        {
+            var avatar = await _avatars.GetAsync(sourceUrl, cancellationToken).ConfigureAwait(false);
+            if (_session.AccountId != accountId) throw new OperationCanceledException();
+            return Add(key, avatar.Media.Content);
+        }
         if (TryGet(key, out var cached)) return cached;
         await _reads.WaitAsync(cancellationToken);
         try
@@ -81,14 +102,15 @@ public sealed class RealmMediaService : IRealmMediaService, IDisposable
 
     private ImageSource Add(string key, byte[] content)
     {
-        var source = ToImageSource(content);
-        if (content.LongLength > CacheBudgetBytes) return source;
         lock (_gate)
         {
             if (_cache.TryGetValue(key, out var existing))
             {
+                if (existing.Content.AsSpan().SequenceEqual(content)) return existing.Source;
                 _cacheBytes -= existing.Content.LongLength;
             }
+            var source = ToImageSource(content);
+            if (_disposed || content.LongLength > CacheBudgetBytes) return source;
             _cache[key] = new CacheEntry(content, source, DateTimeOffset.UtcNow);
             _cacheBytes += content.LongLength;
             while (_cacheBytes > CacheBudgetBytes && _cache.Count > 0)
@@ -97,12 +119,15 @@ public sealed class RealmMediaService : IRealmMediaService, IDisposable
                 _cache.Remove(oldest.Key);
                 _cacheBytes -= oldest.Value.Content.LongLength;
             }
+            return source;
         }
-        return source;
     }
 
     private static ImageSource ToImageSource(byte[] content) =>
-        ImageSource.FromStream(() => new MemoryStream(content, writable: false));
+        new RealmImageSource
+        {
+            Stream = _ => Task.FromResult<Stream>(new MemoryStream(content, writable: false))
+        };
 
     internal static string CreateCacheKey(AccountId accountId, RealmMediaKind kind, string sourceUrl) =>
         $"{accountId.Value}:{kind}:{sourceUrl}";
@@ -111,6 +136,8 @@ public sealed class RealmMediaService : IRealmMediaService, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _avatars.AvatarChanged -= OnAvatarChanged;
+        _session.StateChanged -= OnSessionStateChanged;
         lock (_gate)
         {
             _cache.Clear();

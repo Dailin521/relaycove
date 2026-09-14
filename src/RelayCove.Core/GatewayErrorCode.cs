@@ -15,5 +15,9 @@ public enum GatewayErrorCode
     ReactionDoesNotExist,
     ExpectationMismatch,
     ServerError,
-    RequestFailed
+    RequestFailed,
+    MediaAddressNotAllowed,
+    UnsupportedImageType,
+    MediaTooLarge,
+    EmptyMediaContent
 }

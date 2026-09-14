@@ -20,7 +20,6 @@ public sealed class ConversationListItem : ObservableObject
     private long? _searchTargetMessageId;
     private IReadOnlyList<ConversationAvatarTile> _avatarTiles;
     private UserPresenceStatus? _presenceStatus;
-    private UserStatusContent? _userStatus;
 
     public ConversationListItem(
         ConversationKey conversation,
@@ -36,8 +35,7 @@ public sealed class ConversationListItem : ObservableObject
         bool isPinned = false,
         IReadOnlyList<ConversationAvatarTile>? avatarTiles = null,
         long? searchTargetMessageId = null,
-        UserPresenceStatus? presenceStatus = null,
-        UserStatusContent? userStatus = null)
+        UserPresenceStatus? presenceStatus = null)
     {
         _conversation = conversation ?? throw new ArgumentNullException(nameof(conversation));
         _title = title;
@@ -53,7 +51,6 @@ public sealed class ConversationListItem : ObservableObject
         _avatarTiles = avatarTiles ?? [];
         _searchTargetMessageId = searchTargetMessageId;
         _presenceStatus = presenceStatus;
-        _userStatus = userStatus;
     }
 
     public ConversationKey Conversation => _conversation;
@@ -91,14 +88,6 @@ public sealed class ConversationListItem : ObservableObject
         UserPresenceStatus.Idle => "#F59E0B",
         _ => "#9CA3AF"
     }));
-    public UserStatusContent? UserStatus => _userStatus;
-    public string UserStatusGlyph => UserStatus?.Emoji is { ReactionType: "unicode_emoji" } emoji
-        ? EmojiCatalog.GetDisplayValue(emoji.EmojiCode)
-        : UserStatus?.Emoji is { } fallback ? $":{fallback.EmojiName}:" : string.Empty;
-    public bool HasUserStatusGlyph => UserStatusGlyph.Length > 0;
-    public string UserStatusDescription => UserStatus is null
-        ? string.Empty
-        : UserStatus.StatusText.Length > 0 ? UserStatus.StatusText : UserStatusGlyph;
 
     public bool IsSelected
     {
@@ -155,12 +144,6 @@ public sealed class ConversationListItem : ObservableObject
             OnPropertyChanged(nameof(PresenceLabel));
             OnPropertyChanged(nameof(PresenceBrush));
         }
-        if (SetProperty(ref _userStatus, candidate.UserStatus, nameof(UserStatus)))
-        {
-            OnPropertyChanged(nameof(UserStatusGlyph));
-            OnPropertyChanged(nameof(HasUserStatusGlyph));
-            OnPropertyChanged(nameof(UserStatusDescription));
-        }
         IsSelected = candidate.IsSelected;
     }
 
@@ -179,8 +162,7 @@ public sealed class ConversationListItem : ObservableObject
             IsPinned,
             AvatarTiles,
             messageId,
-            PresenceStatus,
-            UserStatus);
+            PresenceStatus);
 
     private static readonly string[] TonePalette =
     [

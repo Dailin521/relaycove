@@ -14,10 +14,10 @@ $iconPath = Join-Path $repoRoot "src/RelayCove.App/Resources/AppIcon/RelayCove.i
 $webRoot = Join-Path $repoRoot "src/RelayCove.Web"
 $webPackageLock = Join-Path $webRoot "package-lock.json"
 $webDist = Join-Path $webRoot "dist"
-$releaseVersion = "2.4.0"
-$releaseApplicationVersion = "6"
-$expectedIconLength = 65044
-$expectedIconSha256 = "07906CE7D87860C4A15DDD6F904DA722F7BBC3C882DC32FD1D285A78B1161B52"
+$releaseVersion = "1.0.4"
+$releaseApplicationVersion = "11"
+$expectedIconLength = 27520
+$expectedIconSha256 = "0B940A98BB529DC312AA8C1CBC970E98ED7958B78865F11AE39E621B5AD4E995"
 $solutionProjects = @(
     "src/RelayCove.App/RelayCove.App.csproj",
     "src/RelayCove.Core/RelayCove.Core.csproj",
@@ -181,13 +181,13 @@ function Invoke-LocalTests {
 
 function Assert-IconIntegrity {
     if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
-        throw "The preserved RelayCove icon is missing."
+        throw "The RichChat application icon is missing."
     }
 
     $icon = Get-Item -LiteralPath $iconPath
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $iconPath).Hash
     if ($icon.Length -ne $expectedIconLength -or $hash -cne $expectedIconSha256) {
-        throw "The preserved RelayCove icon no longer matches the frozen byte/hash baseline."
+        throw "The RichChat application icon does not match the expected byte/hash baseline."
     }
 }
 
@@ -340,7 +340,7 @@ function Invoke-FullVerification {
     Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination $publishRoot
     Copy-Item -LiteralPath (Join-Path $repoRoot "THIRD-PARTY-NOTICES.md") -Destination $publishRoot
 
-    foreach ($required in @("RichChat.exe", "e_sqlite3.dll", "coreclr.dll", "LICENSE", "THIRD-PARTY-NOTICES.md")) {
+    foreach ($required in @("RichChat.exe", "e_sqlite3.dll", "coreclr.dll", "LICENSE", "THIRD-PARTY-NOTICES.md", "mattermost_bing.mp3", "Mattermost-LICENSE.txt")) {
         if (-not (Get-ChildItem -LiteralPath $publishRoot -Recurse -File -Filter $required)) {
             throw "Required self-contained publish file is missing: $required"
         }

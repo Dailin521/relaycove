@@ -12,12 +12,14 @@ public sealed class MessageItem : ObservableObject
     private string _sender;
     private string _content;
     private string _body;
+    private IReadOnlyList<MessageTextRun> _bodyRuns;
     private string _timestamp;
     private bool _isOwn;
     private bool _isUnread;
     private bool _isBot;
     private string? _senderAvatarUrl;
     private bool _isStarred;
+    private bool _isEdited;
     private IReadOnlyList<ReactionItem> _reactions;
     private string? _permalink;
     private bool _showDateDivider;
@@ -61,7 +63,9 @@ public sealed class MessageItem : ObservableObject
         bool canRecover = false,
         ICommand? recoverCommand = null,
         RealmEndpoint? realm = null,
-        bool animateInsertion = false)
+        bool animateInsertion = false,
+        IReadOnlyDictionary<string, RealmEmoji>? realmEmojis = null,
+        bool isEdited = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(id);
         ArgumentException.ThrowIfNullOrWhiteSpace(sender);
@@ -77,6 +81,7 @@ public sealed class MessageItem : ObservableObject
         _isBot = isBot;
         _senderAvatarUrl = senderAvatarUrl;
         _isStarred = isStarred;
+        _isEdited = isEdited;
         _reactions = (reactions ?? []).ToArray();
         _permalink = permalink;
         _showDateDivider = showDateDivider;
@@ -92,7 +97,8 @@ public sealed class MessageItem : ObservableObject
         _realm = realm;
         _animateInsertion = animateInsertion;
 
-        var presentation = MessageContentPresentation.Parse(content, Realm);
+        var presentation = MessageContentPresentation.Parse(content, Realm, realmEmojis);
+        _bodyRuns = presentation.BodyRuns;
         _quotes = presentation.Quotes;
         _body = presentation.Body;
         _attachments = presentation.Attachments;
@@ -104,6 +110,9 @@ public sealed class MessageItem : ObservableObject
     public string Sender => _sender;
     public string Content => _content;
     public string Body => _body;
+    public IReadOnlyList<MessageTextRun> BodyRuns => _bodyRuns;
+    public bool HasCustomEmoji => BodyRuns.Any(run => run.EmojiSourceUrl is not null);
+    public bool HasPlainBody => HasBody && !HasCustomEmoji;
     public string Timestamp => _timestamp;
     public bool IsOwn => _isOwn;
     public bool IsOther => !IsOwn;
@@ -113,6 +122,7 @@ public sealed class MessageItem : ObservableObject
     public bool HasSenderAvatar => !string.IsNullOrWhiteSpace(SenderAvatarUrl);
     public bool ShowAvatarFallback => !HasSenderAvatar;
     public bool IsStarred => _isStarred;
+    public bool IsEdited => _isEdited;
     public IReadOnlyList<ReactionItem> Reactions => _reactions;
     public string? Permalink => _permalink;
     public bool ShowDateDivider => _showDateDivider;
@@ -143,7 +153,7 @@ public sealed class MessageItem : ObservableObject
     public Brush ToneBrush => new SolidColorBrush(
         Color.FromArgb(TonePalette[(int)(Math.Abs((SenderId ?? 0) % TonePalette.Length))]));
     public string AvatarInitial => AvatarInitials.Create(Sender, IsBot);
-    public string AccessibleLabel => $"{Sender}，{Timestamp}。{Content}";
+    public string AccessibleLabel => $"{Sender}，{Timestamp}。{(IsEdited ? "已编辑。" : string.Empty)}{Content}";
 
     internal bool IsInsertionAnimationPending => _animateInsertion;
 
@@ -201,6 +211,10 @@ public sealed class MessageItem : ObservableObject
             OnPropertyChanged(nameof(ShowAvatarFallback));
         }
         SetProperty(ref _isStarred, candidate.IsStarred, nameof(IsStarred));
+        if (SetProperty(ref _isEdited, candidate.IsEdited, nameof(IsEdited)))
+        {
+            OnPropertyChanged(nameof(AccessibleLabel));
+        }
         if (!_reactions.SequenceEqual(candidate.Reactions))
         {
             _reactions = candidate.Reactions.ToArray();
@@ -230,7 +244,7 @@ public sealed class MessageItem : ObservableObject
         SetProperty(ref _recoverCommand, candidate.RecoverCommand, nameof(RecoverCommand));
 
         var presentationChanged = !string.Equals(_content, candidate.Content, StringComparison.Ordinal) ||
-            !Equals(_realm, candidate.Realm);
+            !Equals(_realm, candidate.Realm) || !_bodyRuns.SequenceEqual(candidate.BodyRuns);
         if (SetProperty(ref _content, candidate.Content, nameof(Content)))
         {
             OnPropertyChanged(nameof(AccessibleLabel));
@@ -238,7 +252,11 @@ public sealed class MessageItem : ObservableObject
         SetProperty(ref _realm, candidate.Realm, nameof(Realm));
         if (presentationChanged)
         {
+            _bodyRuns = candidate.BodyRuns;
+            OnPropertyChanged(nameof(BodyRuns));
+            OnPropertyChanged(nameof(HasCustomEmoji));
             SetProperty(ref _body, candidate.Body, nameof(Body));
+            OnPropertyChanged(nameof(HasPlainBody));
             if (!_quotes.SequenceEqual(candidate.Quotes))
             {
                 _quotes = candidate.Quotes.ToArray();

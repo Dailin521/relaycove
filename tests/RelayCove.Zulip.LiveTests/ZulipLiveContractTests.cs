@@ -137,7 +137,7 @@ public sealed class ZulipLiveContractTests
                 timeout.Token);
             Assert.Equal(channelResult.MessageId, Assert.Single(history.Messages).Id);
             await gateway.MarkReadAsync(
-                new MarkReadRequest(configuration.UserB, channel, channelResult.MessageId, 1),
+                new MarkReadRequest(configuration.UserB, [channelResult.MessageId]),
                 timeout.Token);
 
             var thumbsUp = new EmojiReactionIdentity("+1", "1f44d", "unicode_emoji");

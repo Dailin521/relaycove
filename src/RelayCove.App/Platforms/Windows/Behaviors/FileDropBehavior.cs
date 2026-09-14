@@ -1,23 +1,49 @@
-using System.Windows.Input;
-using Microsoft.Maui.Platform;
+using CommunityToolkit.Mvvm.Input;
+using System.Runtime.InteropServices;
+using Microsoft.UI.Xaml.Media;
 using RelayCove.App.Services;
-using RelayCove.App.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
-using Windows.Storage;
 using WinDataPackageOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation;
 using WinUiDragEventArgs = Microsoft.UI.Xaml.DragEventArgs;
+using WinUiDragEventHandler = Microsoft.UI.Xaml.DragEventHandler;
+using WinUiElement = Microsoft.UI.Xaml.UIElement;
+using WinUiFrameworkElement = Microsoft.UI.Xaml.FrameworkElement;
 
 namespace RelayCove.App.Platforms.Windows.Behaviors;
 
 public sealed class FileDropBehavior : Behavior<Border>
 {
-    private ContentPanel? _platformView;
-    private Border? _virtualView;
+    private readonly WinUiDragEventHandler _dragEnterHandler;
+    private readonly WinUiDragEventHandler _dragOverHandler;
+    private readonly WinUiDragEventHandler _dragLeaveHandler;
+    private readonly WinUiDragEventHandler _dropHandler;
+    private WinUiFrameworkElement? _platformView;
+    private Border? _border;
+    private NativeFileDropTarget? _nativeDropTarget;
+    private nint _windowHandle;
+
+    public FileDropBehavior()
+    {
+        _dragEnterHandler = OnDragEnter;
+        _dragOverHandler = OnDragOver;
+        _dragLeaveHandler = OnDragLeave;
+        _dropHandler = OnDrop;
+    }
 
     public static readonly BindableProperty CommandProperty = BindableProperty.Create(
         nameof(Command),
-        typeof(ICommand),
+        typeof(IAsyncRelayCommand),
         typeof(FileDropBehavior));
+
+    public static readonly BindableProperty IsDropEnabledProperty = BindableProperty.Create(
+        nameof(IsDropEnabled),
+        typeof(bool),
+        typeof(FileDropBehavior),
+        false,
+        propertyChanged: static (bindable, _, value) =>
+        {
+            if (!(bool)value) ((FileDropBehavior)bindable).IsDragActive = false;
+        });
 
     public static readonly BindableProperty IsDragActiveProperty = BindableProperty.Create(
         nameof(IsDragActive),
@@ -26,10 +52,16 @@ public sealed class FileDropBehavior : Behavior<Border>
         false,
         BindingMode.TwoWay);
 
-    public ICommand? Command
+    public IAsyncRelayCommand? Command
     {
-        get => (ICommand?)GetValue(CommandProperty);
+        get => (IAsyncRelayCommand?)GetValue(CommandProperty);
         set => SetValue(CommandProperty, value);
+    }
+
+    public bool IsDropEnabled
+    {
+        get => (bool)GetValue(IsDropEnabledProperty);
+        set => SetValue(IsDropEnabledProperty, value);
     }
 
     public bool IsDragActive
@@ -41,45 +73,106 @@ public sealed class FileDropBehavior : Behavior<Border>
     protected override void OnAttachedTo(Border bindable)
     {
         base.OnAttachedTo(bindable);
-        _virtualView = bindable;
+        _border = bindable;
         bindable.HandlerChanged += OnHandlerChanged;
-        AttachNativeView(bindable.Handler?.PlatformView as ContentPanel);
+        AttachNativeView(bindable.Handler?.PlatformView as WinUiFrameworkElement);
     }
 
     protected override void OnDetachingFrom(Border bindable)
     {
         bindable.HandlerChanged -= OnHandlerChanged;
         DetachNativeView();
-        _virtualView = null;
+        _border = null;
         base.OnDetachingFrom(bindable);
     }
 
     private void OnHandlerChanged(object? sender, EventArgs eventArgs) =>
-        AttachNativeView((sender as Border)?.Handler?.PlatformView as ContentPanel);
+        AttachNativeView((sender as Border)?.Handler?.PlatformView as WinUiFrameworkElement);
 
-    private void AttachNativeView(ContentPanel? platformView)
+    private void AttachNativeView(WinUiFrameworkElement? platformView)
     {
         DetachNativeView();
         if (platformView is null) return;
         _platformView = platformView;
+        platformView.Loaded += OnNativeLoaded;
+        platformView.Unloaded += OnNativeUnloaded;
         platformView.AllowDrop = true;
-        platformView.DragEnter += OnDragEnter;
-        platformView.DragOver += OnDragOver;
-        platformView.DragLeave += OnDragLeave;
-        platformView.Drop += OnDrop;
+        // RichEditBox and attachment controls may already have handled the routed event.
+        platformView.AddHandler(WinUiElement.DragEnterEvent, _dragEnterHandler, true);
+        platformView.AddHandler(WinUiElement.DragOverEvent, _dragOverHandler, true);
+        platformView.AddHandler(WinUiElement.DragLeaveEvent, _dragLeaveHandler, true);
+        platformView.AddHandler(WinUiElement.DropEvent, _dropHandler, true);
+        if (platformView.IsLoaded) AttachCompatibilityDropTarget();
     }
 
     private void DetachNativeView()
     {
         if (_platformView is null) return;
-        _platformView.DragEnter -= OnDragEnter;
-        _platformView.DragOver -= OnDragOver;
-        _platformView.DragLeave -= OnDragLeave;
-        _platformView.Drop -= OnDrop;
+        DetachCompatibilityDropTarget();
+        _platformView.Loaded -= OnNativeLoaded;
+        _platformView.Unloaded -= OnNativeUnloaded;
+        _platformView.RemoveHandler(WinUiElement.DragEnterEvent, _dragEnterHandler);
+        _platformView.RemoveHandler(WinUiElement.DragOverEvent, _dragOverHandler);
+        _platformView.RemoveHandler(WinUiElement.DragLeaveEvent, _dragLeaveHandler);
+        _platformView.RemoveHandler(WinUiElement.DropEvent, _dropHandler);
         _platformView.AllowDrop = false;
         _platformView = null;
         IsDragActive = false;
     }
+
+    private void OnNativeLoaded(object sender, Microsoft.UI.Xaml.RoutedEventArgs eventArgs) =>
+        AttachCompatibilityDropTarget();
+
+    private void OnNativeUnloaded(object sender, Microsoft.UI.Xaml.RoutedEventArgs eventArgs) =>
+        DetachCompatibilityDropTarget();
+
+    private void DetachCompatibilityDropTarget()
+    {
+        _nativeDropTarget?.Dispose();
+        _nativeDropTarget = null;
+        _windowHandle = 0;
+    }
+
+    private void AttachCompatibilityDropTarget()
+    {
+        if (_nativeDropTarget is not null || !WindowsProcessEnvironment.IsElevated() ||
+            _border?.Window?.Handler?.PlatformView is not Microsoft.UI.Xaml.Window window) return;
+        _windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(window);
+        _nativeDropTarget = new NativeFileDropTarget(CanDropAtScreenPoint,
+            active => IsDragActive = active, AcceptNativeFiles);
+        _nativeDropTarget.Attach(_windowHandle);
+    }
+
+    private bool CanDropAtScreenPoint(int x, int y)
+    {
+        if (!IsDropEnabled || Command?.CanExecute(null) != true ||
+            _platformView?.XamlRoot is not { } root) return false;
+        var point = new NativeDropPoint { X = x, Y = y };
+        if (!ScreenToClient(_windowHandle, ref point)) return false;
+        var position = new global::Windows.Foundation.Point(
+            point.X / root.RasterizationScale, point.Y / root.RasterizationScale);
+        // Use the frontmost visible hit so a settings/modal overlay cannot accept files
+        // into the Composer beneath it, even though both share the same native HWND.
+        var hit = VisualTreeHelper.FindElementsInHostCoordinates(position, root.Content).FirstOrDefault();
+        for (Microsoft.UI.Xaml.DependencyObject? current = hit; current is not null;
+             current = VisualTreeHelper.GetParent(current))
+        {
+            if (ReferenceEquals(current, _platformView)) return true;
+        }
+        return false;
+    }
+
+    private async void AcceptNativeFiles(Func<CancellationToken, Task<IReadOnlyList<SelectedAttachmentFile>>> readAsync)
+    {
+        if (!IsDropEnabled || Command is not { } command || !command.CanExecute(readAsync)) return;
+        // Execute immediately to capture the current account and draft before any await.
+        try { await command.ExecuteAsync(readAsync); }
+        catch { IsDragActive = false; }
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ScreenToClient(nint window, ref NativeDropPoint point);
 
     private void OnDragEnter(object sender, WinUiDragEventArgs eventArgs) => UpdateDragState(eventArgs);
 
@@ -87,9 +180,10 @@ public sealed class FileDropBehavior : Behavior<Border>
 
     private void UpdateDragState(WinUiDragEventArgs eventArgs)
     {
-        var hasFiles = eventArgs.DataView.Contains(StandardDataFormats.StorageItems);
-        eventArgs.AcceptedOperation = hasFiles ? WinDataPackageOperation.Copy : WinDataPackageOperation.None;
-        IsDragActive = hasFiles;
+        var canDrop = IsDropEnabled && Command?.CanExecute(null) == true &&
+            eventArgs.DataView.Contains(StandardDataFormats.StorageItems);
+        eventArgs.AcceptedOperation = canDrop ? WinDataPackageOperation.Copy : WinDataPackageOperation.None;
+        IsDragActive = canDrop;
         eventArgs.Handled = true;
     }
 
@@ -103,43 +197,24 @@ public sealed class FileDropBehavior : Behavior<Border>
     {
         IsDragActive = false;
         eventArgs.Handled = true;
-        if (!eventArgs.DataView.Contains(StandardDataFormats.StorageItems)) return;
+        eventArgs.AcceptedOperation = WinDataPackageOperation.None;
+        if (!IsDropEnabled || Command is not { } command ||
+            !eventArgs.DataView.Contains(StandardDataFormats.StorageItems)) return;
+
+        var dataView = eventArgs.DataView;
+        Func<CancellationToken, Task<IReadOnlyList<SelectedAttachmentFile>>> readAsync = token =>
+            ClipboardFileAttachmentFactory.CreateAsync(dataView, token);
+        if (!command.CanExecute(readAsync)) return;
+        eventArgs.AcceptedOperation = WinDataPackageOperation.Copy;
+        var deferral = eventArgs.GetDeferral();
 
         try
         {
-            var storageItems = await eventArgs.DataView.GetStorageItemsAsync();
-            var selected = new List<SelectedAttachmentFile>();
-            foreach (var file in storageItems.OfType<StorageFile>())
-            {
-                var properties = await file.GetBasicPropertiesAsync();
-                var length = properties.Size > long.MaxValue ? long.MaxValue : (long)properties.Size;
-                selected.Add(new SelectedAttachmentFile(
-                    file.Name,
-                    file.ContentType,
-                    length,
-                    async cancellationToken =>
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        return await file.OpenStreamForReadAsync();
-                    },
-                    string.IsNullOrWhiteSpace(file.Path) ? null : file.Path));
-            }
-
-            var command = Command ?? ResolveViewModel()?.AddDroppedAttachmentsCommand;
-            if (command?.CanExecute(selected) == true) command.Execute(selected);
+            await command.ExecuteAsync(readAsync);
         }
-        catch
+        finally
         {
-            ResolveViewModel()?.AddDroppedAttachmentsCommand.Execute(Array.Empty<SelectedAttachmentFile>());
+            deferral.Complete();
         }
-    }
-
-    private ShellViewModel? ResolveViewModel()
-    {
-        for (Element? current = _virtualView; current is not null; current = current.Parent)
-        {
-            if (current.BindingContext is ShellViewModel viewModel) return viewModel;
-        }
-        return null;
     }
 }

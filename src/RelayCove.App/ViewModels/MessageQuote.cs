@@ -5,6 +5,10 @@ namespace RelayCove.App.ViewModels;
 
 public sealed record MessageQuote(string Sender, string Body, string Remainder, string? Permalink)
 {
+    public IReadOnlyList<MessageAttachmentItem> Attachments { get; init; } = [];
+    public bool HasAttachments => Attachments.Count > 0;
+    public bool HasBody => !string.IsNullOrWhiteSpace(Body);
+
     public static string Build(MessageItem message)
     {
         ArgumentNullException.ThrowIfNull(message);

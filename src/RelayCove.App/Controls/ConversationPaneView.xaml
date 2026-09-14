@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:controls="clr-namespace:RelayCove.App.Controls"
              xmlns:viewModels="clr-namespace:RelayCove.App.ViewModels"
+             xmlns:windowsBehaviors="clr-namespace:RelayCove.App.Platforms.Windows.Behaviors"
              x:Class="RelayCove.App.Controls.ConversationPaneView"
              x:Name="Root"
              x:DataType="viewModels:ShellViewModel"
@@ -15,7 +16,7 @@
                            Style="{StaticResource BaseEntryStyle}"
                            Text="{Binding ConversationFilterQuery, Mode=TwoWay}"
                            Placeholder="搜索聊天"
-                           SemanticProperties.Description="筛选当前聊天列表；向下键打开首项，Escape 清除" />
+                           SemanticProperties.Description="筛选当前聊天列表" />
                     <Image Source="icon_search.png"
                            IsVisible="{Binding ShowConversationSearchIcon}"
                            WidthRequest="17"
@@ -30,8 +31,8 @@
                              Source="icon_plus.png"
                              Style="{StaticResource ImageIconButtonStyle}"
                              BackgroundColor="{AppThemeBinding Light={StaticResource LightSurfaceHoverColor}, Dark={StaticResource DarkSurfaceHoverColor}}"
-                             Command="{Binding OpenNewConversationCommand}"
-                             SemanticProperties.Description="发起私聊或新建群聊" />
+                             Clicked="OnNewConversationClicked"
+                             SemanticProperties.Description="选择发起私聊或发起群聊" />
             </Grid>
             <Label Grid.Row="1"
                    Text="{Binding NativePreviewStatus}"
@@ -62,9 +63,10 @@
                 <DataTemplate x:DataType="viewModels:ConversationListItem">
                     <Border HeightRequest="67"
                             Margin="8,0,8,1"
-                            Padding="8"
+                            Padding="18,8,8,8"
                             StrokeThickness="0"
                             Opacity="{Binding ItemOpacity}">
+                        <Border.Behaviors><windowsBehaviors:ConversationContextBehavior /></Border.Behaviors>
                         <Border.GestureRecognizers>
                             <TapGestureRecognizer Tapped="OnConversationTapped" CommandParameter="{Binding .}" />
                             <PointerGestureRecognizer
@@ -84,32 +86,35 @@
                                 <Setter Property="Background" Value="{StaticResource SurfaceSelectedBrush}" />
                             </DataTrigger>
                         </Border.Triggers>
-                        <Grid ColumnDefinitions="42,*,38" RowDefinitions="Auto,Auto" ColumnSpacing="9">
+                        <Grid ColumnDefinitions="42,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="9">
                             <Border Grid.RowSpan="2"
                                     WidthRequest="40"
                                     HeightRequest="40"
                                     Padding="0"
                                     HorizontalOptions="End"
                                     VerticalOptions="Center"
-                                    Background="{Binding ToneBrush}"
+                                    Background="{StaticResource AccentBrush}"
                                     StrokeThickness="0">
-                                <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
+                                <Border.StrokeShape><RoundRectangle CornerRadius="20" /></Border.StrokeShape>
+                                <Border.Triggers>
+                                    <DataTrigger TargetType="Border" Binding="{Binding HasAvatarTiles}" Value="True">
+                                        <Setter Property="StrokeShape" Value="RoundRectangle 10" />
+                                    </DataTrigger>
+                                </Border.Triggers>
                                 <Grid>
                                     <Grid IsVisible="{Binding ShowSingleAvatar}">
                                         <Label Text="{Binding Initial}"
-                                               TextColor="White"
-                                               FontSize="11"
-                                               FontAttributes="Bold"
-                                               HorizontalTextAlignment="Center"
-                                               VerticalTextAlignment="Center" />
-                                        <controls:RealmMediaImageView SourceUrl="{Binding AvatarUrl}"
+                                               IsVisible="{Binding IsFallbackVisible, Source={x:Reference ConversationAvatar}, x:DataType=controls:RealmMediaImageView}"
+                                               Style="{StaticResource AvatarInitialLabelStyle}" />
+                                        <controls:RealmMediaImageView x:Name="ConversationAvatar"
+                                                                      SourceUrl="{Binding AvatarUrl}"
                                                                       MediaKind="Avatar"
                                                                       Aspect="AspectFill"
                                                                       ShowFailureText="False" />
                                         <Border WidthRequest="11"
                                                 HeightRequest="11"
                                                 Padding="0"
-                                                Margin="0,0,1,1"
+                                                Margin="0,0,3,3"
                                                 HorizontalOptions="End"
                                                 VerticalOptions="End"
                                                 IsVisible="{Binding HasPresence}"
@@ -122,11 +127,7 @@
                                     </Grid>
                                     <Label Text="{Binding Initial}"
                                            IsVisible="{Binding ShowGroupFallback}"
-                                           TextColor="White"
-                                           FontSize="11"
-                                           FontAttributes="Bold"
-                                           HorizontalTextAlignment="Center"
-                                           VerticalTextAlignment="Center" />
+                                           Style="{StaticResource AvatarInitialLabelStyle}" />
                                     <Grid IsVisible="{Binding HasAvatarTiles}"
                                           RowDefinitions="*,*"
                                           ColumnDefinitions="*,*"
@@ -139,17 +140,16 @@
                                                 <Border Grid.Row="{Binding Row}"
                                                         Grid.Column="{Binding Column}"
                                                         Padding="0"
-                                                        Background="{Binding ToneBrush}"
+                                                        Background="{StaticResource AccentBrush}"
                                                         StrokeThickness="0">
                                                     <Border.StrokeShape><RoundRectangle CornerRadius="4" /></Border.StrokeShape>
                                                     <Grid>
                                                         <Label Text="{Binding Initial}"
-                                                               TextColor="White"
-                                                               FontSize="7"
-                                                               FontAttributes="Bold"
-                                                               HorizontalTextAlignment="Center"
-                                                               VerticalTextAlignment="Center" />
-                                                        <controls:RealmMediaImageView SourceUrl="{Binding AvatarUrl}"
+                                                               IsVisible="{Binding IsFallbackVisible, Source={x:Reference ConversationTileAvatar}, x:DataType=controls:RealmMediaImageView}"
+                                                               Style="{StaticResource AvatarInitialLabelStyle}"
+                                                               FontSize="7" />
+                                                        <controls:RealmMediaImageView x:Name="ConversationTileAvatar"
+                                                                                      SourceUrl="{Binding AvatarUrl}"
                                                                                       MediaKind="Avatar"
                                                                                       Aspect="AspectFill"
                                                                                       ShowFailureText="False" />
@@ -160,7 +160,7 @@
                                     </Grid>
                                 </Grid>
                             </Border>
-                            <Grid Grid.Column="1" ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="5">
+                            <Grid Grid.Column="1" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="5">
                                 <Label Text="📌" IsVisible="{Binding IsPinned}" FontSize="10" VerticalTextAlignment="End" />
                                 <controls:SearchHighlightLabel Grid.Column="1"
                                                                SourceText="{Binding Title}"
@@ -171,13 +171,6 @@
                                                                VerticalTextAlignment="End"
                                                                LineBreakMode="TailTruncation" />
                                 <Label Grid.Column="2"
-                                       Text="{Binding UserStatusGlyph}"
-                                       IsVisible="{Binding HasUserStatusGlyph}"
-                                       FontSize="12"
-                                       VerticalTextAlignment="End"
-                                       ToolTipProperties.Text="{Binding UserStatusDescription}"
-                                       SemanticProperties.Description="{Binding UserStatusDescription}" />
-                                <Label Grid.Column="3"
                                        Text="{Binding Timestamp}"
                                        IsVisible="{Binding HasTimestamp}"
                                        Style="{StaticResource MutedLabelStyle}"
@@ -193,25 +186,30 @@
                                        Style="{StaticResource MutedLabelStyle}"
                                        FontSize="10"
                                        VerticalTextAlignment="Start" />
-                                <controls:SearchHighlightLabel Grid.Column="1"
-                                                               SourceText="{Binding Detail}"
+                                <controls:MessageEmojiLabel Grid.Column="1"
+                                                               Text="{Binding Detail}"
+                                                               RealmEmojis="{Binding ViewModel.RealmEmojis, Source={x:Reference Root}, x:DataType=controls:ConversationPaneView}"
+                                                               IsTextSelectionEnabled="False"
+                                                               InputTransparent="True"
+                                                               EmojiSize="16"
+                                                               MaxLines="1"
                                                                HighlightQuery="{Binding ViewModel.ConversationFilterQuery, Source={x:Reference Root}, x:DataType=controls:ConversationPaneView}"
                                                                Style="{StaticResource MutedLabelStyle}"
                                                                FontSize="12"
                                                                VerticalTextAlignment="Start"
                                                                LineBreakMode="TailTruncation" />
                             </Grid>
-                            <Border Grid.Column="2"
-                                    Grid.RowSpan="2"
-                                    Padding="5,1"
-                                    VerticalOptions="Center"
-                                    HorizontalOptions="End"
-                                    IsVisible="{Binding HasUnread}"
-                                    Background="{StaticResource DangerBrush}"
-                                    StrokeThickness="0">
-                                <Border.StrokeShape><RoundRectangle CornerRadius="9" /></Border.StrokeShape>
-                                <Label Text="{Binding UnreadLabel}" FontSize="9" TextColor="White" />
-                            </Border>
+                            <Grid Grid.Column="2" Grid.RowSpan="2" MinimumWidthRequest="18">
+                                <Border Padding="5,1"
+                                        VerticalOptions="Center"
+                                        HorizontalOptions="End"
+                                        IsVisible="{Binding HasUnread}"
+                                        Background="{StaticResource DangerBrush}"
+                                        StrokeThickness="0">
+                                    <Border.StrokeShape><RoundRectangle CornerRadius="9" /></Border.StrokeShape>
+                                    <Label Text="{Binding UnreadLabel}" FontSize="9" TextColor="White" />
+                                </Border>
+                            </Grid>
                         </Grid>
                     </Border>
                 </DataTemplate>

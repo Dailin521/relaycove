@@ -1,10 +1,10 @@
 # RichChat MAUI 产品与架构计划
 
 状态：当前权威计划
-版本：`2.4.0`
+源码版本：`1.0.4`（尚未发布）
 平台：Windows 11 x64
 框架：`net10.0-windows10.0.19041.0`
-更新：2026-09-03
+更新：2026-09-11
 
 ## 1. 产品方向
 
@@ -31,7 +31,7 @@ Zulip Realm 始终是账号、权限、成员、消息和实时事件的唯一�
 - 公开频道、命名话题、多人私信和旧频道兼容入口。
 - 历史 RelayCove Web 新功能或 MAUI/Web 对齐。
 - `@` 候选、typing、应用退出后的后台 push、SSO、多账号、AI、自动更新。
-- Android、iOS、Mac Catalyst、Linux、MSIX、安装器和代码签名。
+- Android、iOS、Mac Catalyst、Linux、MSIX 和代码签名。
 
 ## 3. 架构边界
 
@@ -56,11 +56,13 @@ MAUI UI 只通过 `IClientSession` 使用业务状态。网络和数据库 I/O �
 ## 4. 协议与安全
 
 - Realm 只接受规范 HTTPS origin；生产 HTTP 固定禁用自动重定向。
+- 当前个人 MVP 的 Realm 请求固定直连，不继承系统或环境 HTTP 代理；需要代理才能访问的网络暂不支持。TLS 仍使用系统证书链，失败后不通过切换线路重发业务写入。
 - 密码只进入 `/fetch_api_key` 请求，不记录、不持久化。
 - API key 不进入 URL、日志、UI、异常、测试快照或发布包。
 - TLS 使用系统证书链，不提供跳过校验开关。
 - `401` 进入重新认证；`429` 只按服务器要求重试幂等读取。
 - 消息、群创建、成员管理和其他非幂等写入绝不自动重试。
+- 上传后写入消息的附件 URL 必须保留服务器返回的 Unicode 路径；Zulip 12.1 按字面 path_id 关联附件，不能用 AbsoluteUri 将中文重新编码。普通上传与 TUS 完成/恢复统一处理，只在同源永久上传地址校验后安全序列化；保留特殊分隔符的转义，不能整体解码 URL 或用显示文件名重建路径。下载时的 HTTP URI 编码独立处理。
 - SQLite 是可删除缓存，不是业务主库；清缓存只能删除当前账号的精确目录或会话数据。
 - presence 和个人状态只保存在当前 session，不写入 SQLite。
 
@@ -76,10 +78,15 @@ MAUI UI 只通过 `IClientSession` 使用业务状态。网络和数据库 I/O �
 
 - 左侧只显示统一会话时间线；置顶优先，其余按最新消息排序。
 - 当前会话在底部收到消息时自然上移并显示新消息，不做整页刷新。
+- 启动恢复先显示已解锁的账号缓存并打开首个会话，网络连接与最新消息校验在后台进行；SQLite 页读到即显示，相同消息复用原行且不重复滚动。离线仍可翻阅本地历史，恢复联网不打断已经开始的向上浏览。
+- 自定义头像优先；明确来自 Zulip Jdenticon 的默认头像统一显示本地蓝底白色首字。Zulip 12.1 只在 register 顶层提供本人头像来源，普通用户快照不提供来源；不得根据与上传头像同形的 URL 猜测。已知来源随用户缓存持久化，并处理实时头像变更。
+- 界面与托盘共用按账号隔离的头像文件缓存：先读本地，后台合并同一地址的下载，内容相同不重写文件或更换图片对象；刷新失败保留本地图，重连后补取。账号切换丢弃晚到结果，注销与清本地缓存清除当前账号头像；头像来源与 URL 的更新也同步到已打开的成员与联系人视图。
 - 未打开对应会话并到达最新位置前，不因悬停、托盘预览或窗口焦点清除未读。
+- 发送消息显式提交 `read_by_sender=true`；本人消息也保留服务端 `read` 标志。自动已读只提交当前会话最近 50 条已加载消息中的未读 ID，服务端确认同一批 ID 后才更新本地；失败后在新的可见周期允许重试。注册快照中的明确未读 ID 必须修正旧缓存误标的已读，之后恢复快照权威计数，避免范围错配和重复累计。
 - 系统通知和托盘提醒只在应用运行期间有效。
 - 一对一状态来自官方 presence；self-DM 和群聊不伪造聚合状态。
 - 视觉、鼠标、键盘、焦点、字号和 DPI 由用户在 Visual Studio 做最终人工判断。
+- 按用户 2026-09-08 要求，会话列表、消息列表、菜单和其他非输入区域统一只用鼠标选择与操作，原生列表键盘导航也禁用；鼠标选中的消息正文保留 Ctrl+C 复制。文本框内保留打字、光标/选区、剪贴板、输入法、Enter 发送/搜索与 Ctrl+Enter 换行；Tab 不移出输入框，Windows 系统窗口快捷键保留。
 
 更细的现有交互以 `docs/ui/INTERACTION_SPEC.md` 为准；代码和当前运行结果优先于旧文档措辞。
 
@@ -95,7 +102,9 @@ pwsh ./scripts/verify.ps1 -Mode Live
 - `Full`：Release build/tests + MAUI app 自包含 publish + ZIP/运行时/秘密检查；不重复 Fast。
 - `Live`：只在明确提供隔离账号、目标和真实写授权时运行；不属于 Fast/Full。
 
-发布目标固定为 app 项目、`win-x64`、unpackaged、自包含 ZIP。ZIP 只复制运行文件、`LICENSE` 和 `THIRD-PARTY-NOTICES.md`，不包含 `docs/`。签名、安装器和干净 VM 不是当前个人 MVP 的默认发布步骤；未运行时不得声称已验证。
+发布目标固定为 app 项目、`win-x64`、unpackaged、自包含 ZIP。ZIP 只复制运行文件、`LICENSE` 和 `THIRD-PARTY-NOTICES.md`，不包含 `docs/`。用户于 2026-09-07 明确要求可安装程序后，增加 Inno Setup 当前用户安装器，使用 `scripts/package-installer.ps1` 包装 Full 生成且哈希匹配的 ZIP。安装到当前用户目录，提供快捷方式与卸载入口；卸载不清理账号凭据或缓存，不自动启动应用。签名和干净 VM 仍不是默认发布步骤；未运行时不得声称已验证。
+
+安装器选择自动关闭时，通过 Restart Manager 强制结束占用目标安装目录 `RichChat.exe` 的旧进程，以兼容关闭后仍驻留托盘的旧版本；不得按进程名全局终止其他目录的程序。安装后不自动重启，升级前应先处理未发送草稿。修改此策略时运行 `scripts/test-installer-close.ps1 -IsccPath <ISCC路径>`，并使用 `-RejectShutdownQuery` 复验明确拒绝关闭的场景；脚本仅安装隔离测试文件，不操作用户应用。
 
 ## 8. 文档策略
 
@@ -105,5 +114,6 @@ pwsh ./scripts/verify.ps1 -Mode Live
 
 - [Zulip API](https://docs.zulip.com/api/)
 - [Zulip 12.1 OpenAPI](https://github.com/zulip/zulip/blob/12.1/zerver/openapi/zulip.yaml)
+- [Zulip 12.1 附件路径提取](https://github.com/zulip/zulip/blob/12.1/zerver/lib/markdown/__init__.py#L314-L330) 与[附件关联](https://github.com/zulip/zulip/blob/12.1/zerver/actions/uploads.py#L40-L82)
 - [MAUI SecureStorage](https://learn.microsoft.com/dotnet/maui/platform-integration/storage/secure-storage?view=net-maui-10.0)
 - [.NET MAUI Windows unpackaged 发布](https://learn.microsoft.com/dotnet/maui/windows/deployment/publish-unpackaged-cli?view=net-maui-10.0)

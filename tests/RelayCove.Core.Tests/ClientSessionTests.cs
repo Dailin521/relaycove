@@ -4,6 +4,330 @@ namespace RelayCove.Core.Tests;
 
 public sealed class ClientSessionTests
 {
+    [Theory]
+    [InlineData("message-51", false, false)]
+    [InlineData("message-51", true, true)]
+    [InlineData("updated", false, true)]
+    public async Task EditMessageAsync_WhenServerConfirms_UpdatesEditedStateAfterResponseOnly(
+        string content, bool wasEdited, bool expected)
+    {
+        var message = Message(51, new DirectMessage([])) with { IsEdited = wasEdited };
+        var response = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(events:
+                [new MessageUpsertEvent(message, Source: DomainEventSource.Register)])),
+            EditMessageHandler = (_, _) =>
+            {
+                started.SetResult();
+                return response.Task;
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(), utcNow: () => message.Timestamp);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(message.Conversation);
+
+        var pending = session.EditMessageAsync(51, content);
+        await started.Task;
+        Assert.Equal(wasEdited, session.State.Messages[51].IsEdited);
+        response.SetResult();
+        await pending;
+
+        Assert.Equal(expected, session.State.Messages[51].IsEdited);
+        Assert.Equal(content, session.State.Messages[51].Content);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task SelectConversationAsync_WhenRegisterDeletesAnotherCachedConversation_DoesNotRestoreItsMemoryWindowOffline()
+    {
+        var first = new DirectMessage([20]);
+        var second = new DirectMessage([30]);
+        var events = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delays = new ControlledDelay();
+        var gateway = new FakeGateway();
+        gateway.RegisterHandler = (_, _) => Task.FromResult(gateway.RegisterCalls == 1
+            ? Register() : Register(queue: "replacement", events: [new MessageDeletedEvent([2], Source: DomainEventSource.Register)]));
+        gateway.GetEventsHandler = (_, token) => gateway.GetEventsCalls == 1 ? events.Task.WaitAsync(token) : Never<EventBatch>(token);
+        gateway.HistoryHandler = (request, _) => gateway.RegisterCalls == 1
+            ? Task.FromResult(new HistoryResult(request.Conversation == first ? [Message(2, first)] : [], true, true))
+            : Task.FromException<HistoryResult>(new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
+        var store = new FakeAccountStore { PreserveMessagesOnRegister = true };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault(), delays.DelayAsync);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(first);
+        Assert.Contains(2, session.State.Messages.Keys);
+        await session.SelectConversationAsync(second);
+        events.SetException(new GatewayException(GatewayErrorKind.QueueExpired, GatewayErrorCode.BadEventQueueId));
+        await delays.CompleteNextAsync(TimeSpan.FromSeconds(20));
+        await WaitUntilAsync(() => gateway.GetEventsCalls == 2);
+        await session.SelectConversationAsync(first);
+
+        Assert.Empty(session.State.Messages);
+        Assert.Empty(store.SnapshotState.Messages);
+        Assert.Equal("offline", session.HistoryState.Error);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RestoreAsync_WhenServerDeletedCachedMessages_ReconcilesAfterRegister(bool empty)
+    {
+        var credential = Credential();
+        var conversation = new DirectMessage([20]);
+        var cached = Enumerable.Range(1, 650).Select(id => Message(id, conversation)).ToArray();
+        var register = new TaskCompletionSource<RegisterResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var history = new TaskCompletionSource<HistoryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new FakeAccountStore
+        {
+            Account = Stored(credential), PreserveMessagesOnRegister = true,
+            SnapshotState = new ClientState(messages: cached.ToDictionary(message => message.Id)),
+            RecentDirectMessages = [conversation]
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, token) => register.Task.WaitAsync(token),
+            HistoryHandler = (request, token) => request.Conversation == conversation
+                ? history.Task.WaitAsync(token) : Task.FromResult(new HistoryResult([], true, true))
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault { Credential = credential });
+
+        Assert.True(await session.RestoreAsync());
+        await session.SelectConversationAsync(conversation);
+        Assert.Contains(650, session.State.Messages.Keys);
+        register.SetResult(Register(recent: [conversation]));
+        await WaitUntilAsync(() => gateway.HistoryRequests.Count == 1);
+        Assert.Equal(650, store.SnapshotState.Messages.Count);
+        history.SetResult(new HistoryResult(empty ? [] : [cached[648]], true, true));
+        await WaitUntilAsync(() => !session.HistoryState.IsLoading);
+
+        Assert.Equal(empty ? Array.Empty<long>() : [649L], store.SnapshotState.Messages.Keys.Order());
+        Assert.Equal(empty ? Array.Empty<long>() : [649L], session.State.Messages.Keys.Order());
+        await session.SelectConversationAsync(new DirectMessage([30]));
+        await session.SelectConversationAsync(conversation);
+        Assert.DoesNotContain(650, session.State.Messages.Keys);
+    }
+
+    [Fact]
+    public async Task LoadOlderAsync_WhenServerDeletedMessageBeforeAnchor_RemovesItAndRetainsLatestPage()
+    {
+        var conversation = new DirectMessage([20]);
+        var cached = Enumerable.Range(1, 100).Select(id => Message(id, conversation)).ToArray();
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(events: cached.Select(message =>
+                (DomainEvent)new MessageUpsertEvent(message, Source: DomainEventSource.Register)).ToArray())),
+            HistoryHandler = (request, _) => Task.FromResult(new HistoryResult(
+                request.AnchorMessageId is null ? cached[50..] : cached[..49], request.AnchorMessageId is not null,
+                request.AnchorMessageId is null))
+        };
+        var store = new FakeAccountStore();
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(conversation);
+        await session.LoadOlderAsync();
+
+        Assert.DoesNotContain(50, session.State.Messages.Keys);
+        Assert.DoesNotContain(50, store.SnapshotState.Messages.Keys);
+        Assert.Contains(100, store.SnapshotState.Messages.Keys);
+        Assert.Contains(1, session.State.Messages.Keys);
+    }
+
+    [Fact]
+    public async Task SelectConversationAsync_WhenHistoryFails_KeepsCachedMessages()
+    {
+        var conversation = new DirectMessage([20]);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(events:
+                [new MessageUpsertEvent(Message(1, conversation), Source: DomainEventSource.Register)])),
+            HistoryHandler = (_, _) => Task.FromException<HistoryResult>(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError))
+        };
+        var store = new FakeAccountStore();
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(conversation);
+
+        Assert.Contains(1, session.State.Messages.Keys);
+        Assert.Contains(1, store.SnapshotState.Messages.Keys);
+        Assert.Equal("offline", session.HistoryState.Error);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SelectConversationAsync_WhenFlagsAndEditArriveBeforeUncachedHistory_MergesChangesAndStillReconciles(bool allMessages)
+    {
+        var conversation = new DirectMessage([20]);
+        var response = new TaskCompletionSource<HistoryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var events = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(events:
+                [new MessageUpsertEvent(Message(2, conversation), Source: DomainEventSource.Register)])),
+            GetEventsHandler = (request, token) => request.LastEventId < 4 ? events.Task.WaitAsync(token) : Never<EventBatch>(token),
+            HistoryHandler = (_, token) => response.Task.WaitAsync(token)
+        };
+        var store = new FakeAccountStore();
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var loading = session.SelectConversationAsync(conversation);
+        await WaitUntilAsync(() => gateway.HistoryRequests.Count == 1);
+        events.SetResult(new EventBatch([
+            new MessageFlagsChangedEvent([1], allMessages, MessageFlagOperation.Add, "read", 2),
+            new MessageContentChangedEvent(1, "edited", 3),
+            new MessageFlagsChangedEvent([1], false, MessageFlagOperation.Add, "starred", 4)], 4));
+        await WaitUntilAsync(() => session.State.LastEventId == 4);
+        response.SetResult(new HistoryResult([Message(1, conversation)], true, true));
+        await loading;
+
+        var message = Assert.Single(session.State.Messages).Value;
+        Assert.Equal(1, message.Id);
+        Assert.Equal("edited", message.Content);
+        Assert.True(message.IsRead);
+        Assert.True(message.IsStarred);
+        Assert.Equal(message, Assert.Single(store.SnapshotState.Messages).Value);
+    }
+
+    [Fact]
+    public async Task SelectConversationAsync_WhenRegisterChangesDuringHistory_RefetchesWithoutRestoringDeletedMessage()
+    {
+        var conversation = new DirectMessage([20]);
+        var response = new TaskCompletionSource<HistoryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var events = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delays = new ControlledDelay();
+        var gateway = new FakeGateway();
+        gateway.RegisterHandler = (_, _) => Task.FromResult(gateway.RegisterCalls == 1
+            ? Register(events: [new MessageUpsertEvent(Message(2, conversation), Source: DomainEventSource.Register)])
+            : Register(queue: "replacement", events: [new MessageDeletedEvent([2], Source: DomainEventSource.Register)]));
+        gateway.GetEventsHandler = (_, token) => gateway.GetEventsCalls == 1 ? events.Task.WaitAsync(token) : Never<EventBatch>(token);
+        gateway.HistoryHandler = (_, token) => gateway.HistoryRequests.Count == 1
+            ? response.Task.WaitAsync(token) : Task.FromResult(new HistoryResult([], true, true));
+        var store = new FakeAccountStore { PreserveMessagesOnRegister = true };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault(), delays.DelayAsync);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var loading = session.SelectConversationAsync(conversation);
+        await WaitUntilAsync(() => gateway.HistoryRequests.Count == 1);
+        events.SetException(new GatewayException(GatewayErrorKind.QueueExpired, GatewayErrorCode.BadEventQueueId));
+        await delays.CompleteNextAsync(TimeSpan.FromSeconds(20));
+        await WaitUntilAsync(() => gateway.GetEventsCalls == 2);
+        Assert.Empty(store.SnapshotState.Messages);
+        response.SetResult(new HistoryResult([Message(2, conversation)], true, true));
+        await loading;
+
+        Assert.Equal(2, gateway.HistoryRequests.Count);
+        Assert.Empty(session.State.Messages);
+        Assert.Empty(store.SnapshotState.Messages);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SelectConversationAsync_WhenServerHistoryOmitsCachedMessages_RemovesOnlyConfirmedRange(bool foundOldest)
+    {
+        var conversation = new DirectMessage([20]);
+        var other = new DirectMessage([30]);
+        var cached = Enumerable.Range(1, 5).Select(id => Message(id, conversation)).Append(Message(99, other)).ToArray();
+        var unread = new UnreadState(new Dictionary<string, int> { [conversation.CanonicalKey] = 2 }, 2);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(unread: unread,
+                events: cached.Select(message => (DomainEvent)new MessageUpsertEvent(message, Source: DomainEventSource.Register)).ToArray())),
+            HistoryHandler = (_, _) => Task.FromResult(new HistoryResult([cached[2] with { IsRead = true }, cached[4]], foundOldest, true))
+        };
+        var store = new FakeAccountStore();
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.SelectConversationAsync(conversation);
+
+        Assert.False(session.State.Messages.ContainsKey(4));
+        Assert.False(store.SnapshotState.Messages.ContainsKey(4));
+        Assert.Equal(!foundOldest, store.SnapshotState.Messages.ContainsKey(1));
+        Assert.Equal(!foundOldest, store.SnapshotState.Messages.ContainsKey(2));
+        Assert.True(store.SnapshotState.Messages.ContainsKey(99));
+        Assert.Equal(2, session.State.Unread.Total);
+        Assert.Equal(2, store.SnapshotState.Unread.Total);
+        Assert.True(session.State.Messages[3].IsRead);
+        Assert.True(store.SnapshotState.Messages[3].IsRead);
+    }
+
+    [Fact]
+    public async Task SelectConversationAsync_WhenServerConversationIsEmpty_ClearsAllCachedPagesAndMemory()
+    {
+        var conversation = new DirectMessage([20]);
+        var cached = Enumerable.Range(1, 650).Select(id => Message(id, conversation)).ToArray();
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(events:
+                cached.Select(message => (DomainEvent)new MessageUpsertEvent(message, Source: DomainEventSource.Register)).ToArray())),
+            HistoryHandler = (_, _) => Task.FromResult(new HistoryResult([], true, true))
+        };
+        var store = new FakeAccountStore();
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        await session.SelectConversationAsync(conversation);
+        Assert.Empty(session.State.Messages);
+        Assert.Empty(store.SnapshotState.Messages);
+        await session.SelectConversationAsync(new DirectMessage([30]));
+        await session.SelectConversationAsync(conversation);
+        Assert.Empty(session.State.Messages);
+    }
+
+    [Fact]
+    public async Task SelectConversationAsync_WhenRealtimeChangesArriveDuringHistory_PreservesDeleteMoveAndNewMessage()
+    {
+        var conversation = new DirectMessage([20]);
+        var destination = new DirectMessage([30]);
+        var cached = new[] { Message(1, conversation), Message(2, conversation), Message(3, conversation) };
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var response = new TaskCompletionSource<HistoryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var events = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(events:
+                cached.Select(message => (DomainEvent)new MessageUpsertEvent(message, Source: DomainEventSource.Register)).ToArray())),
+            GetEventsHandler = (request, token) => request.LastEventId < 4 ? events.Task.WaitAsync(token) : Never<EventBatch>(token),
+            HistoryHandler = (_, token) => { entered.TrySetResult(); return response.Task.WaitAsync(token); }
+        };
+        var store = new FakeAccountStore();
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var loading = session.SelectConversationAsync(conversation);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        events.SetResult(new EventBatch([
+            new MessageDeletedEvent([2], 2), new MessageMovedEvent([3], destination, 3),
+            new MessageUpsertEvent(Message(4, conversation), 4)], 4));
+        await WaitUntilAsync(() => session.State.LastEventId == 4);
+        response.SetResult(new HistoryResult(cached, true, true));
+        await loading;
+
+        Assert.False(session.State.Messages.ContainsKey(2));
+        Assert.False(store.SnapshotState.Messages.ContainsKey(2));
+        Assert.Equal(destination, store.SnapshotState.Messages[3].Conversation);
+        Assert.True(session.State.Messages.ContainsKey(4));
+        Assert.True(store.SnapshotState.Messages.ContainsKey(4));
+    }
+
+    [Fact]
+    public async Task LoginAsync_WhenRegisterHasCustomEmoji_ProjectsSnapshotAndClearsOnLogout()
+    {
+        var emoji = new RealmEmoji("1", "party", "/user_avatars/1/emoji/images/1.png", false);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register() with { RealmEmojis = [emoji] })
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        Assert.Equal(emoji, Assert.Single(session.State.RealmEmojis).Value);
+        await session.LogoutAsync();
+        Assert.Empty(session.State.RealmEmojis);
+    }
+
     [Fact]
     public async Task RestoreAsync_WhenCredentialVaultCannotBeRead_LocksKnownCachesAndExposesNoAccount()
     {
@@ -171,23 +495,337 @@ public sealed class ClientSessionTests
         var registerSource = new TaskCompletionSource<RegisterResult>(TaskCreationOptions.RunContinuationsAsynchronously);
         var gateway = new FakeGateway
         {
-            RegisterHandler = (_, _) => registerSource.Task
+            RegisterHandler = (_, token) => registerSource.Task.WaitAsync(token)
         };
         await using var session = new ClientSession(gateway, store, vault);
 
         var restore = session.RestoreAsync();
         await gateway.RegisterEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        Assert.Equal(ConnectionStatus.Offline, session.State.Connection.Status);
-        Assert.Contains(1, session.State.Messages.Keys);
-        Assert.Equal(2, session.RecentDirectMessages.Count);
-        Assert.Contains(dm, session.RecentDirectMessages);
-        Assert.Contains(persistedDm, session.RecentDirectMessages);
-        Assert.True(store.IsUnlocked);
+        Task selection;
+        try
+        {
+            Assert.Equal(ConnectionStatus.Offline, session.State.Connection.Status);
+            Assert.Contains(1, session.State.Messages.Keys);
+            Assert.Equal(2, session.RecentDirectMessages.Count);
+            Assert.Contains(dm, session.RecentDirectMessages);
+            Assert.Contains(persistedDm, session.RecentDirectMessages);
+            Assert.True(store.IsUnlocked);
+            Assert.True(restore.IsCompletedSuccessfully);
 
-        registerSource.SetResult(Register(recent: [dm]));
+            selection = session.SelectConversationAsync(dm);
+            Assert.Equal(dm, session.SelectedConversation);
+            Assert.Same(cachedMessage, session.State.Messages[1]);
+        }
+        finally
+        {
+            registerSource.TrySetResult(Register(recent: [dm]));
+        }
         Assert.True(await restore);
+        await selection.WaitAsync(TimeSpan.FromSeconds(3));
+        await WaitUntilAsync(() => gateway.HistoryRequests.Count == 1 && !session.HistoryState.IsLoading);
+        Assert.Single(gateway.HistoryRequests);
         await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task RestoreAsync_WhenSqlitePageArrivesBeforeRegister_KeepsItVisibleUntilChangedHistoryArrives()
+    {
+        var credential = Credential();
+        var conversation = new DirectMessage([44]);
+        var cached = Message(1, conversation) with { IsRead = true };
+        var cacheSource = new TaskCompletionSource<IReadOnlyList<ChatMessage>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registerSource = new TaskCompletionSource<RegisterResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var historySource = new TaskCompletionSource<HistoryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var historyEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new FakeAccountStore
+        {
+            Account = Stored(credential),
+            RecentDirectMessages = [conversation],
+            QueryHandler = (_, _, _, _, token) => cacheSource.Task.WaitAsync(token)
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, token) => registerSource.Task.WaitAsync(token),
+            HistoryHandler = (_, token) =>
+            {
+                historyEntered.TrySetResult();
+                return historySource.Task.WaitAsync(token);
+            }
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault { Credential = credential });
+
+        Assert.True(await session.RestoreAsync().WaitAsync(TimeSpan.FromSeconds(3)));
+        var selection = session.SelectConversationAsync(conversation);
+        Assert.False(selection.IsCompleted);
+        cacheSource.SetResult([cached]);
+        await WaitUntilAsync(() => session.State.Messages.ContainsKey(1));
+        Assert.Same(cached, session.State.Messages[1]);
+        Assert.Empty(gateway.HistoryRequests);
+
+        var visiblePages = new ConcurrentQueue<ChatMessage[]>();
+        session.StateChanged += (_, args) => visiblePages.Enqueue(args.State.Messages.Values.ToArray());
+        registerSource.SetResult(Register(recent: [conversation]));
+        await historyEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Same(cached, session.State.Messages[1]);
+
+        historySource.SetResult(new HistoryResult([cached with { Content = "edited" }, Message(2, conversation)], true, true));
+        await selection.WaitAsync(TimeSpan.FromSeconds(3));
+        await WaitUntilAsync(() => session.State.Messages.ContainsKey(2) && !session.HistoryState.IsLoading);
+
+        Assert.All(visiblePages, page => Assert.NotEmpty(page));
+        Assert.Equal("edited", session.State.Messages[1].Content);
+        Assert.Contains(2, session.State.Messages.Keys);
+        Assert.Equal(1, gateway.RegisterCalls);
+        Assert.Single(gateway.HistoryRequests);
+    }
+
+    [Fact]
+    public async Task RestoreAsync_WhenHistoryMatchesCache_PreservesVisibleMessageIdentity()
+    {
+        var credential = Credential();
+        var conversation = new DirectMessage([44]);
+        var cached = Message(1, conversation) with { IsRead = true };
+        var registerSource = new TaskCompletionSource<RegisterResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new FakeAccountStore
+        {
+            Account = Stored(credential),
+            RecentDirectMessages = [conversation],
+            QueryHandler = (_, _, _, _, _) => Task.FromResult<IReadOnlyList<ChatMessage>>([cached])
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, token) => registerSource.Task.WaitAsync(token),
+            HistoryHandler = (_, _) => Task.FromResult(new HistoryResult([cached with { Reactions = [] }], true, true))
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault { Credential = credential });
+
+        Assert.True(await session.RestoreAsync().WaitAsync(TimeSpan.FromSeconds(3)));
+        var selection = session.SelectConversationAsync(conversation);
+        Assert.Same(cached, session.State.Messages[1]);
+        var visiblePages = new ConcurrentQueue<ChatMessage[]>();
+        session.StateChanged += (_, args) => visiblePages.Enqueue(args.State.Messages.Values.ToArray());
+        registerSource.SetResult(Register(recent: [conversation]));
+        await selection.WaitAsync(TimeSpan.FromSeconds(3));
+        await WaitUntilAsync(() => gateway.HistoryRequests.Count == 1 && !session.HistoryState.IsLoading);
+
+        Assert.All(visiblePages, page => Assert.Same(cached, Assert.Single(page)));
+        Assert.False(session.HistoryState.IsLoading);
+        Assert.Single(gateway.HistoryRequests);
+    }
+
+    [Fact]
+    public async Task RestoreAsync_WhenOnlyEditMetadataDiffersFromCache_RefreshesVisibleMessage()
+    {
+        var credential = Credential();
+        var conversation = new DirectMessage([44]);
+        var cached = Message(1, conversation) with { IsRead = true };
+        var registerSource = new TaskCompletionSource<RegisterResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new FakeAccountStore
+        {
+            Account = Stored(credential),
+            RecentDirectMessages = [conversation],
+            QueryHandler = (_, _, _, _, _) => Task.FromResult<IReadOnlyList<ChatMessage>>([cached])
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, token) => registerSource.Task.WaitAsync(token),
+            HistoryHandler = (_, _) => Task.FromResult(new HistoryResult([cached with { IsEdited = true }], true, true))
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault { Credential = credential });
+
+        Assert.True(await session.RestoreAsync().WaitAsync(TimeSpan.FromSeconds(3)));
+        var selection = session.SelectConversationAsync(conversation);
+        Assert.False(session.State.Messages[1].IsEdited);
+        registerSource.SetResult(Register(recent: [conversation]));
+        await selection.WaitAsync(TimeSpan.FromSeconds(3));
+        await WaitUntilAsync(() => gateway.HistoryRequests.Count == 1 && !session.HistoryState.IsLoading);
+
+        Assert.True(session.State.Messages[1].IsEdited);
+        Assert.Equal(cached.Content, session.State.Messages[1].Content);
+    }
+
+    [Fact]
+    public async Task RestoreAsync_WhenSelectionChangesDuringRegister_OnlyLoadsLatestSelectedHistory()
+    {
+        var credential = Credential();
+        var first = new DirectMessage([44]);
+        var second = new DirectMessage([55]);
+        var registerSource = new TaskCompletionSource<RegisterResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new FakeAccountStore
+        {
+            Account = Stored(credential),
+            RecentDirectMessages = [first, second],
+            QueryHandler = (_, conversation, _, _, _) => Task.FromResult<IReadOnlyList<ChatMessage>>([Message(conversation == first ? 1 : 2, conversation)])
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, token) => registerSource.Task.WaitAsync(token)
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault { Credential = credential });
+
+        Assert.True(await session.RestoreAsync().WaitAsync(TimeSpan.FromSeconds(3)));
+        var firstSelection = session.SelectConversationAsync(first);
+        var secondSelection = session.SelectConversationAsync(second);
+        await firstSelection.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(second, session.SelectedConversation);
+        Assert.Equal(second, Assert.Single(session.State.Messages.Values).Conversation);
+
+        registerSource.SetResult(Register(recent: [first, second]));
+        await secondSelection.WaitAsync(TimeSpan.FromSeconds(3));
+        await WaitUntilAsync(() => gateway.HistoryRequests.Count == 1 && !session.HistoryState.IsLoading);
+        Assert.Equal(second, Assert.Single(gateway.HistoryRequests).Conversation);
+        Assert.Equal(second, Assert.Single(session.State.Messages.Values).Conversation);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RestoreAsync_WhenRegisterFails_KeepsOfflineCacheOrClearsUnauthorizedAccount(bool unauthorized)
+    {
+        var credential = Credential();
+        var conversation = new DirectMessage([44]);
+        var registerSource = new TaskCompletionSource<RegisterResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new FakeAccountStore
+        {
+            Account = Stored(credential),
+            RecentDirectMessages = [conversation],
+            QueryHandler = (_, _, _, _, _) => Task.FromResult<IReadOnlyList<ChatMessage>>([Message(1, conversation)])
+        };
+        var vault = new FakeCredentialVault { Credential = credential };
+        var delayEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway { RegisterHandler = (_, token) => registerSource.Task.WaitAsync(token) };
+        await using var session = new ClientSession(gateway, store, vault, delay: (_, token) =>
+        {
+            delayEntered.TrySetResult();
+            return Never<bool>(token);
+        });
+
+        Assert.True(await session.RestoreAsync().WaitAsync(TimeSpan.FromSeconds(3)));
+        var selection = session.SelectConversationAsync(conversation);
+        await selection.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.False(session.HistoryState.IsLoading);
+        Assert.Single(session.State.Messages);
+        registerSource.SetException(unauthorized
+            ? new GatewayException(GatewayErrorKind.ReauthRequired, GatewayErrorCode.Unauthorized)
+            : new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
+        if (unauthorized)
+        {
+            await WaitUntilAsync(() => vault.Credential is null && !store.IsUnlocked);
+            Assert.Empty(session.State.Messages);
+            Assert.Null(session.SelectedConversation);
+        }
+        else
+        {
+            await delayEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Single(session.State.Messages);
+            Assert.Equal(ConnectionStatus.Reconnecting, session.State.Connection.Status);
+            Assert.Equal("retry_wait", session.State.Connection.Detail);
+            Assert.True(store.IsUnlocked);
+        }
+        await session.StopAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        try { await selection; } catch (OperationCanceledException) { }
+        Assert.Empty(gateway.HistoryRequests);
+    }
+
+    [Fact]
+    public async Task RestoreAsync_WhenLogoutDuringRegister_CancelsPendingHistoryAndClearsAccount()
+    {
+        var credential = Credential();
+        var conversation = new DirectMessage([44]);
+        var store = new FakeAccountStore
+        {
+            Account = Stored(credential),
+            RecentDirectMessages = [conversation],
+            QueryHandler = (_, _, _, _, _) => Task.FromResult<IReadOnlyList<ChatMessage>>([Message(1, conversation)])
+        };
+        var vault = new FakeCredentialVault { Credential = credential };
+        var gateway = new FakeGateway { RegisterHandler = (_, token) => Never<RegisterResult>(token) };
+        await using var session = new ClientSession(gateway, store, vault);
+
+        Assert.True(await session.RestoreAsync().WaitAsync(TimeSpan.FromSeconds(3)));
+        var selection = session.SelectConversationAsync(conversation);
+        await gateway.RegisterEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await session.LogoutAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        await selection.WaitAsync(TimeSpan.FromSeconds(3));
+
+        Assert.Null(session.AccountId);
+        Assert.Null(vault.Credential);
+        Assert.False(store.IsUnlocked);
+        Assert.Empty(session.State.Messages);
+        Assert.Empty(gateway.HistoryRequests);
+    }
+
+    [Fact]
+    public async Task RestoreAsync_WhenUserPagesWhileRegisterIsPending_PreservesOlderCacheWindow()
+    {
+        var credential = Credential();
+        var conversation = new DirectMessage([44]);
+        var registerSource = new TaskCompletionSource<RegisterResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var polled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new FakeAccountStore
+        {
+            Account = Stored(credential),
+            RecentDirectMessages = [conversation],
+            QueryHandler = (_, _, before, _, _) => Task.FromResult<IReadOnlyList<ChatMessage>>(
+                [Message(before is null ? 2 : 1, conversation)])
+        };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, token) => registerSource.Task.WaitAsync(token),
+            GetEventsHandler = (_, token) =>
+            {
+                polled.TrySetResult();
+                return Never<EventBatch>(token);
+            }
+        };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault { Credential = credential });
+
+        Assert.True(await session.RestoreAsync().WaitAsync(TimeSpan.FromSeconds(3)));
+        await session.SelectConversationAsync(conversation).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.False(session.HistoryState.IsLoading);
+        await session.LoadOlderAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(1, session.HistoryState.OldestLoadedMessageId);
+        Assert.Equal(2, session.State.Messages.Count);
+
+        registerSource.SetResult(Register(recent: [conversation]));
+        await polled.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(1, session.HistoryState.OldestLoadedMessageId);
+        Assert.Equal(2, session.State.Messages.Count);
+        Assert.Empty(gateway.HistoryRequests);
+    }
+
+    [Fact]
+    public async Task RestoreAsync_WhenRegisterEnablesPresence_ReportsBeforeFirstRefreshDelay()
+    {
+        var credential = Credential();
+        var registerSource = new TaskCompletionSource<RegisterResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstDelay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reports = 0;
+        var reportsAtFirstDelay = -1;
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, token) => registerSource.Task.WaitAsync(token),
+            UpdateOwnPresenceHandler = (_, _) =>
+            {
+                Interlocked.Increment(ref reports);
+                return Task.CompletedTask;
+            }
+        };
+        var store = new FakeAccountStore { Account = Stored(credential) };
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault { Credential = credential },
+            presenceDelay: (_, token) =>
+            {
+                reportsAtFirstDelay = Volatile.Read(ref reports);
+                firstDelay.TrySetResult();
+                return Never<bool>(token);
+            });
+
+        Assert.True(await session.RestoreAsync().WaitAsync(TimeSpan.FromSeconds(3)));
+        registerSource.SetResult(Register(isPresenceAvailable: true, isOwnPresenceEnabled: true));
+        await firstDelay.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+        Assert.Equal(1, reportsAtFirstDelay);
     }
 
     [Fact]
@@ -424,14 +1062,18 @@ public sealed class ClientSessionTests
     [Fact]
     public async Task EventLoop_WhenQueueExpires_ReregistersWithoutRetryingPostCommands()
     {
+        var delays = new ControlledDelay();
         var gateway = new FakeGateway();
         gateway.RegisterHandler = (_, _) => Task.FromResult(Register(queue: $"queue-{gateway.RegisterCalls}"));
         gateway.GetEventsHandler = (request, cancellationToken) => gateway.GetEventsCalls == 1
             ? Task.FromException<EventBatch>(new GatewayException(GatewayErrorKind.QueueExpired, GatewayErrorCode.BadEventQueueId))
             : Never<EventBatch>(cancellationToken);
-        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(), delays.DelayAsync);
 
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => session.State.Connection.Detail == "retry_wait");
+        Assert.Equal(1, gateway.RegisterCalls);
+        await delays.CompleteNextAsync(TimeSpan.FromSeconds(20));
         await WaitUntilAsync(() => gateway.RegisterCalls >= 2 && gateway.GetEventsCalls >= 2);
 
         Assert.Equal(2, gateway.RegisterCalls);
@@ -452,15 +1094,14 @@ public sealed class ClientSessionTests
             gateway,
             new FakeAccountStore(),
             new FakeCredentialVault(),
-            delays.DelayAsync,
-            serverRestartDelay: () => TimeSpan.FromMinutes(5));
+            delays.DelayAsync);
 
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
         await WaitUntilAsync(() => gateway.ProbeCalls == 2);
         Assert.Equal(ConnectionStatus.Reconnecting, session.State.Connection.Status);
         Assert.Single(gateway.GetEventsRequests);
 
-        await delays.CompleteNextAsync(TimeSpan.FromMinutes(5));
+        await delays.CompleteNextAsync(TimeSpan.FromSeconds(20));
         await WaitUntilAsync(() => gateway.RegisterCalls == 2 && gateway.GetEventsRequests.Count == 2);
 
         Assert.Equal("queue-1", gateway.GetEventsRequests[0].QueueId);
@@ -469,11 +1110,14 @@ public sealed class ClientSessionTests
         await session.StopAsync();
     }
 
-    [Fact]
-    public async Task EventLoop_WhenRateLimited_WaitsRetryAfterBeforeRetryingGet()
+    [Theory]
+    [InlineData(17, 20)]
+    [InlineData(60, 60)]
+    [InlineData(-1, 20)]
+    public async Task EventLoop_WhenRateLimited_WaitsAtLeastTwentySecondsAndHonorsRetryAfter(int serverSeconds, int expectedSeconds)
     {
         var delays = new ControlledDelay();
-        var retryAfter = TimeSpan.FromSeconds(17);
+        TimeSpan? retryAfter = serverSeconds < 0 ? null : TimeSpan.FromSeconds(serverSeconds);
         var gateway = new FakeGateway();
         gateway.GetEventsHandler = (_, cancellationToken) => gateway.GetEventsCalls == 1
             ? Task.FromException<EventBatch>(new GatewayException(
@@ -486,10 +1130,244 @@ public sealed class ClientSessionTests
         await WaitUntilAsync(() => session.State.Connection.Status == ConnectionStatus.RateLimited);
         Assert.Equal(1, gateway.GetEventsCalls);
 
-        await delays.CompleteNextAsync(retryAfter);
+        await delays.CompleteNextAsync(TimeSpan.FromSeconds(expectedSeconds));
         await WaitUntilAsync(() => gateway.GetEventsCalls == 2);
 
         await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task EventLoop_WhenStoppedDuringRetry_DoesNotPollAgain()
+    {
+        var delays = new ControlledDelay();
+        var gateway = new FakeGateway
+        {
+            GetEventsHandler = (_, _) => Task.FromException<EventBatch>(new GatewayException(GatewayErrorKind.Server, GatewayErrorCode.ServerError, 503))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(), delays.DelayAsync);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => session.State.Connection.Detail == "retry_wait");
+
+        await session.StopAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        await delays.CompleteNextAsync(TimeSpan.FromSeconds(20));
+
+        Assert.Equal(1, gateway.GetEventsCalls);
+        Assert.Equal("stopped", session.State.Connection.Detail);
+    }
+
+    [Theory]
+    [InlineData(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError, 0)]
+    [InlineData(GatewayErrorKind.Offline, GatewayErrorCode.RequestTimedOut, 0)]
+    [InlineData(GatewayErrorKind.Server, GatewayErrorCode.ServerError, 500)]
+    [InlineData(GatewayErrorKind.Server, GatewayErrorCode.ServerError, 502)]
+    [InlineData(GatewayErrorKind.Server, GatewayErrorCode.ServerError, 503)]
+    [InlineData(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, 200)]
+    [InlineData(GatewayErrorKind.RequestFailed, GatewayErrorCode.RequestFailed, 408)]
+    public async Task EventLoop_WhenConnectionFails_RetriesEveryTwentySecondsAndRecovers(
+        GatewayErrorKind kind, GatewayErrorCode code, int status)
+    {
+        var delays = new ControlledDelay();
+        var response = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway();
+        gateway.GetEventsHandler = (_, token) => gateway.GetEventsCalls switch
+        {
+            <= 2 => Task.FromException<EventBatch>(new GatewayException(kind, code, status == 0 ? null : status)),
+            3 => response.Task.WaitAsync(token),
+            _ => Never<EventBatch>(token)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(), delays.DelayAsync);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            await WaitUntilAsync(() => gateway.GetEventsCalls == attempt && session.State.Connection.Detail == "retry_wait");
+            Assert.Equal(ConnectionStatus.Reconnecting, session.State.Connection.Status);
+            Assert.Equal(attempt, session.State.Connection.RetryAttempt);
+            Assert.Equal(TimeSpan.FromSeconds(20), session.State.Connection.RetryDelay);
+            Assert.Equal(code, session.State.Connection.FailureCode);
+            Assert.Equal(status == 0 ? (int?)null : status, session.State.Connection.FailureStatusCode);
+            Assert.Equal(1, session.State.LastEventId);
+            await delays.CompleteNextAsync(TimeSpan.FromSeconds(20));
+        }
+        await WaitUntilAsync(() => gateway.GetEventsCalls == 3);
+        Assert.Equal("retrying", session.State.Connection.Detail);
+        Assert.Equal(2, session.State.Connection.RetryAttempt);
+        Assert.Null(session.State.Connection.RetryDelay);
+        response.SetResult(new EventBatch([new HeartbeatEvent(2)], 2));
+        await WaitUntilAsync(() => session.State.Connection.Status == ConnectionStatus.Connected);
+
+        Assert.Equal(2, session.State.LastEventId);
+        Assert.Equal(0, session.State.Connection.RetryAttempt);
+        Assert.Null(session.State.Connection.FailureCode);
+        Assert.Equal(1, gateway.RegisterCalls);
+        Assert.Equal(0, gateway.SendCalls);
+        Assert.Equal(0, gateway.UploadCalls);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task EventLoop_WhenConcurrentHistoryFails_PreservesReconnectPhase(bool rateLimited, bool retryStarted)
+    {
+        var delays = new ControlledDelay();
+        var poll = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var history = new TaskCompletionSource<HistoryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway();
+        gateway.GetEventsHandler = (_, token) => gateway.GetEventsCalls == 1
+            ? poll.Task.WaitAsync(token)
+            : Never<EventBatch>(token);
+        gateway.HistoryHandler = (_, token) => history.Task.WaitAsync(token);
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(), delays.DelayAsync);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => gateway.GetEventsCalls == 1);
+        var selection = session.SelectConversationAsync(new DirectMessage([20]));
+        await WaitUntilAsync(() => gateway.HistoryRequests.Count == 1);
+
+        poll.SetException(rateLimited
+            ? new GatewayException(GatewayErrorKind.RateLimited, GatewayErrorCode.RateLimited, 429)
+            : new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
+        await WaitUntilAsync(() => session.State.Connection.Detail == "retry_wait");
+        if (retryStarted)
+        {
+            await delays.CompleteNextAsync(TimeSpan.FromSeconds(20));
+            await WaitUntilAsync(() => gateway.GetEventsCalls == 2);
+        }
+
+        history.SetException(new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
+        await selection.WaitAsync(TimeSpan.FromSeconds(3));
+
+        Assert.Equal(rateLimited ? ConnectionStatus.RateLimited : ConnectionStatus.Reconnecting, session.State.Connection.Status);
+        Assert.Equal(retryStarted ? "retrying" : "retry_wait", session.State.Connection.Detail);
+        Assert.Equal("offline", session.HistoryState.Error);
+        Assert.Equal(0, gateway.SendCalls);
+        Assert.Equal(0, gateway.UploadCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EventLoop_WhenConcurrentSearchIsRateLimited_PreservesReconnectPhase(bool retryStarted)
+    {
+        var delays = new ControlledDelay();
+        var poll = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var searchResponse = new TaskCompletionSource<MessageQueryPage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway();
+        gateway.GetEventsHandler = (_, token) => gateway.GetEventsCalls == 1
+            ? poll.Task.WaitAsync(token)
+            : Never<EventBatch>(token);
+        gateway.SearchHandler = (_, token) => searchResponse.Task.WaitAsync(token);
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(), delays.DelayAsync);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => gateway.GetEventsCalls == 1);
+        var search = session.SearchMessagesAsync("query", null, 50);
+
+        poll.SetException(new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
+        await WaitUntilAsync(() => session.State.Connection.Detail == "retry_wait");
+        if (retryStarted)
+        {
+            await delays.CompleteNextAsync(TimeSpan.FromSeconds(20));
+            await WaitUntilAsync(() => gateway.GetEventsCalls == 2);
+        }
+
+        searchResponse.SetException(new GatewayException(
+            GatewayErrorKind.RateLimited, GatewayErrorCode.RateLimited, 429, TimeSpan.FromSeconds(60)));
+        var exception = await Assert.ThrowsAsync<GatewayException>(() => search.WaitAsync(TimeSpan.FromSeconds(3)));
+
+        Assert.Equal(GatewayErrorKind.RateLimited, exception.Kind);
+        Assert.Equal(TimeSpan.FromSeconds(60), exception.RetryAfter);
+        Assert.Equal(ConnectionStatus.Reconnecting, session.State.Connection.Status);
+        Assert.Equal(retryStarted ? "retrying" : "retry_wait", session.State.Connection.Detail);
+        if (!retryStarted)
+        {
+            await delays.CompleteNextAsync(TimeSpan.FromSeconds(20));
+            await WaitUntilAsync(() => gateway.GetEventsCalls == 2);
+        }
+        Assert.Equal(0, gateway.SendCalls);
+        Assert.Equal(0, gateway.UploadCalls);
+    }
+
+    [Theory]
+    [InlineData(GatewayErrorKind.RequestFailed, GatewayErrorCode.RequestFailed, 403)]
+    [InlineData(GatewayErrorKind.IncompatibleRealm, GatewayErrorCode.RedirectNotAllowed, 302)]
+    public async Task EventLoop_WhenFailureIsNotRecoverable_DoesNotRetry(
+        GatewayErrorKind kind, GatewayErrorCode code, int status)
+    {
+        var delays = new List<TimeSpan>();
+        var gateway = new FakeGateway
+        {
+            GetEventsHandler = (_, _) => Task.FromException<EventBatch>(new GatewayException(kind, code, status))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(), (delay, _) =>
+        {
+            delays.Add(delay);
+            return Task.CompletedTask;
+        });
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => session.State.Connection.Status == ConnectionStatus.Faulted);
+        Assert.Equal(1, gateway.GetEventsCalls);
+        Assert.Empty(delays);
+    }
+
+    [Theory]
+    [InlineData(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError)]
+    [InlineData(GatewayErrorKind.Server, GatewayErrorCode.ServerError)]
+    [InlineData(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse)]
+    public async Task RestoreAsync_WhenRegistrationTemporarilyFails_KeepsCacheAndRetriesEveryTwentySeconds(
+        GatewayErrorKind kind, GatewayErrorCode code)
+    {
+        var credential = Credential();
+        var conversation = new DirectMessage([44]);
+        var cached = Message(1, conversation);
+        var store = new FakeAccountStore
+        {
+            Account = Stored(credential), IsUnlocked = true,
+            SnapshotState = new ClientState(messages: new Dictionary<long, ChatMessage> { [1] = cached }),
+            QueryHandler = (_, _, _, _, _) => Task.FromResult<IReadOnlyList<ChatMessage>>([cached])
+        };
+        var delays = new ControlledDelay();
+        var gateway = new FakeGateway();
+        gateway.RegisterHandler = (_, _) => gateway.RegisterCalls <= 2
+            ? Task.FromException<RegisterResult>(new GatewayException(kind, code))
+            : Task.FromResult(Register());
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault { Credential = credential }, delays.DelayAsync);
+        Assert.True(await session.RestoreAsync());
+        await session.SelectConversationAsync(conversation).WaitAsync(TimeSpan.FromSeconds(3));
+        for (var attempt = 1; attempt <= 2; attempt++)
+        {
+            await WaitUntilAsync(() => gateway.RegisterCalls == attempt && session.State.Connection.Detail == "retry_wait");
+            Assert.Equal(attempt, session.State.Connection.RetryAttempt);
+            Assert.Equal(code, session.State.Connection.FailureCode);
+            Assert.Same(cached, session.State.Messages[1]);
+            Assert.True(store.IsUnlocked);
+            await delays.CompleteNextAsync(TimeSpan.FromSeconds(20));
+        }
+        await WaitUntilAsync(() => session.State.Connection.Status == ConnectionStatus.Connected);
+        Assert.Equal(3, gateway.RegisterCalls);
+        Assert.Equal(0, gateway.AuthenticateCalls);
+        Assert.Equal(0, gateway.SendCalls);
+    }
+
+    [Fact]
+    public async Task EventLoop_WhenRestartProbeTemporarilyFails_RetriesProbeBeforeRegistering()
+    {
+        var delays = new ControlledDelay();
+        var gateway = new FakeGateway();
+        gateway.GetEventsHandler = (_, token) => gateway.GetEventsCalls == 1
+            ? Task.FromResult(new EventBatch([new ServerRestartedEvent(500, 2)], 2))
+            : Never<EventBatch>(token);
+        gateway.ProbeHandler = () => gateway.ProbeCalls == 2
+            ? Task.FromException<RealmProbeResult>(new GatewayException(GatewayErrorKind.Server, GatewayErrorCode.ServerError, 503))
+            : Task.FromResult(new RealmProbeResult(RealmEndpoint.Parse("https://zulip.example/"), "12.1", 500, false, true));
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(), delays.DelayAsync);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => gateway.ProbeCalls == 2 && session.State.Connection.Detail == "retry_wait");
+        Assert.Equal(1, gateway.RegisterCalls);
+        await delays.CompleteNextAsync(TimeSpan.FromSeconds(20));
+        await WaitUntilAsync(() => gateway.ProbeCalls == 3);
+        await delays.CompleteNextAsync(TimeSpan.FromSeconds(20));
+        await WaitUntilAsync(() => gateway.RegisterCalls == 2 && session.State.Connection.Status == ConnectionStatus.Connected);
+        Assert.Equal(0, gateway.SendCalls);
     }
 
     [Fact]
@@ -1176,6 +2054,108 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task MarkDisplayedReadAsync_WhenRegisterCorrectsCachedReadFlag_DoesNotCountUnreadTwice()
+    {
+        var conversation = new DirectMessage([20]);
+        var serverMessage = Message(100, conversation);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                events:
+                [
+                    new MessageUpsertEvent(serverMessage with { IsRead = true }, Source: DomainEventSource.Register),
+                    new MessageFlagsChangedEvent([100], false, MessageFlagOperation.Remove, "read", Source: DomainEventSource.Register)
+                ],
+                unread: new UnreadState(new Dictionary<string, int> { [conversation.CanonicalKey] = 1 }))),
+            HistoryHandler = (_, _) => Task.FromResult(new HistoryResult([serverMessage], true, true))
+        };
+        var store = new FakeAccountStore();
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => session.State.Connection.Status == ConnectionStatus.Connected);
+        Assert.False(store.SnapshotState.Messages[100].IsRead);
+
+        await session.SelectConversationAsync(conversation);
+
+        Assert.False(session.State.Messages[100].IsRead);
+        Assert.Equal(1, session.State.Unread.Total);
+        await session.MarkDisplayedReadAsync();
+
+        Assert.True(session.State.Messages[100].IsRead);
+        Assert.Equal(0, session.State.Unread.Total);
+        Assert.Equal(0, store.SnapshotState.Unread.Total);
+        Assert.Equal(new long[] { 100 }, Assert.Single(gateway.MarkReadRequests).MessageIds);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task MarkDisplayedReadAsync_WhenServerHasAdditionalUnread_DoesNotSkipIncomingMessages()
+    {
+        var conversation = new DirectMessage([20]);
+        var serverUnread = new HashSet<long> { 100, 101, 102 };
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                events:
+                [
+                    new MessageUpsertEvent(Message(100, conversation) with { SenderId = 20 }, Source: DomainEventSource.Register),
+                    new MessageUpsertEvent(Message(101, conversation) with { IsRead = true }, Source: DomainEventSource.Register),
+                    new MessageUpsertEvent(Message(102, conversation) with { SenderId = 20 }, Source: DomainEventSource.Register)
+                ],
+                unread: new UnreadState(new Dictionary<string, int> { [conversation.CanonicalKey] = 3 }))),
+            MarkReadHandler = (request, _) =>
+            {
+                serverUnread.ExceptWith(request.MessageIds);
+                return Task.CompletedTask;
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(conversation);
+
+        await session.MarkDisplayedReadAsync();
+
+        Assert.Equal(new long[] { 100, 102 }, Assert.Single(gateway.MarkReadRequests).MessageIds.Order());
+        Assert.True(session.State.Messages[100].IsRead);
+        Assert.True(session.State.Messages[102].IsRead);
+        Assert.Equal(101, Assert.Single(serverUnread));
+        Assert.Equal(1, session.State.Unread.Total);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task MarkDisplayedReadAsync_WhenOwnMessageIsUnread_PreservesServerFlagUntilConfirmed()
+    {
+        var conversation = new DirectMessage([20]);
+        var ownMessage = Message(100, conversation);
+        var markSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(
+                events: [new MessageUpsertEvent(ownMessage, Source: DomainEventSource.Register)],
+                unread: new UnreadState(new Dictionary<string, int> { [conversation.CanonicalKey] = 1 }))),
+            MarkReadHandler = async (_, cancellationToken) => await markSource.Task.WaitAsync(cancellationToken)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(conversation);
+
+        Assert.Equal(session.CurrentUserId, ownMessage.SenderId);
+        Assert.False(session.State.Messages[100].IsRead);
+        var marking = session.MarkDisplayedReadAsync();
+        await WaitUntilAsync(() => gateway.MarkReadRequests.Count == 1);
+        Assert.False(session.State.Messages[100].IsRead);
+        Assert.Equal(1, session.State.Unread.Total);
+
+        markSource.SetResult();
+        await marking;
+
+        Assert.True(session.State.Messages[100].IsRead);
+        Assert.Equal(0, session.State.Unread.Total);
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task MarkDisplayedReadAsync_WhenServiceHasNotSucceeded_DoesNotMutateThenMarksOnlyNewestFifty()
     {
         var conversation = new DirectMessage([20]);
@@ -1206,8 +2186,7 @@ public sealed class ClientSessionTests
         await marking;
 
         Assert.Equal(50, session.State.Messages.Values.Count(message => message.IsRead));
-        Assert.Equal(50, gateway.MarkReadRequests[0].Limit);
-        Assert.Equal(60, gateway.MarkReadRequests[0].AnchorMessageId);
+        Assert.Equal(Enumerable.Range(11, 50).Select(id => (long)id), gateway.MarkReadRequests[0].MessageIds.Order());
         await session.StopAsync();
     }
 
@@ -1233,7 +2212,8 @@ public sealed class ClientSessionTests
         await session.MarkDisplayedReadAsync();
 
         Assert.Empty(gateway.MarkReadRequests);
-        Assert.DoesNotContain(session.State.Messages.Values, message => !message.IsRead);
+        Assert.All(session.State.Messages.Values.Where(message => message.Id <= 50), message => Assert.False(message.IsRead));
+        Assert.All(session.State.Messages.Values.Where(message => message.Id > 50), message => Assert.True(message.IsRead));
         await session.StopAsync();
     }
 
@@ -1259,8 +2239,7 @@ public sealed class ClientSessionTests
         await session.MarkDisplayedReadAsync();
 
         var request = Assert.Single(gateway.MarkReadRequests);
-        Assert.Equal(99, request.AnchorMessageId);
-        Assert.Equal(25, request.Limit);
+        Assert.Equal(Enumerable.Range(51, 50).Where(id => id % 2 != 0).Select(id => (long)id), request.MessageIds.Order());
         Assert.All(session.State.Messages.Values.Where(message => message.Id > 50), message => Assert.True(message.IsRead));
         Assert.All(session.State.Messages.Values.Where(message => message.Id <= 50), message => Assert.False(message.IsRead));
         await session.StopAsync();
@@ -1496,7 +2475,7 @@ public sealed class ClientSessionTests
                 return Task.FromException(new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
             }
         };
-        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(), utcNow: () => message.Timestamp);
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
         await session.SelectConversationAsync(message.Conversation);
 
@@ -1506,6 +2485,7 @@ public sealed class ClientSessionTests
 
         Assert.Equal(1, Volatile.Read(ref calls));
         Assert.Equal("message-51", session.State.Messages[51].Content);
+        Assert.False(session.State.Messages[51].IsEdited);
         Assert.Equal(MessageMutationStatus.Uncertain, session.State.MessageMutations[51].Status);
         await session.StopAsync();
     }
@@ -1532,6 +2512,289 @@ public sealed class ClientSessionTests
 
         Assert.Equal(0, calls);
         await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task UpdateOwnNameAsync_WhenConfirmed_ChangesOnlyNameAfterResponse()
+    {
+        var response = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway { UpdateOwnNameHandler = (request, _) =>
+        {
+            Assert.Equal("新名字", request.FullName);
+            return response.Task;
+        } };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var previous = session.State.Users[10];
+        var pending = session.UpdateOwnNameAsync(session.AccountId!.Value, " 新名字 ");
+        await WaitUntilAsync(() => gateway.NameUpdateCalls == 1);
+        Assert.Equal(previous, session.State.Users[10]);
+        response.SetResult("新名字");
+        Assert.True(await pending);
+        Assert.Equal(previous with { FullName = "新名字" }, session.State.Users[10]);
+        Assert.Equal(1, gateway.NameUpdateCalls);
+    }
+
+    [Fact]
+    public async Task UpdateOwnNameAsync_WhenUnauthorized_ClearsCredentialsAndRequiresLogin()
+    {
+        var gateway = new FakeGateway { UpdateOwnNameHandler = (_, _) => Task.FromException<string>(
+            new GatewayException(GatewayErrorKind.ReauthRequired, GatewayErrorCode.Unauthorized, 401)) };
+        var vault = new FakeCredentialVault();
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), vault);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await Assert.ThrowsAsync<GatewayException>(() => session.UpdateOwnNameAsync(session.AccountId!.Value, "New name"));
+        Assert.Equal(ConnectionStatus.ReauthRequired, session.State.Connection.Status);
+        Assert.True(vault.RemoveCalls > 0);
+        Assert.Equal(1, gateway.NameUpdateCalls);
+    }
+
+    [Fact]
+    public async Task UpdateOwnNameAsync_WhenOnlyAvatarChanges_StillAppliesConfirmedName()
+    {
+        var response = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var events = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var eventCalls = 0;
+        var gateway = new FakeGateway
+        {
+            UpdateOwnNameHandler = (_, _) => response.Task,
+            GetEventsHandler = (_, token) => Interlocked.Increment(ref eventCalls) == 1 ? events.Task : Never<EventBatch>(token)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var pending = session.UpdateOwnNameAsync(session.AccountId!.Value, "New name");
+        await WaitUntilAsync(() => gateway.NameUpdateCalls == 1);
+        events.SetResult(new EventBatch([new UserPatchedEvent(10, null, null, null, 2,
+            HasAvatar: true, AvatarUrl: "/user_avatars/new.png", AvatarSource: UserAvatarSource.Uploaded)], 2));
+        await WaitUntilAsync(() => session.State.LastEventId >= 2);
+        response.SetResult("New name");
+        Assert.True(await pending);
+        Assert.Equal("New name", session.State.Users[10].FullName);
+        Assert.Equal("/user_avatars/new.png", session.State.Users[10].AvatarUrl);
+    }
+
+    [Fact]
+    public async Task UpdateOwnNameAsync_WhenServerKeepsOriginalName_ReturnsUnconfirmed()
+    {
+        var gateway = new FakeGateway();
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var previous = session.State.Users[10];
+        gateway.UpdateOwnNameHandler = (_, _) => Task.FromResult(previous.FullName);
+        Assert.False(await session.UpdateOwnNameAsync(session.AccountId!.Value, "New name"));
+        Assert.Equal(previous, session.State.Users[10]);
+        Assert.Equal(1, gateway.NameUpdateCalls);
+    }
+
+    [Fact]
+    public async Task UpdateOwnNameAsync_WhenAccountChanged_RejectsBeforeWrite()
+    {
+        var gateway = new FakeGateway();
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var otherAccount = AccountId.Create(RealmEndpoint.Parse("https://zulip.example/"), 20);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.UpdateOwnNameAsync(otherAccount, "New name"));
+        Assert.Equal(0, gateway.NameUpdateCalls);
+    }
+
+    [Fact]
+    public async Task UpdateOwnNameAsync_WhenCancelled_IgnoresLateResponse()
+    {
+        var response = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway { UpdateOwnNameHandler = (_, _) => response.Task };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var previous = session.State.Users[10];
+        using var cancellation = new CancellationTokenSource();
+        var pending = session.UpdateOwnNameAsync(session.AccountId!.Value, "New name", cancellation.Token);
+        await WaitUntilAsync(() => gateway.NameUpdateCalls == 1);
+        cancellation.Cancel();
+        response.SetResult("New name");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        Assert.Equal(previous, session.State.Users[10]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UpdateOwnNameAsync_WhenNewerRealtimeNameArrives_KeepsEventName(bool returnsToOriginal)
+    {
+        var response = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var events = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var eventCalls = 0;
+        var gateway = new FakeGateway
+        {
+            UpdateOwnNameHandler = (_, _) => response.Task,
+            GetEventsHandler = (_, token) => Interlocked.Increment(ref eventCalls) == 1 ? events.Task : Never<EventBatch>(token)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var eventName = returnsToOriginal ? session.State.Users[10].FullName : "Newest name";
+        var pending = session.UpdateOwnNameAsync(session.AccountId!.Value, "New name");
+        await WaitUntilAsync(() => gateway.NameUpdateCalls == 1);
+        events.SetResult(new EventBatch([
+            new UserPatchedEvent(10, "New name", null, null, 2),
+            new UserPatchedEvent(10, eventName, null, null, 3)], 3));
+        await WaitUntilAsync(() => session.State.LastEventId >= 3);
+        response.SetResult("New name");
+        Assert.False(await pending);
+        Assert.Equal(eventName, session.State.Users[10].FullName);
+    }
+
+    [Theory]
+    [InlineData(GatewayErrorKind.Offline)]
+    [InlineData(GatewayErrorKind.Server)]
+    public async Task UpdateOwnNameAsync_WhenFailed_KeepsNameAndReleasesGate(GatewayErrorKind kind)
+    {
+        var gateway = new FakeGateway { UpdateOwnNameHandler = (_, _) =>
+            Task.FromException<string>(new GatewayException(kind, GatewayErrorCode.RequestTimedOut)) };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var previous = session.State.Users[10];
+        await Assert.ThrowsAsync<GatewayException>(() => session.UpdateOwnNameAsync(session.AccountId!.Value, "New name"));
+        Assert.Equal(previous, session.State.Users[10]);
+        await session.LogoutAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, gateway.NameUpdateCalls);
+    }
+
+    [Fact]
+    public async Task UploadOwnAvatarAsync_WhenTimedOut_ReleasesCommandGateForLogout()
+    {
+        var gateway = new FakeGateway
+        {
+            UploadOwnAvatarHandler = (_, _) => Task.FromException<string>(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.RequestTimedOut))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await using var stream = new MemoryStream([1]);
+        await Assert.ThrowsAsync<GatewayException>(() => session.UploadOwnAvatarAsync(session.AccountId!.Value,
+            new AttachmentUpload("avatar.png", "image/png", 1, stream)));
+        await session.LogoutAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(ConnectionStatus.SignedOut, session.State.Connection.Status);
+        Assert.Equal(1, gateway.AvatarUploadCalls);
+    }
+
+    [Fact]
+    public async Task UploadOwnAvatarAsync_WhenConfirmed_UpdatesOwnAvatarAfterResponse()
+    {
+        var response = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway { UploadOwnAvatarHandler = (_, _) => response.Task };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var previous = session.State.Users[10];
+        await using var stream = new MemoryStream([1]);
+
+        var pending = session.UploadOwnAvatarAsync(session.AccountId!.Value, new AttachmentUpload("avatar.png", "image/png", 1, stream));
+        await WaitUntilAsync(() => gateway.AvatarUploadCalls == 1);
+        Assert.Equal(previous, session.State.Users[10]);
+        response.SetResult("/user_avatars/1/new.png?x=2");
+        await pending;
+
+        Assert.Equal("/user_avatars/1/new.png?x=2", session.State.Users[10].DisplayAvatarUrl);
+        Assert.Equal(UserAvatarSource.Uploaded, session.State.Users[10].AvatarSource);
+        Assert.Equal(previous.FullName, session.State.Users[10].FullName);
+        Assert.Equal(1, gateway.AvatarUploadCalls);
+        Assert.Equal(0, gateway.UploadCalls);
+    }
+
+    [Fact]
+    public async Task UploadOwnAvatarAsync_WhenAccountChanged_RejectsBeforeUpload()
+    {
+        var gateway = new FakeGateway();
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await using var stream = new MemoryStream([1]);
+        var otherAccount = AccountId.Create(RealmEndpoint.Parse("https://zulip.example/"), 20);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.UploadOwnAvatarAsync(
+            otherAccount, new AttachmentUpload("avatar.png", "image/png", 1, stream)));
+
+        Assert.Equal(0, gateway.AvatarUploadCalls);
+    }
+
+    [Fact]
+    public async Task UploadOwnAvatarAsync_WhenImageExceedsAvatarLimit_RejectsBeforeUpload()
+    {
+        var gateway = new FakeGateway { RegisterHandler = (_, _) => Task.FromResult(Register() with { MaxAvatarFileSizeMiB = 1 }) };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await using var stream = new MemoryStream([1]);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => session.UploadOwnAvatarAsync(session.AccountId!.Value,
+            new AttachmentUpload("avatar.png", "image/png", 1024 * 1024 + 1, stream)));
+
+        Assert.Equal(1024 * 1024, session.MaxAvatarUploadBytes);
+        Assert.Equal(0, gateway.AvatarUploadCalls);
+    }
+
+    [Theory]
+    [InlineData(GatewayErrorKind.Offline)]
+    [InlineData(GatewayErrorKind.RequestFailed)]
+    [InlineData(GatewayErrorKind.Server)]
+    public async Task UploadOwnAvatarAsync_WhenFailed_KeepsPreviousAvatarAndDoesNotRetry(GatewayErrorKind kind)
+    {
+        var gateway = new FakeGateway
+        {
+            UploadOwnAvatarHandler = (_, _) => Task.FromException<string>(new GatewayException(kind, GatewayErrorCode.NetworkError))
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var previous = session.State.Users[10];
+        await using var stream = new MemoryStream([1]);
+
+        await Assert.ThrowsAsync<GatewayException>(() => session.UploadOwnAvatarAsync(session.AccountId!.Value,
+            new AttachmentUpload("avatar.png", "image/png", 1, stream)));
+
+        Assert.Equal(previous, session.State.Users[10]);
+        Assert.Equal(1, gateway.AvatarUploadCalls);
+    }
+
+    [Fact]
+    public async Task UploadOwnAvatarAsync_WhenCancelled_IgnoresLateResponse()
+    {
+        var response = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway { UploadOwnAvatarHandler = (_, _) => response.Task };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var previous = session.State.Users[10];
+        await using var stream = new MemoryStream([1]);
+        using var cancellation = new CancellationTokenSource();
+        var pending = session.UploadOwnAvatarAsync(session.AccountId!.Value,
+            new AttachmentUpload("avatar.png", "image/png", 1, stream), cancellation.Token);
+        await WaitUntilAsync(() => gateway.AvatarUploadCalls == 1);
+        cancellation.Cancel();
+        response.SetResult("/user_avatars/1/late.png");
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        Assert.Equal(previous, session.State.Users[10]);
+        Assert.Equal(1, gateway.AvatarUploadCalls);
+    }
+
+    [Fact]
+    public async Task UploadOwnAvatarAsync_WhenNewerRealtimeAvatarArrives_DoesNotOverwriteIt()
+    {
+        var response = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var events = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var eventCalls = 0;
+        var gateway = new FakeGateway
+        {
+            UploadOwnAvatarHandler = (_, _) => response.Task,
+            GetEventsHandler = (_, token) => Interlocked.Increment(ref eventCalls) == 1 ? events.Task : Never<EventBatch>(token)
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await using var stream = new MemoryStream([1]);
+        var pending = session.UploadOwnAvatarAsync(session.AccountId!.Value, new AttachmentUpload("avatar.png", "image/png", 1, stream));
+        await WaitUntilAsync(() => gateway.AvatarUploadCalls == 1);
+        events.SetResult(new EventBatch([new UserPatchedEvent(10, null, null, null, 2,
+            HasAvatar: true, AvatarUrl: "/user_avatars/1/newest.png?x=3", AvatarVersion: 3, AvatarSource: UserAvatarSource.Uploaded)], 2));
+        await WaitUntilAsync(() => session.State.Users[10].AvatarVersion == 3);
+        response.SetResult("/user_avatars/1/old.png?x=2");
+        await pending;
+
+        Assert.Equal("/user_avatars/1/newest.png?x=3", session.State.Users[10].DisplayAvatarUrl);
+        Assert.Equal(3, session.State.Users[10].AvatarVersion);
     }
 
     [Fact]
@@ -1630,6 +2893,72 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task SetSubscriptionPreferenceAsync_WhenQueuedDuringLogout_DoesNotWriteWithAnotherSession()
+    {
+        var response = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(7, "engineering")])),
+            SetSubscriptionPreferenceHandler = (_, _) => response.Task
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var account = session.AccountId!.Value;
+        var first = session.SetSubscriptionPreferenceAsync(account, 7, SubscriptionPreference.Pinned, true);
+        await WaitUntilAsync(() => gateway.PreferenceRequests.Count == 1);
+        var queued = session.SetSubscriptionPreferenceAsync(account, 7, SubscriptionPreference.Muted, true);
+        await session.LogoutAsync();
+        await session.LoginAsync("https://another.example/", "me@example.test", "password");
+        response.SetResult(true);
+        await first;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => queued);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.SetSubscriptionPreferenceAsync(account, 7, SubscriptionPreference.Pinned, true));
+        Assert.Single(gateway.PreferenceRequests);
+        Assert.False(session.State.Subscriptions[7].IsPinned);
+        Assert.False(session.State.Subscriptions[7].IsMuted);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CloseConversationAsync_WhenTargeted_ClosesOnlyMatchingSelectionAndKeepsState(bool matches)
+    {
+        var gateway = new FakeGateway();
+        var store = new FakeAccountStore();
+        await using var session = new ClientSession(gateway, store, new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var selected = new DirectMessage([20]);
+        await session.SelectConversationAsync(selected);
+        var state = session.State;
+        await session.CloseConversationAsync(session.AccountId!.Value, matches ? selected : new DirectMessage([30]));
+        Assert.Equal(matches ? null : selected, session.SelectedConversation);
+        Assert.Same(state, session.State);
+        Assert.Empty(gateway.MarkReadRequests);
+        Assert.Equal(0, store.ClearCalls);
+        var otherAccount = AccountId.Create(RealmEndpoint.Parse("https://another.example"), 10);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.CloseConversationAsync(otherAccount, selected));
+    }
+
+    [Fact]
+    public async Task CloseConversationAsync_WhenHistoryArrivesLate_DiscardsIt()
+    {
+        var conversation = new DirectMessage([20]);
+        var response = new TaskCompletionSource<HistoryResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway { HistoryHandler = (_, _) => response.Task };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var pending = session.SelectConversationAsync(conversation);
+        await WaitUntilAsync(() => gateway.HistoryRequests.Count == 1);
+        await session.CloseConversationAsync(session.AccountId!.Value, conversation);
+        response.SetResult(new HistoryResult([new ChatMessage(99, conversation, 20, "late", DateTimeOffset.UnixEpoch)], true, true));
+        try { await pending; } catch (OperationCanceledException) { }
+        Assert.Null(session.SelectedConversation);
+        Assert.Null(session.HistoryState.Conversation);
+        Assert.DoesNotContain(99, session.State.Messages.Keys);
+        Assert.Empty(gateway.MarkReadRequests);
+    }
+
+    [Fact]
     public async Task SetSubscriptionPreferenceAsync_WhenConfirmed_UpdatesReducerState()
     {
         var gateway = new FakeGateway { RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(7, "engineering")])) };
@@ -1677,8 +3006,13 @@ public sealed class ClientSessionTests
         await session.StopAsync();
     }
 
-    [Fact]
-    public async Task SearchMessagesAsync_WhenContentFilterHasNoKeyword_ForwardsFilter()
+    [Theory]
+    [InlineData(MessageSearchFilter.Messages)]
+    [InlineData(MessageSearchFilter.Files)]
+    [InlineData(MessageSearchFilter.Images)]
+    [InlineData(MessageSearchFilter.Videos)]
+    [InlineData(MessageSearchFilter.Links)]
+    public async Task SearchMessagesAsync_WhenFilterHasNoKeyword_ForwardsFilter(MessageSearchFilter filter)
     {
         MessageSearchRequest? captured = null;
         var gateway = new FakeGateway
@@ -1693,16 +3027,260 @@ public sealed class ClientSessionTests
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
 
         await session.SearchMessagesAsync(
-            string.Empty,
+            " \t ",
             null,
             50,
             CancellationToken.None,
-            MessageSearchFilter.Links);
+            filter);
 
         Assert.NotNull(captured);
-        Assert.Equal(MessageSearchFilter.Links, captured.Filter);
+        Assert.Equal(filter, captured.Filter);
         Assert.Equal(string.Empty, captured.Query);
         await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task SearchMessagesAsync_WhenConversationIsProvided_ForwardsScopeWithQueryFilterAndCursor()
+    {
+        MessageSearchRequest? captured = null;
+        var gateway = new FakeGateway
+        {
+            SearchHandler = (request, _) =>
+            {
+                captured = request;
+                return Task.FromResult(new MessageQueryPage([], true, true, true));
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var conversation = new DirectMessage([20]);
+
+        await session.SearchMessagesAsync(" report ", 90, 25, CancellationToken.None, MessageSearchFilter.Files, conversation);
+
+        Assert.NotNull(captured);
+        Assert.Same(conversation, captured.Conversation);
+        Assert.Equal("report", captured.Query);
+        Assert.Equal(90, captured.BeforeMessageId);
+        Assert.Equal(25, captured.Limit);
+        Assert.Equal(MessageSearchFilter.Files, captured.Filter);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task SearchMessagesAsync_WhenPageContainsOnlyUnsupportedConversations_PreservesCursorForOlderResults()
+    {
+        var requests = new List<MessageSearchRequest>();
+        var older = Message(70, new DirectMessage([8]));
+        var gateway = new FakeGateway
+        {
+            SearchHandler = (request, _) =>
+            {
+                requests.Add(request);
+                return Task.FromResult(request.BeforeMessageId is null
+                    ? new MessageQueryPage(
+                        [Message(90, new ChannelTopic(999, "")), Message(80, new DirectMessage([8, 9]))],
+                        false, true, true)
+                    : new MessageQueryPage([older], true, true, true));
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var first = await session.SearchMessagesAsync(string.Empty, null, 50);
+        Assert.Empty(first.Messages);
+        Assert.False(first.FoundOldest);
+        Assert.Equal(80, first.OldestFetchedMessageId);
+        var next = await session.SearchMessagesAsync(string.Empty, first.OldestFetchedMessageId, 50);
+
+        Assert.Equal(older, Assert.Single(next.Messages));
+        Assert.True(next.FoundOldest);
+        Assert.Equal(80, requests[1].BeforeMessageId);
+        await session.StopAsync();
+    }
+
+    [Theory]
+    [InlineData(false, 599, true)]
+    [InlineData(false, 600, false)]
+    [InlineData(true, 599, true)]
+    [InlineData(true, 600, false)]
+    public async Task MessageMutation_WhenFallbackDeadlineIsReached_DoesNotSendExpiredActions(bool delete, int age, bool allowed)
+    {
+        var message = Message(51, new DirectMessage([]));
+        var calls = 0;
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(events:
+                [new MessageUpsertEvent(message, Source: DomainEventSource.Register)])),
+            EditMessageHandler = (_, _) => { calls++; return Task.CompletedTask; },
+            DeleteMessageHandler = (_, _) => { calls++; return Task.CompletedTask; }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(),
+            utcNow: () => message.Timestamp.AddSeconds(age));
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(message.Conversation);
+        Func<Task> action = () => delete ? session.DeleteMessageAsync(51) : session.EditMessageAsync(51, "changed");
+        if (allowed) await action();
+        else await Assert.ThrowsAsync<InvalidOperationException>(action);
+        Assert.Equal(allowed ? 1 : 0, calls);
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task EventLoop_WhenMessagePolicyChanges_RefreshesPolicyWithoutLosingOriginalQueueMessages()
+    {
+        var firstEvents = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refresh = new TaskCompletionSource<RegisterResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registrations = 0;
+        var polls = 0;
+        var message = Message(70, new DirectMessage([]));
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, token) => ++registrations == 1
+                ? Task.FromResult(Register() with { MessageActions = new MessageActionPolicy() })
+                : refresh.Task.WaitAsync(token),
+            GetEventsHandler = (_, token) => ++polls switch
+            {
+                1 => firstEvents.Task.WaitAsync(token),
+                2 => Task.FromResult(new EventBatch([new MessageUpsertEvent(message, 3)], 3)),
+                _ => Never<EventBatch>(token)
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(message.Conversation);
+        firstEvents.SetResult(new EventBatch([new MessageActionPolicyInvalidatedEvent(2)], 2));
+        await WaitUntilAsync(() => gateway.RegisterCalls == 2);
+        Assert.False(session.State.MessageActions.IsAvailable);
+        var policy = new MessageActionPolicy { AllowEditing = false, DeleteLimitSeconds = 90 };
+        refresh.SetResult(Register(queue: "temporary-policy-queue") with { MessageActions = policy, LastEventId = 99 });
+        await WaitUntilAsync(() => session.State.Messages.ContainsKey(70) && ReferenceEquals(policy, session.State.MessageActions) && gateway.DeleteQueueCalls == 1);
+        Assert.Same(policy, session.State.MessageActions);
+        Assert.Equal(3, session.State.LastEventId);
+        Assert.All(gateway.GetEventsRequests, request => Assert.Equal("queue-1", request.QueueId));
+        Assert.Equal("temporary-policy-queue", Assert.Single(gateway.DeleteQueueRequests).QueueId);
+        await session.LogoutAsync();
+        Assert.Same(MessageActionPolicy.Unavailable, session.State.MessageActions);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MessagePolicyRefresh_WhenLaterChangeOrFailureOccurs_ContinuesReceivingAndRejectsStalePolicy(bool fails)
+    {
+        var firstRefresh = new TaskCompletionSource<RegisterResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finalRefresh = new TaskCompletionSource<RegisterResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var nextEvents = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delay = new ControlledDelay();
+        var registrations = 0;
+        var polls = 0;
+        var message = Message(71, new DirectMessage([]));
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, token) => ++registrations switch
+            {
+                1 => Task.FromResult(Register()),
+                2 => firstRefresh.Task.WaitAsync(token),
+                _ => finalRefresh.Task.WaitAsync(token)
+            },
+            GetEventsHandler = (_, token) => ++polls switch
+            {
+                1 => Task.FromResult(new EventBatch([new MessageActionPolicyInvalidatedEvent(2)], 2)),
+                2 => nextEvents.Task.WaitAsync(token),
+                _ => Never<EventBatch>(token)
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(), delay: delay.DelayAsync);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(message.Conversation);
+        await WaitUntilAsync(() => gateway.RegisterCalls == 2);
+        nextEvents.SetResult(new EventBatch([new MessageUpsertEvent(message, 3), new MessageActionPolicyInvalidatedEvent(4)], 4));
+        await WaitUntilAsync(() => session.State.LastEventId == 4);
+        Assert.Contains(71, session.State.Messages.Keys);
+        if (fails)
+        {
+            firstRefresh.SetException(new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
+            await delay.CompleteNextAsync(TimeSpan.FromSeconds(20));
+        }
+        else firstRefresh.SetResult(Register(queue: "stale-policy-queue") with { MessageActions = new MessageActionPolicy() });
+        await WaitUntilAsync(() => gateway.RegisterCalls == 3);
+        Assert.False(session.State.MessageActions.IsAvailable);
+        Assert.Equal(ConnectionStatus.Connected, session.State.Connection.Status);
+        var policy = new MessageActionPolicy { AllowEditing = false, CanDeleteOwn = false };
+        finalRefresh.SetResult(Register(queue: "latest-policy-queue") with { MessageActions = policy });
+        await WaitUntilAsync(() => ReferenceEquals(policy, session.State.MessageActions) && gateway.DeleteQueueCalls == (fails ? 1 : 2));
+        Assert.All(gateway.GetEventsRequests, request => Assert.Equal("queue-1", request.QueueId));
+        Assert.Equal(4, session.State.LastEventId);
+        await session.StopAsync();
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task MessagePolicyRefresh_WhenServerRejectsRequest_RevokesUnauthorizedSessionOrStopsPermanentRetries(bool unauthorized)
+    {
+        var events = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var registrations = 0;
+        var polls = 0;
+        var vault = new FakeCredentialVault();
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => ++registrations == 1 ? Task.FromResult(Register()) :
+                Task.FromException<RegisterResult>(new GatewayException(
+                    unauthorized ? GatewayErrorKind.ReauthRequired : GatewayErrorKind.RequestFailed,
+                    unauthorized ? GatewayErrorCode.Unauthorized : GatewayErrorCode.RequestFailed,
+                    statusCode: unauthorized ? 401 : 403)),
+            GetEventsHandler = (_, token) => ++polls switch
+            {
+                1 => Task.FromResult(new EventBatch([new MessageActionPolicyInvalidatedEvent(2)], 2)),
+                2 => events.Task.WaitAsync(token),
+                _ => Never<EventBatch>(token)
+            }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), vault);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => gateway.RegisterCalls == 2);
+        // Await the worker only to synchronize this test with its exception handler.
+        var worker = (Task)typeof(ClientSession).GetField("_messageActionPolicyRefresh",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(session)!;
+        await worker.WaitAsync(TimeSpan.FromSeconds(3));
+        if (unauthorized)
+        {
+            Assert.Equal(ConnectionStatus.ReauthRequired, session.State.Connection.Status);
+            Assert.Null(vault.Credential);
+            Assert.Null(session.CurrentUserId);
+        }
+        else
+        {
+            events.SetResult(new EventBatch([new HeartbeatEvent(3)], 3));
+            await WaitUntilAsync(() => gateway.GetEventsCalls == 3);
+            Assert.Equal(2, gateway.RegisterCalls);
+            Assert.Equal(ConnectionStatus.Connected, session.State.Connection.Status);
+            Assert.False(session.State.MessageActions.IsAvailable);
+        }
+        await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task MessagePolicyRefresh_WhenTemporaryQueueCleanupDisconnects_StillAllowsLogout()
+    {
+        var registrations = 0;
+        var polls = 0;
+        var vault = new FakeCredentialVault();
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(++registrations == 1 ? Register() : Register(queue: "temporary-policy-queue")),
+            GetEventsHandler = (_, token) => ++polls == 1
+                ? Task.FromResult(new EventBatch([new MessageActionPolicyInvalidatedEvent(2)], 2))
+                : Never<EventBatch>(token),
+            DeleteQueueHandler = (request, _) => request.QueueId == "temporary-policy-queue"
+                ? Task.FromException(new IOException("disconnected")) : Task.CompletedTask
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), vault);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => gateway.DeleteQueueCalls == 1);
+        await session.LogoutAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Null(vault.Credential);
+        Assert.Equal(ConnectionStatus.SignedOut, session.State.Connection.Status);
     }
 
     [Fact]
@@ -2036,6 +3614,124 @@ public sealed class ClientSessionTests
         Assert.Empty(session.State.Messages);
         await session.StopAsync();
     }
+
+    [Fact]
+    public async Task ConversationSettingsReads_WhenAllPending_StartGatewayRequestsIndependently()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway
+        {
+            ChannelDetailsHandler = async (_, _) => { await release.Task; return Details(7, "group"); },
+            ChannelMembersHandler = async (_, _) => { await release.Task; return new long[] { 10 }; },
+            RealmUsersHandler = async (_, _) => { await release.Task; return new UserProfile[] { new(10, "Me") }; }
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+
+        var details = session.LoadChannelDetailsAsync(7);
+        var members = session.GetChannelMemberIdsAsync(7);
+        var users = session.GetRealmUsersAsync();
+        Assert.Single(gateway.ChannelDetailsRequests);
+        Assert.Single(gateway.ChannelMemberRequests);
+        Assert.Single(gateway.RealmUsersRequests);
+        Assert.False(details.IsCompleted);
+        Assert.False(members.IsCompleted);
+        Assert.False(users.IsCompleted);
+
+        release.SetResult();
+        await Task.WhenAll(details, members, users);
+    }
+
+    [Theory]
+    [InlineData("details", false)]
+    [InlineData("members", false)]
+    [InlineData("users", false)]
+    [InlineData("details", true)]
+    [InlineData("members", true)]
+    [InlineData("users", true)]
+    public async Task ConversationSettingsReads_WhenOldUnauthorizedArrivesAfterLogin_KeepsCurrentCredentials(
+        string operation, bool sameAccount)
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway
+        {
+            ChannelDetailsHandler = async (_, _) => { await release.Task; throw SettingsUnauthorized(); },
+            ChannelMembersHandler = async (_, _) => { await release.Task; throw SettingsUnauthorized(); },
+            RealmUsersHandler = async (_, _) => { await release.Task; throw SettingsUnauthorized(); }
+        };
+        var vault = new FakeCredentialVault();
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), vault);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var read = ReadConversationSettingsAsync(session, operation);
+
+        await session.LogoutAsync();
+        await session.LoginAsync(sameAccount ? "https://zulip.example/" : "https://other.example/", "me@example.test", "password");
+        var current = vault.Credential;
+        var removedBefore = vault.RemoveCalls;
+        release.SetResult();
+        await Assert.ThrowsAsync<GatewayException>(() => read);
+
+        Assert.Same(current, vault.Credential);
+        Assert.Equal(removedBefore, vault.RemoveCalls);
+        Assert.Equal(ConnectionStatus.Connected, session.State.Connection.Status);
+    }
+
+    [Theory]
+    [InlineData("details", false)]
+    [InlineData("members", false)]
+    [InlineData("users", false)]
+    [InlineData("details", true)]
+    [InlineData("members", true)]
+    [InlineData("users", true)]
+    public async Task ConversationSettingsReads_WhenUnauthorizedCleanupIsPending_LoginOrRestoreWaitsForRemoval(
+        string operation, bool restore)
+    {
+        var releaseRemoval = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var removalStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var vault = new FakeCredentialVault
+        {
+            BeforeRemoveAsync = () => { removalStarted.TrySetResult(); return releaseRemoval.Task; }
+        };
+        var gateway = new FakeGateway
+        {
+            ChannelDetailsHandler = (_, _) => Task.FromException<ChannelDetails>(SettingsUnauthorized()),
+            ChannelMembersHandler = (_, _) => Task.FromException<IReadOnlyList<long>>(SettingsUnauthorized()),
+            RealmUsersHandler = (_, _) => Task.FromException<IReadOnlyList<UserProfile>>(SettingsUnauthorized())
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), vault);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        var read = ReadConversationSettingsAsync(session, operation);
+        await removalStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Task restart = restore ? session.RestoreAsync() : session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        Assert.False(restart.IsCompleted);
+        releaseRemoval.SetResult();
+        await Assert.ThrowsAsync<GatewayException>(() => read);
+        await restart.WaitAsync(TimeSpan.FromSeconds(5));
+
+        if (restore)
+        {
+            Assert.False(await (Task<bool>)restart);
+            Assert.Null(vault.Credential);
+        }
+        else
+        {
+            Assert.NotNull(vault.Credential);
+            Assert.Equal(ConnectionStatus.Connected, session.State.Connection.Status);
+        }
+        Assert.Equal(1, vault.RemoveCalls);
+    }
+
+    private static Task ReadConversationSettingsAsync(ClientSession session, string operation) => operation switch
+    {
+        "details" => session.LoadChannelDetailsAsync(7),
+        "members" => session.GetChannelMemberIdsAsync(7),
+        "users" => session.GetRealmUsersAsync(),
+        _ => throw new ArgumentOutOfRangeException(nameof(operation))
+    };
+
+    private static GatewayException SettingsUnauthorized() =>
+        new(GatewayErrorKind.ReauthRequired, GatewayErrorCode.Unauthorized, 401);
 
     [Fact]
     public async Task GetRealmUsersAsync_WhenConnected_ReturnsGatewaySnapshotWithoutMutatingState()
@@ -2985,6 +4681,7 @@ public sealed class ClientSessionTests
         public Exception? GetFailure { get; set; }
         public Exception? SetFailure { get; set; }
         public Exception? RemoveFailure { get; set; }
+        public Func<Task>? BeforeRemoveAsync { get; set; }
         public int RemoveCalls { get; private set; }
 
         public Task<CredentialEnvelope?> GetAsync(CancellationToken cancellationToken = default)
@@ -3002,13 +4699,13 @@ public sealed class ClientSessionTests
             return Task.CompletedTask;
         }
 
-        public Task RemoveAsync(CancellationToken cancellationToken = default)
+        public async Task RemoveAsync(CancellationToken cancellationToken = default)
         {
             log?.Add("vault:remove");
             RemoveCalls++;
-            if (RemoveFailure is not null) return Task.FromException(RemoveFailure);
+            if (RemoveFailure is not null) throw RemoveFailure;
+            if (BeforeRemoveAsync is not null) await BeforeRemoveAsync();
             Credential = null;
-            return Task.CompletedTask;
         }
     }
 
@@ -3016,6 +4713,7 @@ public sealed class ClientSessionTests
     {
         public StoredAccount? Account { get; set; }
         public ClientState SnapshotState { get; set; } = ClientState.Empty;
+        public bool PreserveMessagesOnRegister { get; set; }
         public IReadOnlyList<ConversationKey> RecentDirectMessages { get; set; } = [];
         public bool IsUnlocked { get; set; } = true;
         public int ClearCalls { get; private set; }
@@ -3093,7 +4791,11 @@ public sealed class ClientSessionTests
             StoredPages.Add(messages.ToArray());
             SnapshotState = DomainReducer.Apply(
                 SnapshotState,
-                messages.Select(message => new MessageUpsertEvent(message, Source: DomainEventSource.History)));
+                messages.Select(message => new MessageUpsertEvent(message, Source: DomainEventSource.History))) with
+            {
+                // Match SQLite: a fetched page does not replace authoritative unread counts.
+                Unread = SnapshotState.Unread
+            };
         }
 
         public Task<IReadOnlyList<TopicSummary>> QueryTopicSummariesAsync(
@@ -3113,10 +4815,11 @@ public sealed class ClientSessionTests
         {
             log?.Add("store:replace");
             SnapshotState = new ClientState(
+                messages: PreserveMessagesOnRegister ? SnapshotState.Messages : null,
                 subscriptions: snapshot.Subscriptions.ToDictionary(item => item.ChannelId),
                 users: snapshot.Users.ToDictionary(item => item.UserId),
                 unread: snapshot.Unread);
-            SnapshotState = DomainReducer.Apply(SnapshotState, snapshot.Events);
+            SnapshotState = DomainReducer.Apply(SnapshotState, snapshot.Events) with { Unread = snapshot.Unread };
             return Task.CompletedTask;
         }
 
@@ -3192,10 +4895,20 @@ public sealed class ClientSessionTests
         public int TopicsCalls { get; private set; }
         public int DeleteQueueCalls { get; private set; }
         public int UploadCalls { get; private set; }
+        public int AvatarUploadCalls { get; private set; }
+        public int NameUpdateCalls { get; private set; }
+        public Func<UpdateOwnNameRequest, CancellationToken, Task<string>>? UpdateOwnNameHandler { get; set; }
+        public Task<string> UpdateOwnNameAsync(UpdateOwnNameRequest request, CancellationToken cancellationToken = default)
+        {
+            NameUpdateCalls++;
+            return UpdateOwnNameHandler?.Invoke(request, cancellationToken) ?? Task.FromResult(request.FullName);
+        }
+        public Func<UploadAttachmentRequest, CancellationToken, Task<string>>? UploadOwnAvatarHandler { get; set; }
         public int CancelledLongPolls { get; private set; }
         public TaskCompletionSource<bool> RegisterEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource<bool> AuthenticateEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Exception? ProbeFailure { get; set; }
+        public Func<Task<RealmProbeResult>>? ProbeHandler { get; set; }
         public Exception? AuthenticateFailure { get; set; }
         public bool BlockAuthenticationUntilCancelled { get; set; }
         public List<HistoryRequest> HistoryRequests { get; } = [];
@@ -3263,6 +4976,7 @@ public sealed class ClientSessionTests
             log?.Add("gateway:probe");
             ProbeCalls++;
             if (ProbeFailure is not null) return Task.FromException<RealmProbeResult>(ProbeFailure);
+            if (ProbeHandler is not null) return ProbeHandler();
             return Task.FromResult(new RealmProbeResult(realm, "10", 500, false, true));
         }
 
@@ -3356,6 +5070,12 @@ public sealed class ClientSessionTests
 
         public Task SetMessageStarredAsync(SetMessageStarredRequest request, CancellationToken cancellationToken = default) =>
             SetMessageStarredHandler?.Invoke(request, cancellationToken) ?? Task.CompletedTask;
+
+        public Task<string> UploadOwnAvatarAsync(UploadAttachmentRequest request, CancellationToken cancellationToken = default)
+        {
+            AvatarUploadCalls++;
+            return UploadOwnAvatarHandler?.Invoke(request, cancellationToken) ?? Task.FromResult("/user_avatars/1/avatar.png?x=2");
+        }
 
         public Task<UploadedAttachment> UploadAttachmentAsync(UploadAttachmentRequest request, CancellationToken cancellationToken = default)
         {

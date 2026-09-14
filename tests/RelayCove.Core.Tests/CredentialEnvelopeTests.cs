@@ -57,7 +57,7 @@ public sealed class CredentialEnvelopeTests
             new HistoryRequest(credential, new ChannelTopic(42, "topic-secret"), 1234),
             new RegisterRequest(credential, ["event-secret"]),
             new TopicsRequest(credential, 42),
-            new MarkReadRequest(credential, new ChannelTopic(42, "topic-secret"), 1234)
+            new MarkReadRequest(credential, [1234])
         ];
 
         foreach (var request in requests)

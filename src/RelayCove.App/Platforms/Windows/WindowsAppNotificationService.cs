@@ -1,8 +1,10 @@
 using System.Runtime.InteropServices;
+using Microsoft.Toolkit.Uwp.Notifications;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
 using Microsoft.Windows.BadgeNotifications;
 using RelayCove.App.Services;
+using RelayCove.Core;
 using WinRT.Interop;
 
 namespace RelayCove.App.Platforms.Windows;
@@ -13,20 +15,30 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     private const uint FlashWindowTray = 0x00000002;
     private const uint FlashWindowTimerNoForeground = 0x0000000C;
     private const int ShowWindowRestore = 9;
+    private const string DesktopToastGroup = "relaycove-live";
+    private const string DesktopToastAppId = "com.relaycove.client.desktop";
     private readonly TaskbarUnreadOverlay _taskbarUnreadOverlay = new();
+    private readonly WindowsNotificationSoundPlayer _notificationSound = new();
     private readonly INotificationAvatarFileStore _notificationAvatarFileStore;
     private readonly IUiDispatcher _dispatcher;
     private readonly IWindowShellAdapter _windowShellAdapter;
+    private readonly IClientSession? _session;
+    private AccountId? _notificationAccountId;
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private WindowsTrayIconController? _trayIconController;
     private Window? _window;
     private AppNotificationManager? _manager;
+    private ToastNotifierCompat? _desktopNotifier;
+    private bool _desktopActivationSubscribed;
+    private AccountId? _desktopNotificationAccountId;
+    private string _desktopActivationToken = Guid.NewGuid().ToString("N");
     private nint _windowHandle;
     private int _pendingUnreadCount;
     private bool _pendingUnreadIsTruncated;
     private int _pendingTrayUnreadCount;
     private bool _pendingTrayUnreadIsTruncated;
     private long _trayPreviewGeneration;
+    private AppMessageNotification? _trayPreviewNotification;
     private bool _registered;
     private bool _disposed;
     private string _systemNotificationStatus = "等待窗口初始化。";
@@ -36,21 +48,53 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     public event EventHandler<RelayCove.App.Services.AppNotificationActivatedEventArgs>? NotificationActivated;
 
     public bool IsSystemNotificationSupported =>
-        _registered && _manager?.Setting == AppNotificationSetting.Enabled;
+        _registered && (_desktopNotifier is not null
+            ? _desktopNotifier.Setting == global::Windows.UI.Notifications.NotificationSetting.Enabled
+            : _manager?.Setting == AppNotificationSetting.Enabled);
 
     public string SystemNotificationStatus => _systemNotificationStatus;
     public string TaskbarBadgeStatus => _taskbarBadgeStatus;
 
+    internal static void PrepareProcessNotificationIdentity()
+    {
+        // Windows requires an explicit identity before creating windows. Registration
+        // below checks the result again and reports failure without preventing startup.
+        if (WindowsProcessEnvironment.IsElevated()) _ = SetCurrentProcessExplicitAppUserModelID(DesktopToastAppId);
+    }
+
     public WindowsAppNotificationService(
         INotificationAvatarFileStore notificationAvatarFileStore,
         IUiDispatcher dispatcher,
-        IWindowShellAdapter windowShellAdapter)
+        IWindowShellAdapter windowShellAdapter,
+        IClientSession? session = null)
     {
         _notificationAvatarFileStore = notificationAvatarFileStore ??
                                        throw new ArgumentNullException(nameof(notificationAvatarFileStore));
         _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         _windowShellAdapter = windowShellAdapter ?? throw new ArgumentNullException(nameof(windowShellAdapter));
+        _notificationAvatarFileStore.AvatarChanged += OnAvatarChanged;
+        _session = session;
+        _notificationAccountId = session?.AccountId;
+        if (_session is not null) _session.StateChanged += OnSessionStateChanged;
     }
+
+    private void OnSessionStateChanged(object? sender, ClientStateChangedEventArgs args) => _dispatcher.Dispatch(() =>
+    {
+        RefreshDesktopNotificationAccount();
+        if (_disposed || _notificationAccountId == _session?.AccountId) return;
+        _notificationAccountId = _session?.AccountId;
+        _trayPreviewNotification = null;
+        Interlocked.Increment(ref _trayPreviewGeneration);
+        UpdateTrayUnread(0, false);
+    });
+
+    private void OnAvatarChanged(object? sender, AvatarChangedEventArgs args) => _dispatcher.Dispatch(() =>
+    {
+        if (_disposed || args.AccountId != _notificationAccountId || args.AccountId != _session?.AccountId ||
+            _trayPreviewNotification is not { } notification ||
+            notification.SenderAvatarUrl != args.SourceUrl) return;
+        _ = UpdateTrayPreviewAvatarAsync(notification, Interlocked.Read(ref _trayPreviewGeneration));
+    });
 
     public void Attach(Window window)
     {
@@ -68,8 +112,7 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     public void ShowMessageNotification(AppMessageNotification notification)
     {
         ArgumentNullException.ThrowIfNull(notification);
-        if (_disposed || !_registered || _manager is null ||
-            _manager.Setting != AppNotificationSetting.Enabled) return;
+        if (_disposed || !IsSystemNotificationSupported) return;
 
         _ = ShowMessageNotificationAsync(notification);
     }
@@ -80,6 +123,8 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
         if (_disposed) return;
 
         var generation = Interlocked.Increment(ref _trayPreviewGeneration);
+        _notificationAccountId = _session?.AccountId;
+        _trayPreviewNotification = notification;
         _trayIconController?.UpdatePreview(notification, null);
         _ = UpdateTrayPreviewAvatarAsync(notification, generation);
     }
@@ -88,6 +133,7 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
         AppMessageNotification notification,
         long generation)
     {
+        var accountId = _session?.AccountId;
         Uri? avatarUri = null;
         if (!string.IsNullOrWhiteSpace(notification.SenderAvatarUrl))
         {
@@ -110,13 +156,14 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
 
         _dispatcher.Dispatch(() =>
         {
-            if (_disposed || generation != Interlocked.Read(ref _trayPreviewGeneration)) return;
+            if (_disposed || accountId != _session?.AccountId || generation != Interlocked.Read(ref _trayPreviewGeneration)) return;
             _trayIconController?.UpdatePreview(notification, avatarUri);
         });
     }
 
     private async Task ShowMessageNotificationAsync(AppMessageNotification notification)
     {
+        var accountId = _session?.AccountId;
         Uri? avatarUri = null;
         if (!string.IsNullOrWhiteSpace(notification.SenderAvatarUrl))
         {
@@ -137,16 +184,35 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
             }
         }
 
-        _dispatcher.Dispatch(() => TryShowNotification(notification, avatarUri));
+        _dispatcher.Dispatch(() =>
+        {
+            if (accountId == _session?.AccountId) TryShowNotification(notification, avatarUri);
+        });
     }
 
     private void TryShowNotification(AppMessageNotification notification, Uri? avatarUri)
     {
-        if (_disposed || !_registered || _manager is null ||
-            _manager.Setting != AppNotificationSetting.Enabled) return;
+        if (_disposed || !IsSystemNotificationSupported) return;
         try
         {
-            _manager.Show(BuildNotification(notification, avatarUri));
+            if (_desktopNotifier is not null)
+            {
+                RefreshDesktopNotificationAccount();
+                var xml = new global::Windows.Data.Xml.Dom.XmlDocument();
+                xml.LoadXml(WindowsDesktopToastPayload.Build(notification, avatarUri, _desktopActivationToken));
+                var toast = new global::Windows.UI.Notifications.ToastNotification(xml)
+                {
+                    Group = DesktopToastGroup,
+                    Tag = Guid.NewGuid().ToString("N")[..16]
+                };
+                toast.Failed += OnDesktopToastFailed;
+                _desktopNotifier.Show(toast);
+            }
+            else
+            {
+                _manager!.Show(BuildNotification(notification, avatarUri));
+            }
+            _ = _notificationSound.TryPlay();
         }
         catch (Exception)
         {
@@ -159,6 +225,7 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
         var builder = new AppNotificationBuilder()
             .AddText(notification.Title)
             .AddText(notification.Body)
+            .MuteAudio()
             .AddArgument("conversation", notification.ConversationKey);
         if (CanUseAvatarUri(avatarUri))
         {
@@ -178,6 +245,7 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
             _pendingTrayUnreadCount == 0 && !_pendingTrayUnreadIsTruncated)
         {
             Interlocked.Increment(ref _trayPreviewGeneration);
+            _trayPreviewNotification = null;
         }
         _trayIconController?.UpdateUnread(_pendingTrayUnreadCount, _pendingTrayUnreadIsTruncated);
     }
@@ -186,7 +254,9 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     {
         _pendingUnreadCount = Math.Max(0, count);
         _pendingUnreadIsTruncated = isTruncated;
-        if (_disposed || _windowHandle == 0) return;
+        if (_disposed) return;
+        _trayIconController?.UpdateBadgeVisibility(_pendingUnreadCount > 0 || _pendingUnreadIsTruncated);
+        if (_windowHandle == 0) return;
 
         var mode = ResolveBadgeMode(_pendingUnreadCount, _pendingUnreadIsTruncated);
         var systemBadgeUpdated = false;
@@ -244,7 +314,9 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
 
     public void FlashTaskbar()
     {
-        if (_disposed || _windowHandle == 0) return;
+        if (_disposed) return;
+        _trayIconController?.StartFlashing();
+        if (_windowHandle == 0) return;
         var info = new FlashWindowInfo
         {
             Size = (uint)Marshal.SizeOf<FlashWindowInfo>(),
@@ -254,7 +326,6 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
             Timeout = 0
         };
         _ = FlashWindowEx(ref info);
-        _trayIconController?.StartFlashing();
     }
 
     public void StopTaskbarFlash()
@@ -298,6 +369,13 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     private void RegisterSystemNotifications()
     {
         if (_registered || _disposed) return;
+        // WinAppSDK refuses every elevated process. The classic desktop Toast API
+        // supports our unpackaged app and still displays Windows banners/Action Center.
+        if (WindowsProcessEnvironment.IsElevated())
+        {
+            RegisterDesktopSystemNotifications();
+            return;
+        }
         AppNotificationManager? manager = null;
         try
         {
@@ -321,6 +399,76 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
             _registered = false;
             SetStatus("系统通知注册失败；请确认应用未以管理员身份运行。", force: true);
         }
+    }
+
+    private void RegisterDesktopSystemNotifications()
+    {
+        try
+        {
+            // Give the desktop notifier and the existing sound policy the same identity.
+            Marshal.ThrowExceptionForHR(SetCurrentProcessExplicitAppUserModelID(DesktopToastAppId));
+            ToastNotificationManagerCompat.OnActivated += OnDesktopToastActivated;
+            _desktopActivationSubscribed = true;
+            _desktopNotifier = ToastNotificationManagerCompat.CreateToastNotifier();
+            _registered = true;
+            ClearDesktopNotifications();
+            SetStatus(DescribeDesktopSetting(_desktopNotifier.Setting), force: true);
+        }
+        catch
+        {
+            DetachDesktopNotifications();
+            _registered = false;
+            SetStatus("系统通知注册失败；请检查 Windows 通知设置。", force: true);
+        }
+    }
+
+    private void RefreshDesktopNotificationAccount()
+    {
+        if (_desktopNotificationAccountId == _session?.AccountId) return;
+        ClearDesktopNotifications();
+        _desktopNotificationAccountId = _session?.AccountId;
+        _desktopActivationToken = Guid.NewGuid().ToString("N");
+    }
+
+    private void OnDesktopToastActivated(ToastNotificationActivatedEventArgsCompat args)
+    {
+        _dispatcher.Dispatch(() =>
+        {
+            if (_disposed || _desktopNotificationAccountId != _session?.AccountId) return;
+            var conversation = WindowsDesktopToastPayload.GetConversation(args.Argument, _desktopActivationToken);
+            if (conversation is not null) ActivateTrayIcon(conversation);
+        });
+    }
+
+    private void OnDesktopToastFailed(global::Windows.UI.Notifications.ToastNotification sender,
+        global::Windows.UI.Notifications.ToastFailedEventArgs args) => _dispatcher.Dispatch(() =>
+    {
+        if (!_disposed) SetStatus("Windows 未能显示系统通知；请检查系统通知设置。");
+    });
+
+    internal static string DescribeDesktopSetting(global::Windows.UI.Notifications.NotificationSetting setting) => setting switch
+    {
+        global::Windows.UI.Notifications.NotificationSetting.Enabled => "系统通知已接入；实际横幅仍受 Windows 通知设置控制。",
+        global::Windows.UI.Notifications.NotificationSetting.DisabledForApplication => "Windows 已关闭 RichChat 的系统通知。",
+        global::Windows.UI.Notifications.NotificationSetting.DisabledForUser => "Windows 已关闭当前用户的系统通知。",
+        global::Windows.UI.Notifications.NotificationSetting.DisabledByGroupPolicy => "系统通知已被 Windows 组策略关闭。",
+        global::Windows.UI.Notifications.NotificationSetting.DisabledByManifest => "当前应用清单未启用系统通知。",
+        _ => "当前 Windows 环境不支持系统通知。"
+    };
+
+    private void DetachDesktopNotifications()
+    {
+        ClearDesktopNotifications();
+        if (_desktopActivationSubscribed) ToastNotificationManagerCompat.OnActivated -= OnDesktopToastActivated;
+        _desktopActivationSubscribed = false;
+        _desktopNotifier = null;
+    }
+
+    private void ClearDesktopNotifications()
+    {
+        if (_desktopNotifier is null) return;
+        try { ToastNotificationManagerCompat.History.RemoveGroup(DesktopToastGroup); }
+        catch { /* Cleanup must not interrupt account changes or application shutdown. */ }
     }
 
     private void OnNotificationInvoked(
@@ -396,8 +544,12 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     {
         if (_disposed) return;
         _disposed = true;
+        _notificationAvatarFileStore.AvatarChanged -= OnAvatarChanged;
+        if (_session is not null) _session.StateChanged -= OnSessionStateChanged;
+        _trayPreviewNotification = null;
         _lifetimeCancellation.Cancel();
         DetachWindow();
+        DetachDesktopNotifications();
         if (_manager is not null)
         {
             try
@@ -411,6 +563,7 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
         }
         _manager = null;
         _registered = false;
+        _notificationSound.Dispose();
         _taskbarUnreadOverlay.Dispose();
         _lifetimeCancellation.Dispose();
     }
@@ -436,6 +589,9 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetForegroundWindow(nint windowHandle);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
 }
 
 internal enum TaskbarBadgeMode

@@ -6,5 +6,6 @@ public enum SettingsCategory
     General,
     Notifications,
     Storage,
-    Account
+    Account,
+    About
 }

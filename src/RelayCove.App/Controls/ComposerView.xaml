@@ -10,13 +10,14 @@
     <Border Margin="15,0,15,14"
             HeightRequest="{Binding ComposerDisplayHeight}"
             MinimumHeightRequest="128"
-            Background="{StaticResource SurfaceSoftBrush}"
+            Background="{StaticResource ChatBackgroundBrush}"
             Stroke="{StaticResource BorderBrush}"
             StrokeThickness="1">
         <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
         <Border.Behaviors>
             <windowsBehaviors:FileDropBehavior
-                Command="{Binding ViewModel.AddDroppedAttachmentsCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
+                Command="{Binding ViewModel.DropAttachmentsCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
+                IsDropEnabled="{Binding ViewModel.CanCompose, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
                 IsDragActive="{Binding ViewModel.IsFileDragActive, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}" />
         </Border.Behaviors>
 
@@ -46,30 +47,14 @@
                                      FontSize="{DynamicResource BaseFontSize}"
                                      TextColor="{AppThemeBinding Light={StaticResource LightTextColor}, Dark={StaticResource DarkTextColor}}"
                                      Text="{Binding ComposerText, Mode=TwoWay}"
+                                     RealmEmojis="{Binding RealmEmojis}"
                                      IsEnabled="{Binding CanCompose}"
                                      SendCommand="{Binding ViewModel.SendCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
-                                     PasteImageCommand="{Binding ViewModel.AddPastedImageCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
+                                     PasteAttachmentsCommand="{Binding ViewModel.PasteAttachmentsCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
                                      CursorPosition="{Binding ViewModel.ComposerCursorPosition, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}"
                                      SelectionLength="{Binding ViewModel.ComposerSelectionLength, Source={x:Reference Root}, Mode=TwoWay, x:DataType=controls:ComposerView}"
                                      FocusRequest="{Binding ViewModel.ComposerFocusRequest, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
                                      SemanticProperties.Description="多行消息输入框；Enter 发送，Ctrl+Enter 换行" />
-            <Label Grid.Row="2"
-                   Margin="17,7,13,7"
-                   Text="{Binding ComposerPlaceholder}"
-                   FontFamily="{StaticResource RelayCoveFontFamily}"
-                   FontSize="{DynamicResource BaseFontSize}"
-                   TextColor="{AppThemeBinding Light={StaticResource LightMutedColor}, Dark={StaticResource DarkMutedColor}}"
-                   HorizontalOptions="Start"
-                   VerticalOptions="Start"
-                   InputTransparent="True"
-                   IsVisible="False">
-                <Label.Triggers>
-                    <DataTrigger TargetType="Label" Binding="{Binding ComposerText}" Value="">
-                        <Setter Property="IsVisible" Value="True" />
-                    </DataTrigger>
-                </Label.Triggers>
-            </Label>
-
             <VerticalStackLayout Grid.Row="1" Margin="10,0,10,4" Spacing="3">
                 <CollectionView ItemsSource="{Binding Attachments}"
                                 IsVisible="{Binding HasAttachments}"
@@ -122,7 +107,7 @@
                                                  IsEnabled="{Binding CanRemove}"
                                                  Command="{Binding ViewModel.RemoveAttachmentCommand, Source={x:Reference Root}, x:DataType=controls:ComposerView}"
                                                  CommandParameter="{Binding .}"
-                                                 SemanticProperties.Description="移除附件草稿" />
+                                                 SemanticProperties.Description="取消上传并移除附件草稿" />
                                 </Grid>
                             </Border>
                         </DataTemplate>
@@ -159,8 +144,6 @@
                 <Button Grid.Column="3"
                         AutomationId="ComposerSendButton"
                         Text="发送"
-                        ImageSource="icon_send.png"
-                        ContentLayout="Left,5"
                         Style="{StaticResource ComposerSendButtonStyle}"
                         HeightRequest="32"
                         MinimumHeightRequest="32"

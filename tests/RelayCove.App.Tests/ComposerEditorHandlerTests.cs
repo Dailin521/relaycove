@@ -1,9 +1,45 @@
 using RelayCove.App.Platforms.Windows.Handlers;
+using RelayCove.App.ViewModels;
+using RelayCove.Core;
 
 namespace RelayCove.App.Tests;
 
 public sealed class ComposerEditorHandlerTests
 {
+    [Fact]
+    public void ComposerDocumentText_WhenImagesAndNewlinesExist_ReconstructsRawDraftAndSelectionOffsets()
+    {
+        var document = new ComposerDocumentText("你\uFFFC好\r\uFFFC🚀", new Dictionary<int, string>
+        {
+            [1] = ":party:", [4] = ":rocket:"
+        });
+
+        Assert.Equal("你:party:好\r\n:rocket:🚀", document.RawText);
+        Assert.Equal(1, document.ToTextIndex(1));
+        Assert.Equal(8, document.ToTextIndex(2));
+        Assert.Equal(11, document.ToTextIndex(4));
+        Assert.Equal(19, document.ToTextIndex(5));
+        foreach (var index in new[] { 0, 1, 2, 3, 4, 5, 7 })
+            Assert.Equal(index, document.ToDocumentIndex(document.ToTextIndex(index)));
+        Assert.Equal(1, document.ToDocumentIndex(4));
+        Assert.Equal(7, document.ToDocumentIndex(int.MaxValue));
+    }
+
+    [Fact]
+    public void CreateRuns_WhenUsedForComposer_PreservesEveryRawCharacterIncludingUnicodeShortcodesAndCode()
+    {
+        const string raw = "你:party: :rocket: :+1: `:party:` https://example.test/:party:/x";
+        var emojis = new Dictionary<string, RealmEmoji>
+        {
+            ["1"] = new("1", "party", "/user_avatars/1/emoji/images/1.png", false)
+        };
+
+        var runs = EmojiShortcodeCatalog.CreateRuns(raw, emojis, replaceUnicode: false);
+
+        Assert.Equal(raw, string.Concat(runs.Select(run => run.Text)));
+        Assert.Equal(":party:", Assert.Single(runs, run => run.EmojiSourceUrl is not null).Text);
+    }
+
     [Fact]
     public void DocumentText_WhenMixedNewlines_RoundTripsAsWindowsText()
     {

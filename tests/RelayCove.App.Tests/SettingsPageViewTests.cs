@@ -3,6 +3,25 @@ namespace RelayCove.App.Tests;
 public sealed class SettingsPageViewTests
 {
     [Fact]
+    public void General_WhenRendered_ExposesStartupSwitchAndFailureStatus()
+    {
+        var document = System.Xml.Linq.XDocument.Load(FindWorkspaceFile(
+            "src", "RelayCove.App", "Controls", "SettingsPageView.xaml"));
+        System.Xml.Linq.XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+        var general = Assert.Single(document.Descendants(maui + "VerticalStackLayout"),
+            element => (string?)element.Attribute("IsVisible") == "{Binding IsGeneralSettings}");
+        var toggle = Assert.Single(general.Descendants(maui + "Switch"));
+
+        Assert.Equal("{Binding StartWithWindows, Mode=TwoWay}", (string?)toggle.Attribute("IsToggled"));
+        Assert.Equal("{Binding CanChangeStartup}", (string?)toggle.Attribute("IsEnabled"));
+        Assert.Contains(general.Descendants(maui + "Label"), label =>
+            (string?)label.Attribute("Text") == "开机启动");
+        Assert.Contains(general.Descendants(maui + "Label"), label =>
+            (string?)label.Attribute("Text") == "{Binding StartupSettingsStatus}" &&
+            (string?)label.Attribute("IsVisible") == "{Binding HasStartupSettingsStatus}");
+    }
+
+    [Fact]
     public void Notifications_WhenRendered_ExposeNativeControlsAndRemovePlaceholder()
     {
         var source = File.ReadAllText(FindWorkspaceFile(

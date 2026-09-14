@@ -1,9 +1,19 @@
 using System.Windows.Input;
+using RelayCove.Core;
 
 namespace RelayCove.App.Controls;
 
 public sealed class ComposerEditor : View
 {
+    public static readonly BindableProperty RealmEmojisProperty = BindableProperty.Create(
+        nameof(RealmEmojis), typeof(IReadOnlyDictionary<string, RealmEmoji>), typeof(ComposerEditor));
+
+    public IReadOnlyDictionary<string, RealmEmoji>? RealmEmojis
+    {
+        get => (IReadOnlyDictionary<string, RealmEmoji>?)GetValue(RealmEmojisProperty);
+        set => SetValue(RealmEmojisProperty, value);
+    }
+
     public static readonly BindableProperty TextProperty = BindableProperty.Create(
         nameof(Text),
         typeof(string),
@@ -54,8 +64,8 @@ public sealed class ComposerEditor : View
         typeof(ICommand),
         typeof(ComposerEditor));
 
-    public static readonly BindableProperty PasteImageCommandProperty = BindableProperty.Create(
-        nameof(PasteImageCommand),
+    public static readonly BindableProperty PasteAttachmentsCommandProperty = BindableProperty.Create(
+        nameof(PasteAttachmentsCommand),
         typeof(ICommand),
         typeof(ComposerEditor));
 
@@ -107,9 +117,9 @@ public sealed class ComposerEditor : View
         set => SetValue(SendCommandProperty, value);
     }
 
-    public ICommand? PasteImageCommand
+    public ICommand? PasteAttachmentsCommand
     {
-        get => (ICommand?)GetValue(PasteImageCommandProperty);
-        set => SetValue(PasteImageCommandProperty, value);
+        get => (ICommand?)GetValue(PasteAttachmentsCommandProperty);
+        set => SetValue(PasteAttachmentsCommandProperty, value);
     }
 }

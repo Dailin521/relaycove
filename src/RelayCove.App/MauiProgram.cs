@@ -18,10 +18,12 @@ public static class MauiProgram
         var builder = MauiApp.CreateBuilder();
         builder
             .UseMauiApp<App>()
+            .ConfigureImageSources(sources => sources.AddService<RealmImageSource, RealmImageSourceService>())
             .ConfigureMauiHandlers(handlers =>
             {
                 handlers.AddHandler<ComposerEditor, ComposerEditorHandler>();
                 handlers.AddHandler<NativeColorPicker, NativeColorPickerHandler>();
+                handlers.AddHandler<MessageEmojiLabel, MessageEmojiLabelHandler>();
             });
 
 #if DEBUG
@@ -34,11 +36,13 @@ public static class MauiProgram
         builder.Services.AddSingleton<IUiDispatcher, MauiUiDispatcher>();
         builder.Services.AddSingleton<IAppearanceService, MauiAppearanceService>();
         builder.Services.AddSingleton<IUiPreferencesService, MauiUiPreferencesService>();
+        builder.Services.AddSingleton<IStartupService, WindowsStartupService>();
         builder.Services.AddSingleton<INotificationPreferencesService, MauiNotificationPreferencesService>();
         builder.Services.AddSingleton<IConversationPreferencesStore, MauiConversationPreferencesStore>();
         builder.Services.AddSingleton<IPlatformInteractionService, MauiPlatformInteractionService>();
         builder.Services.AddSingleton<IFileSelectionService, MauiFileSelectionService>();
         builder.Services.AddSingleton<IRealmMediaService, RealmMediaService>();
+        builder.Services.AddSingleton<AvatarCache>();
         builder.Services.AddSingleton<INotificationAvatarFileStore, NotificationAvatarFileStore>();
         builder.Services.AddSingleton<IFileSaveService, WindowsFileSaveService>();
         builder.Services.AddSingleton<IDownloadHistoryStore, MauiDownloadHistoryStore>();

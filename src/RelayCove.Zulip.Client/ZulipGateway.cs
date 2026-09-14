@@ -18,21 +18,22 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
     private const long TusChunkSizeBytes = 5L * 1024 * 1024;
     private const int TusRecoveryAttempts = 3;
     private const int TusConsecutivePatchRecoveryLimit = 3;
+    private static readonly TimeSpan ConnectionRequestTimeout = TimeSpan.FromSeconds(30);
     private static readonly string[] DefaultEventTypes =
     [
         "message", "subscription", "realm_user", "stream", "update_message",
-        "delete_message", "update_message_flags", "reaction", "realm", "presence", "user_settings", "user_status", "heartbeat", "restart"
+        "delete_message", "update_message_flags", "reaction", "realm", "user_group", "presence", "user_settings", "user_status", "realm_emoji", "heartbeat", "restart"
     ];
     private static readonly string[] InitialFetchEventTypes =
     [
-        "subscription", "realm_user", "realm", "realm_user_groups", "recent_private_conversations", "presence", "user_settings", "user_status"
+        "subscription", "realm_user", "realm", "realm_user_groups", "recent_private_conversations", "presence", "user_settings", "user_status", "realm_emoji"
     ];
     private static readonly IReadOnlyDictionary<string, bool> ClientCapabilities =
         new Dictionary<string, bool>(StringComparer.Ordinal)
         {
             ["notification_settings_null"] = true,
             ["bulk_message_deletion"] = true,
-            ["user_avatar_url_field_optional"] = true,
+            ["user_avatar_url_field_optional"] = false,
             ["user_list_incomplete"] = true,
             ["empty_topic_name"] = true,
             ["archived_channels"] = true,
@@ -52,7 +53,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         ArgumentNullException.ThrowIfNull(handler);
     }
 
-    /// <summary>Creates a gateway with a redirect-disabled HTTP handler.</summary>
+    /// <summary>Creates a gateway with a direct, redirect-disabled HTTP handler.</summary>
     public ZulipGateway(TimeProvider? timeProvider = null, ILogger? logger = null)
         : this(CreateRedirectDisabledClient(), true, timeProvider, logger)
     {
@@ -76,8 +77,9 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
     public async Task<RealmProbeResult> ProbeRealmAsync(RealmEndpoint realm, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(realm);
-        using var response = await SendAsync(realm, HttpMethod.Get, "server_settings", null, null, cancellationToken).ConfigureAwait(false);
-        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadConnectionDocumentAsync(
+            realm, HttpMethod.Get, "server_settings", null, null,
+            ConnectionRequestTimeout, cancellationToken).ConfigureAwait(false);
         var root = document.RootElement;
         var featureLevel = GetInt64(root, "zulip_feature_level") ?? 0;
         var version = GetString(root, "zulip_version") ?? "unknown";
@@ -154,8 +156,9 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             ["client_capabilities"] = JsonSerializer.Serialize(ClientCapabilities, JsonOptions)
         };
 
-        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Post, "register", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
-        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadConnectionDocumentAsync(
+            request.Credentials.Realm, HttpMethod.Post, "register", fields, request.Credentials,
+            ConnectionRequestTimeout, cancellationToken).ConfigureAwait(false);
         var root = document.RootElement;
         // This is the client-side GET /events HTTP timeout. The separate
         // idle_queue_timeout_secs field controls server-side queue collection.
@@ -165,6 +168,13 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         var maxFileUploadSizeMiB = GetInt32(root, "max_file_upload_size_mib");
         var subscriptions = GetArray(root, "subscriptions").Select(ToSubscription).Where(static item => item is not null).Cast<Subscription>().ToArray();
         var users = GetArray(root, "realm_users").Select(ToUserOrNull).Where(static item => item is not null).Cast<UserProfile>().ToArray();
+        // Zulip 12.1 exposes the current user's source at the register root,
+        // not in ordinary user snapshots. Jdenticon and uploads share URL paths.
+        for (var index = 0; index < users.Length; index++)
+        {
+            if (users[index].UserId == request.Credentials.UserId)
+                users[index] = users[index] with { AvatarSource = ToAvatarSource(root) };
+        }
         var hasPresenceSnapshot = TryToModernPresences(root, out var presences);
         var hasUserStatusSnapshot = TryToUserStatuses(root, out var userStatuses);
         return new RegisterResult(
@@ -177,7 +187,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             users,
             ToRecentDirectMessages(root),
             ToUnread(root, request.Credentials.UserId),
-            [],
+            ToUnreadSnapshotEvents(root),
             maxFileUploadSizeMiB is > 0 ? maxFileUploadSizeMiB : null,
             PositiveOrNull(GetInt32(root, "max_stream_name_length", "max_channel_name_length")),
             PositiveOrNull(GetInt32(root, "max_stream_description_length", "max_channel_description_length")),
@@ -190,7 +200,10 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             GetBoolean(root, "realm_presence_disabled") is false && hasPresenceSnapshot,
             GetOwnPresenceEnabled(root, request.Credentials.UserId),
             userStatuses,
-            hasUserStatusSnapshot);
+            hasUserStatusSnapshot,
+            PositiveOrNull(GetInt32(root, "max_avatar_file_size_mib")),
+            ToMessageActionPolicy(root, request.Credentials.UserId),
+            ToRealmEmojis(root));
     }
 
     public async Task<RealmPresenceResult> GetRealmPresenceAsync(
@@ -294,27 +307,15 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             ["last_event_id"] = request.LastEventId.ToString(CultureInfo.InvariantCulture),
             ["dont_block"] = "false"
         };
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(request.Timeout);
-        HttpResponseMessage response;
-        try
-        {
-            response = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "events", query, request.Credentials, timeout.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.RequestTimedOut, innerException: exception);
-        }
-        using (response)
-        {
-            using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
-            var root = document.RootElement;
-            var events = GetArray(root, "events")
-                .SelectMany(item => ToEvents(item, DomainEventSource.Realtime, request.Credentials.UserId))
-                .ToArray();
-            var lastId = events.Select(static item => item.EventId).Where(static id => id.HasValue).Select(static id => id!.Value).DefaultIfEmpty(request.LastEventId).Max();
-            return new EventBatch(events, lastId);
-        }
+        using var document = await ReadConnectionDocumentAsync(
+            request.Credentials.Realm, HttpMethod.Get, "events", query, request.Credentials,
+            request.Timeout, cancellationToken).ConfigureAwait(false);
+        var root = document.RootElement;
+        var events = GetArray(root, "events")
+            .SelectMany(item => ToEvents(item, DomainEventSource.Realtime, request.Credentials.UserId))
+            .ToArray();
+        var lastId = events.Select(static item => item.EventId).Where(static id => id.HasValue).Select(static id => id!.Value).DefaultIfEmpty(request.LastEventId).Max();
+        return new EventBatch(events, lastId);
     }
 
     public async Task<HistoryResult> GetHistoryAsync(HistoryRequest request, CancellationToken cancellationToken = default)
@@ -419,7 +420,10 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             _ => null
         };
         if (hasOperand is not null) terms.Add(NarrowTerm("has", hasOperand));
-        if (terms.Count == 0) throw new ArgumentException("A search query or content filter is required.", nameof(request));
+        if (request.Conversation is { } conversation)
+        {
+            terms.AddRange(CreateConversationTerms(conversation, request.Credentials.UserId));
+        }
         return GetMessagesPageAsync(
             request.Credentials,
             SerializeTerms(terms),
@@ -538,6 +542,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         var fields = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["content"] = request.Content,
+            ["read_by_sender"] = "true",
             ["queue_id"] = request.QueueId,
             ["local_id"] = request.LocalId
         };
@@ -627,6 +632,79 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         using var ignored = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<string> UpdateOwnNameAsync(
+        UpdateOwnNameRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrWhiteSpace(request.FullName);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30), _timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        try
+        {
+            var fields = new Dictionary<string, string>(StringComparer.Ordinal) { ["full_name"] = request.FullName.Trim() };
+            using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Patch, "settings",
+                fields, request.Credentials, linked.Token, cancellationToken).ConfigureAwait(false);
+            using var document = await ReadDocumentAsync(response, linked.Token).ConfigureAwait(false);
+            EnsureSuccessResponse(document.RootElement);
+
+            // Zulip 12.1 silently ignores full_name when organization policy disables name changes.
+            using var userResponse = await SendAsync(request.Credentials.Realm, HttpMethod.Get, "users/me",
+                null, request.Credentials, linked.Token, cancellationToken).ConfigureAwait(false);
+            using var userDocument = await ReadDocumentAsync(userResponse, linked.Token).ConfigureAwait(false);
+            EnsureSuccessResponse(userDocument.RootElement);
+            var user = ToUserOrNull(userDocument.RootElement);
+            if (user is null || user.UserId != request.Credentials.UserId || string.IsNullOrWhiteSpace(user.FullName))
+                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+            return user.FullName;
+        }
+        catch (Exception exception) when (exception is IOException or HttpRequestException)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError, innerException: exception);
+        }
+        catch (OperationCanceledException exception) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.RequestTimedOut, innerException: exception);
+        }
+    }
+
+    public async Task<string> UploadOwnAvatarAsync(
+        UploadAttachmentRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        using var multipart = new MultipartFormDataContent();
+        var streamContent = new StreamContent(request.Upload.Content);
+        if (MediaTypeHeaderValue.TryParse(request.Upload.ContentType, out var contentType))
+        {
+            streamContent.Headers.ContentType = contentType;
+        }
+        streamContent.Headers.ContentLength = request.Upload.Length;
+        multipart.Add(streamContent, "file", SanitizeUploadFileName(request.Upload.FileName));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60), _timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        try
+        {
+            using var response = await SendMultipartAsync(
+                request.Credentials.Realm, "users/me/avatar", multipart,
+                request.Credentials, linked.Token).ConfigureAwait(false);
+            using var document = await ReadDocumentAsync(response, linked.Token).ConfigureAwait(false);
+            EnsureSuccessResponse(document.RootElement);
+            var avatarUrl = GetString(document.RootElement, "avatar_url");
+            if (string.IsNullOrWhiteSpace(avatarUrl))
+            {
+                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+            }
+            // The existing controlled avatar loader validates the server's URL before fetching it.
+            return avatarUrl;
+        }
+        catch (OperationCanceledException exception) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.RequestTimedOut, innerException: exception);
+        }
+    }
+
     public async Task<UploadedAttachment> UploadAttachmentAsync(
         UploadAttachmentRequest request,
         CancellationToken cancellationToken = default)
@@ -669,7 +747,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
         }
         var returnedName = SanitizeUploadFileName(GetString(document.RootElement, "filename") ?? fileName);
-        return new UploadedAttachment(returnedName, url.AbsoluteUri);
+        return new UploadedAttachment(returnedName, ToUploadMessageUrl(url));
     }
 
     private async Task<UploadedAttachment> UploadAttachmentResumablyAsync(
@@ -748,6 +826,8 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             response.Content,
             transfer.MaximumBytes,
             cancellationToken).ConfigureAwait(false);
+        if (request.Media.Kind != RealmMediaKind.File && bytes.Length == 0)
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.EmptyMediaContent);
         return new RealmMediaResult(bytes, transfer.ContentType);
     }
 
@@ -781,15 +861,16 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             ? 100L * 1024 * 1024
             : 25L * 1024 * 1024;
         var maximumBytes = Math.Min(request.Media.MaximumBytes, hardLimit);
-        if (maximumBytes <= 0 ||
-            !TryResolveRealmMediaUrl(
+        if (maximumBytes <= 0)
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        if (!TryResolveRealmMediaUrl(
                 request.Credentials.Realm,
                 request.Media.SourceUrl,
                 request.Media.Kind,
                 temporary: false,
                 out var approved))
         {
-            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.MediaAddressNotAllowed);
         }
 
         var fetchUrl = approved;
@@ -814,7 +895,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
                     temporary: true,
                     out fetchUrl))
             {
-                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.MediaAddressNotAllowed);
             }
         }
 
@@ -827,7 +908,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         if (request.Media.Kind != RealmMediaKind.File && !IsPreviewImageContentType(contentType))
         {
             response.Dispose();
-            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, (int)response.StatusCode);
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.UnsupportedImageType, (int)response.StatusCode);
         }
         return (response, maximumBytes, contentType ?? "application/octet-stream");
     }
@@ -1195,13 +1276,17 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         {
             ["op"] = "add",
             ["flag"] = "read",
-            ["narrow"] = SerializeUnreadNarrow(request.Conversation, request.Credentials.UserId),
-            ["num_before"] = (request.Limit - 1).ToString(CultureInfo.InvariantCulture),
-            ["num_after"] = "0"
+            ["messages"] = JsonSerializer.Serialize(request.MessageIds, JsonOptions)
         };
-        fields["anchor"] = request.AnchorMessageId?.ToString(CultureInfo.InvariantCulture) ?? "newest";
-        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Post, "messages/flags/narrow", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
-        using var ignored = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        using var response = await SendAsync(request.Credentials.Realm, HttpMethod.Post, "messages/flags", fields, request.Credentials, cancellationToken).ConfigureAwait(false);
+        using var document = await ReadDocumentAsync(response, cancellationToken).ConfigureAwait(false);
+        EnsureSuccessResponse(document.RootElement);
+        EnsureNoUnsupportedParameters(document.RootElement);
+        if (!TryGetStrictInt64Array(document.RootElement, "messages", out var confirmedIds) ||
+            !confirmedIds.ToHashSet().SetEquals(request.MessageIds))
+        {
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+        }
     }
 
     public async Task DeleteQueueAsync(DeleteQueueRequest request, CancellationToken cancellationToken = default)
@@ -1225,11 +1310,51 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
     }
 
     /// <summary>Builds the default handler with redirects explicitly disabled.</summary>
-    public static HttpClientHandler CreateDefaultHandler() => new() { AllowAutoRedirect = false };
+    public static HttpClientHandler CreateDefaultHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        // Use the Realm's direct route; desktop proxy settings may route this
+        // process differently from the official client and prevent reconnection.
+        UseProxy = false
+    };
 
     private static HttpClient CreateRedirectDisabledClient() => new(CreateDefaultHandler()) { Timeout = Timeout.InfiniteTimeSpan };
 
-    private async Task<HttpResponseMessage> SendAsync(RealmEndpoint realm, HttpMethod method, string relativePath, IReadOnlyDictionary<string, string>? parameters, CredentialEnvelope? credentials, CancellationToken cancellationToken)
+    private async Task<JsonDocument> ReadConnectionDocumentAsync(
+        RealmEndpoint realm,
+        HttpMethod method,
+        string relativePath,
+        IReadOnlyDictionary<string, string>? parameters,
+        CredentialEnvelope? credentials,
+        TimeSpan requestTimeout,
+        CancellationToken cancellationToken)
+    {
+        using var timeout = new CancellationTokenSource(requestTimeout, _timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        try
+        {
+            using var response = await SendAsync(
+                realm, method, relativePath, parameters, credentials, linked.Token, cancellationToken).ConfigureAwait(false);
+            return await ReadDocumentAsync(response, linked.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested && timeout.IsCancellationRequested)
+        {
+            throw new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.RequestTimedOut, innerException: exception);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            throw new GatewayException(
+                GatewayErrorKind.Offline,
+                timeout.IsCancellationRequested ? GatewayErrorCode.RequestTimedOut : GatewayErrorCode.NetworkError,
+                innerException: exception);
+        }
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(
+        RealmEndpoint realm, HttpMethod method, string relativePath,
+        IReadOnlyDictionary<string, string>? parameters, CredentialEnvelope? credentials,
+        CancellationToken cancellationToken, CancellationToken? callerCancellationToken = null)
     {
         var operation = GetSafeOperationName(relativePath);
         var started = _timeProvider.GetTimestamp();
@@ -1250,9 +1375,10 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
                 (int)response.StatusCode,
                 _timeProvider.GetElapsedTime(started).TotalMilliseconds);
             if (response.IsSuccessStatusCode) return response;
-            var error = await ToGatewayExceptionAsync(response, cancellationToken).ConfigureAwait(false);
-            response.Dispose();
-            throw error;
+            using (response)
+            {
+                throw await ToGatewayExceptionAsync(response, cancellationToken, callerCancellationToken).ConfigureAwait(false);
+            }
         }
         catch (GatewayException) { throw; }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -1382,7 +1508,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
     {
         if (content.Headers.ContentLength is { } declared && declared > maximumBytes)
         {
-            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+            throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.MediaTooLarge);
         }
         await using var source = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
         using var destination = new MemoryStream((int)Math.Min(maximumBytes, 1024 * 1024));
@@ -1395,7 +1521,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             total += read;
             if (total > maximumBytes)
             {
-                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
+                throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.MediaTooLarge);
             }
             await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
         }
@@ -1429,7 +1555,8 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         return total;
     }
 
-    private async Task<GatewayException> ToGatewayExceptionAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    private async Task<GatewayException> ToGatewayExceptionAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken, CancellationToken? callerCancellationToken = null)
     {
         if ((int)response.StatusCode is >= 300 and < 400)
         {
@@ -1452,6 +1579,13 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             }
         }
         catch (JsonException) { }
+        catch (Exception exception) when (callerCancellationToken.HasValue &&
+            exception is OperationCanceledException or HttpRequestException or IOException)
+        {
+            // A failed error body must not discard the HTTP status or Retry-After
+            // already received. Explicit caller cancellation still takes priority.
+            callerCancellationToken.Value.ThrowIfCancellationRequested();
+        }
 
         if (string.Equals(code, "BAD_EVENT_QUEUE_ID", StringComparison.OrdinalIgnoreCase))
             return new GatewayException(GatewayErrorKind.QueueExpired, GatewayErrorCode.BadEventQueueId, (int)response.StatusCode);
@@ -1536,6 +1670,9 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         if (!string.Equals(resolved.Scheme, realm.Uri.Scheme, StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(resolved.Host, realm.Uri.Host, StringComparison.OrdinalIgnoreCase) ||
             resolved.Port != realm.Uri.Port ||
+            !string.IsNullOrEmpty(resolved.UserInfo) ||
+            !string.IsNullOrEmpty(resolved.Query) ||
+            !string.IsNullOrEmpty(resolved.Fragment) ||
             !resolved.AbsolutePath.StartsWith("/user_uploads/", StringComparison.Ordinal) ||
             resolved.AbsolutePath.StartsWith("/user_uploads/temporary/", StringComparison.Ordinal))
         {
@@ -1543,6 +1680,14 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         }
         url = resolved;
         return true;
+    }
+
+    private static string ToUploadMessageUrl(Uri url)
+    {
+        // Zulip 12.1 claims attachments by the literal Unicode path_id in the message.
+        // Keep reserved escapes intact, including spaces that would break a Markdown destination.
+        return url.GetComponents(UriComponents.AbsoluteUri, UriFormat.SafeUnescaped)
+            .Replace(" ", "%20", StringComparison.Ordinal);
     }
 
     private static bool TryResolveRealmMediaUrl(
@@ -1581,6 +1726,8 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
                 RealmMediaKind.Avatar => decodedPath.StartsWith("/avatar/", StringComparison.Ordinal) ||
                     decodedPath.StartsWith("/user_avatars/", StringComparison.Ordinal) ||
                     decodedPath.StartsWith("/static/generated/avatars/", StringComparison.Ordinal),
+                RealmMediaKind.Emoji => decodedPath.StartsWith("/user_avatars/", StringComparison.Ordinal) &&
+                    decodedPath.Contains("/emoji/images/", StringComparison.Ordinal),
                 _ => decodedPath.StartsWith("/user_uploads/", StringComparison.Ordinal) &&
                     !decodedPath.StartsWith("/user_uploads/temporary/", StringComparison.Ordinal)
             };
@@ -1617,10 +1764,15 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         }
     }
 
-    private static string SerializeNarrow(ConversationKey conversation, long currentUserId)
+    private static string SerializeNarrow(ConversationKey conversation, long currentUserId) =>
+        SerializeTerms(CreateConversationTerms(conversation, currentUserId));
+
+    private static IReadOnlyList<IReadOnlyDictionary<string, object>> CreateConversationTerms(
+        ConversationKey conversation,
+        long currentUserId)
     {
         ArgumentNullException.ThrowIfNull(conversation);
-        IReadOnlyList<IReadOnlyDictionary<string, object>> narrow = conversation switch
+        return conversation switch
         {
             ChannelTopic channel =>
             [
@@ -1637,7 +1789,6 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             ],
             _ => throw new ArgumentOutOfRangeException(nameof(conversation), "Unsupported conversation type.")
         };
-        return SerializeTerms(narrow);
     }
 
     private static string SerializeTerms(IReadOnlyList<IReadOnlyDictionary<string, object>> terms) =>
@@ -1672,7 +1823,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         var kind = GetString(value, "type") ?? "unknown";
         try
         {
-            return kind switch
+            IReadOnlyList<DomainEvent> events = kind switch
             {
                 "heartbeat" => [new HeartbeatEvent(eventId, source)],
                 "message" => ToMessageEvents(value, source, currentUserId, eventId),
@@ -1692,6 +1843,8 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
                         source)
                 ],
                 "realm_user" => ToRealmUserEvents(value, source, eventId),
+                "realm_emoji" when GetString(value, "op") == "update" =>
+                    [new RealmEmojiUpdatedEvent(ToRealmEmojis(value), eventId, source)],
                 "presence" => ToPresenceEvents(value, source, eventId),
                 "user_settings" => ToUserSettingsEvents(value, source, eventId),
                 "user_status" => ToUserStatusEvents(value, source, eventId),
@@ -1706,11 +1859,35 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
                 ],
                 _ => [new UnknownDomainEvent(kind, eventId, source)]
             };
+            return InvalidatesMessageActionPolicy(value, kind, currentUserId)
+                ? [.. events, new MessageActionPolicyInvalidatedEvent(eventId, source)]
+                : events;
         }
         catch (Exception exception) when (exception is ArgumentException or OverflowException)
         {
             return [new UnknownDomainEvent(kind, eventId, source)];
         }
+    }
+
+    // Without individual_emoji_changes, Zulip 12.1 sends a complete realm_emoji/update snapshot.
+    private static IReadOnlyList<RealmEmoji> ToRealmEmojis(JsonElement root)
+    {
+        var emojis = GetObject(root, "realm_emoji");
+        if (emojis.ValueKind != JsonValueKind.Object) return [];
+        var result = new List<RealmEmoji>();
+        foreach (var property in emojis.EnumerateObject())
+        {
+            var value = property.Value;
+            var id = GetString(value, "id");
+            var name = GetString(value, "name");
+            var sourceUrl = GetString(value, "source_url");
+            var deactivated = GetBoolean(value, "deactivated");
+            if (string.IsNullOrWhiteSpace(id) || id != property.Name ||
+                string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(sourceUrl) ||
+                deactivated is null) continue;
+            result.Add(new RealmEmoji(id, name, sourceUrl, deactivated.Value, GetString(value, "still_url")));
+        }
+        return result;
     }
 
     private static IReadOnlyList<DomainEvent> ToMessageEvents(
@@ -1765,29 +1942,9 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             events.Add(new MessageContentChangedEvent(contentMessageId, content, eventId, source));
         }
 
-        if (messageId is { } flaggedMessageId && TryGetProperty(value, "flags", out var flagsElement) &&
-            flagsElement.ValueKind == JsonValueKind.Array)
-        {
-            var flags = GetStringArray(value, "flags");
-            var isRead = flags.Contains("read", StringComparer.OrdinalIgnoreCase);
-            events.Add(new MessageFlagsChangedEvent(
-                [flaggedMessageId],
-                false,
-                isRead ? MessageFlagOperation.Add : MessageFlagOperation.Remove,
-                "read",
-                eventId,
-                source));
-            if (flags.Contains("starred", StringComparer.OrdinalIgnoreCase))
-            {
-                events.Add(new MessageFlagsChangedEvent(
-                    [flaggedMessageId],
-                    false,
-                    MessageFlagOperation.Add,
-                    "starred",
-                    eventId,
-                    source));
-            }
-        }
+        // Zulip's edit flags are a snapshot that can race with reads/star changes.
+        // Like web/src/message_store.ts:update_booleans, do not apply those two
+        // flags here; their authoritative changes arrive as update_message_flags.
 
         var hasTopicMove = TryGetProperty(value, "subject", out _);
         var hasChannelMove = GetInt64(value, "new_stream_id") is not null;
@@ -1863,7 +2020,11 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
                 GetString(person, "new_email", "email"),
                 GetBoolean(person, "is_active"),
                 eventId,
-                source)
+                source,
+                HasAvatar: TryGetProperty(person, "avatar_url", out _),
+                AvatarUrl: GetString(person, "avatar_url"),
+                AvatarVersion: GetInt32(person, "avatar_version"),
+                AvatarSource: ToAvatarSource(person))
         ];
     }
 
@@ -2022,7 +2183,8 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             GetString(value, "sender_full_name"),
             GetString(value, "avatar_url", "sender_avatar_url"),
             isStarred,
-            reactions);
+            reactions,
+            isEdited: GetInt64(value, "last_edit_timestamp") is not null);
     }
 
     private static Subscription? ToSubscription(JsonElement value)
@@ -2320,7 +2482,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         if (!TryResolveRealmUploadUrl(realm, rawUrl, out var url))
             throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, (int)response.StatusCode);
         var returnedName = SanitizeUploadFileName(GetString(document.RootElement, "filename") ?? fallbackFileName);
-        return new UploadedAttachment(returnedName, url.AbsoluteUri);
+        return new UploadedAttachment(returnedName, ToUploadMessageUrl(url));
     }
 
     private static UploadedAttachment BuildTusUploadResultFromLocation(
@@ -2333,7 +2495,7 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
         var pathId = uploadUri.AbsolutePath[prefix.Length..];
         var fileUrl = new Uri(realm.Uri, "/user_uploads/" + pathId);
-        return new UploadedAttachment(fileName, fileUrl.AbsoluteUri);
+        return new UploadedAttachment(fileName, ToUploadMessageUrl(fileUrl));
     }
 
     private static long GetTusOffset(HttpResponseMessage response)
@@ -2485,7 +2647,8 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
                 GetBoolean(value, "is_active") ?? true,
                 GetString(value, "avatar_url"),
                 GetInt32(value, "avatar_version"),
-                GetBoolean(value, "is_bot") ?? false)
+                GetBoolean(value, "is_bot") ?? false,
+                ToAvatarSource(value))
             : null;
     }
 
@@ -2525,8 +2688,16 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
 
         var avatarVersion = GetInt32(value, "avatar_version");
         if (avatarVersion is < 0) throw new GatewayException(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse);
-        return new UserProfile(id, fullName, email, isActive, GetString(value, "avatar_url"), avatarVersion, isBot);
+        return new UserProfile(id, fullName, email, isActive, GetString(value, "avatar_url"), avatarVersion, isBot, ToAvatarSource(value));
     }
+
+    private static UserAvatarSource ToAvatarSource(JsonElement value) => GetString(value, "avatar_source") switch
+    {
+        "J" => UserAvatarSource.Generated,
+        "U" => UserAvatarSource.Uploaded,
+        "G" => UserAvatarSource.Gravatar,
+        _ => UserAvatarSource.Unknown
+    };
 
     private static IReadOnlyList<UserTopicVisibility> ToUserTopicVisibilities(JsonElement root)
     {
@@ -2543,6 +2714,67 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             .Where(static item => item is not null)
             .Cast<UserTopicVisibility>()
             .ToArray();
+    }
+
+    private static MessageActionPolicy ToMessageActionPolicy(JsonElement root, long currentUserId)
+    {
+        var rawGroups = GetArray(root, "realm_user_groups");
+        var groups = rawGroups.Select(ToStrictChannelUserGroup).OfType<ChannelUserGroup>().ToArray();
+        var validGroups = groups.Length == rawGroups.Length &&
+            groups.Select(group => group.GroupId).Distinct().Count() == groups.Length;
+        bool HasPermission(JsonElement value, string property) => validGroups &&
+            TryGetStrictGroupSetting(value, property, out var setting) &&
+            ChannelPermissionEvaluator.IsMember(currentUserId, setting, groups);
+
+        var channels = new Dictionary<long, MessageActionChannelPolicy>();
+        foreach (var channel in GetArray(root, "subscriptions"))
+        {
+            var id = GetInt64(channel, "stream_id");
+            if (id is not > 0) continue;
+            channels[id.Value] = new MessageActionChannelPolicy(
+                GetBoolean(channel, "is_archived") == true,
+                HasPermission(channel, "can_delete_own_message_group"),
+                HasPermission(channel, "can_delete_any_message_group"));
+        }
+        return new MessageActionPolicy
+        {
+            AllowEditing = !TryGetProperty(root, "realm_allow_message_editing", out _) ||
+                GetBoolean(root, "realm_allow_message_editing") == true,
+            EditLimitSeconds = ToMessageActionLimit(root, "realm_message_content_edit_limit_seconds"),
+            DeleteLimitSeconds = ToMessageActionLimit(root, "realm_message_content_delete_limit_seconds"),
+            CanDeleteOwn = HasPermission(root, "realm_can_delete_own_message_group"),
+            CanDeleteAny = HasPermission(root, "realm_can_delete_any_message_group"),
+            Channels = channels
+        };
+    }
+
+    private static int? ToMessageActionLimit(JsonElement root, string property)
+    {
+        if (!TryGetProperty(root, property, out var value)) return MessageActionPolicy.FallbackLimitSeconds;
+        if (value.ValueKind == JsonValueKind.Null) return null; // Explicit server unlimited.
+        // Zulip 12.1 does not use the pre-6.0 sentinel 0. Malformed limits fail closed.
+        return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var seconds) && seconds > 0
+            ? seconds
+            : 0;
+    }
+
+    private static bool InvalidatesMessageActionPolicy(JsonElement value, string kind, long currentUserId)
+    {
+        static bool IsPolicyProperty(string? property) => property is
+            "allow_message_editing" or "message_content_edit_limit_seconds" or
+            "message_content_delete_limit_seconds" or "can_delete_own_message_group" or "can_delete_any_message_group";
+
+        if (kind == "realm")
+            return IsPolicyProperty(GetString(value, "property")) ||
+                TryGetProperty(value, "data", out var data) && data.ValueKind == JsonValueKind.Object &&
+                data.EnumerateObject().Any(property => IsPolicyProperty(property.Name));
+        if (kind == "user_group") return true;
+        if (kind == "subscription") return GetString(value, "op") is "add" or "remove";
+        if (kind == "stream") return GetString(value, "op") is "create" or "delete" ||
+            GetString(value, "property") is "is_archived" or "can_delete_own_message_group" or "can_delete_any_message_group";
+        return kind == "realm_user" && TryGetProperty(value, "person", out var person) &&
+            GetInt64(person, "user_id") == currentUserId &&
+            (TryGetProperty(person, "role", out _) || TryGetProperty(person, "is_active", out _));
     }
 
     private static bool IsOrganizationAdministrator(JsonElement root, long currentUserId)
@@ -2823,6 +3055,24 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             result.Add(new DirectMessage(ids));
         }
         return result;
+    }
+
+    private static IReadOnlyList<DomainEvent> ToUnreadSnapshotEvents(JsonElement root)
+    {
+        if (!TryGetProperty(root, "unread_msgs", out var unread)) return [];
+        var messageIds = new[] { "streams", "pms", "huddles" }
+            .SelectMany(name => GetArray(unread, name))
+            .SelectMany(item => GetInt64Array(item, "unread_message_ids"))
+            .Where(static id => id > 0)
+            .Distinct()
+            .ToArray();
+        // Correct cached read flags before installing the authoritative counts.
+        // An incomplete unread snapshot must never imply that absent IDs are read.
+        // Zulip can return 50,000 unread IDs; bound each cache update batch.
+        return messageIds.Chunk(500)
+            .Select(ids => (DomainEvent)new MessageFlagsChangedEvent(
+                ids, false, MessageFlagOperation.Remove, "read", Source: DomainEventSource.Register))
+            .ToArray();
     }
 
     private static UnreadState ToUnread(JsonElement root, long currentUserId)

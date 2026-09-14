@@ -1,7 +1,27 @@
+using System.Xml.Linq;
+
 namespace RelayCove.App.Tests;
 
 public sealed class DetailsPaneViewTests
 {
+    [Fact]
+    public void DetailsPane_WhenContentIsDeferred_KeepsHeaderCloseAndLoadingOutsideContent()
+    {
+        XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "DetailsPaneView.xaml"));
+        var content = Assert.Single(source.Descendants(maui + "ScrollView"));
+        Assert.Equal("{Binding IsDetailsContentReady}", content.Attribute("IsVisible")?.Value);
+        Assert.Contains(source.Descendants(maui + "Button"), button =>
+            button.Attribute("Command")?.Value == "{Binding ToggleDetailsCommand}" &&
+            !button.Ancestors().Contains(content));
+        Assert.Contains(source.Descendants(maui + "ActivityIndicator"), indicator =>
+            indicator.Attribute("IsVisible")?.Value == "{Binding IsDetailsLoading}" &&
+            !indicator.Ancestors().Contains(content));
+        Assert.Contains(source.Descendants(maui + "Label"), label =>
+            label.Attribute("Text")?.Value == "{Binding DetailsLoadError}" &&
+            !label.Ancestors().Contains(content));
+    }
+
     [Fact]
     public void DetailsPane_WhenRendered_ShowsSeparatePrivateAndChannelSettings()
     {

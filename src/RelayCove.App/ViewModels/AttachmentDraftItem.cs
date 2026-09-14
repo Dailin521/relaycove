@@ -55,7 +55,7 @@ public sealed partial class AttachmentDraftItem : ObservableObject
         _ => string.Empty
     };
     public bool CanRetry => Status is AttachmentUploadStatus.Uncertain or AttachmentUploadStatus.Failed;
-    public bool CanRemove => Status != AttachmentUploadStatus.Uploading;
+    public bool CanRemove => true;
     public bool IsUploading => Status == AttachmentUploadStatus.Uploading;
 
     partial void OnStatusChanged(AttachmentUploadStatus value) =>

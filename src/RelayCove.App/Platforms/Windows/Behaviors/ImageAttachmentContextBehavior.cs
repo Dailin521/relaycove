@@ -10,8 +10,9 @@ public sealed class ImageAttachmentContextBehavior : Behavior<Border>
 {
     private WinUiBorder? _platformView;
     private Border? _virtualView;
-    private ShellViewModel? _viewModel;
-    private bool _opened;
+    private readonly RightTappedEventHandler _rightTappedHandler;
+
+    public ImageAttachmentContextBehavior() => _rightTappedHandler = OnRightTapped;
 
     protected override void OnAttachedTo(Border bindable)
     {
@@ -37,13 +38,12 @@ public sealed class ImageAttachmentContextBehavior : Behavior<Border>
         DetachNativeView();
         if (platformView is null) return;
         _platformView = platformView;
-        platformView.RightTapped += OnRightTapped;
+        platformView.AddHandler(Microsoft.UI.Xaml.UIElement.RightTappedEvent, _rightTappedHandler, true);
     }
 
     private void DetachNativeView()
     {
-        if (_platformView is not null) _platformView.RightTapped -= OnRightTapped;
-        StopWatchingFocusReturn();
+        _platformView?.RemoveHandler(Microsoft.UI.Xaml.UIElement.RightTappedEvent, _rightTappedHandler);
         _platformView = null;
     }
 
@@ -61,9 +61,6 @@ public sealed class ImageAttachmentContextBehavior : Behavior<Border>
         var request = new ImageAttachmentMenuRequest(message, attachment, anchor.X, anchor.Y);
         if (!viewModel.OpenImageAttachmentMenuAtCommand.CanExecute(request)) return;
 
-        _viewModel = viewModel;
-        _opened = true;
-        viewModel.PropertyChanged += OnViewModelPropertyChanged;
         viewModel.OpenImageAttachmentMenuAtCommand.Execute(request);
         eventArgs.Handled = true;
     }
@@ -94,22 +91,4 @@ public sealed class ImageAttachmentContextBehavior : Behavior<Border>
         .OfType<WinUiFrameworkElement>()
         .FirstOrDefault();
 
-    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs eventArgs)
-    {
-        if (!_opened || eventArgs.PropertyName != nameof(ShellViewModel.MessageActionFocusRequest) ||
-            _platformView is null)
-        {
-            return;
-        }
-
-        _platformView.Focus(Microsoft.UI.Xaml.FocusState.Keyboard);
-        StopWatchingFocusReturn();
-    }
-
-    private void StopWatchingFocusReturn()
-    {
-        if (_viewModel is not null) _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
-        _viewModel = null;
-        _opened = false;
-    }
 }

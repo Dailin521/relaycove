@@ -24,7 +24,6 @@ public partial class MessageListView : ContentView
     private const uint MessageInsertionDuration = 140;
     private const int MaximumScrollAttemptsPerLayout = 12;
     private ShellViewModel? _viewModel;
-    private VisualElement? _messageMenuTrigger;
     private long? _firstVisibleMessageId;
     private double _firstVisibleViewportOffset;
     private long? _pendingPrependAnchorId;
@@ -55,12 +54,10 @@ public partial class MessageListView : ContentView
     private readonly HashSet<string> _pendingInsertionAnimationIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _preparedInsertionAnimationIds = new(StringComparer.Ordinal);
     private readonly PointerEventHandler _viewportPointerInputHandler;
-    private readonly KeyEventHandler _viewportKeyInputHandler;
 
     public MessageListView()
     {
         _viewportPointerInputHandler = OnViewportPointerInput;
-        _viewportKeyInputHandler = OnViewportKeyInput;
         InitializeComponent();
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
@@ -136,15 +133,6 @@ public partial class MessageListView : ContentView
             return;
         }
 
-        if (eventArgs.PropertyName == nameof(ShellViewModel.MessageActionFocusRequest) &&
-            _messageMenuTrigger is not null)
-        {
-            Dispatcher.Dispatch(() =>
-            {
-                _messageMenuTrigger?.Focus();
-                _messageMenuTrigger = null;
-            });
-        }
     }
 
     private async void OnMessageCollectionScrolled(object? sender, ItemsViewScrolledEventArgs eventArgs)
@@ -467,10 +455,6 @@ public partial class MessageListView : ContentView
                 Microsoft.UI.Xaml.UIElement.PointerWheelChangedEvent,
                 _viewportPointerInputHandler,
                 true);
-            _platformLayoutRoot.AddHandler(
-                Microsoft.UI.Xaml.UIElement.KeyDownEvent,
-                _viewportKeyInputHandler,
-                true);
             EnsurePlatformMessageListConfigured();
         }
     }
@@ -497,9 +481,6 @@ public partial class MessageListView : ContentView
     {
         if (_platformLayoutRoot is not null)
         {
-            _platformLayoutRoot.RemoveHandler(
-                Microsoft.UI.Xaml.UIElement.KeyDownEvent,
-                _viewportKeyInputHandler);
             _platformLayoutRoot.RemoveHandler(
                 Microsoft.UI.Xaml.UIElement.PointerWheelChangedEvent,
                 _viewportPointerInputHandler);
@@ -582,22 +563,6 @@ public partial class MessageListView : ContentView
     private void ResetTopHistoryLoadState()
     {
         _topHistoryLoadLatched = false;
-    }
-
-    private void OnViewportKeyInput(object sender, KeyRoutedEventArgs eventArgs)
-    {
-        if (eventArgs.Key is Windows.System.VirtualKey.Up or
-            Windows.System.VirtualKey.Down or
-            Windows.System.VirtualKey.Left or
-            Windows.System.VirtualKey.Right or
-            Windows.System.VirtualKey.PageUp or
-            Windows.System.VirtualKey.PageDown or
-            Windows.System.VirtualKey.Home or
-            Windows.System.VirtualKey.End or
-            Windows.System.VirtualKey.Space)
-        {
-            ClearViewportAnchorsForUserInput();
-        }
     }
 
     private void ClearViewportAnchorsForUserInput()
@@ -1112,41 +1077,8 @@ public partial class MessageListView : ContentView
         }
     }
 
-    private void OnOpenMessageMenuClicked(object? sender, EventArgs eventArgs)
-    {
-        if (sender is not VisualElement { BindingContext: MessageItem message } trigger) return;
-        _messageMenuTrigger = trigger;
-        var request = CreateMenuRequest(trigger, message);
-        if (request is null) Execute(_viewModel?.OpenMessageMenuCommand, message);
-        else Execute(_viewModel?.OpenMessageMenuAtCommand, request);
-    }
-
-    private static MessageMenuRequest? CreateMenuRequest(VisualElement trigger, MessageItem message)
-    {
-        var source = trigger.Handler?.PlatformView as WinUiFrameworkElement;
-        var pageRoot = Application.Current?.Windows
-            .Select(window => window.Page?.Handler?.PlatformView)
-            .OfType<WinUiFrameworkElement>()
-            .FirstOrDefault();
-        if (source is null || pageRoot is null) return null;
-        try
-        {
-            var localX = message.IsOwn ? 0d : source.ActualWidth;
-            var point = source.TransformToVisual(pageRoot)
-                .TransformPoint(new WinPoint(localX, source.ActualHeight));
-            return new MessageMenuRequest(message, point.X, point.Y);
-        }
-        catch (InvalidOperationException)
-        {
-            return null;
-        }
-    }
-
     private void OnQuoteMessageClicked(object? sender, EventArgs eventArgs) =>
         ExecuteMessageCommand(sender, _viewModel?.QuoteMessageCommand);
-
-    private void OnCopyMessageClicked(object? sender, EventArgs eventArgs) =>
-        ExecuteMessageCommand(sender, _viewModel?.CopyMessageRawCommand);
 
     private void OnOpenReactionPickerClicked(object? sender, EventArgs eventArgs)
     {
@@ -1188,9 +1120,6 @@ public partial class MessageListView : ContentView
             return null;
         }
     }
-
-    private void OnEditMessageClicked(object? sender, EventArgs eventArgs) =>
-        ExecuteMessageCommand(sender, _viewModel?.OpenEditDialogCommand);
 
     private void OnToggleMessageStarClicked(object? sender, EventArgs eventArgs) =>
         ExecuteMessageCommand(sender, _viewModel?.ToggleMessageStarCommand);

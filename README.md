@@ -4,11 +4,15 @@ RichChat 是一个直接连接 Zulip Realm 的 Windows 原生 .NET MAUI 客户�
 
 当前正式版本为 [`2.4.0`](https://github.com/Dailin521/relaycove/releases/tag/v2.4.0)，目标平台为 Windows 11 x64，使用 .NET SDK `10.0.400`、MAUI `10.0.20` 和 `win-x64`。`RelayCove.Web` 只保留为历史源码，不再参与产品开发或 Windows 发布。
 
+当前源码版本为 `1.0.4`，尚未发布；重新运行 `publish-installer.cmd` 将生成对应版本的安装包。
+
 ## 下载
 
 从 [GitHub Releases](https://github.com/Dailin521/relaycove/releases) 下载当前正式版本。`v2.3.0` 是更名前发布的历史包，因此仍使用 `RelayCove-2.3.0-win-x64.zip` 和 `RelayCove.App.exe`；后续版本统一使用 `RichChat-<version>-win-x64.zip` 和 `RichChat.exe`。
 
-这是自包含、未签名、无安装器的 ZIP。应用关闭后不会接收消息，也不包含后台推送、自动更新、MSIX 或代码签名。
+GitHub 上的现有版本提供自包含、未签名的 ZIP。本地也支持生成 `RichChat-<version>-win-x64-Setup.exe` 中文安装器：默认安装到当前用户的 `%LOCALAPPDATA%\Programs\RichChat`，不需要管理员权限，提供开始菜单、桌面快捷方式和 Windows 卸载入口。升级或卸载前请从托盘右键退出 RichChat；卸载保留已有账号凭据和聊天缓存，如需移除凭据请先在应用中注销。
+
+应用退出后不会接收消息，也不包含后台推送、自动更新、MSIX 或代码签名。
 
 ## 当前范围
 
@@ -19,7 +23,7 @@ RichChat 是一个直接连接 Zulip Realm 的 Windows 原生 .NET MAUI 客户�
 - Windows 系统通知、任务栏未读、托盘提醒与会话跳转。
 - Zulip 官方在线/忙碌/离线显示，以及个人 emoji/text 状态。
 
-公开频道、命名话题、多人私信、SSO、多账号、`@` 候选、后台 push、安装器和签名不属于当前个人 MVP。
+公开频道、命名话题、多人私信、SSO、多账号、`@` 候选、后台 push 和签名不属于当前个人 MVP。
 
 ## 工程结构
 
@@ -43,6 +47,16 @@ pwsh ./scripts/verify.ps1 -Mode Full
 `Fast` 运行 Debug build 和四个普通测试项目。`Full` 独立运行 Release build/tests、MAUI app 自包含 publish、ZIP 检查和秘密扫描。`Live` 只有在明确提供隔离凭据及真实写入授权时才能运行。
 
 发布 ZIP 只包含应用运行文件、`LICENSE` 和 `THIRD-PARTY-NOTICES.md`，不包含 `docs/`。
+
+双击根目录 `publish-installer.cmd`，即可依次还原 Release 依赖、运行 Full 并生成中文 EXE 安装器。需要 PowerShell 7、项目要求的 .NET SDK/MAUI Windows 工作负载及 Inno Setup 6.5.4；命令优先使用本机 `.verify/installer/tools/inno-6.5.4/ISCC.exe`，也会查找 Inno Setup 6 的常用安装目录，可通过环境变量 `RELAYCOVE_ISCC` 指定编译器路径。任何一步失败都会停止并保留错误提示；命令行调用时可加 `--no-pause` 取消结束暂停。
+
+也可以在完成当前源码的 `Full` 后单独生成安装器；脚本校验 ZIP 的 SHA-256，并只打包该 ZIP 的内容：
+
+```powershell
+pwsh ./scripts/package-installer.ps1 -IsccPath 'C:\path\to\Inno Setup 6\ISCC.exe'
+```
+
+安装器、ZIP 和各自的 `.sha256` 均输出到 `artifacts/package/`。安装器内含 .NET 和 Windows App SDK 运行时，安装本身不下载依赖。`scripts/installer/Languages/ChineseSimplified.isl` 来自 [Inno Setup 6.5.4 的社区简体中文翻译](https://github.com/jrsoftware/issrc/blob/is-6_5_4/Files/Languages/Unofficial/ChineseSimplified.isl)，保留原作者信息。
 
 ## 安全边界
 

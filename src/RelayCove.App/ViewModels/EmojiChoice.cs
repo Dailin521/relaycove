@@ -10,7 +10,8 @@ public sealed record EmojiChoice(
     string EmojiName,
     string EmojiCode,
     string CategoryKey,
-    string ReactionType = "unicode_emoji") : INotifyPropertyChanged
+    string ReactionType = "unicode_emoji",
+    string? SourceUrl = null) : INotifyPropertyChanged
 {
     private bool _isComposerSelected;
     private bool _isPointerOver;

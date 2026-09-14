@@ -40,7 +40,6 @@ internal sealed class WindowsTrayIconController : IDisposable
     private const uint NotifyIconMessage = 0x00000001;
     private const uint NotifyIconIcon = 0x00000002;
     private const uint NotifyIconTip = 0x00000004;
-    private const uint NotifyIconGuid = 0x00000020;
     private const uint NotifySelect = 0x0400;
     private const uint NotifyKeySelect = 0x0401;
     private const uint NotifyPopupOpen = 0x0406;
@@ -66,14 +65,14 @@ internal sealed class WindowsTrayIconController : IDisposable
     private const uint MonitorDefaultToNearest = 2;
     private const int PreviewWidthDip = 360;
     private const int PreviewHeightDip = 112;
-    private static readonly Guid TrayIconGuid = new("8B6EF624-2B24-4FB2-B647-4B42221686EA");
+    private const int PreviewDismissDelayMilliseconds = 450;
 
     private readonly Action<string?> _activateWindow;
     private readonly Action _exitApplication;
     private readonly WindowProcedure _windowProcedure;
+    private readonly WindowsTrayBlinkTimer _blinkTimer;
     private readonly string _windowClassName = $"RelayCove.Tray.{Environment.ProcessId}";
     private DispatcherQueue? _dispatcherQueue;
-    private DispatcherQueueTimer? _blinkTimer;
     private DispatcherQueueTimer? _hoverTimer;
     private Microsoft.UI.Xaml.Window? _previewWindow;
     private AppWindow? _previewAppWindow;
@@ -86,11 +85,13 @@ internal sealed class WindowsTrayIconController : IDisposable
     private nint _mainWindowHandle;
     private nint _messageWindowHandle;
     private nint _iconHandle;
+    private nint _unreadIconHandle;
     private nint _transparentIconHandle;
     private nint _moduleHandle;
     private uint _taskbarCreatedMessage;
     private int _unreadCount;
     private bool _unreadIsTruncated;
+    private bool _showUnreadBadge;
     private bool _iconAdded;
     private bool _iconShowingArtwork;
     private bool _flashRequested;
@@ -99,6 +100,7 @@ internal sealed class WindowsTrayIconController : IDisposable
     private bool _exitQueued;
     private bool _previewVisibilityQueued;
     private bool _previewVisibilityRequested;
+    private long? _previewDismissDeadline;
     private bool _disposed;
     private AppMessageNotification? _previewNotification;
     private Uri? _previewAvatarUri;
@@ -108,6 +110,7 @@ internal sealed class WindowsTrayIconController : IDisposable
         _activateWindow = activateWindow ?? throw new ArgumentNullException(nameof(activateWindow));
         _exitApplication = exitApplication ?? throw new ArgumentNullException(nameof(exitApplication));
         _windowProcedure = OnWindowMessage;
+        _blinkTimer = new WindowsTrayBlinkTimer(OnBlinkTimerTick);
     }
 
     internal void Attach(nint mainWindowHandle)
@@ -155,8 +158,15 @@ internal sealed class WindowsTrayIconController : IDisposable
             ResumeFlashing();
         }
 
-        ModifyIcon();
+        _ = ModifyIcon(_iconShowingArtwork);
         UpdatePreviewContent();
+    }
+
+    internal void UpdateBadgeVisibility(bool isVisible)
+    {
+        if (_disposed || _showUnreadBadge == isVisible) return;
+        _showUnreadBadge = isVisible;
+        _ = ModifyIcon(_iconShowingArtwork);
     }
 
     internal void UpdatePreview(AppMessageNotification notification, Uri? avatarUri)
@@ -177,7 +187,7 @@ internal sealed class WindowsTrayIconController : IDisposable
     internal void StopFlashing()
     {
         _flashRequested = false;
-        _blinkTimer?.Stop();
+        _blinkTimer.Stop();
         EnsureIconVisible();
     }
 
@@ -205,24 +215,17 @@ internal sealed class WindowsTrayIconController : IDisposable
     private void ResumeFlashing()
     {
         if (!_flashRequested || !HasUnread || _hovering || _disposed) return;
+        if (_blinkTimer.IsRunning) return;
         EnsureIconVisible();
-        if (_blinkTimer is null)
-        {
-            var dispatcherQueue = _dispatcherQueue ?? DispatcherQueue.GetForCurrentThread();
-            if (dispatcherQueue is null) return;
-            _blinkTimer = dispatcherQueue.CreateTimer();
-            _blinkTimer.Interval = TimeSpan.FromMilliseconds(500);
-            _blinkTimer.IsRepeating = true;
-            _blinkTimer.Tick += OnBlinkTimerTick;
-        }
-        _blinkTimer.Start();
+        // The tray's message-only HWND remains alive when every app window is hidden.
+        _blinkTimer.Start(_messageWindowHandle);
     }
 
-    private void OnBlinkTimerTick(DispatcherQueueTimer sender, object args)
+    private void OnBlinkTimerTick()
     {
         if (!_flashRequested || !HasUnread || _hovering)
         {
-            sender.Stop();
+            _blinkTimer.Stop();
             EnsureIconVisible();
             return;
         }
@@ -280,9 +283,18 @@ internal sealed class WindowsTrayIconController : IDisposable
         }
 
         if (_iconHandle == 0) return;
-        var andMask = Enumerable.Repeat(byte.MaxValue, 32).ToArray();
-        var xorMask = new byte[32];
-        _transparentIconHandle = CreateIcon(_moduleHandle, 16, 16, 1, 1, andMask, xorMask);
+        _unreadIconHandle = WindowsTrayUnreadIconRenderer.Create(_iconHandle);
+        _transparentIconHandle = CreateTransparentIcon(_moduleHandle);
+    }
+
+    internal static nint CreateTransparentIcon(nint moduleHandle)
+    {
+        const int size = 16;
+        var andMask = Enumerable.Repeat(byte.MaxValue, size / 8 * size).ToArray();
+        // Common Controls v6 retains the previous color image when a monochrome
+        // transparent HICON replaces it. A 32-bit icon clears the image list slot.
+        var xorBits = new byte[size * size * 4];
+        return CreateIcon(moduleHandle, size, size, 1, 32, andMask, xorBits);
     }
 
     private void AddIcon()
@@ -307,21 +319,20 @@ internal sealed class WindowsTrayIconController : IDisposable
         _iconShowingArtwork = false;
     }
 
-    private void ModifyIcon()
+    private bool ModifyIcon(bool showingArtwork)
     {
-        if (!_iconAdded) return;
+        if (!_iconAdded) return false;
         var data = CreateIconData(NotifyIconIcon | NotifyIconTip);
-        data.IconHandle = _iconShowingArtwork || _transparentIconHandle == 0
-            ? _iconHandle
+        data.IconHandle = showingArtwork || _transparentIconHandle == 0
+            ? ArtworkIconHandle
             : _transparentIconHandle;
-        _ = ShellNotifyIcon(NotifyIconModify, ref data);
+        return ShellNotifyIcon(NotifyIconModify, ref data);
     }
 
     private void SetIconArtwork(bool visible)
     {
         if (!_iconAdded || _transparentIconHandle == 0) return;
-        _iconShowingArtwork = visible;
-        ModifyIcon();
+        if (ModifyIcon(visible)) _iconShowingArtwork = visible;
     }
 
     private void RemoveIcon()
@@ -340,18 +351,22 @@ internal sealed class WindowsTrayIconController : IDisposable
         else if (!_iconShowingArtwork) SetIconArtwork(true);
     }
 
+    private nint ArtworkIconHandle =>
+        _showUnreadBadge && HasUnread && _unreadIconHandle != 0 ? _unreadIconHandle : _iconHandle;
+
     private NotifyIconData CreateIconData(uint flags) => new()
     {
         Size = (uint)Marshal.SizeOf<NotifyIconData>(),
         WindowHandle = _messageWindowHandle,
         Id = NotifyIconId,
-        Flags = flags | NotifyIconGuid,
+        // Unsigned portable builds can move between folders. A fixed GUID is tied
+        // to the executable path by the shell; use the HWND + Id identity instead.
+        Flags = flags,
         CallbackMessage = CallbackMessage,
-        IconHandle = _iconHandle,
+        IconHandle = ArtworkIconHandle,
         Tip = FormatTooltip(_unreadCount, _unreadIsTruncated),
         Info = string.Empty,
-        InfoTitle = string.Empty,
-        Guid = TrayIconGuid
+        InfoTitle = string.Empty
     };
 
     private nint OnWindowMessage(nint windowHandle, uint message, nint wordParameter, nint longParameter)
@@ -370,6 +385,8 @@ internal sealed class WindowsTrayIconController : IDisposable
 
     private nint ProcessWindowMessage(nint windowHandle, uint message, nint wordParameter, nint longParameter)
     {
+        if (_blinkTimer.TryHandleMessage(windowHandle, message, wordParameter)) return 0;
+
         if (message == _taskbarCreatedMessage && message != 0)
         {
             _iconAdded = false;
@@ -390,7 +407,9 @@ internal sealed class WindowsTrayIconController : IDisposable
         switch (notification)
         {
             case NotifyPopupClose:
-                QueuePreviewVisibility(visible: false);
+                // Moving from the icon into our preview also closes the shell popup.
+                // Let hover tracking decide when both surfaces have been left.
+                if (_hovering) StartHoverTracking();
                 break;
             case NotifySelect:
             case NotifyKeySelect:
@@ -458,11 +477,36 @@ internal sealed class WindowsTrayIconController : IDisposable
 
     private void OnHoverTimerTick(DispatcherQueueTimer sender, object args)
     {
-        if (_disposed || !IsCursorOverIcon())
+        if (_disposed || ShouldDismissPreview(
+                IsCursorOverIcon(), IsCursorOverPreview(), Environment.TickCount64, ref _previewDismissDeadline))
         {
             sender.Stop();
             QueuePreviewVisibility(visible: false);
         }
+    }
+
+    internal static bool ShouldDismissPreview(
+        bool isCursorOverIcon,
+        bool isCursorOverPreview,
+        long nowMilliseconds,
+        ref long? dismissDeadline)
+    {
+        if (isCursorOverIcon || isCursorOverPreview)
+        {
+            dismissDeadline = null;
+            return false;
+        }
+        dismissDeadline ??= nowMilliseconds + PreviewDismissDelayMilliseconds;
+        return nowMilliseconds >= dismissDeadline.Value;
+    }
+
+    private bool IsCursorOverPreview()
+    {
+        if (!_hovering || _previewWindow is null) return false;
+        if (!GetWindowRect(WindowNative.GetWindowHandle(_previewWindow), out var rectangle) ||
+            !GetCursorPos(out var cursor)) return false;
+        return cursor.X >= rectangle.Left && cursor.X < rectangle.Right &&
+               cursor.Y >= rectangle.Top && cursor.Y < rectangle.Bottom;
     }
 
     private bool IsCursorOverIcon()
@@ -591,7 +635,7 @@ internal sealed class WindowsTrayIconController : IDisposable
     private void ShowPreview()
     {
         if (_disposed || !HasUnread) return;
-        _blinkTimer?.Stop();
+        _blinkTimer.Stop();
         EnsureIconVisible();
         EnsurePreviewWindow();
         UpdatePreviewContent();
@@ -608,12 +652,15 @@ internal sealed class WindowsTrayIconController : IDisposable
             0,
             SetWindowPositionNoActivate | SetWindowPositionShowWindow | 0x0001 | 0x0002);
         _hovering = true;
+        _previewDismissDeadline = null;
     }
 
     private void HidePreview()
     {
         var wasHovering = _hovering;
         _hovering = false;
+        _previewDismissDeadline = null;
+        _hoverTimer?.Stop();
         if (_previewAppWindow is not null)
         {
             _previewAppWindow.Hide();
@@ -712,6 +759,7 @@ internal sealed class WindowsTrayIconController : IDisposable
         content.Children.Add(avatarContainer);
         content.Children.Add(textColumn);
         root.Child = content;
+        root.Tapped += OnPreviewTapped;
 
         _previewWindow = new Microsoft.UI.Xaml.Window { Content = root };
         var handle = WindowNative.GetWindowHandle(_previewWindow);
@@ -756,7 +804,11 @@ internal sealed class WindowsTrayIconController : IDisposable
         _previewInitial.Text = GetInitial(title);
         if (_previewAvatarUri is { IsFile: true } avatarUri)
         {
-            _previewAvatar.Source = new BitmapImage(avatarUri);
+            _previewAvatar.Source = new BitmapImage
+            {
+                CreateOptions = Microsoft.UI.Xaml.Media.Imaging.BitmapCreateOptions.IgnoreImageCache,
+                UriSource = avatarUri
+            };
             _previewAvatar.Visibility = WinUiVisibility.Visible;
         }
         else
@@ -764,6 +816,12 @@ internal sealed class WindowsTrayIconController : IDisposable
             _previewAvatar.Source = null;
             _previewAvatar.Visibility = WinUiVisibility.Collapsed;
         }
+    }
+
+    private void OnPreviewTapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs args)
+    {
+        args.Handled = true;
+        QueueWindowActivation();
     }
 
     private static string GetInitial(string title)
@@ -811,8 +869,7 @@ internal sealed class WindowsTrayIconController : IDisposable
     {
         Size = (uint)Marshal.SizeOf<NotifyIconIdentifier>(),
         WindowHandle = _messageWindowHandle,
-        Id = NotifyIconId,
-        Guid = TrayIconGuid
+        Id = NotifyIconId
     };
 
     internal static int ScaleDipToPixels(int dip, uint dpi) =>
@@ -822,9 +879,7 @@ internal sealed class WindowsTrayIconController : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _blinkTimer?.Stop();
-        if (_blinkTimer is not null) _blinkTimer.Tick -= OnBlinkTimerTick;
-        _blinkTimer = null;
+        _blinkTimer.Stop();
         _hoverTimer?.Stop();
         if (_hoverTimer is not null) _hoverTimer.Tick -= OnHoverTimerTick;
         _hoverTimer = null;
@@ -835,6 +890,8 @@ internal sealed class WindowsTrayIconController : IDisposable
         RemoveIcon();
         if (_iconHandle != 0) _ = DestroyIcon(_iconHandle);
         _iconHandle = 0;
+        if (_unreadIconHandle != 0) _ = DestroyIcon(_unreadIconHandle);
+        _unreadIconHandle = 0;
         if (_transparentIconHandle != 0) _ = DestroyIcon(_transparentIconHandle);
         _transparentIconHandle = 0;
         if (_messageWindowHandle != 0) _ = DestroyWindow(_messageWindowHandle);
@@ -1020,6 +1077,10 @@ internal sealed class WindowsTrayIconController : IDisposable
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetCursorPos(out NativePoint point);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetWindowRect(nint windowHandle, out NativeRectangle rectangle);
 
     [DllImport("user32.dll")]
     private static extern nint CreatePopupMenu();

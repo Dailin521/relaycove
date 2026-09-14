@@ -5,11 +5,15 @@ namespace RelayCove.App.Tests;
 public sealed class AvatarInitialsTests
 {
     [Theory]
-    [InlineData("Maya Chen", "MA")]
-    [InlineData("Alex Wu", "AL")]
+    [InlineData("Maya Chen", "M")]
+    [InlineData("Alex Wu", "A")]
     [InlineData("林远", "林")]
-    [InlineData("  Sarah Li  ", "SA")]
-    public void Create_WhenDisplayNameProvided_ReturnsWebParityInitials(string displayName, string expected)
+    [InlineData("  Sarah Li  ", "S")]
+    [InlineData("👩🏽‍💻 Developer", "👩🏽‍💻")]
+    [InlineData("e\u0301lodie", "E\u0301")]
+    [InlineData("", "?")]
+    [InlineData(null, "?")]
+    public void Create_WhenDisplayNameProvided_ReturnsSingleTextElement(string? displayName, string expected)
     {
         Assert.Equal(expected, AvatarInitials.Create(displayName));
     }

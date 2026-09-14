@@ -27,6 +27,7 @@ public partial class App : MauiWinUIApplication
     /// </summary>
     public App()
     {
+        WindowsAppNotificationService.PrepareProcessNotificationIdentity();
         this.InitializeComponent();
     }
 
@@ -48,6 +49,7 @@ public partial class App : MauiWinUIApplication
             _mainInstance = registeredInstance;
             _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
             _mainInstance.Activated += OnInstanceActivated;
+            MouseOnlyNavigation.Enable();
             base.OnLaunched(args);
         }
         catch

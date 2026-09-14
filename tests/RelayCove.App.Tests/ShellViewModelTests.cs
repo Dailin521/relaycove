@@ -1,4 +1,4 @@
-using System.Collections.Specialized;
+﻿using System.Collections.Specialized;
 using CommunityToolkit.Mvvm.Input;
 using RelayCove.App.Services;
 using RelayCove.App.ViewModels;
@@ -8,8 +8,807 @@ namespace RelayCove.App.Tests;
 
 public sealed class ShellViewModelTests
 {
+    [Theory]
+    [InlineData(7)]
+    [InlineData(8)]
+    public void Messages_WhenEditMetadataChanges_UpdatesExistingRowWithoutChangingContent(long senderId)
+    {
+        var conversation = new DirectMessage([8]);
+        var original = new ChatMessage(1, conversation, senderId, "正文", DateTimeOffset.UnixEpoch, isEdited: true);
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            Selected = conversation,
+            Recent = [conversation],
+            StateValue = new ClientState(messages: new Dictionary<long, ChatMessage> { [1] = original })
+        };
+        using var viewModel = CreateViewModel(session);
+        var item = Assert.Single(viewModel.Messages);
+        Assert.True(item.IsEdited);
+        Assert.Contains("已编辑", item.AccessibleLabel);
+        var changed = new List<string?>();
+        item.PropertyChanged += (_, args) => changed.Add(args.PropertyName);
+
+        foreach (var isEdited in new[] { false, true })
+        {
+            session.StateValue = session.StateValue with
+            {
+                Messages = new Dictionary<long, ChatMessage> { [1] = original with { IsEdited = isEdited } }
+            };
+            session.Publish();
+
+            Assert.Same(item, Assert.Single(viewModel.Messages));
+            Assert.Equal(isEdited, item.IsEdited);
+            Assert.Equal("正文", item.Content);
+            Assert.Equal("正文", item.Body);
+            Assert.Contains(nameof(MessageItem.IsEdited), changed);
+            Assert.Contains(nameof(MessageItem.AccessibleLabel), changed);
+            changed.Clear();
+        }
+    }
+
     [Fact]
-    public void DirectConversation_WhenOfficialPresenceAndUserStatusAreAvailable_ShowsBothLayers()
+    public void StartupSettings_WhenOpenedAndReopened_ReadsStateWithoutWriting()
+    {
+        var startup = new FakeStartupService();
+        using var viewModel = CreateViewModel(new FakeSession(), startupService: startup);
+
+        Assert.False(viewModel.StartWithWindows);
+        Assert.True(viewModel.CanChangeStartup);
+        Assert.False(viewModel.HasStartupSettingsStatus);
+        viewModel.ShowGeneralSettingsCommand.Execute(null);
+        Assert.True(viewModel.IsGeneralSettings);
+        Assert.Empty(startup.Writes);
+
+        startup.State = StartupState.Enabled;
+        viewModel.ShowMessagesCommand.Execute(null);
+        viewModel.ShowGeneralSettingsCommand.Execute(null);
+        Assert.True(viewModel.StartWithWindows);
+        Assert.Empty(startup.Writes);
+    }
+
+    [Fact]
+    public void StartupSettings_WhenAnotherCopyIsRegistered_ShowsWarningAndCanDisableIt()
+    {
+        var startup = new FakeStartupService { State = StartupState.DifferentExecutable };
+        using var viewModel = CreateViewModel(new FakeSession(), startupService: startup);
+
+        Assert.True(viewModel.StartWithWindows);
+        Assert.Equal("开机启动指向其他位置，如需启动当前版本，请关闭后重新开启。", viewModel.StartupSettingsStatus);
+        Assert.Empty(startup.Writes);
+
+        viewModel.StartWithWindows = false;
+        Assert.False(viewModel.StartWithWindows);
+        Assert.Equal([false], startup.Writes);
+    }
+
+    [Fact]
+    public void StartWithWindows_WhenToggled_PersistsAndRestoresOnNextViewModel()
+    {
+        var startup = new FakeStartupService();
+        using var viewModel = CreateViewModel(new FakeSession(), startupService: startup);
+
+        viewModel.StartWithWindows = true;
+        viewModel.StartWithWindows = true;
+        Assert.True(viewModel.StartWithWindows);
+        Assert.Equal([true], startup.Writes);
+
+        using var reopened = CreateViewModel(new FakeSession(), startupService: startup);
+        Assert.True(reopened.StartWithWindows);
+        reopened.StartWithWindows = false;
+        Assert.False(reopened.StartWithWindows);
+        Assert.Equal([true, false], startup.Writes);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void StartWithWindows_WhenWriteFails_RestoresActualStateAndShowsSafeError(bool initialEnabled)
+    {
+        var startup = new FakeStartupService
+        {
+            State = initialEnabled ? StartupState.Enabled : StartupState.Disabled,
+            ThrowOnWrite = true
+        };
+        using var viewModel = CreateViewModel(new FakeSession(), startupService: startup);
+        var changes = new List<string?>();
+        viewModel.PropertyChanged += (_, args) => changes.Add(args.PropertyName);
+
+        viewModel.StartWithWindows = !initialEnabled;
+
+        Assert.Equal(initialEnabled, viewModel.StartWithWindows);
+        Assert.Equal("无法更改开机启动，请稍后重试。", viewModel.StartupSettingsStatus);
+        Assert.Contains(nameof(ShellViewModel.StartWithWindows), changes);
+        Assert.Equal([!initialEnabled], startup.Writes);
+    }
+
+    [Fact]
+    public void StartupSettings_WhenReadFails_DisablesSwitchAndRecoversOnReopen()
+    {
+        var startup = new FakeStartupService { ThrowOnRead = true };
+        using var viewModel = CreateViewModel(new FakeSession(), startupService: startup);
+
+        Assert.False(viewModel.CanChangeStartup);
+        Assert.Equal("无法读取开机启动状态，请重新打开通用设置重试。", viewModel.StartupSettingsStatus);
+        viewModel.StartWithWindows = true;
+        Assert.Empty(startup.Writes);
+
+        startup.ThrowOnRead = false;
+        viewModel.ShowGeneralSettingsCommand.Execute(null);
+        Assert.True(viewModel.CanChangeStartup);
+        Assert.False(viewModel.StartWithWindows);
+        Assert.False(viewModel.HasStartupSettingsStatus);
+    }
+
+    [Theory]
+    [InlineData(StartupState.DisabledByWindows)]
+    [InlineData(StartupState.UnknownWindowsApproval)]
+    public void StartupSettings_WhenSystemBlocksEntry_ShowsWarningAndAllowsRemovingEntry(StartupState state)
+    {
+        var startup = new FakeStartupService { State = state };
+        using var viewModel = CreateViewModel(new FakeSession(), startupService: startup);
+
+        Assert.True(viewModel.StartWithWindows);
+        Assert.True(viewModel.HasStartupSettingsStatus);
+        Assert.Contains("Windows", viewModel.StartupSettingsStatus);
+        Assert.Empty(startup.Writes);
+
+        viewModel.StartWithWindows = false;
+        Assert.False(viewModel.StartWithWindows);
+        Assert.False(viewModel.HasStartupSettingsStatus);
+        Assert.Equal([false], startup.Writes);
+    }
+
+    [Theory]
+    [InlineData(GatewayErrorCode.NetworkError, null, "无法连接服务器")]
+    [InlineData(GatewayErrorCode.RequestTimedOut, null, "连接超时")]
+    [InlineData(GatewayErrorCode.InvalidResponse, 200, "服务器响应异常")]
+    [InlineData(GatewayErrorCode.ServerError, 503, "服务器错误（503）")]
+    [InlineData(GatewayErrorCode.RequestFailed, 408, "连接超时")]
+    [InlineData(GatewayErrorCode.BadEventQueueId, 400, "连接已失效")]
+    [InlineData(GatewayErrorCode.RateLimited, 429, "服务器繁忙")]
+    public void ConnectionStatus_WhenRetryFailsQuickly_ShowsCauseAndAdvancingAttempt(
+        GatewayErrorCode code, int? status, string reason)
+    {
+        var connection = new ConnectionState(
+            code == GatewayErrorCode.RateLimited ? ConnectionStatus.RateLimited : ConnectionStatus.Reconnecting, "retry_wait")
+        {
+            RetryAttempt = 1,
+            RetryDelay = TimeSpan.FromSeconds(20),
+            FailureCode = code,
+            FailureStatusCode = status
+        };
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
+            StateValue = new ClientState(connection: connection)
+        };
+        using var viewModel = CreateViewModel(session);
+        Assert.Equal($"{reason}，等待第 1 次重连，间隔 20 秒", viewModel.ConnectionStatus);
+
+        session.StateValue = session.StateValue with { Connection = connection with { RetryAttempt = 2, RetryDelay = TimeSpan.FromSeconds(60) } };
+        session.Publish();
+        Assert.Equal($"{reason}，等待第 2 次重连，间隔 60 秒", viewModel.ConnectionStatus);
+
+        session.StateValue = session.StateValue with
+        {
+            Connection = connection with { Status = ConnectionStatus.Reconnecting, Detail = "retrying", RetryAttempt = 2, RetryDelay = null }
+        };
+        session.Publish();
+        Assert.Equal("正在重新连接（第 2 次）", viewModel.ConnectionStatus);
+        Assert.True(viewModel.ShowConnectionStatus);
+
+        session.StateValue = session.StateValue with { Connection = new ConnectionState(ConnectionStatus.Connected) };
+        session.Publish();
+        Assert.False(viewModel.ShowConnectionStatus);
+    }
+
+    [Theory]
+    [InlineData(ConnectionStatus.Offline, "cache_first", false, "正在连接")]
+    [InlineData(ConnectionStatus.Connecting, null, false, "正在连接")]
+    [InlineData(ConnectionStatus.Connected, null, false, "已连接")]
+    [InlineData(ConnectionStatus.Offline, null, true, "连接已中断")]
+    [InlineData(ConnectionStatus.Reconnecting, "retry_wait", true, "等待重新连接")]
+    [InlineData(ConnectionStatus.Reconnecting, "retrying", true, "正在重新连接")]
+    [InlineData(ConnectionStatus.RateLimited, "retry_wait", true, "服务器繁忙，等待重新连接")]
+    [InlineData(ConnectionStatus.Faulted, null, true, "连接故障")]
+    public void ConnectionStatus_WhenProjected_ShowsOnlyFailuresAndRecovery(
+        ConnectionStatus status, string? detail, bool visible, string label)
+    {
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
+            StateValue = new ClientState(connection: new ConnectionState(status, detail))
+        };
+        using var viewModel = CreateViewModel(session);
+        Assert.Equal(visible, viewModel.ShowConnectionStatus);
+        Assert.Equal(label, viewModel.ConnectionStatus);
+    }
+
+    [Fact]
+    public void ConnectionStatus_WhenCacheLoadsThenConnectionFailsAndRecovers_KeepsMessagesAndUpdatesBanner()
+    {
+        var conversation = new DirectMessage([8]);
+        var cached = new ChatMessage(10, conversation, 8, "cached", DateTimeOffset.UnixEpoch, isRead: true);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Offline, "cache_first"),
+                messages: new Dictionary<long, ChatMessage> { [10] = cached })
+        };
+        using var viewModel = CreateViewModel(session);
+        var row = Assert.Single(viewModel.Messages);
+        Assert.False(viewModel.ShowConnectionStatus);
+        Assert.DoesNotContain("离线", viewModel.MessageEmptyTitle);
+
+        foreach (var detail in new[] { "retry_wait", "retrying" })
+        {
+            session.StateValue = session.StateValue with { Connection = new ConnectionState(ConnectionStatus.Reconnecting, detail) };
+            session.Publish();
+            Assert.True(viewModel.ShowConnectionStatus);
+            Assert.Same(row, Assert.Single(viewModel.Messages));
+        }
+        session.StateValue = session.StateValue with { Connection = new ConnectionState(ConnectionStatus.Connected) };
+        session.Publish();
+        Assert.False(viewModel.ShowConnectionStatus);
+        Assert.Same(row, Assert.Single(viewModel.Messages));
+    }
+
+    [Fact]
+    public async Task UploadAvatarCommand_WhenLogoutIsConfirmed_CancelsUploadBeforeLoggingOut()
+    {
+        var session = AvatarSession();
+        CancellationToken uploadToken = default;
+        session.UploadAvatarAction = (_, _, token) =>
+        {
+            uploadToken = token;
+            return Task.Delay(Timeout.InfiniteTimeSpan, token);
+        };
+        var loggedOut = false;
+        session.LogoutAction = _ =>
+        {
+            Assert.True(uploadToken.IsCancellationRequested);
+            loggedOut = true;
+            return Task.CompletedTask;
+        };
+        using var viewModel = CreateViewModel(session, fileSelectionService: new FakeFileSelectionService { Files = [AvatarFile()] });
+        var upload = viewModel.UploadAvatarCommand.ExecuteAsync(null);
+        viewModel.RequestLogoutCommand.Execute(null);
+        await viewModel.ConfirmLogoutCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(5));
+        await upload.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(loggedOut);
+        Assert.False(viewModel.IsAvatarUploadBusy);
+        Assert.Equal(1, session.AvatarUploadCalls);
+    }
+
+    [Fact]
+    public async Task UploadAvatarCommand_WhenAccepted_UpdatesAvatarAndKeepsComposerUntouched()
+    {
+        var response = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = AvatarSession();
+        session.UploadAvatarAction = async (accountId, upload, _) =>
+        {
+            Assert.Equal(session.AccountId, accountId);
+            Assert.Equal("avatar.png", upload.FileName);
+            await response.Task;
+            session.StateValue = DomainReducer.Apply(session.StateValue,
+                new UserPatchedEvent(7, null, null, null, Source: DomainEventSource.Local,
+                    HasAvatar: true, AvatarUrl: "/user_avatars/1/updated.png?x=2", AvatarSource: UserAvatarSource.Uploaded));
+            session.Publish();
+        };
+        using var viewModel = CreateViewModel(session, fileSelectionService: new FakeFileSelectionService { Files = [AvatarFile()] });
+        viewModel.ComposerText = "unfinished message";
+        viewModel.ToggleAccountMenuCommand.Execute(null);
+
+        var pending = viewModel.UploadAvatarCommand.ExecuteAsync(null);
+        Assert.True(viewModel.IsAvatarUploadBusy);
+        Assert.False(viewModel.UploadAvatarCommand.CanExecute(null));
+        Assert.Null(viewModel.CurrentUserAvatarUrl);
+        response.SetResult(true);
+        await pending;
+
+        Assert.Equal(1, session.AvatarUploadCalls);
+        Assert.Equal(0, session.UploadCalls);
+        Assert.Equal("/user_avatars/1/updated.png?x=2", viewModel.CurrentUserAvatarUrl);
+        Assert.Equal("头像已更新。", viewModel.AvatarUploadStatus);
+        Assert.False(viewModel.IsAvatarUploadBusy);
+        Assert.True(viewModel.IsAccountMenuOpen);
+        Assert.Equal("unfinished message", viewModel.ComposerText);
+        Assert.Empty(viewModel.Attachments);
+        Assert.Empty(session.SentContents);
+    }
+
+    [Fact]
+    public async Task UploadAvatarCommand_WhenPickerCancelled_DoesNotUpload()
+    {
+        var session = AvatarSession();
+        using var viewModel = CreateViewModel(session);
+        await viewModel.UploadAvatarCommand.ExecuteAsync(null);
+        Assert.Equal(0, session.AvatarUploadCalls);
+        Assert.False(viewModel.IsAvatarUploadBusy);
+        Assert.False(viewModel.HasAvatarUploadStatus);
+    }
+
+    [Theory]
+    [InlineData("note.txt", 3)]
+    [InlineData("empty.png", 0)]
+    [InlineData("large.png", 6 * 1024 * 1024)]
+    public async Task UploadAvatarCommand_WhenImageIsInvalid_RejectsBeforeReadingFile(string name, long length)
+    {
+        var session = AvatarSession();
+        var opened = false;
+        var file = new SelectedAttachmentFile(name, "image/png", length, _ =>
+        {
+            opened = true;
+            return Task.FromResult<Stream>(new MemoryStream([1, 2, 3]));
+        });
+        using var viewModel = CreateViewModel(session, fileSelectionService: new FakeFileSelectionService { Files = [file] });
+        await viewModel.UploadAvatarCommand.ExecuteAsync(null);
+        Assert.Equal(0, session.AvatarUploadCalls);
+        Assert.False(opened);
+        Assert.True(viewModel.HasAvatarUploadStatus);
+    }
+
+    [Fact]
+    public async Task UploadAvatarCommand_WhenUploadFails_ShowsFailureAndAllowsExplicitRetry()
+    {
+        var session = AvatarSession();
+        session.UploadAvatarAction = (_, _, _) => Task.FromException(new GatewayException(GatewayErrorKind.Server, GatewayErrorCode.NetworkError));
+        using var viewModel = CreateViewModel(session, fileSelectionService: new FakeFileSelectionService { Files = [AvatarFile()] });
+        await viewModel.UploadAvatarCommand.ExecuteAsync(null);
+        Assert.Equal(1, session.AvatarUploadCalls);
+        Assert.Contains("无法确认", viewModel.AvatarUploadStatus);
+        Assert.True(viewModel.UploadAvatarCommand.CanExecute(null));
+        Assert.Null(viewModel.CurrentUserAvatarUrl);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UploadAvatarCommand_WhenAccountChangesDuringSelection_DoesNotUploadToNewAccount(bool duringFileOpen)
+    {
+        var session = AvatarSession();
+        var picker = new FakeFileSelectionService();
+        using var viewModel = CreateViewModel(session, fileSelectionService: picker);
+        void SwitchAccount()
+        {
+            session.Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 8);
+            session.Publish();
+        }
+        picker.PickAvatarAction = _ =>
+        {
+            if (!duringFileOpen) SwitchAccount();
+            return Task.FromResult<SelectedAttachmentFile?>(new SelectedAttachmentFile("avatar.png", "image/png", 3, _ =>
+            {
+                if (duringFileOpen) SwitchAccount();
+                return Task.FromResult<Stream>(new MemoryStream([1, 2, 3]));
+            }));
+        };
+        await viewModel.UploadAvatarCommand.ExecuteAsync(null);
+        Assert.Equal(0, session.AvatarUploadCalls);
+        Assert.False(viewModel.HasAvatarUploadStatus);
+        Assert.False(viewModel.IsAvatarUploadBusy);
+    }
+
+    [Fact]
+    public async Task UploadAvatarCommand_WhenOldAccountResponseArrives_DoesNotShowSuccessForNewAccount()
+    {
+        var response = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = AvatarSession();
+        session.UploadAvatarAction = (_, _, _) => response.Task;
+        using var viewModel = CreateViewModel(session, fileSelectionService: new FakeFileSelectionService { Files = [AvatarFile()] });
+        var pending = viewModel.UploadAvatarCommand.ExecuteAsync(null);
+        session.Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 8);
+        session.Publish();
+        response.SetResult(true);
+        await pending;
+        Assert.False(viewModel.HasAvatarUploadStatus);
+        Assert.False(viewModel.IsAvatarUploadBusy);
+    }
+
+    [Fact]
+    public void EditOwnNameCommand_WhenOpenedAndCancelled_PrefillsAndDoesNotWrite()
+    {
+        var session = AvatarSession();
+        using var viewModel = CreateViewModel(session);
+        viewModel.ToggleAccountMenuCommand.Execute(null);
+        viewModel.EditOwnNameCommand.Execute(null);
+        Assert.True(viewModel.IsOwnNameEditing);
+        Assert.Equal("Me", viewModel.OwnNameDraft);
+        Assert.False(viewModel.SaveOwnNameCommand.CanExecute(null));
+        viewModel.OwnNameDraft = "   ";
+        Assert.False(viewModel.SaveOwnNameCommand.CanExecute(null));
+        viewModel.OwnNameDraft = "New name";
+        Assert.True(viewModel.SaveOwnNameCommand.CanExecute(null));
+        viewModel.CancelOwnNameEditCommand.Execute(null);
+        Assert.False(viewModel.IsOwnNameEditing);
+        Assert.Equal(0, session.NameUpdateCalls);
+        Assert.Equal("Me", viewModel.CurrentUserDisplayName);
+    }
+
+    [Fact]
+    public async Task SaveOwnNameCommand_WhenConfirmed_UpdatesNameWithoutChangingComposer()
+    {
+        var response = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = AvatarSession();
+        session.UpdateOwnNameAction = async (accountId, name, _) =>
+        {
+            Assert.Equal(session.AccountId, accountId);
+            Assert.Equal("新名字", name);
+            await response.Task;
+            session.StateValue = DomainReducer.Apply(session.StateValue,
+                new UserPatchedEvent(7, name, null, null, Source: DomainEventSource.Local));
+            session.Publish();
+            return true;
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.ComposerText = "unfinished message";
+        viewModel.ToggleAccountMenuCommand.Execute(null);
+        viewModel.EditOwnNameCommand.Execute(null);
+        viewModel.OwnNameDraft = " 新名字 ";
+        var pending = viewModel.SaveOwnNameCommand.ExecuteAsync(null);
+        Assert.True(viewModel.IsOwnNameSaveBusy);
+        Assert.False(viewModel.SaveOwnNameCommand.CanExecute(null));
+        Assert.False(viewModel.EditOwnNameCommand.CanExecute(null));
+        Assert.False(viewModel.CancelOwnNameEditCommand.CanExecute(null));
+        Assert.Equal("Me", viewModel.CurrentUserDisplayName);
+        response.SetResult(true);
+        await pending;
+        Assert.Equal(1, session.NameUpdateCalls);
+        Assert.Equal("新名字", viewModel.CurrentUserDisplayName);
+        Assert.Equal("名字已更新。", viewModel.OwnNameEditStatus);
+        Assert.False(viewModel.IsOwnNameEditing);
+        Assert.False(viewModel.IsOwnNameSaveBusy);
+        Assert.True(viewModel.IsAccountMenuOpen);
+        Assert.Equal("unfinished message", viewModel.ComposerText);
+        Assert.Empty(session.SentContents);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SaveOwnNameCommand_WhenNotConfirmed_KeepsDraftAndAllowsManualRetry(bool throws)
+    {
+        var session = AvatarSession();
+        session.UpdateOwnNameAction = (_, _, _) => throws
+            ? Task.FromException<bool>(new GatewayException(GatewayErrorKind.Server, GatewayErrorCode.NetworkError))
+            : Task.FromResult(false);
+        using var viewModel = CreateViewModel(session);
+        viewModel.EditOwnNameCommand.Execute(null);
+        viewModel.OwnNameDraft = "New name";
+        await viewModel.SaveOwnNameCommand.ExecuteAsync(null);
+        Assert.Equal(1, session.NameUpdateCalls);
+        Assert.Equal("Me", viewModel.CurrentUserDisplayName);
+        Assert.Equal("New name", viewModel.OwnNameDraft);
+        Assert.Contains(throws ? "无法确认" : "名字未更新", viewModel.OwnNameEditStatus);
+        Assert.True(viewModel.IsOwnNameEditing);
+        Assert.True(viewModel.SaveOwnNameCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task SaveOwnNameCommand_WhenAccountChanges_DiscardsDraftAndLateResponse()
+    {
+        var response = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = AvatarSession();
+        session.UpdateOwnNameAction = (_, _, _) => response.Task;
+        using var viewModel = CreateViewModel(session);
+        viewModel.EditOwnNameCommand.Execute(null);
+        viewModel.OwnNameDraft = "New name";
+        var pending = viewModel.SaveOwnNameCommand.ExecuteAsync(null);
+        session.Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 8);
+        session.Publish();
+        response.SetResult(true);
+        await pending;
+        Assert.False(viewModel.HasOwnNameEditStatus);
+        Assert.False(viewModel.IsOwnNameEditing);
+        Assert.False(viewModel.IsOwnNameSaveBusy);
+        Assert.Empty(viewModel.OwnNameDraft);
+    }
+
+    [Fact]
+    public async Task SaveOwnNameCommand_WhenLogoutConfirmed_CancelsBeforeLogout()
+    {
+        var session = AvatarSession();
+        CancellationToken saveToken = default;
+        session.UpdateOwnNameAction = async (_, _, token) =>
+        {
+            saveToken = token;
+            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            return true;
+        };
+        session.LogoutAction = _ =>
+        {
+            Assert.True(saveToken.IsCancellationRequested);
+            return Task.CompletedTask;
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.EditOwnNameCommand.Execute(null);
+        viewModel.OwnNameDraft = "New name";
+        var pending = viewModel.SaveOwnNameCommand.ExecuteAsync(null);
+        viewModel.RequestLogoutCommand.Execute(null);
+        await viewModel.ConfirmLogoutCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(5));
+        await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(viewModel.IsOwnNameSaveBusy);
+        Assert.False(viewModel.HasOwnNameEditStatus);
+    }
+
+    [Fact]
+    public void EditOwnNameCommand_WhenMenuCloses_DiscardsUnsavedDraft()
+    {
+        var session = AvatarSession();
+        using var viewModel = CreateViewModel(session);
+        viewModel.ToggleAccountMenuCommand.Execute(null);
+        viewModel.EditOwnNameCommand.Execute(null);
+        viewModel.OwnNameDraft = "Unsaved name";
+        viewModel.CloseAccountMenuCommand.Execute(null);
+        Assert.False(viewModel.IsOwnNameEditing);
+        viewModel.ToggleAccountMenuCommand.Execute(null);
+        viewModel.EditOwnNameCommand.Execute(null);
+        Assert.Equal("Me", viewModel.OwnNameDraft);
+        Assert.Equal(0, session.NameUpdateCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConversationMenu_WhenOtherDirectMessageIsTargeted_ChangesOnlyTargetPreference(bool pin)
+    {
+        var session = ConversationMenuSession();
+        var preferences = new InMemoryConversationPreferencesStore();
+        using var viewModel = CreateViewModel(session, conversationPreferencesStore: preferences);
+        viewModel.ComposerText = "keep my draft";
+        var target = viewModel.CreateConversationMenuTarget(viewModel.Conversations.Single(item => item.Conversation == new DirectMessage([9])))!;
+        Assert.NotNull(target);
+        Assert.Equal(new DirectMessage([8]), session.Selected);
+        if (pin) await viewModel.ToggleConversationPinnedCommand.ExecuteAsync(target);
+        else await viewModel.ToggleConversationMutedCommand.ExecuteAsync(target);
+        var saved = preferences.Get(target.AccountId, target.Conversation.CanonicalKey);
+        Assert.Equal(pin, saved.IsPinned);
+        Assert.Equal(!pin, saved.IsMuted);
+        Assert.Equal(new ConversationPreference(), preferences.Get(target.AccountId, new DirectMessage([8]).CanonicalKey));
+        Assert.Equal(new DirectMessage([8]), session.Selected);
+        Assert.Equal("keep my draft", viewModel.ComposerText);
+        Assert.Equal(0, session.SubscriptionPreferenceCalls);
+        if (pin) Assert.Equal(target.Conversation, viewModel.Conversations.First().Conversation);
+        var updated = viewModel.CreateConversationMenuTarget(viewModel.Conversations.Single(item => item.Conversation == target.Conversation))!;
+        if (pin) await viewModel.ToggleConversationPinnedCommand.ExecuteAsync(updated);
+        else await viewModel.ToggleConversationMutedCommand.ExecuteAsync(updated);
+        Assert.Equal(new ConversationPreference(), preferences.Get(target.AccountId, target.Conversation.CanonicalKey));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConversationMenu_WhenGroupPreferencePending_UsesTargetAndWaitsForConfirmation(bool pin)
+    {
+        var response = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = ConversationMenuSession();
+        session.SubscriptionPreferenceAction = async (id, preference, value, _) =>
+        {
+            Assert.Equal(4, id);
+            Assert.Equal(pin ? SubscriptionPreference.Pinned : SubscriptionPreference.Muted, preference);
+            Assert.True(value);
+            await response.Task;
+            session.StateValue = DomainReducer.Apply(session.StateValue,
+                new SubscriptionPreferenceChangedEvent(id, preference, value, Source: DomainEventSource.Local));
+            session.Publish();
+        };
+        using var viewModel = CreateViewModel(session);
+        var row = viewModel.Conversations.Single(item => item.Conversation == new ChannelTopic(4, string.Empty));
+        var target = viewModel.CreateConversationMenuTarget(row)!;
+        var pending = pin ? viewModel.ToggleConversationPinnedCommand.ExecuteAsync(target) : viewModel.ToggleConversationMutedCommand.ExecuteAsync(target);
+        Assert.True(viewModel.IsConversationMenuActionBusy);
+        Assert.False(viewModel.ToggleConversationPinnedCommand.CanExecute(target));
+        Assert.False(row.IsPinned);
+        Assert.False(row.IsMuted);
+        Assert.Equal(new DirectMessage([8]), session.Selected);
+        response.SetResult(true);
+        await pending;
+        Assert.Equal(pin, row.IsPinned);
+        Assert.Equal(!pin, row.IsMuted);
+        Assert.Equal(1, session.SubscriptionPreferenceCalls);
+    }
+
+    [Fact]
+    public async Task ConversationMenu_WhenAccountChanges_RejectsOldTargetAndDiscardsLateError()
+    {
+        var response = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = ConversationMenuSession();
+        session.SubscriptionPreferenceAction = async (_, _, _, _) =>
+        {
+            await response.Task;
+            throw new GatewayException(GatewayErrorKind.Server, GatewayErrorCode.ServerError);
+        };
+        using var viewModel = CreateViewModel(session);
+        var target = viewModel.CreateConversationMenuTarget(viewModel.Conversations.Single(item => item.IsPrivateGroup))!;
+        var pending = viewModel.ToggleConversationPinnedCommand.ExecuteAsync(target);
+        session.Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 20);
+        session.Publish();
+        response.SetResult(true);
+        await pending;
+        Assert.Null(viewModel.LoginError);
+        Assert.False(viewModel.DeleteConversationCommand.CanExecute(target));
+        await viewModel.DeleteConversationCommand.ExecuteAsync(target);
+        Assert.Equal(0, session.CloseConversationCalls);
+        Assert.Equal(1, session.SubscriptionPreferenceCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeleteConversation_WhenRemoved_HidesPersistentlyWithoutDeletingHistory(bool selected)
+    {
+        var session = ConversationMenuSession();
+        var preferences = new InMemoryConversationPreferencesStore();
+        var conversation = new DirectMessage([selected ? 8 : 9]);
+        using (var viewModel = CreateViewModel(session, conversationPreferencesStore: preferences))
+        {
+            viewModel.ComposerText = "keep draft";
+            var originalState = session.StateValue;
+            var target = viewModel.CreateConversationMenuTarget(viewModel.Conversations.Single(item => item.Conversation == conversation))!;
+            await viewModel.DeleteConversationCommand.ExecuteAsync(target);
+            Assert.DoesNotContain(viewModel.Conversations, item => item.Conversation == conversation);
+            Assert.Same(originalState, session.StateValue);
+            Assert.Equal(selected ? null : new DirectMessage([8]), session.Selected);
+            Assert.Equal(selected ? 1 : 0, session.CloseConversationCalls);
+            Assert.Equal(0, session.SubscriptionPreferenceCalls);
+            if (selected)
+            {
+                Assert.False(viewModel.HasSelectedConversation);
+                Assert.Empty(viewModel.Messages);
+            }
+            else Assert.Equal("keep draft", viewModel.ComposerText);
+        }
+        using var reopened = CreateViewModel(session, conversationPreferencesStore: preferences);
+        Assert.DoesNotContain(reopened.Conversations, item => item.Conversation == conversation);
+        var original = session.StateValue.Messages.Values.Single(message => message.Conversation == conversation);
+        session.StateValue = DomainReducer.Apply(session.StateValue,
+            new MessageUpsertEvent(original with { Content = "edited old message" }, Source: DomainEventSource.Local));
+        session.Publish();
+        Assert.DoesNotContain(reopened.Conversations, item => item.Conversation == conversation);
+        session.StateValue = DomainReducer.Apply(session.StateValue,
+            new MessageUpsertEvent(new ChatMessage(99, conversation, 9, "new message", DateTimeOffset.UtcNow), Source: DomainEventSource.Local));
+        session.Publish();
+        Assert.Contains(reopened.Conversations, item => item.Conversation == conversation);
+        Assert.Null(preferences.Get(session.Account!.Value, conversation.CanonicalKey).HiddenThroughMessageId);
+    }
+
+    [Theory]
+    [InlineData("list")]
+    [InlineData("search")]
+    [InlineData("saved")]
+    public async Task DeleteConversation_WhenReopenedFromSearch_RestoresRowAndDraft(string entryPoint)
+    {
+        var session = ConversationMenuSession();
+        session.OpenMessageAction = (conversation, _, _) =>
+        {
+            session.Selected = conversation;
+            session.Publish();
+            return Task.CompletedTask;
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.ComposerText = "keep draft";
+        var target = viewModel.CreateConversationMenuTarget(viewModel.Conversations.Single(item => item.Conversation == session.Selected))!;
+        await viewModel.DeleteConversationCommand.ExecuteAsync(target);
+        if (entryPoint == "list")
+        {
+            viewModel.ConversationFilterQuery = "first message";
+            var match = viewModel.FilteredConversations.First(item => item.Conversation == target.Conversation);
+            viewModel.ActivateConversation(match);
+        }
+        else if (entryPoint == "search")
+            await viewModel.SelectSearchResultCommand.ExecuteAsync(new SearchResultItem("10", "消息", "Bea", "first message", target.Conversation, 10));
+        else
+            await viewModel.OpenSavedMessageCommand.ExecuteAsync(new SavedMessageItem(10, target.Conversation, "Bea", "first message", ""));
+        await WaitUntilAsync(() => session.Selected == target.Conversation);
+        Assert.Contains(viewModel.Conversations, item => item.Conversation == target.Conversation);
+        Assert.Equal("keep draft", viewModel.ComposerText);
+    }
+
+    [Fact]
+    public void ConversationMenu_WhenAccountChangesBeforeProjection_DoesNotTargetOldRowWithNewAccount()
+    {
+        var session = ConversationMenuSession();
+        using var viewModel = CreateViewModel(session);
+        var oldRow = viewModel.Conversations.First();
+        session.Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 20);
+        Assert.Null(viewModel.CreateConversationMenuTarget(oldRow));
+    }
+
+    [Fact]
+    public async Task DeleteConversation_WhenPreferencesChangeWhileClosing_PreservesLatestPreferences()
+    {
+        var response = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = ConversationMenuSession();
+        session.CloseConversationAction = (_, _, _) => response.Task;
+        var preferences = new InMemoryConversationPreferencesStore();
+        using var viewModel = CreateViewModel(session, conversationPreferencesStore: preferences);
+        var target = viewModel.CreateConversationMenuTarget(viewModel.Conversations.Single(item => item.Conversation == session.Selected))!;
+        var pending = viewModel.DeleteConversationCommand.ExecuteAsync(target);
+        var changed = new ConversationPreference(IsMuted: true, IsPinned: true, Remark: "latest remark");
+        preferences.Save(target.AccountId, target.Conversation.CanonicalKey, changed);
+        response.SetResult(true);
+        await pending;
+        Assert.Equal(changed with { HiddenThroughMessageId = 10 }, preferences.Get(target.AccountId, target.Conversation.CanonicalKey));
+    }
+
+    [Fact]
+    public void ConversationMenu_WhenOffline_AllowsLocalActionsAndDisablesGroupWrites()
+    {
+        var session = ConversationMenuSession();
+        session.StateValue = session.StateValue with { Connection = new ConnectionState(ConnectionStatus.Offline) };
+        using var viewModel = CreateViewModel(session);
+        var group = viewModel.CreateConversationMenuTarget(viewModel.Conversations.Single(item => item.IsPrivateGroup))!;
+        var direct = viewModel.CreateConversationMenuTarget(viewModel.Conversations.First(item => !item.IsPrivateGroup))!;
+        Assert.False(viewModel.ToggleConversationPinnedCommand.CanExecute(group));
+        Assert.False(viewModel.ToggleConversationMutedCommand.CanExecute(group));
+        Assert.True(viewModel.DeleteConversationCommand.CanExecute(group));
+        Assert.True(viewModel.ToggleConversationPinnedCommand.CanExecute(direct));
+    }
+
+    private static FakeSession ConversationMenuSession() => new()
+    {
+        Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
+        CurrentUserId = 7,
+        Selected = new DirectMessage([8]),
+        Recent = [new DirectMessage([8]), new DirectMessage([9])],
+        StateValue = new ClientState(
+            users: new Dictionary<long, UserProfile> { [7] = new(7, "Me"), [8] = new(8, "Bea"), [9] = new(9, "Cy") },
+            subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription(4, "Group") },
+            messages: new Dictionary<long, ChatMessage>
+            {
+                [10] = new(10, new DirectMessage([8]), 8, "first message", DateTimeOffset.UnixEpoch.AddSeconds(10)),
+                [11] = new(11, new DirectMessage([9]), 9, "second message", DateTimeOffset.UnixEpoch.AddSeconds(11))
+            },
+            connection: new ConnectionState(ConnectionStatus.Connected))
+    };
+
+    private static FakeSession AvatarSession() => new()
+    {
+        Account = AccountId.Create(RealmEndpoint.Parse("https://chat.example.test"), 7),
+        CurrentUserId = 7,
+        StateValue = new ClientState(
+            users: new Dictionary<long, UserProfile> { [7] = new(7, "Me", avatarSource: UserAvatarSource.Generated) },
+            connection: new ConnectionState(ConnectionStatus.Connected))
+    };
+
+    private static SelectedAttachmentFile AvatarFile() => new("avatar.png", "image/png", 3,
+        _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3])));
+
+    [Theory]
+    [InlineData(UserAvatarSource.Generated, null)]
+    [InlineData(UserAvatarSource.Uploaded, "/user_avatars/current.png")]
+    public async Task Avatar_WhenSourceIsKnown_ProjectsConsistentlyAndUpdatesOpenViews(UserAvatarSource source, string? expected)
+    {
+        var direct = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7, Selected = direct, Recent = [direct],
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile> { [7] = new UserProfile(7, "Ada", avatarUrl: "/user_avatars/current.png", avatarVersion: 2, avatarSource: source), [8] = new UserProfile(8, "Bea", avatarUrl: "/user_avatars/current.png", avatarVersion: 2, avatarSource: source) },
+                messages: new Dictionary<long, ChatMessage> { [1] = new ChatMessage(1, direct, 7, "hello", DateTimeOffset.UnixEpoch, senderAvatarUrl: "/user_avatars/old.png") },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        await ((IAsyncRelayCommand)viewModel.ToggleDetailsCommand).ExecuteAsync(null);
+        Assert.Equal(expected, viewModel.CurrentUserAvatarUrl);
+        Assert.Equal(expected, Assert.Single(viewModel.Conversations).AvatarUrl);
+        Assert.All(viewModel.KnownContacts, contact => Assert.Equal(expected, contact.AvatarUrl));
+        Assert.Equal(expected, Assert.Single(viewModel.Messages).SenderAvatarUrl);
+        Assert.Equal(expected, viewModel.DetailsAvatarUrl);
+        session.StateValue = DomainReducer.Apply(session.StateValue, new UserPatchedEvent(7, null, null, null,
+            HasAvatar: true, AvatarUrl: "/user_avatars/replaced.png", AvatarVersion: 3, AvatarSource: UserAvatarSource.Uploaded));
+        session.StateValue = DomainReducer.Apply(session.StateValue, new UserPatchedEvent(8, null, null, null,
+            HasAvatar: true, AvatarUrl: "/user_avatars/replaced.png", AvatarVersion: 3, AvatarSource: UserAvatarSource.Uploaded));
+        session.Publish();
+        Assert.Equal("/user_avatars/replaced.png", viewModel.CurrentUserAvatarUrl);
+        Assert.Equal("/user_avatars/replaced.png", Assert.Single(viewModel.Messages).SenderAvatarUrl);
+        Assert.Equal("/user_avatars/replaced.png", viewModel.DetailsAvatarUrl);
+    }
+
+    [Fact]
+    public void DirectConversation_WhenPersonalStatusIsAvailableOrUpdated_ShowsOnlyPresence()
     {
         var direct = new DirectMessage([20]);
         var now = DateTimeOffset.UtcNow;
@@ -44,9 +843,20 @@ public sealed class ShellViewModelTests
         Assert.True(item.HasPresence);
         Assert.Equal(UserPresenceStatus.Active, item.PresenceStatus);
         Assert.Equal("在线", item.PresenceLabel);
-        Assert.Equal("📅", item.UserStatusGlyph);
-        Assert.Equal("会议中", item.UserStatusDescription);
-        Assert.Equal("在线 · 📅 会议中", viewModel.ConversationSubtitle);
+        Assert.Equal("在线", viewModel.ConversationSubtitle);
+
+        session.StateValue = session.StateValue with
+        {
+            UserStatuses = new UserStatusState(true, new Dictionary<long, UserStatusContent>
+            {
+                [20] = new UserStatusContent("在办公室", new EmojiReactionIdentity("office", "1f3e2", "unicode_emoji"))
+            })
+        };
+        session.Publish();
+
+        Assert.Equal("在线", viewModel.ConversationSubtitle);
+        Assert.Equal("Bea", Assert.Single(viewModel.Conversations).Title);
+        Assert.Equal("在线", Assert.Single(viewModel.FilteredConversations).PresenceLabel);
     }
 
     [Fact]
@@ -161,6 +971,7 @@ public sealed class ShellViewModelTests
         {
             Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 10),
             CurrentUserId = 10,
+            SearchMessagesAction = (_, _, _, _) => Task.FromResult(new MessageQueryPage([anchor], true, true, true)),
             StateValue = new ClientState(
                 users: new Dictionary<long, UserProfile> { [20] = new UserProfile(20, "Bea") },
                 connection: new ConnectionState(ConnectionStatus.Connected))
@@ -183,9 +994,11 @@ public sealed class ShellViewModelTests
         };
         using var viewModel = CreateViewModel(session);
         viewModel.OpenSearchCommand.Execute(null);
+        viewModel.SearchQuery = "matched";
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
 
         await ((IAsyncRelayCommand<SearchResultItem?>)viewModel.SelectSearchResultCommand).ExecuteAsync(
-            new SearchResultItem("server:85", "服务器消息", "Bea", anchor.Content, conversation, anchor.Id));
+            Assert.Single(viewModel.SearchResults));
 
         Assert.Equal((conversation, anchor.Id), Assert.Single(session.OpenedMessages));
         var request = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
@@ -195,8 +1008,83 @@ public sealed class ShellViewModelTests
         Assert.False(viewModel.IsSearchOpen);
     }
 
-    [Fact]
-    public async Task LoadOlderSearch_WhenTwoServerPagesExist_KeepsBothPagesVisible()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScrollToLatest_WhenSearchHistoryNeedsReload_UsesOnlySuccessfulLatestPage(bool failReload)
+    {
+        var conversation = new DirectMessage([20]);
+        var anchor = new ChatMessage(85, conversation, 20, "search hit", DateTimeOffset.UnixEpoch);
+        var newest = new ChatMessage(1000, conversation, 20, "newest", DateTimeOffset.UnixEpoch.AddDays(1));
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reloads = 0;
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 10),
+            CurrentUserId = 10,
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        session.OpenMessageAction = (opened, _, _) =>
+        {
+            session.Selected = opened;
+            session.HistoryState = new ConversationHistoryState(opened, 3, false, false, false, 85, null);
+            session.StateValue = session.StateValue with { Messages = new Dictionary<long, ChatMessage> { [85] = anchor } };
+            session.Publish();
+            return Task.CompletedTask;
+        };
+        session.SelectAction = async (selected, cancellationToken) =>
+        {
+            Assert.Equal(conversation, selected);
+            reloads++;
+            session.HistoryState = session.HistoryState with { Generation = 4, IsLoading = true };
+            session.Publish();
+            started.SetResult();
+            await release.Task.WaitAsync(cancellationToken);
+            session.HistoryState = session.HistoryState with
+            {
+                IsLoading = false,
+                Error = failReload ? "history_failed" : null
+            };
+            if (!failReload)
+                session.StateValue = session.StateValue with { Messages = new Dictionary<long, ChatMessage> { [1000] = newest } };
+            session.Publish();
+        };
+        using var viewModel = CreateViewModel(session);
+        await viewModel.SelectSearchResultCommand.ExecuteAsync(
+            new SearchResultItem("server-message:85", "消息", "Bea", anchor.Content, conversation, anchor.Id));
+        var anchorRequest = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        viewModel.AcknowledgeMessageScrollRequest(anchorRequest);
+
+        var jump = viewModel.ScrollToLatestCommand.ExecuteAsync(null);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.NotEqual(MessageScrollReason.ManualJumpToLatest, viewModel.PendingMessageScrollRequest?.Reason);
+        release.SetResult();
+        await jump;
+
+        Assert.Equal(1, reloads);
+        if (failReload)
+        {
+            Assert.True(viewModel.HasConversationActivationError);
+            Assert.NotEqual(MessageScrollReason.ManualJumpToLatest, viewModel.PendingMessageScrollRequest?.Reason);
+        }
+        else
+        {
+            var request = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+            Assert.Equal(newest.Id, request.TargetMessageId);
+            Assert.Equal(4, request.Generation);
+            Assert.Equal(MessageScrollReason.ManualJumpToLatest, request.Reason);
+            viewModel.AcknowledgeMessageScrollRequest(request);
+            await viewModel.ScrollToLatestCommand.ExecuteAsync(null);
+            Assert.Equal(1, reloads);
+        }
+    }
+
+    [Theory]
+    [InlineData("server")]
+    [InlineData("")]
+    [InlineData(" \t ")]
+    public async Task LoadOlderSearch_WhenTwoServerPagesExist_KeepsBothPagesVisible(string query)
     {
         var calls = 0;
         var session = new FakeSession
@@ -219,7 +1107,7 @@ public sealed class ShellViewModelTests
         };
         using var viewModel = CreateViewModel(session);
         viewModel.OpenSearchCommand.Execute(null);
-        viewModel.SearchQuery = "server";
+        viewModel.SearchQuery = query;
 
         await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
         await ((IAsyncRelayCommand)viewModel.LoadOlderSearchCommand).ExecuteAsync(null);
@@ -228,6 +1116,142 @@ public sealed class ShellViewModelTests
         Assert.Equal(100, viewModel.SearchResults.Count);
         Assert.Contains(viewModel.SearchResults, item => item.Id == "server-message:1");
         Assert.Contains(viewModel.SearchResults, item => item.Id == "server-message:100");
+    }
+
+    [Fact]
+    public async Task LoadOlderSearch_WhenFilteredPagesHaveNoVisibleMessages_ContinuesToSupportedMessages()
+    {
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            SearchMessagesAction = (_, before, _, _) => Task.FromResult(before is null
+                ? new MessageQueryPage([new ChatMessage(90, new DirectMessage([8, 9]), 8, "隐藏消息", DateTimeOffset.UnixEpoch)], false, true, true) with { Messages = [] }
+                : before == 90
+                    ? new MessageQueryPage([new ChatMessage(80, new ChannelTopic(999, ""), 8, "隐藏消息", DateTimeOffset.UnixEpoch)], false, true, true) with { Messages = [] }
+                    : new MessageQueryPage([new ChatMessage(70, new DirectMessage([8]), 8, "可见消息", DateTimeOffset.UnixEpoch)], true, true, true))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenSearchCommand.Execute(null);
+
+        await viewModel.SearchNowCommand.ExecuteAsync(null);
+        Assert.Empty(viewModel.SearchResults);
+        Assert.True(viewModel.HasMoreSearchResults);
+        await viewModel.LoadOlderSearchCommand.ExecuteAsync(null);
+        Assert.Empty(viewModel.SearchResults);
+        Assert.True(viewModel.HasMoreSearchResults);
+        await viewModel.LoadOlderSearchCommand.ExecuteAsync(null);
+
+        Assert.Equal(70, Assert.Single(viewModel.SearchResults).MessageId);
+        Assert.False(viewModel.HasMoreSearchResults);
+        Assert.Equal(new long?[] { null, 90, 80 }, session.SearchRequests.Select(request => request.BeforeMessageId));
+    }
+
+    [Theory]
+    [InlineData("dm", "report")]
+    [InlineData("self", "report")]
+    [InlineData("group", "report")]
+    [InlineData("dm", "")]
+    [InlineData("self", "")]
+    [InlineData("group", "")]
+    public async Task ConversationSearch_WhenSubmittedPagedAndFiltered_KeepsOpenedConversationScope(string kind, string query)
+    {
+        ConversationKey conversation = kind switch
+        {
+            "group" => new ChannelTopic(4, string.Empty),
+            "self" => new DirectMessage([]),
+            _ => new DirectMessage([20])
+        };
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            StateValue = new ClientState(
+                subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription() }),
+            SearchMessagesAction = (_, beforeMessageId, _, _) => Task.FromResult(new MessageQueryPage(
+                [
+                    new ChatMessage(beforeMessageId is null ? 90 : 70, conversation, 20, "[report](https://example.test/report)", DateTimeOffset.UnixEpoch),
+                    new ChatMessage(beforeMessageId is null ? 80 : 60, new DirectMessage([30]), 30, "report elsewhere", DateTimeOffset.UnixEpoch)
+                ], beforeMessageId is not null, true, true))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenConversationSearchCommand.Execute(null);
+        viewModel.SearchQuery = query;
+        Assert.Empty(session.SearchRequests);
+
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
+        Assert.Equal(90, Assert.Single(viewModel.SearchResults).MessageId);
+        // The dialog owns its scope even if the background selection changes.
+        session.Selected = new DirectMessage([30]);
+        await ((IAsyncRelayCommand)viewModel.LoadOlderSearchCommand).ExecuteAsync(null);
+        Assert.Equal(new long?[] { 90, 70 }, viewModel.SearchResults.Select(result => result.MessageId));
+
+        viewModel.SelectSearchCategoryCommand.Execute(
+            viewModel.SearchCategories.Single(category => category.Filter == MessageSearchFilter.Links));
+        Assert.Equal(2, session.SearchRequests.Count);
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
+
+        Assert.Equal(90, Assert.Single(viewModel.SearchResults).MessageId);
+        Assert.Collection(session.SearchRequests,
+            request => Assert.Null(request.BeforeMessageId),
+            request => Assert.Equal(80, request.BeforeMessageId),
+            request =>
+            {
+                Assert.Null(request.BeforeMessageId);
+                Assert.Equal(MessageSearchFilter.Links, request.Filter);
+            });
+        Assert.All(session.SearchRequests, request =>
+        {
+            Assert.Equal(query, request.Query);
+            Assert.Equal(conversation.CanonicalKey, request.Conversation?.CanonicalKey);
+        });
+    }
+
+    [Fact]
+    public async Task ConversationSearch_WhenReopenedForAnotherPerson_DiscardsPreviousResponseAndReplacesScope()
+    {
+        var first = new DirectMessage([20]);
+        var second = new DirectMessage([30]);
+        var pending = new TaskCompletionSource<MessageQueryPage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeSession { Selected = first, SearchMessagesAction = (_, _, _, _) => pending.Task };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenConversationSearchCommand.Execute(null);
+        viewModel.SearchQuery = "report";
+        var search = ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
+
+        viewModel.CloseSearchCommand.Execute(null);
+        session.Selected = second;
+        viewModel.OpenConversationSearchCommand.Execute(null);
+        viewModel.SearchQuery = "report";
+        pending.SetResult(new MessageQueryPage(
+            [new ChatMessage(90, first, 20, "report", DateTimeOffset.UnixEpoch)], true, true, true));
+        await search;
+        Assert.Empty(viewModel.SearchResults);
+
+        var message = new ChatMessage(80, second, 30, "report", DateTimeOffset.UnixEpoch);
+        session.SearchMessagesAction = (_, _, _, _) => Task.FromResult(new MessageQueryPage([message], true, true, true));
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
+        Assert.Equal(second.CanonicalKey, session.SearchRequests[^1].Conversation?.CanonicalKey);
+        Assert.Equal(80, Assert.Single(viewModel.SearchResults).MessageId);
+        await ((IAsyncRelayCommand<SearchResultItem?>)viewModel.SelectSearchResultCommand).ExecuteAsync(
+            Assert.Single(viewModel.SearchResults));
+        Assert.Equal((second, message.Id), Assert.Single(session.OpenedMessages));
+        Assert.False(viewModel.IsSearchOpen);
+
+        viewModel.OpenSearchCommand.Execute(null);
+        viewModel.SearchQuery = "report";
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
+        Assert.Null(session.SearchRequests[^1].Conversation);
+    }
+
+    [Fact]
+    public void ConversationSearch_WhenNoConversationIsSelected_DoesNotOpenGlobalSearch()
+    {
+        var session = new FakeSession();
+        using var viewModel = CreateViewModel(session);
+
+        viewModel.OpenConversationSearchCommand.Execute(null);
+
+        Assert.False(viewModel.IsSearchOpen);
+        Assert.Empty(session.SearchRequests);
     }
 
     [Fact]
@@ -285,6 +1309,100 @@ public sealed class ShellViewModelTests
 
         Assert.Empty(interactions.Opened);
         Assert.Equal("请先输入有效的 HTTPS Realm 地址。", viewModel.LoginError);
+    }
+
+    [Theory]
+    [InlineData("https://Chat.Example.Test/", "https://chat.example.test/accounts/password/reset/")]
+    [InlineData("https://chat.example.test", "https://chat.example.test/accounts/password/reset/")]
+    [InlineData("https://chat.example.test:8443/", "https://chat.example.test:8443/accounts/password/reset/")]
+    public async Task OpenPasswordResetCommand_WhenRealmIsValid_OpensSameOriginPageWithoutCredentials(
+        string realm, string expectedUrl)
+    {
+        var loginCalls = 0;
+        var session = new FakeSession
+        {
+            LoginAction = (_, _, _, _) =>
+            {
+                loginCalls++;
+                return Task.CompletedTask;
+            }
+        };
+        var interactions = new FakePlatformInteractionService();
+        using var viewModel = CreateViewModel(session, platformInteractions: interactions);
+        viewModel.Realm = realm;
+        viewModel.Email = "person@example.test";
+        viewModel.Password = "unused-test-value";
+        viewModel.LoginError = "之前的错误";
+
+        await ((IAsyncRelayCommand)viewModel.OpenPasswordResetCommand).ExecuteAsync(null);
+
+        var opened = Assert.Single(interactions.Opened);
+        Assert.Equal(new Uri(expectedUrl), opened);
+        Assert.Empty(opened.Query);
+        Assert.Empty(opened.Fragment);
+        Assert.Empty(opened.UserInfo);
+        Assert.Equal(0, loginCalls);
+        Assert.Null(viewModel.LoginError);
+        Assert.Equal("person@example.test", viewModel.Email);
+        Assert.Equal("unused-test-value", viewModel.Password);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("chat.example.test")]
+    [InlineData("http://chat.example.test")]
+    [InlineData("https://chat.example.test/path")]
+    [InlineData("https://chat.example.test/?value=sample")]
+    [InlineData("https://chat.example.test/#fragment")]
+    [InlineData("https://user@chat.example.test/")]
+    public async Task OpenPasswordResetCommand_WhenRealmIsInvalid_DoesNotOpenBrowser(string realm)
+    {
+        var interactions = new FakePlatformInteractionService();
+        using var viewModel = CreateViewModel(new FakeSession(), platformInteractions: interactions);
+        viewModel.Realm = realm;
+
+        await ((IAsyncRelayCommand)viewModel.OpenPasswordResetCommand).ExecuteAsync(null);
+
+        Assert.Empty(interactions.Opened);
+        Assert.Equal("请先输入有效的 HTTPS Realm 地址。", viewModel.LoginError);
+    }
+
+    [Fact]
+    public async Task OpenPasswordResetCommand_WhenBrowserFails_ShowsSafeErrorAndAllowsRetry()
+    {
+        var interactions = new FakePlatformInteractionService
+        {
+            OpenUriAction = _ => throw new InvalidOperationException("private launcher details")
+        };
+        using var viewModel = CreateViewModel(new FakeSession(), platformInteractions: interactions);
+        viewModel.Realm = "https://chat.example.test/";
+
+        await ((IAsyncRelayCommand)viewModel.OpenPasswordResetCommand).ExecuteAsync(null);
+
+        Assert.Equal("无法打开密码重置页面，请检查系统浏览器设置。", viewModel.LoginError);
+
+        interactions.OpenUriAction = null;
+        await ((IAsyncRelayCommand)viewModel.OpenPasswordResetCommand).ExecuteAsync(null);
+
+        Assert.Null(viewModel.LoginError);
+        Assert.Equal(2, interactions.Opened.Count);
+    }
+
+    [Fact]
+    public async Task OpenPasswordResetCommand_WhenRealmChanges_UsesCurrentInputWithoutRequiringLogin()
+    {
+        var interactions = new FakePlatformInteractionService();
+        using var viewModel = CreateViewModel(new FakeSession(), platformInteractions: interactions);
+        viewModel.Realm = "https://first.example.test/";
+        await ((IAsyncRelayCommand)viewModel.OpenPasswordResetCommand).ExecuteAsync(null);
+        viewModel.Realm = "https://second.example.test/";
+        await ((IAsyncRelayCommand)viewModel.OpenPasswordResetCommand).ExecuteAsync(null);
+
+        Assert.Equal(
+            [new Uri("https://first.example.test/accounts/password/reset/"),
+             new Uri("https://second.example.test/accounts/password/reset/")],
+            interactions.Opened);
     }
 
     [Fact]
@@ -482,6 +1600,13 @@ public sealed class ShellViewModelTests
         viewModel.TaskbarBadgeEnabled = false;
         Assert.Equal((0, false), notifications.BadgeUpdates[^1]);
         Assert.Equal((125, false), notifications.TrayUnreadUpdates[^1]);
+
+        viewModel.TaskbarBadgeEnabled = true;
+        Assert.Equal((125, false), notifications.BadgeUpdates[^1]);
+        viewModel.DoNotDisturb = true;
+        Assert.Equal((125, false), notifications.BadgeUpdates[^1]);
+        Assert.Equal((125, false), notifications.TrayUnreadUpdates[^1]);
+        Assert.Empty(notifications.Notifications);
     }
 
     [Fact]
@@ -638,10 +1763,72 @@ public sealed class ShellViewModelTests
         Assert.True(viewModel.DoNotDisturb);
         viewModel.DoNotDisturb = false;
         viewModel.ShowMessagePreview = false;
+        viewModel.TaskbarBadgeEnabled = false;
 
         Assert.False(preferences.Current.DoNotDisturb);
         Assert.False(preferences.Current.ShowMessagePreview);
-        Assert.Equal(2, preferences.Saved.Count);
+        Assert.False(preferences.Current.TaskbarBadgeEnabled);
+        Assert.Equal(3, preferences.Saved.Count);
+    }
+
+    [Fact]
+    public void AutoMarkRead_WhenOwnMessageIsUnread_ReportsItToTheServer()
+    {
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            Selected = conversation,
+            Recent = [conversation],
+            HistoryState = new ConversationHistoryState(conversation, 1, false, true, false, 11, null),
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage>
+                {
+                    [11] = new ChatMessage(11, conversation, 7, "own", DateTimeOffset.UnixEpoch)
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.AcknowledgeMessageScrollRequest(Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest));
+        viewModel.SetWindowActive(true);
+
+        Assert.Equal(conversation, Assert.Single(session.ExpectedMarkReadConversations));
+    }
+
+    [Fact]
+    public void AutoMarkRead_WhenRequestFails_RetriesAfterWindowBecomesActiveAgain()
+    {
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            Selected = conversation,
+            Recent = [conversation],
+            HistoryState = new ConversationHistoryState(conversation, 1, false, true, false, 11, null),
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage>
+                {
+                    [11] = new ChatMessage(11, conversation, 8, "new", DateTimeOffset.UnixEpoch)
+                },
+                unread: new UnreadState(new Dictionary<string, int> { [conversation.CanonicalKey] = 1 }),
+                connection: new ConnectionState(ConnectionStatus.Connected)),
+            MarkDisplayedReadAction = (_, _) => Task.FromException(
+                new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.AcknowledgeMessageScrollRequest(Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest));
+        viewModel.SetWindowActive(true);
+        Assert.Single(session.ExpectedMarkReadConversations);
+
+        session.Publish();
+        Assert.Single(session.ExpectedMarkReadConversations);
+        Assert.True(viewModel.HasNavigationUnread);
+
+        viewModel.SetWindowActive(false);
+        session.MarkDisplayedReadAction = null;
+        viewModel.SetWindowActive(true);
+
+        Assert.Equal(2, session.ExpectedMarkReadConversations.Count);
     }
 
     [Fact]
@@ -820,7 +2007,7 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public async Task ActivateDirectMessage_WhenNoMemoryWindow_DefersPartialPagesUntilLatestHistoryCompletes()
+    public async Task ActivateDirectMessage_WhenNoMemoryWindow_DisplaysSqlitePageBeforeLatestHistoryCompletes()
     {
         var first = new DirectMessage([8]);
         var second = new DirectMessage([9]);
@@ -861,7 +2048,13 @@ public sealed class ShellViewModelTests
         };
         session.Publish();
 
-        Assert.Empty(viewModel.Messages);
+        var cachedRow = Assert.Single(viewModel.Messages);
+        Assert.Equal(20, cachedRow.MessageId);
+        Assert.False(viewModel.ShowConversationLoadingIndicator);
+        var cachedScroll = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(20, cachedScroll.TargetMessageId);
+        var changes = new List<NotifyCollectionChangedAction>();
+        viewModel.Messages.CollectionChanged += (_, eventArgs) => changes.Add(eventArgs.Action);
 
         session.HistoryState = new ConversationHistoryState(second, 2, false, true, false, 20, null);
         session.StateValue = session.StateValue with
@@ -880,6 +2073,8 @@ public sealed class ShellViewModelTests
             viewModel.Messages,
             message => Assert.Equal(20, message.MessageId),
             message => Assert.Equal(21, message.MessageId));
+        Assert.Same(cachedRow, viewModel.Messages[0]);
+        Assert.Equal([NotifyCollectionChangedAction.Add], changes);
         var scrollRequest = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
         Assert.Equal(MessageScrollReason.ConversationActivated, scrollRequest.Reason);
         Assert.Equal(21, scrollRequest.TargetMessageId);
@@ -1483,6 +2678,46 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public void ShowNewChannelConversation_WhenOpenedFromMenu_KeepsMultipleOtherMembersSelectable()
+    {
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile>
+                {
+                    [7] = new UserProfile(7, "Ada"),
+                    [8] = new UserProfile(8, "Bea"),
+                    [9] = new UserProfile(9, "Chen")
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        viewModel.ShowNewChannelConversationCommand.Execute(null);
+
+        Assert.True(viewModel.IsNewConversationOpen);
+        Assert.True(viewModel.IsNewChannelConversationMode);
+        Assert.Equal([8L, 9L], viewModel.NewConversationChoices.Select(choice => choice.UserId));
+        viewModel.NewPrivateGroupName = "New group";
+        viewModel.SelectNewDirectConversationContactCommand.Execute(viewModel.NewConversationChoices[0]);
+        Assert.All(viewModel.NewConversationChoices, choice => Assert.False(choice.IsSelected));
+        viewModel.NewConversationChoices[0].IsSelected = true;
+        Assert.False(viewModel.CanStartNewChannelConversation);
+        viewModel.NewConversationChoices[1].IsSelected = true;
+        viewModel.SelectNewDirectConversationContactCommand.Execute(viewModel.NewConversationChoices[0]);
+        Assert.All(viewModel.NewConversationChoices, choice => Assert.True(choice.IsSelected));
+        Assert.True(viewModel.CanStartNewChannelConversation);
+        viewModel.NewConversationChoices[0].IsSelected = false;
+        viewModel.SelectNewDirectConversationContactCommand.Execute(viewModel.NewConversationChoices[0]);
+        Assert.False(viewModel.NewConversationChoices[0].IsSelected);
+        Assert.True(viewModel.NewConversationChoices[1].IsSelected);
+        Assert.False(viewModel.CanStartNewChannelConversation);
+        Assert.Empty(session.SentContents);
+        Assert.Null(session.SelectedConversation);
+    }
+
+    [Fact]
     public void ShowNewChannelConversation_WhenOffline_StaysDisabledWithConnectionReason()
     {
         var session = new FakeSession
@@ -1535,6 +2770,7 @@ public sealed class ShellViewModelTests
 
         viewModel.OpenNewConversationCommand.Execute(null);
         viewModel.ShowNewChannelConversationCommand.Execute(null);
+        Assert.Equal([8L, 9L], viewModel.NewConversationChoices.Select(choice => choice.UserId));
         foreach (var choice in viewModel.NewConversationChoices) choice.IsSelected = true;
         viewModel.NewPrivateGroupName = "产品设计群";
         await ((IAsyncRelayCommand)viewModel.StartNewChannelConversationCommand).ExecuteAsync(null);
@@ -1678,7 +2914,58 @@ public sealed class ShellViewModelTests
         viewModel.ToggleDetailsCommand.Execute(null);
         Assert.True(viewModel.IsOverlayDetailsVisible);
         Assert.False(viewModel.IsInlineDetailsVisible);
+        Assert.True(viewModel.IsPrimaryShellEnabled);
+    }
+
+    [Theory]
+    [InlineData(640)]
+    [InlineData(1024)]
+    public async Task ToggleDetails_WhenOverlayOpens_KeepsBackgroundEnabledAndRetainsModalState(int width)
+    {
+        var session = new FakeSession
+        {
+            Selected = new DirectMessage([8]),
+            StateValue = new ClientState(users: new Dictionary<long, UserProfile> { [8] = new(8, "Bea") })
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.UpdateViewport(width);
+        var enabledStates = new List<bool>();
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ShellViewModel.IsPrimaryShellEnabled))
+                enabledStates.Add(viewModel.IsPrimaryShellEnabled);
+        };
+
+        await viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.IsOverlayDetailsVisible);
+        Assert.True(viewModel.IsModalOverlayVisible);
+        Assert.True(viewModel.IsPrimaryShellEnabled);
+        Assert.NotEmpty(enabledStates);
+        Assert.All(enabledStates, enabled => Assert.True(enabled));
+
+        await viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsOverlayDetailsVisible);
+        Assert.False(viewModel.IsModalOverlayVisible);
+        Assert.True(viewModel.IsPrimaryShellEnabled);
+        Assert.All(enabledStates, enabled => Assert.True(enabled));
+    }
+
+    [Fact]
+    public void DetailsOverlay_WhenLogoutConfirmationAlsoOpens_PreservesConfirmationBlocking()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        viewModel.UpdateViewport(1024);
+        viewModel.IsDetailsOpen = true;
+        Assert.True(viewModel.IsPrimaryShellEnabled);
+
+        viewModel.LogoutConfirmationVisible = true;
+        Assert.True(viewModel.IsModalOverlayVisible);
         Assert.False(viewModel.IsPrimaryShellEnabled);
+
+        viewModel.LogoutConfirmationVisible = false;
+        Assert.True(viewModel.IsPrimaryShellEnabled);
     }
 
     [Fact]
@@ -1896,7 +3183,7 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public void OwnStatus_WhenPresenceAndPersonalStatusAreKnown_ProjectsReadOnlySummary()
+    public void OwnStatus_WhenPresenceAndPersonalStatusAreKnown_ProjectsOnlyPresence()
     {
         var session = new FakeSession
         {
@@ -1915,15 +3202,18 @@ public sealed class ShellViewModelTests
 
         Assert.True(viewModel.HasOwnPresenceStatus);
         Assert.True(viewModel.IsOwnPresenceOnline);
-        Assert.True(viewModel.HasOwnUserStatus);
         Assert.True(viewModel.HasOwnStatusSummary);
-        Assert.Equal("在线 · 📅 会议中", viewModel.OwnStatusSummary);
+        Assert.Equal("在线", viewModel.OwnStatusSummary);
         Assert.Equal("在线状态：在线", viewModel.OwnPresenceStatusText);
-        Assert.Equal("个人状态：📅 会议中", viewModel.OwnUserStatusStatusText);
+
+        session.OwnUserStatusValue = new UserStatusContent("在办公室");
+        session.Publish();
+
+        Assert.Equal("在线", viewModel.OwnStatusSummary);
     }
 
     [Fact]
-    public void OwnStatus_WhenServerHasNoKnownStatus_HidesSummary()
+    public void OwnStatus_WhenOnlyPersonalStatusIsKnown_HidesSummary()
     {
         var session = new FakeSession
         {
@@ -1932,7 +3222,8 @@ public sealed class ShellViewModelTests
             CurrentUserId = 7,
             CanSetOwnPresenceValue = true,
             CanSetOwnUserStatusValue = true,
-            IsOwnUserStatusConfirmedValue = true
+            IsOwnUserStatusConfirmedValue = true,
+            OwnUserStatusValue = new UserStatusContent("在办公室")
         };
         using var viewModel = CreateViewModel(session);
 
@@ -1953,6 +3244,23 @@ public sealed class ShellViewModelTests
         viewModel.ToggleSettingsCommand.Execute(null);
 
         Assert.True(viewModel.IsMessagesSection);
+    }
+
+    [Fact]
+    public void OpenSearch_WhenInvoked_KeepsBackgroundControlsEnabledWhileModalIsOpen()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+
+        viewModel.OpenSearchCommand.Execute(null);
+
+        Assert.True(viewModel.IsSearchOpen);
+        Assert.True(viewModel.IsModalOverlayVisible);
+        Assert.True(viewModel.IsPrimaryShellEnabled);
+
+        viewModel.CloseSearchCommand.Execute(null);
+
+        Assert.False(viewModel.IsModalOverlayVisible);
+        Assert.True(viewModel.IsPrimaryShellEnabled);
     }
 
     [Fact]
@@ -2026,7 +3334,7 @@ public sealed class ShellViewModelTests
     [Fact]
     public void EmojiSelection_WhenKeyboardIndexChanges_UpdatesOnlyTheCustomPickerState()
     {
-        using var viewModel = CreateViewModel(new FakeSession());
+        using var viewModel = CreateViewModel(CreateCustomEmojiSession());
         var first = viewModel.EmojiChoices[0];
         var second = viewModel.EmojiChoices[1];
 
@@ -2043,51 +3351,211 @@ public sealed class ShellViewModelTests
     [Fact]
     public void EmojiCatalog_WhenLoaded_ContainsTheCompleteZulipUnicodeSet()
     {
-        using var viewModel = CreateViewModel(new FakeSession());
+        var choices = EmojiCatalog.CreateChoices();
 
-        Assert.Equal(1883, viewModel.EmojiChoices.Count);
-        Assert.Equal(10, viewModel.EmojiCategories.Count);
-        Assert.Equal("常用", viewModel.EmojiCategories[0].Label);
-        Assert.True(viewModel.EmojiCategories[0].IsSelected);
-        Assert.Equal(24, viewModel.VisibleEmojiChoices.Count);
+        Assert.Equal(1883, choices.Count);
         Assert.Equal(
-            viewModel.EmojiChoices.Count,
-            viewModel.EmojiChoices.Select(choice => choice.EmojiCode).Distinct(StringComparer.Ordinal).Count());
-        Assert.All(viewModel.EmojiChoices, choice => Assert.Equal("unicode_emoji", choice.ReactionType));
-        Assert.Contains(viewModel.EmojiChoices, choice =>
+            choices.Count,
+            choices.Select(choice => choice.EmojiCode).Distinct(StringComparer.Ordinal).Count());
+        Assert.All(choices, choice => Assert.Equal("unicode_emoji", choice.ReactionType));
+        Assert.Contains(choices, choice =>
             choice.Emoji == "❤️" &&
             choice.EmojiName == "heart" &&
             choice.EmojiCode == "2764");
-        Assert.Contains(viewModel.EmojiChoices, choice =>
+        Assert.Contains(choices, choice =>
             choice.Emoji == "🫠" &&
             choice.EmojiName == "melting_face" &&
             choice.EmojiCode == "1fae0");
-        Assert.Contains(viewModel.EmojiChoices, choice =>
+        Assert.Contains(choices, choice =>
             choice.Emoji == "🫡" &&
             choice.EmojiName == "saluting_face" &&
             choice.EmojiCode == "1fae1");
-        Assert.Contains(viewModel.EmojiChoices, choice =>
+        Assert.Contains(choices, choice =>
             choice.Emoji == "🇨🇳" &&
             choice.EmojiName == "flag_china" &&
             choice.EmojiCode == "1f1e8-1f1f3");
-        Assert.Contains(viewModel.EmojiChoices, choice =>
+        Assert.Contains(choices, choice =>
             choice.Emoji == "👩‍💻" &&
             choice.EmojiName == "woman_technologist" &&
             choice.EmojiCode == "1f469-200d-1f4bb");
     }
 
     [Fact]
-    public void SelectEmojiCategory_WhenChanged_ProjectsOnlyThatCategory()
+    public void EmojiPickers_WhenRealmHasCustomEmoji_ShowOnlyActiveCustomImages()
+    {
+        using var viewModel = CreateViewModel(CreateCustomEmojiSession());
+        var category = Assert.Single(viewModel.EmojiCategories);
+        Assert.Equal("自定义", category.Label);
+        Assert.True(category.IsSelected);
+        Assert.Equal(2, viewModel.VisibleEmojiChoices.Count);
+        Assert.Equal(viewModel.EmojiChoices, viewModel.VisibleEmojiChoices);
+        Assert.All(viewModel.VisibleEmojiChoices, choice => Assert.Equal("realm_emoji", choice.ReactionType));
+        var choice = viewModel.VisibleEmojiChoices[0];
+        Assert.Equal(new EmojiReactionIdentity("party", "1", "realm_emoji"), choice.Identity);
+        Assert.Equal("/user_avatars/1/emoji/images/1-still.png", choice.SourceUrl);
+        Assert.Equal(":party:", choice.Emoji);
+    }
+
+    [Fact]
+    public void SessionStateChanged_WhenConfirmedAndOutboxContainCustomEmoji_ProjectsImagesForBoth()
+    {
+        var conversation = new DirectMessage([20]);
+        var session = CreateCustomEmojiSession();
+        session.Selected = conversation;
+        session.CurrentUserId = 7;
+        session.StateValue = session.StateValue with
+        {
+            Messages = new Dictionary<long, ChatMessage>
+            {
+                [42] = new(42, conversation, 7, "sent :party:", DateTimeOffset.UnixEpoch)
+            },
+            Outbox = new Dictionary<string, OutboxEntry>
+            {
+                ["pending"] = new("pending", conversation, "pending :rocket:", DateTimeOffset.UnixEpoch, OutboxState.Waiting)
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+
+        Assert.Equal(2, viewModel.Messages.Count);
+        Assert.All(viewModel.Messages, message =>
+        {
+            Assert.True(message.HasCustomEmoji);
+            Assert.False(message.HasPlainBody);
+            Assert.Single(message.BodyRuns, run => run.EmojiSourceUrl is not null);
+        });
+    }
+
+    [Theory]
+    [InlineData(1200, 420)]
+    [InlineData(500, 420)]
+    [InlineData(400, 376)]
+    public void UpdateViewport_WhenEmojiPickerIsCompact_KeepsColumnsWithinAvailableWidth(double width, double expected)
+    {
+        using var viewModel = CreateViewModel(CreateCustomEmojiSession());
+        viewModel.UpdateViewport(width);
+
+        Assert.Equal(expected, viewModel.EmojiPickerWidth);
+        Assert.True(viewModel.EmojiPickerColumns * 28 + 16 <= viewModel.EmojiPickerContentWidth);
+        Assert.True(viewModel.EmojiPickerWidth <= width - 24);
+    }
+
+    [Theory]
+    [InlineData(1440, 900)]
+    [InlineData(900, 500)]
+    [InlineData(500, 400)]
+    [InlineData(280, 300)]
+    public void UpdateViewport_WhenWindowIsSmall_KeepsEmojiCellsAndPopoverInsideViewport(double width, double height)
+    {
+        using var viewModel = CreateViewModel(CreateCustomEmojiSession());
+        viewModel.UpdateViewport(width, height);
+        var position = RelayCove.App.Platforms.Windows.Behaviors.PopoverAnchorBehavior.CalculatePosition(
+            width - 5, height - 5, viewModel.EmojiPickerWidth, viewModel.EmojiPickerHeight, width, height);
+
+        Assert.True(position.X >= 12 && position.X + viewModel.EmojiPickerWidth <= width - 12);
+        Assert.True(position.Y >= 12 && position.Y + viewModel.EmojiPickerHeight <= height - 12);
+        Assert.True((viewModel.EmojiPickerContentWidth - 16) / viewModel.EmojiPickerColumns >= 28);
+        Assert.True(viewModel.EmojiPickerHeight > 100);
+        Assert.Equal(2, viewModel.VisibleEmojiChoices.Count);
+    }
+
+    [Fact]
+    public void EmojiPickers_WhenRealmHasNoCustomEmoji_DoNotFallBackToUnicode()
     {
         using var viewModel = CreateViewModel(new FakeSession());
-        var people = viewModel.EmojiCategories.Single(category => category.Key == "people");
+        Assert.Empty(viewModel.EmojiChoices);
+        Assert.Empty(viewModel.VisibleEmojiChoices);
+    }
 
-        viewModel.SelectEmojiCategoryCommand.Execute(people);
+    [Fact]
+    public void SessionStateChanged_WhenCustomEmojiIsInConversationSummary_PreservesTokenAndPublishesCatalogChanges()
+    {
+        var session = CreateCustomEmojiSession();
+        var conversation = new DirectMessage([20]);
+        session.Selected = conversation;
+        session.Recent = [conversation];
+        session.StateValue = session.StateValue with
+        {
+            Messages = new Dictionary<long, ChatMessage>
+            {
+                [42] = new(42, conversation, 20, "出发 :rocket:", DateTimeOffset.UnixEpoch)
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+        Assert.Equal("出发 :rocket:", Assert.Single(viewModel.Conversations).Detail);
+        Assert.Single(EmojiShortcodeCatalog.CreateRuns(viewModel.Conversations[0].Detail!, viewModel.RealmEmojis),
+            run => run.EmojiSourceUrl is not null);
+        var changed = new List<string?>();
+        viewModel.PropertyChanged += (_, args) => changed.Add(args.PropertyName);
 
-        Assert.True(people.IsSelected);
-        Assert.False(viewModel.EmojiCategories[0].IsSelected);
-        Assert.Equal(386, viewModel.VisibleEmojiChoices.Count);
-        Assert.All(viewModel.VisibleEmojiChoices, choice => Assert.Equal("people", choice.CategoryKey));
+        session.StateValue = session.StateValue with { RealmEmojis = new Dictionary<string, RealmEmoji>() };
+        session.Publish();
+
+        Assert.Contains(nameof(ShellViewModel.RealmEmojis), changed);
+        Assert.Empty(viewModel.RealmEmojis);
+    }
+
+    [Fact]
+    public void EmojiPickers_WhenCustomEmojiChanges_RefreshAndRejectStaleChoice()
+    {
+        var session = CreateCustomEmojiSession();
+        using var viewModel = CreateViewModel(session);
+        var stale = viewModel.EmojiChoices[0];
+        viewModel.SelectedComposerEmoji = stale;
+        session.StateValue = DomainReducer.Apply(session.StateValue,
+            new RealmEmojiUpdatedEvent([new("3", "new_one", "/user_avatars/1/emoji/images/3.png", false)], 1));
+        session.Publish();
+
+        Assert.Equal("new_one", Assert.Single(viewModel.VisibleEmojiChoices).EmojiName);
+        Assert.Null(viewModel.SelectedComposerEmoji);
+        viewModel.InsertComposerEmojiCommand.Execute(stale);
+        Assert.Empty(viewModel.ComposerText);
+        session.StateValue = ClientState.Empty;
+        session.Publish();
+        Assert.Empty(viewModel.VisibleEmojiChoices);
+    }
+
+    private static FakeSession CreateCustomEmojiSession() => new()
+    {
+        StateValue = new ClientState
+        {
+            RealmEmojis = new Dictionary<string, RealmEmoji>
+            {
+                ["1"] = new("1", "party", "/user_avatars/1/emoji/images/1.gif", false, "/user_avatars/1/emoji/images/1-still.png"),
+                ["2"] = new("2", "rocket", "/user_avatars/1/emoji/images/2.png", false),
+                ["9"] = new("9", "old", "/user_avatars/1/emoji/images/9.png", true)
+            }
+        }
+    };
+
+    [Fact]
+    public async Task SelectReactionEmoji_WhenCustomChoiceIsSelected_SendsRealmIdentityOnce()
+    {
+        var session = CreateCustomEmojiSession();
+        session.Selected = new DirectMessage([20]);
+        session.CurrentUserId = 7;
+        session.Recent = [session.Selected];
+        session.StateValue = session.StateValue with
+        {
+            Connection = new ConnectionState(ConnectionStatus.Connected),
+            Users = new Dictionary<long, UserProfile> { [20] = new(20, "Bea") },
+            Messages = new Dictionary<long, ChatMessage>
+            {
+                [42] = new(42, session.Selected, 20, "hello", DateTimeOffset.UnixEpoch)
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.ActivateConversation(Assert.Single(viewModel.Conversations));
+        await WaitUntilAsync(() => viewModel.CanCompose);
+        var message = Assert.Single(viewModel.Messages);
+        viewModel.OpenReactionPickerAtCommand.Execute(new ReactionPickerRequest(message, 100, 100));
+
+        await viewModel.SelectReactionEmojiCommand.ExecuteAsync(viewModel.EmojiChoices[0]);
+
+        var reaction = Assert.Single(session.ReactionCalls);
+        Assert.Equal(42, reaction.MessageId);
+        Assert.Equal(new EmojiReactionIdentity("party", "1", "realm_emoji"), reaction.Identity);
+        Assert.True(reaction.Add);
+        Assert.False(viewModel.IsReactionPickerOpen);
     }
 
     [Fact]
@@ -2099,6 +3567,106 @@ public sealed class ShellViewModelTests
 
         Assert.True(viewModel.IsSettingsSection);
         Assert.True(viewModel.IsAppearanceSettings);
+    }
+
+    [Fact]
+    public async Task InitializeAsync_WhenCacheIsAvailable_SelectsItBeforeBackgroundHistoryCompletes()
+    {
+        var conversation = new DirectMessage([8]);
+        var cached = new ChatMessage(10, conversation, 8, "cached", DateTimeOffset.UnixEpoch, isRead: true);
+        var selectionCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeSession
+        {
+            Recent = [conversation],
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Offline, "cache_first"))
+        };
+        session.SelectAction = (selected, _) =>
+        {
+            session.Selected = selected;
+            session.HistoryState = new ConversationHistoryState(selected, 1, true, false, false, null, null);
+            session.Publish();
+            return selectionCompleted.Task;
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await viewModel.InitializeAsync();
+        Assert.Equal(conversation, session.SelectedConversation);
+        Assert.True(viewModel.IsNavigationPending);
+        session.StateValue = session.StateValue with { Messages = new Dictionary<long, ChatMessage> { [10] = cached } };
+        session.Publish();
+        var row = Assert.Single(viewModel.Messages);
+        var scroll = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(10, scroll.TargetMessageId);
+        Assert.False(viewModel.ShowConversationLoadingIndicator);
+        var changes = new List<NotifyCollectionChangedAction>();
+        viewModel.Messages.CollectionChanged += (_, args) => changes.Add(args.Action);
+        viewModel.AcknowledgeMessageScrollRequest(scroll);
+
+        session.StateValue = session.StateValue with
+        {
+            Connection = new ConnectionState(ConnectionStatus.Connected),
+            Messages = new Dictionary<long, ChatMessage> { [10] = cached with { Reactions = [] } }
+        };
+        session.HistoryState = session.HistoryState with { IsLoading = false, FoundOldest = true };
+        session.Publish();
+        selectionCompleted.SetResult();
+        await WaitUntilAsync(() => !viewModel.IsNavigationPending);
+
+        Assert.Same(row, Assert.Single(viewModel.Messages));
+        Assert.Empty(changes);
+        Assert.Null(viewModel.PendingMessageScrollRequest);
+    }
+
+    [Fact]
+    public async Task InitializeAsync_WhenSelectedCachePageIsEmpty_PositionsFirstNetworkPageAtLatest()
+    {
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            Recent = [conversation],
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Offline))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await viewModel.InitializeAsync();
+        Assert.Equal(conversation, session.SelectedConversation);
+        Assert.Empty(viewModel.Messages);
+        Assert.False(viewModel.IsNavigationPending);
+        session.HistoryState = session.HistoryState with { IsLoading = true };
+        session.StateValue = session.StateValue with { Connection = new ConnectionState(ConnectionStatus.Connected) };
+        session.Publish();
+        session.StateValue = session.StateValue with
+        {
+            Messages = Enumerable.Range(1, 50).ToDictionary(
+                id => (long)id,
+                id => new ChatMessage(id, conversation, 8, "message", DateTimeOffset.UnixEpoch.AddSeconds(id), isRead: true))
+        };
+        session.Publish();
+        session.HistoryState = session.HistoryState with { IsLoading = false };
+        session.Publish();
+
+        var scroll = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+        Assert.Equal(50, scroll.TargetMessageId);
+        Assert.Equal(MessageScrollReason.ConversationActivated, scroll.Reason);
+    }
+
+    [Fact]
+    public async Task InitializeAsync_WhenCacheHasNoConversations_SelectsFirstConversationWhenRegisterArrives()
+    {
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Offline, "cache_first"))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await viewModel.InitializeAsync();
+        Assert.Null(session.SelectedConversation);
+        session.Recent = [conversation];
+        session.StateValue = session.StateValue with { Connection = new ConnectionState(ConnectionStatus.Connected) };
+        session.Publish();
+
+        Assert.Equal(conversation, session.SelectedConversation);
     }
 
     [Fact]
@@ -2249,6 +3817,85 @@ public sealed class ShellViewModelTests
         Assert.Equal("取消收藏", viewModel.ActiveMessageStarActionLabel);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ToggleMessageStarCommand_WhenInvoked_ClosesMenuBeforeRequestCompletes(bool isStarred, bool fails)
+    {
+        var response = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeSession();
+        using var viewModel = CreateViewModel(session);
+        var message = new MessageItem("message-1", 1, 7, "Ada", "hello", "10:00", isStarred: isStarred);
+        var menuClosedAtRequest = false;
+        var calls = new List<(long MessageId, bool IsStarred)>();
+        session.SetMessageStarredAction = (messageId, starred, _) =>
+        {
+            menuClosedAtRequest = !viewModel.IsMessageMenuOpen && viewModel.ActiveMessageAction is null;
+            calls.Add((messageId, starred));
+            return response.Task;
+        };
+        viewModel.OpenMessageMenuCommand.Execute(message);
+
+        var toggle = viewModel.ToggleMessageStarCommand.ExecuteAsync(null);
+
+        Assert.True(menuClosedAtRequest);
+        Assert.False(viewModel.IsMessageMenuOpen);
+        Assert.False(toggle.IsCompleted);
+        Assert.Equal((1L, !isStarred), Assert.Single(calls));
+        Assert.Equal(isStarred, message.IsStarred);
+        Assert.Equal("hello", message.Content);
+        if (fails)
+            response.SetException(new GatewayException(GatewayErrorKind.RequestFailed, GatewayErrorCode.RequestFailed, 403));
+        else
+            response.SetResult();
+        await toggle.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.False(viewModel.IsMessageMenuOpen);
+        Assert.Equal(fails, !string.IsNullOrWhiteSpace(viewModel.LoginError));
+        Assert.Single(calls);
+    }
+
+    [Theory]
+    [InlineData(false, MessageMutationStatus.Submitting, false)]
+    [InlineData(true, MessageMutationStatus.Submitting, false)]
+    [InlineData(false, MessageMutationStatus.Failed, true)]
+    [InlineData(true, MessageMutationStatus.Failed, true)]
+    [InlineData(false, MessageMutationStatus.Uncertain, true)]
+    [InlineData(true, MessageMutationStatus.Uncertain, true)]
+    public void MessageStarMutation_WhenProjected_ShowsOnlyFailureOrUnconfirmedResult(
+        bool isStarred, MessageMutationStatus status, bool showsStatus)
+    {
+        var conversation = new DirectMessage([8]);
+        var message = new ChatMessage(10, conversation, 8, "hello", DateTimeOffset.UnixEpoch, isStarred: isStarred);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            StateValue = new ClientState(
+                connection: new ConnectionState(ConnectionStatus.Connected),
+                messages: new Dictionary<long, ChatMessage> { [10] = message },
+                messageMutations: new Dictionary<long, MessageMutationState>
+                {
+                    [10] = new(10, MessageMutationKind.Star, status)
+                })
+        };
+        using var viewModel = CreateViewModel(session);
+        var row = Assert.Single(viewModel.Messages);
+
+        Assert.Equal(showsStatus, row.HasMutationState);
+        Assert.Equal(status != MessageMutationStatus.Failed, row.MutationBlocksActions);
+        Assert.Equal(isStarred, row.IsStarred);
+        Assert.Equal("hello", row.Body);
+
+        session.StateValue = session.StateValue with { MessageMutations = new Dictionary<long, MessageMutationState>() };
+        session.Publish();
+
+        Assert.Same(row, Assert.Single(viewModel.Messages));
+        Assert.False(row.HasMutationState);
+        Assert.True(row.CanMutate);
+    }
+
     [Fact]
     public void OpenMessageMenuAtCommand_WhenInvoked_StoresTheRequestedAnchor()
     {
@@ -2261,6 +3908,73 @@ public sealed class ShellViewModelTests
         Assert.Same(message, viewModel.ActiveMessageAction);
         Assert.Equal(812.5d, viewModel.MessageMenuAnchorX);
         Assert.Equal(244d, viewModel.MessageMenuAnchorY);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void OpenMessageMenuAtCommand_WhenAnotherMessageMenuIsOpen_ReplacesTargetAndImageAtCurrentPointer(
+        bool firstIsImage, bool secondIsImage)
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        var first = new MessageItem("message-1", 1, 7, "Ada", "first", "10:00");
+        var second = new MessageItem("message-2", 2, 8, "Bea", "second", "10:01", isStarred: true);
+        var firstImage = new MessageAttachmentItem("image", "first.png", "/user_uploads/7/first.png");
+        var secondImage = new MessageAttachmentItem("image", "second.png", "/user_uploads/8/second.png");
+
+        if (firstIsImage)
+            viewModel.OpenImageAttachmentMenuAtCommand.Execute(new ImageAttachmentMenuRequest(first, firstImage, 812d, 244d));
+        else
+            viewModel.OpenMessageMenuAtCommand.Execute(new MessageMenuRequest(first, 812d, 244d));
+        Assert.True(viewModel.IsMessageMenuOpen);
+
+        if (secondIsImage)
+            viewModel.OpenImageAttachmentMenuAtCommand.Execute(new ImageAttachmentMenuRequest(second, secondImage, 400d, 520d));
+        else
+            viewModel.OpenMessageMenuAtCommand.Execute(new MessageMenuRequest(second, 400d, 520d));
+
+        Assert.True(viewModel.IsMessageMenuOpen);
+        Assert.Same(second, viewModel.ActiveMessageAction);
+        Assert.Equal("取消收藏", viewModel.ActiveMessageStarActionLabel);
+        Assert.Same(secondIsImage ? secondImage : null, viewModel.ActiveMessageAttachment);
+        Assert.Equal(secondIsImage, viewModel.HasActiveMessageAttachment);
+        Assert.Equal(400d, viewModel.MessageMenuAnchorX);
+        Assert.Equal(520d, viewModel.MessageMenuAnchorY);
+    }
+
+    [Theory]
+    [InlineData(false, 812.5d, 244d)]
+    [InlineData(false, 400d, 520d)]
+    [InlineData(true, 812.5d, 244d)]
+    [InlineData(true, 400d, 520d)]
+    public void OpenMessageMenuAtCommand_WhenDismissed_CanReopenRepeatedlyAtCurrentPointer(
+        bool isImage, double pointerX, double pointerY)
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        var message = new MessageItem("message-1", 1, 7, "Ada", "hello", "10:00", isOwn: true);
+        var image = new MessageAttachmentItem("image", "preview.png", "/user_uploads/7/preview.png");
+        viewModel.OpenMessageMenuAtCommand.Execute(new MessageMenuRequest(message, 812.5d, 244d));
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            viewModel.CloseMessageMenuCommand.Execute(null);
+            Assert.False(viewModel.IsMessageMenuOpen);
+            Assert.Null(viewModel.ActiveMessageAction);
+            Assert.Null(viewModel.ActiveMessageAttachment);
+
+            if (isImage)
+                viewModel.OpenImageAttachmentMenuAtCommand.Execute(new ImageAttachmentMenuRequest(message, image, pointerX, pointerY));
+            else
+                viewModel.OpenMessageMenuAtCommand.Execute(new MessageMenuRequest(message, pointerX, pointerY));
+
+            Assert.True(viewModel.IsMessageMenuOpen);
+            Assert.Same(message, viewModel.ActiveMessageAction);
+            Assert.Equal(isImage, viewModel.HasActiveMessageAttachment);
+            Assert.Equal(pointerX, viewModel.MessageMenuAnchorX);
+            Assert.Equal(pointerY, viewModel.MessageMenuAnchorY);
+        }
     }
 
     [Fact]
@@ -2381,6 +4095,262 @@ public sealed class ShellViewModelTests
         Assert.Equal(["send now"], session.SentContents);
         release.SetResult();
         await send;
+    }
+
+    [Theory]
+    [InlineData("picker", "", false)]
+    [InlineData("picker", "caption", true)]
+    [InlineData("drop", "caption", false)]
+    [InlineData("drop", "", true)]
+    [InlineData("screenshot", "", false)]
+    [InlineData("screenshot", "caption", true)]
+    public async Task SendCommand_WhenAttachmentConfirmationIsPending_ClearsSubmittedDraftAndPreservesNewDraft(
+        string source,
+        string caption,
+        bool switchConversation)
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var conversation = new DirectMessage([8]);
+        var otherConversation = new DirectMessage([9]);
+        var isImage = source == "screenshot";
+        var file = new SelectedAttachmentFile(
+            isImage ? "screenshot.png" : "notes.txt",
+            isImage ? "image/png" : "text/plain",
+            3,
+            _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3])),
+            openPreviewStream: isImage ? () => new MemoryStream([1, 2, 3]) : null);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            Recent = [conversation, otherConversation],
+            CurrentUserId = 7,
+            ActiveRealm = RealmEndpoint.Parse("https://example.test"),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        session.SendAction = async (content, cancellationToken) =>
+        {
+            session.StateValue = DomainReducer.Apply(session.StateValue, new OutboxQueuedEvent(
+                new OutboxEntry("submitted", conversation, content, DateTimeOffset.UnixEpoch, OutboxState.Hidden)));
+            session.Publish();
+            await release.Task.WaitAsync(cancellationToken);
+        };
+        using var viewModel = CreateViewModel(session, fileSelectionService: new FakeFileSelectionService { Files = [file] });
+        session.Publish();
+        if (source == "picker") await viewModel.PickAttachmentsCommand.ExecuteAsync(null);
+        else if (source == "drop") viewModel.AddDroppedAttachmentsCommand.Execute(new[] { file });
+        else viewModel.AddPastedImageCommand.Execute(file);
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uploaded);
+        viewModel.ComposerText = caption;
+        var expectedContent = (caption.Length > 0 ? caption + "\n" : string.Empty) +
+            $"{(isImage ? "!" : string.Empty)}[{file.FileName}](https://example.test/user_uploads/{file.FileName})";
+
+        var send = viewModel.SendCommand.ExecuteAsync(null);
+        try
+        {
+            Assert.False(send.IsCompleted);
+            Assert.Empty(viewModel.ComposerText);
+            Assert.Empty(viewModel.Attachments);
+            Assert.False(viewModel.HasAttachments);
+            Assert.Equal(viewModel.ComposerHeight, viewModel.ComposerDisplayHeight);
+            Assert.Equal(expectedContent, Assert.Single(session.SentContents));
+            var pending = Assert.Single(viewModel.Messages);
+            Assert.Equal(expectedContent, pending.Content);
+            Assert.Single(pending.Attachments);
+            Assert.False(pending.HasDeliveryState);
+            Assert.False(pending.CanRecover);
+
+            if (switchConversation)
+            {
+                session.Selected = otherConversation;
+                session.Publish();
+            }
+            viewModel.ComposerText = "next draft";
+            viewModel.AddDroppedAttachmentsCommand.Execute(new[]
+            {
+                new SelectedAttachmentFile("next.txt", "text/plain", 1,
+                    _ => Task.FromResult<Stream>(new MemoryStream([4])))
+            });
+            await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uploaded);
+            var nextAttachment = Assert.Single(viewModel.Attachments);
+            release.SetResult();
+            await send;
+
+            Assert.Equal("next draft", viewModel.ComposerText);
+            Assert.Same(nextAttachment, Assert.Single(viewModel.Attachments));
+            session.Selected = switchConversation ? conversation : otherConversation;
+            session.Publish();
+            Assert.Empty(viewModel.ComposerText);
+            Assert.Empty(viewModel.Attachments);
+            session.Selected = switchConversation ? otherConversation : conversation;
+            session.Publish();
+            Assert.Equal("next draft", viewModel.ComposerText);
+            Assert.Same(nextAttachment, Assert.Single(viewModel.Attachments));
+            Assert.Equal(2, session.UploadCalls);
+            Assert.Single(session.SentContents);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await send;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SendCommand_WhenRejectedBeforeOutbox_KeepsSubmittedAttachmentRecoverableWithoutReplacingNewDraft(
+        bool switchConversation)
+    {
+        var conversation = new DirectMessage([8]);
+        var otherConversation = new DirectMessage([9]);
+        const string submittedContent = "caption\n![screenshot.png](https://example.test/user_uploads/screenshot.png)";
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var existing = new OutboxEntry("previous-attempt", conversation, submittedContent,
+            DateTimeOffset.UnixEpoch, OutboxState.Failed, OutboxFailureKind.Rejected);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            Recent = [conversation, otherConversation],
+            StateValue = new ClientState(
+                outbox: new Dictionary<string, OutboxEntry> { [existing.LocalId] = existing },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        session.SendAction = async (_, cancellationToken) =>
+        {
+            session.Publish(); // An identical older outbox item is not this submission.
+            await release.Task.WaitAsync(cancellationToken);
+            throw new ArgumentException("Message length exceeds the server limit.");
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
+        viewModel.AddPastedImageCommand.Execute(new SelectedAttachmentFile(
+            "screenshot.png", "image/png", 3,
+            _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3]))));
+        await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uploaded);
+        viewModel.ComposerText = "caption";
+
+        var send = viewModel.SendCommand.ExecuteAsync(null);
+        try
+        {
+            Assert.Empty(viewModel.ComposerText);
+            Assert.Empty(viewModel.Attachments);
+            if (switchConversation)
+            {
+                session.Selected = otherConversation;
+                session.Publish();
+            }
+            viewModel.ComposerText = "next draft";
+            release.SetResult();
+            await send;
+            Assert.Equal("next draft", viewModel.ComposerText);
+            Assert.Empty(viewModel.Attachments);
+            if (switchConversation)
+            {
+                Assert.Empty(viewModel.Messages);
+                session.Selected = conversation;
+                session.Publish();
+            }
+            var failed = Assert.Single(viewModel.Messages, message =>
+                message.Id.StartsWith("local-unsubmitted-", StringComparison.Ordinal));
+            Assert.Equal(submittedContent, failed.Content);
+            Assert.True(failed.IsDeliveryFailure);
+            Assert.True(failed.CanRecover);
+            Assert.Single(session.SentContents);
+            Assert.Single(session.State.Outbox);
+
+            viewModel.RecoverOutboxCommand.Execute(failed);
+            Assert.Equal(submittedContent, viewModel.ComposerText);
+            Assert.DoesNotContain(failed, viewModel.Messages);
+            session.SendAction = null;
+            await viewModel.SendCommand.ExecuteAsync(null);
+            Assert.Equal(1, session.UploadCalls);
+            Assert.Equal(new[] { submittedContent, submittedContent }, session.SentContents);
+            viewModel.ComposerText = "later draft";
+            viewModel.RecoverOutboxCommand.Execute(failed);
+            Assert.Equal("later draft", viewModel.ComposerText);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await send;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SendCommand_WhenAccountChanges_DiscardsUnsubmittedMessageAndLateFailure(bool changeBeforeFailure)
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeSession
+        {
+            Selected = new DirectMessage([8]),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            SendAction = async (_, cancellationToken) =>
+            {
+                await release.Task.WaitAsync(cancellationToken);
+                throw new ArgumentException("Message length exceeds the server limit.");
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
+        viewModel.ComposerText = "submitted draft";
+        var send = viewModel.SendCommand.ExecuteAsync(null);
+        MessageItem? failed = null;
+        if (!changeBeforeFailure)
+        {
+            release.SetResult();
+            await send;
+            failed = Assert.Single(viewModel.Messages);
+        }
+        session.Account = AccountId.Create(RealmEndpoint.Parse("https://other.example.test"), 99);
+        session.Publish();
+        viewModel.ComposerText = "new account draft";
+        if (changeBeforeFailure)
+        {
+            release.SetResult();
+            await send;
+        }
+        Assert.Empty(viewModel.Messages);
+        if (failed is not null) viewModel.RecoverOutboxCommand.Execute(failed);
+        Assert.Equal("new account draft", viewModel.ComposerText);
+        Assert.Single(session.SentContents);
+    }
+
+    [Fact]
+    public async Task SendCommand_WhenRealtimeConfirmsBeforeSendThrows_DoesNotCreateUnsubmittedFailureOrRestoreDraft()
+    {
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            CurrentUserId = 7,
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        session.SendAction = (content, _) =>
+        {
+            session.StateValue = DomainReducer.Apply(session.StateValue, new OutboxQueuedEvent(
+                new OutboxEntry("submitted", conversation, content, DateTimeOffset.UnixEpoch, OutboxState.Hidden)));
+            session.Publish();
+            session.StateValue = DomainReducer.Apply(session.StateValue, new MessageUpsertEvent(
+                new ChatMessage(101, conversation, 7, content, DateTimeOffset.UnixEpoch, isRead: true),
+                Source: DomainEventSource.Realtime, LocalId: "submitted"));
+            session.Publish();
+            throw new OperationCanceledException();
+        };
+        using var viewModel = CreateViewModel(session);
+        session.Publish();
+        viewModel.ComposerText = "already delivered";
+
+        await viewModel.SendCommand.ExecuteAsync(null);
+
+        var confirmed = Assert.Single(viewModel.Messages);
+        Assert.Equal(101, confirmed.MessageId);
+        Assert.False(confirmed.CanRecover);
+        Assert.False(confirmed.HasDeliveryState);
+        Assert.Empty(viewModel.ComposerText);
+        Assert.Single(session.SentContents);
+        Assert.Empty(session.State.Outbox);
     }
 
     [Fact]
@@ -2603,6 +4573,76 @@ public sealed class ShellViewModelTests
         await loadTask;
 
         Assert.False(viewModel.IsLoadingOlder);
+    }
+
+    [Fact]
+    public async Task MessageViewport_WhenBackgroundHistoryIsLoading_WaitsBeforeRequestingOlderPage()
+    {
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            HistoryState = new ConversationHistoryState(conversation, 1, true, false, true, 50, null),
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+
+        await viewModel.RequestOlderFromTopInputAsync(1_000, conversation.CanonicalKey, 1);
+        Assert.Equal(0, session.LoadOlderCalls);
+        session.HistoryState = session.HistoryState with { IsLoading = false };
+        session.Publish();
+        await viewModel.RequestOlderFromTopInputAsync(1_400, conversation.CanonicalKey, 1);
+        Assert.Equal(1, session.LoadOlderCalls);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task SessionStateChanged_WhenBackgroundHistoryArrives_UpdatesOnlyChangedMessages(bool nearBottom, bool hasNewMessage)
+    {
+        var conversation = new DirectMessage([8]);
+        var cached = new ChatMessage(10, conversation, 8, "cached", DateTimeOffset.UnixEpoch, isRead: true);
+        var session = new FakeSession
+        {
+            Selected = conversation,
+            Recent = [conversation],
+            HistoryState = new ConversationHistoryState(conversation, 1, false, false, true, 10, null),
+            StateValue = new ClientState(
+                messages: new Dictionary<long, ChatMessage> { [10] = cached },
+                connection: new ConnectionState(ConnectionStatus.Offline))
+        };
+        using var viewModel = CreateViewModel(session);
+        var row = Assert.Single(viewModel.Messages);
+        viewModel.AcknowledgeMessageScrollRequest(Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest));
+        await viewModel.ReportMessageViewportAsync(0, 0, 0, 1_000,
+            bottomDistanceDip: nearBottom ? 0 : 2_000, viewportHeightDip: 600);
+        var changes = new List<NotifyCollectionChangedAction>();
+        viewModel.Messages.CollectionChanged += (_, args) => changes.Add(args.Action);
+
+        session.HistoryState = session.HistoryState with { IsLoading = true };
+        session.StateValue = session.StateValue with { Connection = new ConnectionState(ConnectionStatus.Connected) };
+        session.Publish();
+        var messages = new Dictionary<long, ChatMessage> { [10] = cached with { Reactions = [] } };
+        if (hasNewMessage) messages[11] = new ChatMessage(11, conversation, 8, "new", DateTimeOffset.UnixEpoch.AddMinutes(1));
+        session.StateValue = session.StateValue with { Messages = messages };
+        session.Publish();
+        session.HistoryState = session.HistoryState with { IsLoading = false };
+        session.Publish();
+
+        Assert.Same(row, viewModel.Messages[0]);
+        Assert.Equal(hasNewMessage ? [NotifyCollectionChangedAction.Add] : [], changes);
+        if (nearBottom && hasNewMessage)
+        {
+            var follow = Assert.IsType<MessageScrollRequest>(viewModel.PendingMessageScrollRequest);
+            Assert.Equal(MessageScrollReason.RealtimeFollow, follow.Reason);
+            Assert.Equal(11, follow.TargetMessageId);
+        }
+        else
+        {
+            Assert.Null(viewModel.PendingMessageScrollRequest);
+        }
+        Assert.Equal(!nearBottom && hasNewMessage ? 1 : 0, viewModel.NewMessageCount);
     }
 
     [Fact]
@@ -3083,26 +5123,27 @@ public sealed class ShellViewModelTests
     [Fact]
     public void InsertComposerEmoji_WhenSelectionExists_ReplacesSelectionAndRestoresCaret()
     {
-        using var viewModel = CreateViewModel(new FakeSession());
+        using var viewModel = CreateViewModel(CreateCustomEmojiSession());
         viewModel.ComposerText = "hello xx world";
         viewModel.ComposerCursorPosition = 6;
         viewModel.ComposerSelectionLength = 2;
-        var choice = viewModel.EmojiChoices.Single(item => item.Emoji == "🚀");
+        var choice = viewModel.EmojiChoices.Single(item => item.EmojiName == "rocket");
 
         viewModel.InsertComposerEmojiCommand.Execute(choice);
 
-        Assert.Equal("hello 🚀 world", viewModel.ComposerText);
-        Assert.Equal(8, viewModel.ComposerCursorPosition);
+        Assert.Equal("hello :rocket: world", viewModel.ComposerText);
+        Assert.Equal(14, viewModel.ComposerCursorPosition);
         Assert.Equal(0, viewModel.ComposerSelectionLength);
         Assert.Equal(1, viewModel.ComposerFocusRequest);
     }
 
     [Fact]
-    public void SearchQuery_WhenStateIsLoaded_ReturnsRealLocalSourcesWithoutInventingPresence()
+    public async Task SearchQuery_WhenStateIsLoaded_ReturnsOnlyServerMessagesAndClearsOldQueryResults()
     {
         var conversation = new ChannelTopic(4, string.Empty);
         var session = new FakeSession
         {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
             CurrentUserId = 7,
             StateValue = new ClientState(
                 subscriptions: new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription() },
@@ -3113,26 +5154,30 @@ public sealed class ShellViewModelTests
         };
         using var viewModel = CreateViewModel(session);
         session.Publish();
+        session.SearchMessagesAction = (_, _, _, _) => Task.FromResult(new MessageQueryPage(
+            [new ChatMessage(5, conversation, 8, "native search from server", DateTimeOffset.UnixEpoch)],
+            false, true, true));
 
+        viewModel.OpenSearchCommand.Execute(null);
         viewModel.SearchQuery = "native search";
+        Assert.Empty(viewModel.SearchResults);
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
 
-        Assert.Collection(
-            viewModel.SearchResults,
-            conversationResult =>
-            {
-                Assert.Equal("群聊", conversationResult.Kind);
-                Assert.Equal(conversation, conversationResult.Conversation);
-            },
-            messageResult =>
-            {
-                Assert.Equal("已加载消息", messageResult.Kind);
-                Assert.Equal(conversation, messageResult.Conversation);
-            });
-        Assert.DoesNotContain(viewModel.SearchResults, item => item.Subtitle.Contains("在线", StringComparison.Ordinal));
+        var result = Assert.Single(viewModel.SearchResults);
+        Assert.Equal(5, result.MessageId);
+        Assert.Equal(conversation, result.Conversation);
+        Assert.Equal("native search from server", result.Subtitle);
+        Assert.True(viewModel.HasMoreSearchResults);
+        session.Publish();
+        Assert.Single(viewModel.SearchResults);
+
+        viewModel.SearchQuery = "Bea";
+        Assert.Empty(viewModel.SearchResults);
+        Assert.False(viewModel.HasMoreSearchResults);
     }
 
     [Fact]
-    public void SearchCategory_WhenSelected_FiltersLoadedMessagesByContentType()
+    public async Task SearchCategory_WhenSelected_ShowsServerResultsForContentType()
     {
         var conversation = new DirectMessage([8]);
         var session = new FakeSession
@@ -3155,40 +5200,202 @@ public sealed class ShellViewModelTests
         };
         using var viewModel = CreateViewModel(session);
         session.Publish();
+        session.SearchMessagesAction = (query, _, _, _) => Task.FromResult(new MessageQueryPage(
+            session.StateValue.Messages.Values.Where(message => message.Content.Contains(query, StringComparison.Ordinal)).ToArray(),
+            true, true, true));
+        viewModel.OpenSearchCommand.Execute(null);
         viewModel.SearchQuery = "shot";
 
         viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Images));
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
         var image = Assert.Single(viewModel.SearchResults);
-        Assert.Equal("message:3", image.Id);
+        Assert.Equal("server-message:3", image.Id);
         Assert.Equal("图片", image.Kind);
 
         viewModel.SearchQuery = "clip";
         viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Videos));
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
         var video = Assert.Single(viewModel.SearchResults);
-        Assert.Equal("message:4", video.Id);
+        Assert.Equal("server-message:4", video.Id);
         Assert.Equal("视频", video.Kind);
 
         viewModel.SearchQuery = "notes";
         viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Files));
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
         var file = Assert.Single(viewModel.SearchResults);
-        Assert.Equal("message:2", file.Id);
+        Assert.Equal("server-message:2", file.Id);
         Assert.Equal("文件", file.Kind);
 
         viewModel.SearchQuery = "example";
         viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Links));
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
         var link = Assert.Single(viewModel.SearchResults);
-        Assert.Equal("message:5", link.Id);
+        Assert.Equal("server-message:5", link.Id);
         Assert.Equal("链接", link.Kind);
 
         viewModel.SearchQuery = "plain";
         viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Messages));
-        Assert.All(
-            viewModel.SearchResults.Where(item => item.MessageId is not null),
-            item => Assert.Equal("已加载消息", item.Kind));
+        await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
+        Assert.Equal("server-message:1", Assert.Single(viewModel.SearchResults).Id);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(MessageSearchFilter.Images)]
+    public async Task SearchImages_WhenMessageContainsImages_ProjectsPreviewsAndKeepsOriginalMessageTarget(MessageSearchFilter? filter)
+    {
+        var realm = RealmEndpoint.Parse("https://chat.example.test/");
+        var conversation = new DirectMessage([8]);
+        const string raw = "设计图\n![shot](/user_uploads/1/shot.png)\n" +
+                           "[other](https://chat.example.test/user_uploads/1/other.JPG)\n" +
+                           "[notes.pdf](/user_uploads/1/notes.pdf)";
+        var message = new ChatMessage(90, conversation, 8, raw, DateTimeOffset.UnixEpoch, senderDisplayName: "Bea");
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(realm, 7),
+            ActiveRealm = realm,
+            SearchMessagesAction = (_, _, _, _) => Task.FromResult(new MessageQueryPage([message], true, true, true))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenSearchCommand.Execute(null);
+        viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == filter));
+
+        await viewModel.SearchNowCommand.ExecuteAsync(null);
+
+        var result = Assert.Single(viewModel.SearchResults);
+        Assert.True(result.HasImages);
+        Assert.True(result.HasSubtitle);
+        Assert.Equal("Bea", result.Title);
+        Assert.Equal("设计图 [文件] notes.pdf", result.Subtitle);
+        Assert.Equal(new[]
+        {
+            "https://chat.example.test/user_uploads/1/shot.png",
+            "https://chat.example.test/user_uploads/1/other.JPG"
+        }, result.Images.Select(image => image.SourceUrl));
+        Assert.Equal(raw, message.Content);
+        await viewModel.SelectSearchResultCommand.ExecuteAsync(result);
+        Assert.Equal((conversation, 90L), Assert.Single(session.OpenedMessages));
+    }
+
+    [Theory]
+    [InlineData("普通文字")]
+    [InlineData("[notes.pdf](/user_uploads/1/notes.pdf)")]
+    [InlineData("![external](https://outside.example.test/user_uploads/1/shot.png)")]
+    [InlineData("![temporary](/user_uploads/temporary/shot.png)")]
+    [InlineData("![http](http://chat.example.test/user_uploads/1/shot.png)")]
+    public async Task SearchImages_WhenNoControlledImageExists_KeepsTextResult(string content)
+    {
+        var realm = RealmEndpoint.Parse("https://chat.example.test/");
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(realm, 7),
+            ActiveRealm = realm,
+            SearchMessagesAction = (_, _, _, _) => Task.FromResult(new MessageQueryPage(
+                [new ChatMessage(90, new DirectMessage([8]), 8, content, DateTimeOffset.UnixEpoch)], true, true, true))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenSearchCommand.Execute(null);
+
+        await viewModel.SearchNowCommand.ExecuteAsync(null);
+
+        var result = Assert.Single(viewModel.SearchResults);
+        Assert.Empty(result.Images);
+        Assert.False(result.HasImages);
+        Assert.True(result.HasSubtitle);
+        Assert.Equal(content, result.Subtitle);
     }
 
     [Fact]
-    public async Task SearchCategory_WhenMediaFilterHasNoKeyword_DoesNotRequestServer()
+    public async Task SearchImages_WhenLoadingMore_ProjectsThumbnailsOnEveryPageWithoutRawImageLinks()
+    {
+        var realm = RealmEndpoint.Parse("https://chat.example.test/");
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(realm, 7),
+            ActiveRealm = realm,
+            SearchMessagesAction = (_, before, _, _) => Task.FromResult(new MessageQueryPage(
+                [new ChatMessage(before is null ? 90 : 80, new DirectMessage([8]), 8,
+                    before is null ? "![first](/user_uploads/1/first.png)" : "![second](/user_uploads/1/second.png)",
+                    DateTimeOffset.UnixEpoch)], before is not null, true, true))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenSearchCommand.Execute(null);
+        viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Images));
+
+        await viewModel.SearchNowCommand.ExecuteAsync(null);
+        await viewModel.LoadOlderSearchCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, viewModel.SearchResults.Count);
+        Assert.All(viewModel.SearchResults, result =>
+        {
+            Assert.Single(result.Images);
+            Assert.True(result.HasImages);
+            Assert.False(result.HasSubtitle);
+            Assert.Empty(result.Subtitle);
+        });
+        Assert.Equal("https://chat.example.test/user_uploads/1/second.png", viewModel.SearchResults[1].Images[0].SourceUrl);
+    }
+
+    [Theory]
+    [InlineData("design")]
+    [InlineData("")]
+    [InlineData(" \t ")]
+    public async Task SearchNow_WhenAllCategoryIsSelected_SearchesAllContentOnlyAfterExplicitSubmit(string query)
+    {
+        var calls = 0;
+        var conversation = new DirectMessage([8]);
+        var content = new[]
+        {
+            "design text", "[design file](/user_uploads/1/design.pdf)",
+            "![design image](/user_uploads/1/design.png)", "[design video](/user_uploads/1/design.mp4)",
+            "https://example.test/design"
+        };
+        var messages = content.Select((text, index) => new ChatMessage(
+            index + 1, conversation, 8, text, DateTimeOffset.UnixEpoch)).ToArray();
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            ActiveRealm = RealmEndpoint.Parse("https://zulip.example"),
+            SearchMessagesWithFilterAction = (requestedQuery, _, _, filter, _) =>
+            {
+                calls++;
+                Assert.Equal(query.Trim(), requestedQuery);
+                Assert.Equal(MessageSearchFilter.Messages, filter);
+                return Task.FromResult(new MessageQueryPage(messages, true, true, true));
+            }
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenSearchCommand.Execute(null);
+        Assert.Equal("全部", Assert.Single(viewModel.SearchCategories, category => category.IsSelected).Label);
+        viewModel.SearchQuery = query;
+        Assert.Equal(0, calls);
+        Assert.Empty(viewModel.SearchResults);
+        Assert.Equal(string.IsNullOrWhiteSpace(query)
+            ? "点击搜索或按 Enter 查看记录"
+            : "点击搜索或按 Enter 开始搜索", viewModel.SearchEmptyText);
+
+        await viewModel.SearchNowCommand.ExecuteAsync(null);
+        Assert.Equal(1, calls);
+        Assert.Equal(5, viewModel.SearchResults.Count);
+
+        viewModel.SelectSearchCategoryCommand.Execute(
+            viewModel.SearchCategories.Single(category => category.Filter == MessageSearchFilter.Messages));
+        Assert.Equal(1, calls);
+        Assert.Empty(viewModel.SearchResults);
+        Assert.False(viewModel.IsSearchBusy);
+        await viewModel.SearchNowCommand.ExecuteAsync(null);
+        Assert.Equal(2, calls);
+        Assert.Equal(1, Assert.Single(viewModel.SearchResults).MessageId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(MessageSearchFilter.Messages)]
+    [InlineData(MessageSearchFilter.Files)]
+    [InlineData(MessageSearchFilter.Images)]
+    [InlineData(MessageSearchFilter.Videos)]
+    [InlineData(MessageSearchFilter.Links)]
+    public async Task SearchCategory_WhenFilterHasNoKeyword_RequestsServerOnExplicitSubmit(MessageSearchFilter? category)
     {
         MessageSearchFilter? requestedFilter = null;
         var session = new FakeSession
@@ -3202,13 +5409,69 @@ public sealed class ShellViewModelTests
         };
         using var viewModel = CreateViewModel(session);
         viewModel.OpenSearchCommand.Execute(null);
-        viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Images));
+        viewModel.SelectSearchCategoryCommand.Execute(viewModel.SearchCategories.Single(item => item.Filter == category));
+
+        Assert.Null(requestedFilter);
+        Assert.Empty(viewModel.SearchResults);
 
         await ((IAsyncRelayCommand)viewModel.SearchNowCommand).ExecuteAsync(null);
 
-        Assert.Null(requestedFilter);
-        Assert.Equal("输入内容开始搜索", viewModel.SearchEmptyText);
+        Assert.Equal(category ?? MessageSearchFilter.Messages, requestedFilter);
+        Assert.Equal("没有匹配结果。", viewModel.SearchEmptyText);
         Assert.Empty(viewModel.SearchResults);
+    }
+
+    [Theory]
+    [InlineData("query")]
+    [InlineData("category")]
+    [InlineData("close")]
+    public async Task SearchNow_WhenEmptyQueryChangesDuringRequest_DiscardsLateResults(string change)
+    {
+        var pending = new TaskCompletionSource<MessageQueryPage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            SearchMessagesAction = (_, _, _, _) => pending.Task
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenSearchCommand.Execute(null);
+        var search = viewModel.SearchNowCommand.ExecuteAsync(null);
+        Assert.True(viewModel.IsSearchBusy);
+        Assert.Equal("正在搜索…", viewModel.SearchEmptyText);
+
+        if (change == "query") viewModel.SearchQuery = "next";
+        else if (change == "category") viewModel.SelectSearchCategoryCommand.Execute(
+            viewModel.SearchCategories.Single(item => item.Filter == MessageSearchFilter.Images));
+        else viewModel.CloseSearchCommand.Execute(null);
+        pending.SetResult(new MessageQueryPage(
+            [new ChatMessage(90, new DirectMessage([8]), 8, "旧结果", DateTimeOffset.UnixEpoch)], false, true, true));
+        await search;
+
+        Assert.Empty(viewModel.SearchResults);
+        Assert.False(viewModel.HasMoreSearchResults);
+    }
+
+    [Fact]
+    public async Task OpenSearch_WhenEmptySearchCompleted_RefreshesHintWithoutRequestingAgain()
+    {
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            SearchMessagesAction = (_, _, _, _) => Task.FromResult(new MessageQueryPage([], true, true, true))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenSearchCommand.Execute(null);
+        await viewModel.SearchNowCommand.ExecuteAsync(null);
+        Assert.Equal("没有匹配结果。", viewModel.SearchEmptyText);
+        viewModel.CloseSearchCommand.Execute(null);
+        var changed = new List<string?>();
+        viewModel.PropertyChanged += (_, args) => changed.Add(args.PropertyName);
+
+        viewModel.OpenSearchCommand.Execute(null);
+
+        Assert.Single(session.SearchRequests);
+        Assert.Equal("点击搜索或按 Enter 查看记录", viewModel.SearchEmptyText);
+        Assert.Contains(nameof(viewModel.SearchEmptyText), changed);
     }
 
     [Fact]
@@ -3291,6 +5554,154 @@ public sealed class ShellViewModelTests
         Assert.Equal(group, Assert.Single(viewModel.FilteredConversations).Conversation);
         viewModel.SearchQuery = "hidden";
         Assert.Empty(viewModel.SearchResults);
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(0, true)]
+    [InlineData(1, false)]
+    [InlineData(1, true)]
+    [InlineData(2, false)]
+    [InlineData(2, true)]
+    public void ConversationPreview_WhenLatestMessageQuotesAnotherMessage_ShowsReplyForEveryConversationKind(
+        int conversationKind, bool useCachedSummary)
+    {
+        ConversationKey conversation = conversationKind switch
+        {
+            0 => new DirectMessage([8]),
+            1 => new DirectMessage([]),
+            _ => new ChannelTopic(4, string.Empty)
+        };
+        const string content = "@_**Bea|8** [said](https://chat.example.test/#narrow/channel/4-a-long-conversation-name/near/42):\n" +
+                               "```quote\n被引用的原消息\n```\n\n这是回复正文";
+        var message = new ChatMessage(50, conversation, 7, content, DateTimeOffset.UnixEpoch, senderDisplayName: "Ada");
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            Recent = conversation is DirectMessage ? [conversation] : [],
+            StateValue = new ClientState(
+                messages: useCachedSummary ? null : new Dictionary<long, ChatMessage> { [50] = message },
+                conversationSummaries: useCachedSummary
+                    ? new Dictionary<string, ConversationSummary> { [conversation.CanonicalKey] = new(conversation, message) }
+                    : null,
+                subscriptions: conversation is ChannelTopic
+                    ? new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription(4, "测试群") }
+                    : null,
+                users: new Dictionary<long, UserProfile>
+                {
+                    [7] = new UserProfile(7, "Ada"),
+                    [8] = new UserProfile(8, "Bea")
+                })
+        };
+        using var viewModel = CreateViewModel(session);
+        var item = Assert.Single(viewModel.Conversations);
+        var prefix = conversation is ChannelTopic ? "Ada: " : string.Empty;
+
+        Assert.Equal(prefix + "这是回复正文", item.Detail);
+        Assert.Equal(item.Detail, Assert.Single(viewModel.FilteredConversations).Detail);
+        if (conversation is DirectMessage)
+            Assert.Equal("这是回复正文", Assert.Single(viewModel.DirectMessages).Detail);
+        Assert.Equal(content, message.Content);
+
+        var edited = message with { Content = content.Replace("这是回复正文", "更新后的回复", StringComparison.Ordinal) };
+        session.StateValue = useCachedSummary
+            ? session.StateValue with
+            {
+                ConversationSummaries = new Dictionary<string, ConversationSummary>
+                {
+                    [conversation.CanonicalKey] = new(conversation, edited)
+                }
+            }
+            : session.StateValue with { Messages = new Dictionary<long, ChatMessage> { [50] = edited } };
+        session.Publish();
+
+        Assert.Same(item, Assert.Single(viewModel.Conversations));
+        Assert.Equal(prefix + "更新后的回复", item.Detail);
+    }
+
+    [Theory]
+    [InlineData("**Bea** [said](#):\n```quote\n只有引用内容\n```\n\n", "只有引用内容")]
+    [InlineData("@_**Bea|8** [said](https://chat.example.test/#narrow/near/42):\r\n```quote\r\n原文\r\n```\r\n\r\n回复", "回复")]
+    [InlineData("**Bea** [said](#):\n````quote\n原文含 `代码`\n````\n\n回复", "回复")]
+    [InlineData("**Bea** [said](#):\n```quote\n原文\n```紧接的回复", "紧接的回复")]
+    [InlineData("**Bea** [said](#):\n```quote\n第一条\n```\n\n**Ada** [said](#):\n```quote\n第二条\n```\n\n回复两条", "回复两条")]
+    [InlineData("**Bea** [said](#):\n```quote\n第一条\n```\n\n**Ada** [said](#):\n```quote\n第二条\n```", "第一条 第二条")]
+    [InlineData("普通消息 https://example.test/page", "普通消息 https://example.test/page")]
+    [InlineData("![截图](/user_uploads/1/shot.png)", "[图片]")]
+    [InlineData("[截图](/user_uploads/1/shot.PNG)", "[图片]")]
+    [InlineData("[报告](/user_uploads/1/report.pdf)", "[文件]")]
+    [InlineData("[报\\[告\\].pdf](/user_uploads/1/report.pdf)", "[文件]")]
+    [InlineData("看这张图\n![截图](/user_uploads/1/shot.png)", "看这张图 [图片]")]
+    [InlineData("![图](/user_uploads/1/shot.png)\n[文件](/user_uploads/1/file.zip)", "[图片] [文件]")]
+    [InlineData("**Bea** [said](#):\n```quote\n![截图](/user_uploads/1/shot.png)\n```", "[图片]")]
+    [InlineData("**Bea** [said](#):\n```quote\n旧消息\n```\n\n[文件](/user_uploads/1/file.zip)", "[文件]")]
+    [InlineData("**Bea** [said](#):\n````quote\n**Ada** [said](#):\n```quote\n原始消息\n```\n\n上一条回复\n````", "原始消息 上一条回复")]
+    [InlineData("**Bea** [said](#):\n```quote\n第一条\n```\n\n**Bea** [said](#):\n````quote\n**Ada** [said](#):\n```quote\n嵌套引用\n```\n\n上一条回复\n````", "第一条 嵌套引用 上一条回复")]
+    public void ConversationPreview_WhenQuoteFormatVaries_ShowsMessageTextWithoutQuoteMetadata(
+        string content, string expected)
+    {
+        var conversation = new DirectMessage([8]);
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            Recent = [conversation],
+            StateValue = new ClientState(messages: new Dictionary<long, ChatMessage>
+            {
+                [50] = new ChatMessage(50, conversation, 8, content, DateTimeOffset.UnixEpoch)
+            })
+        };
+        using var viewModel = CreateViewModel(session);
+
+        Assert.Equal(expected, Assert.Single(viewModel.Conversations).Detail);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void ConversationPreview_WhenLatestAttachmentChanges_UpdatesExistingRowFromMessagesOrSummary(
+        bool isGroup, bool useCachedSummary)
+    {
+        ConversationKey conversation = isGroup ? new ChannelTopic(4, string.Empty) : new DirectMessage([8]);
+        var message = new ChatMessage(50, conversation, 8,
+            "[截图](https://chat.example.test/user_uploads/1/shot.png)", DateTimeOffset.UnixEpoch,
+            senderDisplayName: "Bea");
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            ActiveRealm = RealmEndpoint.Parse("https://chat.example.test/"),
+            Recent = isGroup ? [] : [conversation],
+            StateValue = new ClientState(
+                messages: useCachedSummary ? null : new Dictionary<long, ChatMessage> { [50] = message },
+                conversationSummaries: useCachedSummary
+                    ? new Dictionary<string, ConversationSummary> { [conversation.CanonicalKey] = new(conversation, message) }
+                    : null,
+                subscriptions: isGroup
+                    ? new Dictionary<long, Subscription> { [4] = PrivateGroupSubscription(4, "测试群") }
+                    : null)
+        };
+        using var viewModel = CreateViewModel(session);
+        var item = Assert.Single(viewModel.Conversations);
+        var prefix = isGroup ? "Bea: " : string.Empty;
+        Assert.Equal(prefix + "[图片]", item.Detail);
+
+        var edited = message with { Content = "[报告](/user_uploads/1/report.pdf)" };
+        session.StateValue = useCachedSummary
+            ? session.StateValue with
+            {
+                ConversationSummaries = new Dictionary<string, ConversationSummary>
+                {
+                    [conversation.CanonicalKey] = new(conversation, edited)
+                }
+            }
+            : session.StateValue with { Messages = new Dictionary<long, ChatMessage> { [50] = edited } };
+        session.Publish();
+
+        Assert.Same(item, Assert.Single(viewModel.Conversations));
+        Assert.Equal(prefix + "[文件]", item.Detail);
+        Assert.Equal(item.Detail, Assert.Single(viewModel.FilteredConversations).Detail);
+        Assert.Equal("[报告](/user_uploads/1/report.pdf)", edited.Content);
     }
 
     [Fact]
@@ -3557,15 +5968,59 @@ public sealed class ShellViewModelTests
         using var viewModel = CreateViewModel(session);
 
         viewModel.OpenNewConversationCommand.Execute(null);
-        Assert.Equal(["Bea", "Chen"], viewModel.NewConversationChoices.Select(choice => choice.Name));
-        Assert.DoesNotContain(viewModel.NewConversationChoices, choice => choice.UserId == 7);
-        foreach (var choice in viewModel.NewConversationChoices) choice.IsSelected = true;
+        Assert.Equal(["Ada", "Bea", "Chen"], viewModel.NewConversationChoices.Select(choice => choice.Name));
+        Assert.Contains(viewModel.NewConversationChoices, choice => choice.UserId == 7);
+        foreach (var choice in viewModel.NewConversationChoices)
+        {
+            viewModel.SelectNewDirectConversationContactCommand.Execute(choice);
+            Assert.Same(choice, Assert.Single(viewModel.NewConversationChoices, item => item.IsSelected));
+        }
+        viewModel.SelectNewDirectConversationContactCommand.Execute(viewModel.NewConversationChoices[2]);
+        Assert.Equal(9, Assert.Single(viewModel.NewConversationChoices, choice => choice.IsSelected).UserId);
+        Assert.True(viewModel.CanStartNewConversation);
+        Assert.True(viewModel.IsNewConversationOpen);
+        Assert.Null(session.SelectedConversation);
 
         await ((IAsyncRelayCommand)viewModel.StartNewConversationCommand).ExecuteAsync(null);
 
         var direct = Assert.IsType<DirectMessage>(session.Selected);
         Assert.Equal([9L], direct.OtherUserIds);
         Assert.False(viewModel.IsNewConversationOpen);
+    }
+
+    [Fact]
+    public async Task StartNewConversationCommand_WhenSelfIsSelected_OpensCanonicalSelfConversation()
+    {
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            StateValue = new ClientState(
+                users: new Dictionary<long, UserProfile>
+                {
+                    [7] = new UserProfile(7, "Ada"),
+                    [8] = new UserProfile(8, "Bea"),
+                    [9] = new UserProfile(9, "Inactive", isActive: false)
+                },
+                connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.OpenNewConversationCommand.Execute(null);
+        Assert.Equal([7L, 8L], viewModel.NewConversationChoices.Select(choice => choice.UserId));
+        var other = Assert.Single(viewModel.NewConversationChoices, choice => choice.UserId == 8);
+        viewModel.SelectNewDirectConversationContactCommand.Execute(other);
+        viewModel.NewConversationQuery = "自己";
+        var self = Assert.Single(viewModel.NewConversationChoices);
+        Assert.Equal(7, self.UserId);
+        Assert.Equal("自己", self.KindLabel);
+        viewModel.SelectNewDirectConversationContactCommand.Execute(self);
+        Assert.False(other.IsSelected);
+        Assert.True(viewModel.CanStartNewConversation);
+
+        await viewModel.StartNewConversationCommand.ExecuteAsync(null);
+
+        Assert.Equal(new DirectMessage([]), session.SelectedConversation);
+        Assert.False(viewModel.IsNewConversationOpen);
+        Assert.Empty(session.SentContents);
     }
 
     [Fact]
@@ -3614,8 +6069,15 @@ public sealed class ShellViewModelTests
         Assert.Equal(1, session.UploadCalls);
     }
 
-    [Fact]
-    public async Task SendCommand_WhenAttachmentIsSelected_UploadsOnceThenSendsOneMarkdownMessage()
+    [Theory]
+    [InlineData("design[1].png", "image/png", "design[1].png",
+        "![design\\[1\\].png](https://example.test/user_uploads/design[1].png)")]
+    [InlineData("设计图[终版].png", "image/png", "设计图终版.png",
+        "![设计图\\[终版\\].png](https://example.test/user_uploads/设计图终版.png)")]
+    [InlineData("使用说明[终版].txt", "text/plain", "使用说明终版.txt",
+        "[使用说明\\[终版\\].txt](https://example.test/user_uploads/使用说明终版.txt)")]
+    public async Task SendCommand_WhenAttachmentIsSelected_UploadsOnceThenSendsOneMarkdownMessage(
+        string fileName, string contentType, string uploadPath, string expectedMarkdown)
     {
         var conversation = new DirectMessage([8]);
         var filePicker = new FakeFileSelectionService
@@ -3623,8 +6085,8 @@ public sealed class ShellViewModelTests
             Files =
             [
                 new SelectedAttachmentFile(
-                    "design[1].png",
-                    "image/png",
+                    fileName,
+                    contentType,
                     3,
                     _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3])))
             ]
@@ -3632,7 +6094,9 @@ public sealed class ShellViewModelTests
         var session = new FakeSession
         {
             Selected = conversation,
-            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
+            UploadAction = (upload, _) => Task.FromResult(new UploadedAttachment(
+                upload.FileName, "https://example.test/user_uploads/" + uploadPath))
         };
         using var viewModel = CreateViewModel(session, fileSelectionService: filePicker);
         session.Publish();
@@ -3643,7 +6107,7 @@ public sealed class ShellViewModelTests
         await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
 
         Assert.Equal(1, session.UploadCalls);
-        Assert.Equal("caption\n![design\\[1\\].png](https://example.test/user_uploads/design[1].png)", Assert.Single(session.SentContents));
+        Assert.Equal("caption\n" + expectedMarkdown, Assert.Single(session.SentContents));
         Assert.Empty(viewModel.Attachments);
         Assert.Equal(string.Empty, viewModel.ComposerText);
     }
@@ -3861,6 +6325,261 @@ public sealed class ShellViewModelTests
         Assert.Empty(viewModel.Attachments);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadAttachments_WhenMultipleFilesAreRead_UploadsOriginalFilesWithoutChangingText(bool drop)
+    {
+        var session = ConversationMenuSession();
+        using var viewModel = CreateViewModel(session);
+        viewModel.ComposerText = "caption";
+        Func<CancellationToken, Task<IReadOnlyList<SelectedAttachmentFile>>> read = _ =>
+            Task.FromResult<IReadOnlyList<SelectedAttachmentFile>>([ClipboardTestFile("资料.txt"), ClipboardTestFile("original.png")]);
+
+        await (drop ? viewModel.DropAttachmentsCommand : viewModel.PasteAttachmentsCommand).ExecuteAsync(read);
+        await WaitUntilAsync(() => viewModel.Attachments.Count == 2 &&
+            viewModel.Attachments.All(item => item.Status == AttachmentUploadStatus.Uploaded));
+
+        Assert.Equal(["资料.txt", "original.png"], viewModel.Attachments.Select(item => item.FileName));
+        Assert.Equal("caption", viewModel.ComposerText);
+        Assert.Equal(2, session.UploadCalls);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ReadAttachments_WhenConversationChangesDuringRead_DiscardsLateFiles(bool drop, bool returnToOriginal)
+    {
+        var session = ConversationMenuSession();
+        using var viewModel = CreateViewModel(session);
+        var readResult = new TaskCompletionSource<IReadOnlyList<SelectedAttachmentFile>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken readToken = default;
+        Func<CancellationToken, Task<IReadOnlyList<SelectedAttachmentFile>>> read = token =>
+        {
+            readToken = token;
+            return readResult.Task;
+        };
+        var command = drop ? viewModel.DropAttachmentsCommand : viewModel.PasteAttachmentsCommand;
+        var pending = command.ExecuteAsync(read);
+        Assert.False(command.CanExecute(read));
+
+        session.Selected = new DirectMessage([9]);
+        session.Publish();
+        if (returnToOriginal)
+        {
+            session.Selected = new DirectMessage([8]);
+            session.Publish();
+        }
+        readResult.SetResult([ClipboardTestFile("late.txt")]);
+        await pending;
+
+        Assert.True(readToken.IsCancellationRequested);
+        Assert.Empty(viewModel.Attachments);
+        Assert.Null(viewModel.AttachmentError);
+        Assert.Equal(0, session.UploadCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadAttachments_WhenAccountChangesWithSameConversation_DiscardsLateFiles(bool drop)
+    {
+        var session = ConversationMenuSession();
+        using var viewModel = CreateViewModel(session);
+        var readResult = new TaskCompletionSource<IReadOnlyList<SelectedAttachmentFile>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Func<CancellationToken, Task<IReadOnlyList<SelectedAttachmentFile>>> read = _ => readResult.Task;
+        var pending = (drop ? viewModel.DropAttachmentsCommand : viewModel.PasteAttachmentsCommand).ExecuteAsync(read);
+
+        session.Account = AccountId.Create(RealmEndpoint.Parse("https://other.example.test"), 7);
+        session.Publish();
+        readResult.SetResult([ClipboardTestFile("late.txt")]);
+        await pending;
+
+        Assert.Empty(viewModel.Attachments);
+        Assert.Equal(0, session.UploadCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadAttachments_WhenMessageIsSentDuringRead_DoesNotAddFilesToNextDraft(bool drop)
+    {
+        var session = ConversationMenuSession();
+        using var viewModel = CreateViewModel(session);
+        viewModel.ComposerText = "send this";
+        var readResult = new TaskCompletionSource<IReadOnlyList<SelectedAttachmentFile>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Func<CancellationToken, Task<IReadOnlyList<SelectedAttachmentFile>>> read = _ => readResult.Task;
+        var pending = (drop ? viewModel.DropAttachmentsCommand : viewModel.PasteAttachmentsCommand).ExecuteAsync(read);
+
+        await viewModel.SendCommand.ExecuteAsync(null);
+        viewModel.ComposerText = "next draft";
+        readResult.SetResult([ClipboardTestFile("old-draft.txt")]);
+        await pending;
+
+        Assert.Equal("send this", Assert.Single(session.SentContents));
+        Assert.Equal("next draft", viewModel.ComposerText);
+        Assert.Empty(viewModel.Attachments);
+        Assert.Equal(0, session.UploadCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadAttachments_WhenAccountHasChangedBeforeUiProjection_DoesNotReadFiles(bool drop)
+    {
+        var session = ConversationMenuSession();
+        using var viewModel = CreateViewModel(session);
+        session.Account = AccountId.Create(RealmEndpoint.Parse("https://other.example.test"), 7);
+        var called = false;
+        Func<CancellationToken, Task<IReadOnlyList<SelectedAttachmentFile>>> read = _ =>
+        {
+            called = true;
+            return Task.FromResult<IReadOnlyList<SelectedAttachmentFile>>([ClipboardTestFile("file.txt")]);
+        };
+
+        await (drop ? viewModel.DropAttachmentsCommand : viewModel.PasteAttachmentsCommand).ExecuteAsync(read);
+
+        Assert.False(called);
+        Assert.Empty(viewModel.Attachments);
+        Assert.Equal(0, session.UploadCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadAttachments_WhenReaderFails_ShowsSafeErrorWithoutUploading(bool drop)
+    {
+        var session = ConversationMenuSession();
+        using var viewModel = CreateViewModel(session);
+        Func<CancellationToken, Task<IReadOnlyList<SelectedAttachmentFile>>> read = _ =>
+            throw new IOException("private clipboard path");
+
+        await (drop ? viewModel.DropAttachmentsCommand : viewModel.PasteAttachmentsCommand).ExecuteAsync(read);
+
+        Assert.Contains(drop ? "无法读取拖入的附件" : "无法读取剪贴板附件", viewModel.AttachmentError);
+        Assert.DoesNotContain("private", viewModel.AttachmentError);
+        Assert.Empty(viewModel.Attachments);
+        Assert.Equal(0, session.UploadCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadAttachments_WhenSelectionExceedsUploadLimit_RejectsWholeSelection(bool drop)
+    {
+        var session = ConversationMenuSession();
+        using var viewModel = CreateViewModel(session);
+        Func<CancellationToken, Task<IReadOnlyList<SelectedAttachmentFile>>> read = _ =>
+            Task.FromResult<IReadOnlyList<SelectedAttachmentFile>>([
+                ClipboardTestFile("small.txt"),
+                new SelectedAttachmentFile("large.zip", "application/zip", long.MaxValue,
+                    _ => throw new InvalidOperationException("Must not open an oversized file."))]);
+
+        await (drop ? viewModel.DropAttachmentsCommand : viewModel.PasteAttachmentsCommand).ExecuteAsync(read);
+
+        Assert.NotNull(viewModel.AttachmentError);
+        Assert.Empty(viewModel.Attachments);
+        Assert.Equal(0, session.UploadCalls);
+    }
+
+    [Fact]
+    public async Task RemoveAttachment_WhenUploading_CancelsOnlyThatFileAndContinuesQueue()
+    {
+        var session = ConversationMenuSession();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        session.UploadAction = async (upload, token) =>
+        {
+            if (upload.FileName == "first.txt")
+            {
+                started.SetResult();
+                try { await Task.Delay(Timeout.Infinite, token); }
+                catch (OperationCanceledException) { cancelled.SetResult(); throw; }
+            }
+            return new UploadedAttachment(upload.FileName, "https://chat.example.test/user_uploads/second.txt");
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.AddDroppedAttachmentsCommand.Execute(new[] { ClipboardTestFile("first.txt"), ClipboardTestFile("second.txt") });
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var removed = viewModel.Attachments[0];
+        Assert.True(removed.CanRemove);
+
+        viewModel.RemoveAttachmentCommand.Execute(removed);
+        await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => viewModel.Attachments.Count == 1 && viewModel.Attachments[0].Status == AttachmentUploadStatus.Uploaded);
+
+        Assert.Equal("second.txt", viewModel.Attachments[0].FileName);
+        Assert.Equal(2, session.UploadCalls);
+        Assert.Null(viewModel.AttachmentError);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RemoveAttachment_WhenRemovedUploadCompletesLate_DoesNotRestoreItOrStopNextFile(bool fails)
+    {
+        var session = ConversationMenuSession();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken uploadToken = default;
+        session.UploadAction = async (upload, token) =>
+        {
+            if (upload.FileName == "first.txt")
+            {
+                uploadToken = token;
+                await release.Task;
+                upload.Progress?.Report(new RealmMediaTransferProgress(3, 3));
+                if (fails) throw new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError);
+            }
+            return new UploadedAttachment(upload.FileName, "https://chat.example.test/user_uploads/file.txt");
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.AddDroppedAttachmentsCommand.Execute(new[] { ClipboardTestFile("first.txt"), ClipboardTestFile("second.txt") });
+        var removed = viewModel.Attachments[0];
+        viewModel.RemoveAttachmentCommand.Execute(removed);
+        release.SetResult();
+        await WaitUntilAsync(() => viewModel.Attachments.Count == 1 && viewModel.Attachments[0].Status == AttachmentUploadStatus.Uploaded);
+
+        Assert.True(uploadToken.IsCancellationRequested);
+        Assert.Null(removed.Uploaded);
+        Assert.Equal(0, removed.UploadProgress);
+        Assert.Equal(2, session.UploadCalls);
+        Assert.Null(viewModel.AttachmentError);
+        session.Selected = new DirectMessage([9]);
+        session.Publish();
+        session.Selected = new DirectMessage([8]);
+        session.Publish();
+        Assert.Equal("second.txt", Assert.Single(viewModel.Attachments).FileName);
+    }
+
+    [Fact]
+    public async Task RemoveAttachment_WhenQueued_SkipsRemovedFileWithoutCancellingActiveFile()
+    {
+        var session = ConversationMenuSession();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken activeToken = default;
+        session.UploadAction = async (upload, token) =>
+        {
+            activeToken = token;
+            await release.Task.WaitAsync(token);
+            return new UploadedAttachment(upload.FileName, "https://chat.example.test/user_uploads/first.txt");
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.AddDroppedAttachmentsCommand.Execute(new[] { ClipboardTestFile("first.txt"), ClipboardTestFile("queued.txt") });
+        viewModel.RemoveAttachmentCommand.Execute(viewModel.Attachments[1]);
+        Assert.False(activeToken.IsCancellationRequested);
+        release.SetResult();
+        await WaitUntilAsync(() => viewModel.Attachments[0].Status == AttachmentUploadStatus.Uploaded);
+
+        Assert.Equal("first.txt", Assert.Single(viewModel.Attachments).FileName);
+        Assert.Equal(1, session.UploadCalls);
+    }
+
+    private static SelectedAttachmentFile ClipboardTestFile(string name) => new(
+        name, name.EndsWith(".png", StringComparison.Ordinal) ? "image/png" : "text/plain", 3,
+        _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3])));
+
     [Fact]
     public async Task AddPastedImage_WhenClipboardProvidesPng_StartsImmediateUpload()
     {
@@ -3900,17 +6619,32 @@ public sealed class ShellViewModelTests
         Assert.Empty(viewModel.Attachments);
     }
 
-    [Fact]
-    public async Task SendCommand_WhenUploadSucceededButSendFailed_ReusesUploadedReferenceOnExplicitRetry()
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    public async Task SendCommand_WhenUploadSucceededButSendFailed_ReusesUploadedReferenceOnExplicitRetry(
+        bool isImage,
+        bool resultUnknown,
+        bool unicodeFileName)
     {
         var conversation = new DirectMessage([8]);
+        var fileName = unicodeFileName
+            ? isImage ? "测试图片.png" : "使用说明.txt"
+            : isImage ? "screenshot.png" : "notes.txt";
+        var expectedContent = $"caption\n{(isImage ? "!" : string.Empty)}[{fileName}](https://example.test/user_uploads/{fileName})";
         var filePicker = new FakeFileSelectionService
         {
             Files =
             [
                 new SelectedAttachmentFile(
-                    "notes.txt",
-                    "text/plain",
+                    fileName,
+                    isImage ? "image/png" : "text/plain",
                     3,
                     _ => Task.FromResult<Stream>(new MemoryStream([1, 2, 3])))
             ]
@@ -3919,28 +6653,72 @@ public sealed class ShellViewModelTests
         var session = new FakeSession
         {
             Selected = conversation,
-            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected)),
-            SendAction = (_, _) => failSend
-                ? throw new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError)
-                : Task.CompletedTask
+            StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected))
+        };
+        session.SendAction = (content, _) =>
+        {
+            if (!failSend) return Task.CompletedTask;
+            var entry = new OutboxEntry("failed-attachment", conversation, content, DateTimeOffset.UnixEpoch,
+                OutboxState.Failed, resultUnknown ? OutboxFailureKind.NetworkResultUnknown : OutboxFailureKind.Rejected);
+            session.StateValue = session.StateValue with
+            {
+                Outbox = new Dictionary<string, OutboxEntry> { [entry.LocalId] = entry }
+            };
+            session.Publish();
+            throw new GatewayException(
+                resultUnknown ? GatewayErrorKind.Offline : GatewayErrorKind.RequestFailed,
+                resultUnknown ? GatewayErrorCode.NetworkError : GatewayErrorCode.RequestFailed);
         };
         using var viewModel = CreateViewModel(session, fileSelectionService: filePicker);
         session.Publish();
         await ((IAsyncRelayCommand)viewModel.PickAttachmentsCommand).ExecuteAsync(null);
         await WaitUntilAsync(() => viewModel.Attachments.Single().Status == AttachmentUploadStatus.Uploaded);
+        viewModel.ComposerText = "caption";
 
         await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
+        Assert.Empty(viewModel.Attachments);
+        Assert.Empty(viewModel.ComposerText);
+        Assert.False(viewModel.CanSend);
+        Assert.Single(session.SentContents);
+        var failed = Assert.Single(viewModel.Messages);
+        Assert.Equal(expectedContent, failed.Content);
+        Assert.True(failed.CanRecover);
+        Assert.Equal(!resultUnknown, failed.IsDeliveryFailure);
+        Assert.Contains(resultUnknown ? "发送结果未确认" : "发送失败", failed.DeliveryState, StringComparison.Ordinal);
+
         failSend = false;
-        session.StateValue = new ClientState(connection: new ConnectionState(ConnectionStatus.Connected));
-        session.Publish();
+        viewModel.RecoverOutboxCommand.Execute(failed);
+        Assert.Equal(expectedContent, viewModel.ComposerText);
         await ((IAsyncRelayCommand)viewModel.SendCommand).ExecuteAsync(null);
 
         Assert.Equal(1, session.UploadCalls);
         Assert.Equal(2, session.SentContents.Count);
         Assert.All(
             session.SentContents,
-            sent => Assert.Equal("[notes.txt](https://example.test/user_uploads/notes.txt)", sent));
+            sent => Assert.Equal(expectedContent, sent));
         Assert.Empty(viewModel.Attachments);
+    }
+
+    [Fact]
+    public void OpenImageViewerCommand_WhenImageBindingStarts_ViewerIsAlreadyOpen()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        var image = new MessageAttachmentItem("image", "preview.png", "/user_uploads/7/preview.png");
+        var bindingStarted = false;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != nameof(ShellViewModel.ActiveImageAttachment) ||
+                viewModel.ActiveImageAttachment is null) return;
+            bindingStarted = true;
+            Assert.True(viewModel.IsImageViewerOpen);
+        };
+
+        viewModel.OpenImageViewerCommand.Execute(image);
+
+        Assert.True(bindingStarted);
+        viewModel.CloseImageViewerCommand.Execute(null);
+        Assert.False(viewModel.IsImageViewerOpen);
+        Assert.Null(viewModel.ActiveImageAttachment);
     }
 
     [Fact]
@@ -4289,11 +7067,13 @@ public sealed class ShellViewModelTests
         Assert.True(viewModel.IsCurrentUserPrivateGroupOwner);
     }
 
-    [Fact]
-    public async Task DirectMessageSettings_WhenChanged_PersistLocallyAndPinNavigationItem()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DirectMessageSettings_WhenChanged_PersistLocallyAndPinNavigationItem(bool isSelf)
     {
         var accountId = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7);
-        var selected = new DirectMessage([8]);
+        var selected = isSelf ? new DirectMessage([]) : new DirectMessage([8]);
         var other = new DirectMessage([9]);
         var preferences = new InMemoryConversationPreferencesStore();
         var session = new FakeSession
@@ -4304,6 +7084,7 @@ public sealed class ShellViewModelTests
             Recent = [other, selected],
             StateValue = new ClientState(users: new Dictionary<long, UserProfile>
             {
+                [7] = new UserProfile(7, "Ada", avatarUrl: "https://zulip.example/avatar/7"),
                 [8] = new UserProfile(8, "Bea", avatarUrl: "https://zulip.example/avatar/8"),
                 [9] = new UserProfile(9, "Cy")
             })
@@ -4316,12 +7097,54 @@ public sealed class ShellViewModelTests
 
         Assert.True(viewModel.ShowDirectMessageSettings);
         Assert.False(viewModel.ShowChannelDetails);
-        Assert.Equal("https://zulip.example/avatar/8", viewModel.DetailsAvatarUrl);
+        Assert.Equal(isSelf ? "https://zulip.example/avatar/7" : "https://zulip.example/avatar/8", viewModel.DetailsAvatarUrl);
         Assert.True(viewModel.IsSelectedDirectMessageMuted);
         Assert.True(viewModel.IsSelectedDirectMessagePinned);
         Assert.Equal(selected.CanonicalKey, viewModel.DirectMessages.First().Conversation.CanonicalKey);
         Assert.True(viewModel.DirectMessages.First().IsMuted);
         Assert.True(preferences.Get(accountId, selected.CanonicalKey).IsPinned);
+        Assert.True(preferences.Get(accountId, selected.CanonicalKey).IsMuted);
+        Assert.Equal(new ConversationPreference(), preferences.Get(accountId, other.CanonicalKey));
+        Assert.Equal(0, session.SubscriptionPreferenceCalls);
+
+        await viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+        await viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+        Assert.True(viewModel.IsDetailsOpen);
+        Assert.True(viewModel.IsSelectedDirectMessagePinned);
+        Assert.True(viewModel.IsSelectedDirectMessageMuted);
+    }
+
+    [Fact]
+    public async Task ToggleDetails_WhenSelfSelected_OpensOwnProfileWithoutReadingGroupData()
+    {
+        var reads = 0;
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            Selected = new DirectMessage([]),
+            StateValue = new ClientState(users: new Dictionary<long, UserProfile>
+            {
+                [7] = new(7, "Ada", avatarUrl: "https://chat.example.test/avatar/7")
+            }),
+            LoadChannelDetailsAction = (id, _) => { reads++; return Task.FromResult(PrivateGroupDetails(id, "group", "", 7)); },
+            ChannelMemberIdsAction = (_, _) => { reads++; return Task.FromResult<IReadOnlyList<long>>([]); },
+            RealmUsersAction = _ => { reads++; return Task.FromResult<IReadOnlyList<UserProfile>>([]); }
+        };
+        using var viewModel = CreateViewModel(session);
+
+        Assert.True(viewModel.CanOpenConversationSettings);
+        await viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.IsDetailsOpen);
+        Assert.True(viewModel.IsDetailsContentReady);
+        Assert.True(viewModel.ShowDirectMessageSettings);
+        Assert.False(viewModel.ShowChannelDetails);
+        Assert.False(viewModel.IsDetailsLoading);
+        Assert.Equal("Ada（自己）", viewModel.DetailsTitle);
+        Assert.Equal("仅你自己可见", viewModel.DetailsBody);
+        Assert.Equal("https://chat.example.test/avatar/7", viewModel.DetailsAvatarUrl);
+        Assert.Equal(0, reads);
+        Assert.Empty(viewModel.DetailsMembers);
     }
 
     [Fact]
@@ -4353,7 +7176,7 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
-    public async Task ToggleDetails_WhenConversationIsNotOneToOneOrChannel_DoesNotOpenEmptySettings()
+    public async Task ToggleDetails_WhenGroupDirectMessageSelected_DoesNotOpenEmptySettings()
     {
         var groupDirectMessage = new DirectMessage([8, 9]);
         var session = new FakeSession
@@ -4454,6 +7277,91 @@ public sealed class ShellViewModelTests
     }
 
     [Fact]
+    public async Task ToggleDetails_WhenAuthorityIsPending_StartsRosterReadsAndCanCloseImmediately()
+    {
+        var session = ConversationMenuSession();
+        session.Selected = new ChannelTopic(4, string.Empty);
+        using var viewModel = CreateViewModel(session);
+        var details = new TaskCompletionSource<ChannelDetails>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var membersStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var usersStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken loadToken = default;
+        session.LoadChannelDetailsAction = (_, token) => { loadToken = token; return details.Task; };
+        session.ChannelMemberIdsAction = (_, _) =>
+        {
+            membersStarted.TrySetResult();
+            return Task.FromResult<IReadOnlyList<long>>([7, 8]);
+        };
+        session.RealmUsersAction = _ =>
+        {
+            usersStarted.TrySetResult();
+            return Task.FromResult<IReadOnlyList<UserProfile>>([new(7, "Me"), new(8, "Bea")]);
+        };
+
+        var open = viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+        Assert.True(viewModel.IsDetailsOpen);
+        await Task.WhenAll(membersStarted.Task, usersStarted.Task).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(open.IsCompleted);
+        Assert.True(viewModel.IsDetailsLoading);
+        Assert.False(viewModel.IsPrivateGroupAuthorityLoaded);
+        Assert.True(viewModel.ToggleDetailsCommand.CanExecute(null));
+        await viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+        Assert.False(viewModel.IsDetailsOpen);
+        Assert.True(loadToken.IsCancellationRequested);
+
+        details.SetResult(PrivateGroupDetails(4, "late-group", "late-announcement", 7));
+        await open;
+        Assert.False(viewModel.IsDetailsOpen);
+        Assert.Empty(viewModel.DetailsMembers);
+        Assert.NotEqual("late-group", viewModel.DetailsChannelName);
+    }
+
+    [Fact]
+    public async Task ToggleDetails_WhenReopenedBeforeOldReadFinishes_KeepsLatestDetails()
+    {
+        var session = ConversationMenuSession();
+        session.Selected = new ChannelTopic(4, string.Empty);
+        using var viewModel = CreateViewModel(session);
+        var oldDetails = new TaskCompletionSource<ChannelDetails>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var oldStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        session.LoadChannelDetailsAction = (_, _) => { oldStarted.SetResult(); return oldDetails.Task; };
+        var oldOpen = viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+        await oldStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+        session.LoadChannelDetailsAction = (_, _) => Task.FromResult(PrivateGroupDetails(4, "new-group", "new-announcement", 7));
+        await viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+
+        oldDetails.SetResult(PrivateGroupDetails(4, "old-group", "old-announcement", 7));
+        await oldOpen;
+
+        Assert.True(viewModel.IsDetailsOpen);
+        Assert.False(viewModel.IsDetailsLoading);
+        Assert.Equal("new-group", viewModel.DetailsChannelName);
+        Assert.Equal("new-announcement", viewModel.DetailsChannelAnnouncement);
+    }
+
+    [Fact]
+    public async Task ToggleDetails_WhenAccountChangesBeforeProjection_IgnoresOldAuthority()
+    {
+        var session = ConversationMenuSession();
+        session.Selected = new ChannelTopic(4, string.Empty);
+        using var viewModel = CreateViewModel(session);
+        var details = new TaskCompletionSource<ChannelDetails>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        session.LoadChannelDetailsAction = (_, _) => { started.SetResult(); return details.Task; };
+        var open = viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        session.Account = AccountId.Create(RealmEndpoint.Parse("https://other.example.test"), 7);
+        details.SetResult(PrivateGroupDetails(4, "old-account-group", "old-account-announcement", 7));
+        await open;
+
+        Assert.False(viewModel.IsPrivateGroupAuthorityLoaded);
+        Assert.NotEqual("old-account-group", viewModel.DetailsChannelName);
+        Assert.Empty(viewModel.DetailsMembers);
+    }
+
+    [Fact]
     public async Task ChannelSettingsLoad_WhenConversationChanges_DoesNotReopenOrProjectLateMembers()
     {
         var channel = new ChannelTopic(4, string.Empty);
@@ -4489,6 +7397,244 @@ public sealed class ShellViewModelTests
         Assert.NotEqual("late-product", viewModel.DetailsChannelName);
     }
 
+    [Theory]
+    [InlineData(59, true, true)]
+    [InlineData(60, false, true)]
+    [InlineData(120, false, false)]
+    public void MessageMenu_WhenServerDeadlinesDiffer_HidesExpiredActions(int age, bool edit, bool delete)
+    {
+        var time = new MessageActionTestTimeProvider();
+        var message = new ChatMessage(1, new DirectMessage([8]), 7, "hello", time.GetUtcNow().AddSeconds(-age));
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            StateValue = new ClientState(messages: new Dictionary<long, ChatMessage> { [1] = message },
+                connection: new ConnectionState(ConnectionStatus.Connected),
+                messageActions: new MessageActionPolicy { EditLimitSeconds = 60, DeleteLimitSeconds = 120 })
+        };
+        using var viewModel = CreateViewModel(session, timeProvider: time);
+        viewModel.OpenMessageMenuCommand.Execute(new MessageItem("1", 1, 7, "Me", "hello", "10:00", isOwn: true));
+        Assert.Equal(edit, viewModel.CanEditActiveMessage);
+        Assert.Equal(delete, viewModel.CanDeleteActiveMessage);
+        viewModel.OpenEditDialogCommand.Execute(null);
+        Assert.Equal(edit, viewModel.IsEditDialogOpen);
+    }
+
+    [Fact]
+    public void MessageMenu_WhenTimeExpiresWhileOpen_UpdatesVisibilityAndDisposesTimerOnClose()
+    {
+        var time = new MessageActionTestTimeProvider();
+        var message = new ChatMessage(1, new DirectMessage([8]), 7, "hello", time.GetUtcNow().AddSeconds(-599));
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            StateValue = new ClientState(messages: new Dictionary<long, ChatMessage> { [1] = message },
+                connection: new ConnectionState(ConnectionStatus.Connected), messageActions: new MessageActionPolicy())
+        };
+        using var viewModel = CreateViewModel(session, timeProvider: time);
+        viewModel.OpenMessageMenuCommand.Execute(new MessageItem("1", 1, 7, "Me", "hello", "10:00", isOwn: true));
+        Assert.True(viewModel.CanEditActiveMessage);
+        var changed = new List<string?>();
+        viewModel.PropertyChanged += (_, args) => changed.Add(args.PropertyName);
+        time.Advance(TimeSpan.FromSeconds(1));
+        Assert.Contains(nameof(viewModel.CanEditActiveMessage), changed);
+        Assert.Contains(nameof(viewModel.CanDeleteActiveMessage), changed);
+        Assert.False(viewModel.CanEditActiveMessage);
+        Assert.False(viewModel.CanDeleteActiveMessage);
+        viewModel.CloseMessageMenuCommand.Execute(null);
+        Assert.True(time.Timer!.Disposed);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task MessageConfirmation_WhenDeadlineExpiresOrPermissionChanges_DoesNotSubmit(bool delete, bool changePermission)
+    {
+        var time = new MessageActionTestTimeProvider();
+        var message = new ChatMessage(1, new DirectMessage([8]), 7, "hello", time.GetUtcNow().AddSeconds(-599));
+        var session = new FakeSession
+        {
+            CurrentUserId = 7,
+            StateValue = new ClientState(messages: new Dictionary<long, ChatMessage> { [1] = message },
+                connection: new ConnectionState(ConnectionStatus.Connected), messageActions: new MessageActionPolicy())
+        };
+        using var viewModel = CreateViewModel(session, timeProvider: time);
+        var item = new MessageItem("1", 1, 7, "Me", "hello", "10:00", isOwn: true);
+        if (delete) viewModel.RequestDeleteMessageCommand.Execute(item);
+        else viewModel.OpenEditDialogCommand.Execute(item);
+        Assert.True(delete ? viewModel.IsDeleteConfirmationOpen : viewModel.IsEditDialogOpen);
+        if (changePermission)
+        {
+            session.StateValue = session.StateValue with { MessageActions = MessageActionPolicy.Unavailable };
+            session.Publish();
+        }
+        else time.Advance(TimeSpan.FromSeconds(1));
+        if (delete) await viewModel.ConfirmDeleteMessageCommand.ExecuteAsync(null);
+        else await viewModel.ConfirmEditMessageCommand.ExecuteAsync(null);
+        Assert.Equal(0, session.MessageEditCalls);
+        Assert.Equal(0, session.MessageDeleteCalls);
+        Assert.Contains(delete ? "删除" : "编辑", viewModel.LoginError);
+    }
+
+    private sealed class MessageActionTestTimeProvider : TimeProvider
+    {
+        private DateTimeOffset _now = DateTimeOffset.UnixEpoch.AddDays(1);
+        public TestTimer? Timer { get; private set; }
+        public override DateTimeOffset GetUtcNow() => _now;
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            Timer = new TestTimer(callback, state);
+        public void Advance(TimeSpan duration)
+        {
+            _now += duration;
+            Timer?.Fire();
+        }
+        public sealed class TestTimer(TimerCallback callback, object? state) : ITimer
+        {
+            public bool Disposed { get; private set; }
+            public void Fire() { if (!Disposed) callback(state); }
+            public bool Change(TimeSpan dueTime, TimeSpan period) => !Disposed;
+            public void Dispose() => Disposed = true;
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ToggleDetails_WhenFirstRenderIsPending_ShowsShellBeforeLoadingContent(bool isGroup)
+    {
+        var session = ConversationMenuSession();
+        session.StateValue = session.StateValue with { Connection = new ConnectionState(ConnectionStatus.Offline) };
+        session.Selected = isGroup ? new ChannelTopic(4, string.Empty) : new DirectMessage([8]);
+        var dispatcher = new RenderGateDispatcher();
+        using var viewModel = CreateViewModel(session, dispatcher: dispatcher);
+        var reads = 0;
+        session.LoadChannelDetailsAction = (id, _) =>
+        {
+            reads++;
+            return Task.FromResult(PrivateGroupDetails(id, "product", "announcement", 7));
+        };
+        session.ChannelMemberIdsAction = (_, _) => { reads++; return Task.FromResult<IReadOnlyList<long>>([7, 8]); };
+        session.RealmUsersAction = _ => { reads++; return Task.FromResult<IReadOnlyList<UserProfile>>([new(7, "Me"), new(8, "Bea")]); };
+
+        var open = viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+        try
+        {
+            Assert.True(viewModel.IsDetailsOpen);
+            Assert.Equal(1, dispatcher.YieldCount);
+            Assert.True(viewModel.IsDetailsLoading);
+            Assert.False(viewModel.IsDetailsContentReady);
+            Assert.False(open.IsCompleted);
+            Assert.Equal(0, reads);
+            Assert.True(viewModel.ToggleDetailsCommand.CanExecute(null));
+        }
+        finally
+        {
+            dispatcher.RenderReady.TrySetResult();
+            await open;
+        }
+
+        Assert.True(viewModel.IsDetailsOpen);
+        Assert.False(viewModel.IsDetailsLoading);
+        Assert.True(viewModel.IsDetailsContentReady);
+        Assert.Equal(isGroup ? 3 : 0, reads);
+        if (isGroup) Assert.Equal(2, viewModel.DetailsMembers.Count);
+        else Assert.Equal("Bea", viewModel.DetailsTitle);
+    }
+
+    [Theory]
+    [InlineData("close")]
+    [InlineData("conversation")]
+    [InlineData("account")]
+    public async Task ToggleDetails_WhenTargetChangesBeforeFirstRender_DoesNotStartOldReads(string change)
+    {
+        var session = ConversationMenuSession();
+        session.StateValue = session.StateValue with { Connection = new ConnectionState(ConnectionStatus.Offline) };
+        session.Selected = new ChannelTopic(4, string.Empty);
+        var dispatcher = new RenderGateDispatcher();
+        using var viewModel = CreateViewModel(session, dispatcher: dispatcher);
+        var reads = 0;
+        session.LoadChannelDetailsAction = (id, _) =>
+        {
+            reads++;
+            return Task.FromResult(PrivateGroupDetails(id, "stale-group", "stale-announcement", 7));
+        };
+
+        var open = viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+        try
+        {
+            Assert.Equal(1, dispatcher.YieldCount);
+            if (change == "close")
+            {
+                await viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+                await open.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.False(viewModel.IsDetailsOpen);
+            }
+            else if (change == "conversation") session.Selected = new DirectMessage([8]);
+            else session.Account = AccountId.Create(RealmEndpoint.Parse("https://other.example.test"), 7);
+        }
+        finally
+        {
+            dispatcher.RenderReady.TrySetResult();
+            await open;
+        }
+
+        Assert.Equal(0, reads);
+        Assert.False(viewModel.IsDetailsContentReady);
+        Assert.False(viewModel.IsPrivateGroupAuthorityLoaded);
+        Assert.Empty(viewModel.DetailsMembers);
+        Assert.NotEqual("stale-group", viewModel.DetailsChannelName);
+    }
+
+    [Fact]
+    public async Task ToggleDetails_WhenReopenedBeforeFirstRender_LoadsOnlyLatestOpening()
+    {
+        var session = ConversationMenuSession();
+        session.StateValue = session.StateValue with { Connection = new ConnectionState(ConnectionStatus.Offline) };
+        session.Selected = new ChannelTopic(4, string.Empty);
+        var dispatcher = new RenderGateDispatcher();
+        using var viewModel = CreateViewModel(session, dispatcher: dispatcher);
+        var reads = 0;
+        session.LoadChannelDetailsAction = (id, _) =>
+        {
+            reads++;
+            return Task.FromResult(PrivateGroupDetails(id, "latest-group", "announcement", 7));
+        };
+
+        var oldOpen = viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+        await viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+        await oldOpen.WaitAsync(TimeSpan.FromSeconds(5));
+        var newOpen = viewModel.ToggleDetailsCommand.ExecuteAsync(null);
+        Assert.True(viewModel.IsDetailsOpen);
+        Assert.True(viewModel.IsDetailsLoading);
+        Assert.False(viewModel.IsDetailsContentReady);
+        Assert.Equal(2, dispatcher.YieldCount);
+        Assert.Equal(0, reads);
+
+        dispatcher.RenderReady.TrySetResult();
+        await newOpen;
+
+        Assert.True(viewModel.IsDetailsOpen);
+        Assert.True(viewModel.IsDetailsContentReady);
+        Assert.False(viewModel.IsDetailsLoading);
+        Assert.Equal("latest-group", viewModel.DetailsChannelName);
+        Assert.Equal(1, reads);
+    }
+
+    private sealed class RenderGateDispatcher : IUiDispatcher
+    {
+        public TaskCompletionSource RenderReady { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int YieldCount { get; private set; }
+        public void Dispatch(Action action) => action();
+        public Task YieldToRenderAsync(CancellationToken cancellationToken = default)
+        {
+            YieldCount++;
+            return RenderReady.Task.WaitAsync(cancellationToken);
+        }
+    }
+
     private static ShellViewModel CreateViewModel(
         IClientSession session,
         FakeLastRealmStore? lastRealmStore = null,
@@ -4502,11 +7648,14 @@ public sealed class ShellViewModelTests
         INotificationPreferencesService? notificationPreferencesService = null,
         IAppNotificationService? appNotificationService = null,
         IWindowShellAdapter? windowShellAdapter = null,
-        IDownloadHistoryStore? downloadHistoryStore = null) =>
+        IDownloadHistoryStore? downloadHistoryStore = null,
+        TimeProvider? timeProvider = null,
+        IUiDispatcher? dispatcher = null,
+        IStartupService? startupService = null) =>
         new(
             session,
             lastRealmStore ?? new FakeLastRealmStore(),
-            new InlineDispatcher(),
+            dispatcher ?? new InlineDispatcher(),
             appearanceService ?? new FakeAppearanceService(),
             uiPreferencesService ?? new FakeUiPreferencesService(),
             platformInteractions ?? new FakePlatformInteractionService(),
@@ -4518,7 +7667,30 @@ public sealed class ShellViewModelTests
             appNotificationService,
             windowShellAdapter,
             null,
-            downloadHistoryStore);
+            downloadHistoryStore,
+            timeProvider,
+            startupService);
+
+    private sealed class FakeStartupService : IStartupService
+    {
+        public StartupState State { get; set; }
+        public bool ThrowOnRead { get; set; }
+        public bool ThrowOnWrite { get; set; }
+        public List<bool> Writes { get; } = [];
+
+        public StartupState GetState()
+        {
+            if (ThrowOnRead) throw new UnauthorizedAccessException("Raw platform failure must not reach UI.");
+            return State;
+        }
+
+        public void SetEnabled(bool enabled)
+        {
+            Writes.Add(enabled);
+            if (ThrowOnWrite) throw new UnauthorizedAccessException("Raw platform failure must not reach UI.");
+            State = enabled ? StartupState.Enabled : StartupState.Disabled;
+        }
+    }
 
     private sealed class FakeUiPreferencesService : IUiPreferencesService
     {
@@ -4593,6 +7765,8 @@ public sealed class ShellViewModelTests
 
     private sealed class FakeRealmMediaService : IRealmMediaService
     {
+        public event EventHandler<AvatarChangedEventArgs>? AvatarChanged { add { } remove { } }
+
         public RealmMediaResult FileResult { get; set; } = new([1, 2, 3], "application/octet-stream");
         public Exception? DownloadFailure { get; set; }
         public int FileCalls { get; private set; }
@@ -4688,6 +7862,9 @@ public sealed class ShellViewModelTests
     private sealed class FakeFileSelectionService : IFileSelectionService
     {
         public IReadOnlyList<SelectedAttachmentFile> Files { get; set; } = [];
+        public Func<CancellationToken, Task<SelectedAttachmentFile?>>? PickAvatarAction { get; set; }
+        public Task<SelectedAttachmentFile?> PickAvatarAsync(CancellationToken cancellationToken = default) =>
+            PickAvatarAction?.Invoke(cancellationToken) ?? Task.FromResult(Files.FirstOrDefault());
         public Task<IReadOnlyList<SelectedAttachmentFile>> PickMultipleAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(Files);
     }
@@ -4696,6 +7873,7 @@ public sealed class ShellViewModelTests
     {
         public List<string> Copied { get; } = [];
         public List<Uri> Opened { get; } = [];
+        public Func<Uri, Task>? OpenUriAction { get; set; }
 
         public Task CopyTextAsync(string text, CancellationToken cancellationToken = default)
         {
@@ -4706,13 +7884,14 @@ public sealed class ShellViewModelTests
         public Task OpenUriAsync(Uri uri, CancellationToken cancellationToken = default)
         {
             Opened.Add(uri);
-            return Task.CompletedTask;
+            return OpenUriAction?.Invoke(uri) ?? Task.CompletedTask;
         }
     }
 
     private sealed class InlineDispatcher : IUiDispatcher
     {
         public void Dispatch(Action action) => action();
+        public Task YieldToRenderAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
     private sealed class FakeLastRealmStore(string? value = null) : ILastRealmStore
@@ -5060,7 +8239,40 @@ public sealed class ShellViewModelTests
         public Func<CancellationToken, Task>? LogoutAction { get; set; }
         public Func<ConversationKey, CancellationToken, Task>? SelectAction { get; set; }
         public Func<string, CancellationToken, Task>? SendAction { get; set; }
+        public Func<long, bool, CancellationToken, Task>? SetMessageStarredAction { get; set; }
         public Func<AttachmentUpload, CancellationToken, Task<UploadedAttachment>>? UploadAction { get; set; }
+        public int AvatarUploadCalls { get; private set; }
+        public int CloseConversationCalls { get; private set; }
+        public Func<AccountId, ConversationKey, CancellationToken, Task>? CloseConversationAction { get; set; }
+        public async Task CloseConversationAsync(AccountId expectedAccountId, ConversationKey conversation, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Assert.Equal(Account, expectedAccountId);
+            CloseConversationCalls++;
+            if (CloseConversationAction is not null) await CloseConversationAction(expectedAccountId, conversation, cancellationToken);
+            if (Selected == conversation) Selected = null;
+            Publish();
+        }
+        public int SubscriptionPreferenceCalls { get; private set; }
+        public Func<long, SubscriptionPreference, bool, CancellationToken, Task>? SubscriptionPreferenceAction { get; set; }
+        public Task SetSubscriptionPreferenceAsync(long channelId, SubscriptionPreference preference, bool value, CancellationToken cancellationToken = default)
+        {
+            SubscriptionPreferenceCalls++;
+            return SubscriptionPreferenceAction?.Invoke(channelId, preference, value, cancellationToken) ?? Task.CompletedTask;
+        }
+        public int NameUpdateCalls { get; private set; }
+        public Func<AccountId, string, CancellationToken, Task<bool>>? UpdateOwnNameAction { get; set; }
+        public Task<bool> UpdateOwnNameAsync(AccountId expectedAccountId, string fullName, CancellationToken cancellationToken = default)
+        {
+            NameUpdateCalls++;
+            return UpdateOwnNameAction?.Invoke(expectedAccountId, fullName, cancellationToken) ?? Task.FromResult(true);
+        }
+        public Func<AccountId, AttachmentUpload, CancellationToken, Task>? UploadAvatarAction { get; set; }
+        public Task UploadOwnAvatarAsync(AccountId expectedAccountId, AttachmentUpload upload, CancellationToken cancellationToken = default)
+        {
+            AvatarUploadCalls++;
+            return UploadAvatarAction?.Invoke(expectedAccountId, upload, cancellationToken) ?? Task.CompletedTask;
+        }
         public Func<long, CancellationToken, Task>? UnsubscribeChannelAction { get; set; }
         public Func<long, CancellationToken, Task<IReadOnlyList<TopicSummary>>>? LoadTopicsAction { get; set; }
         public Func<CancellationToken, Task>? LoadOlderAction { get; set; }
@@ -5093,6 +8305,7 @@ public sealed class ShellViewModelTests
         public int LoadOlderCalls { get; private set; }
         public List<ConversationKey> ExpectedMarkReadConversations { get; } = [];
         public List<(ConversationKey Conversation, long MessageId)> OpenedMessages { get; } = [];
+        public List<(string Query, long? BeforeMessageId, MessageSearchFilter Filter, ConversationKey? Conversation)> SearchRequests { get; } = [];
 
         public AccountId? AccountId => Account;
         public RealmEndpoint? ActiveRealm { get; set; }
@@ -5165,10 +8378,14 @@ public sealed class ShellViewModelTests
             long? beforeMessageId,
             int limit,
             CancellationToken cancellationToken = default,
-            MessageSearchFilter filter = MessageSearchFilter.Messages) =>
-            SearchMessagesWithFilterAction?.Invoke(query, beforeMessageId, limit, filter, cancellationToken) ??
-            SearchMessagesAction?.Invoke(query, beforeMessageId, limit, cancellationToken) ??
-            Task.FromResult(new MessageQueryPage([], false, true, true));
+            MessageSearchFilter filter = MessageSearchFilter.Messages,
+            ConversationKey? conversation = null)
+        {
+            SearchRequests.Add((query, beforeMessageId, filter, conversation));
+            return SearchMessagesWithFilterAction?.Invoke(query, beforeMessageId, limit, filter, cancellationToken) ??
+                SearchMessagesAction?.Invoke(query, beforeMessageId, limit, cancellationToken) ??
+                Task.FromResult(new MessageQueryPage([], false, true, true));
+        }
         public Task OpenMessageAsync(ConversationKey conversation, long messageId, CancellationToken cancellationToken = default)
         {
             OpenedMessages.Add((conversation, messageId));
@@ -5204,10 +8421,18 @@ public sealed class ShellViewModelTests
             SentContents.Add(content);
             return SendAction?.Invoke(content, cancellationToken) ?? Task.CompletedTask;
         }
-        public Task SetReactionAsync(long messageId, EmojiReactionIdentity reaction, bool add, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task EditMessageAsync(long messageId, string content, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task DeleteMessageAsync(long messageId, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task SetMessageStarredAsync(long messageId, bool isStarred, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public List<(long MessageId, EmojiReactionIdentity Identity, bool Add)> ReactionCalls { get; } = [];
+        public Task SetReactionAsync(long messageId, EmojiReactionIdentity reaction, bool add, CancellationToken cancellationToken = default)
+        {
+            ReactionCalls.Add((messageId, reaction, add));
+            return Task.CompletedTask;
+        }
+        public int MessageEditCalls { get; private set; }
+        public int MessageDeleteCalls { get; private set; }
+        public Task EditMessageAsync(long messageId, string content, CancellationToken cancellationToken = default) { MessageEditCalls++; return Task.CompletedTask; }
+        public Task DeleteMessageAsync(long messageId, CancellationToken cancellationToken = default) { MessageDeleteCalls++; return Task.CompletedTask; }
+        public Task SetMessageStarredAsync(long messageId, bool isStarred, CancellationToken cancellationToken = default) =>
+            SetMessageStarredAction?.Invoke(messageId, isStarred, cancellationToken) ?? Task.CompletedTask;
         public Task<UploadedAttachment> UploadAttachmentAsync(AttachmentUpload upload, CancellationToken cancellationToken = default)
         {
             UploadCalls++;

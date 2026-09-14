@@ -33,6 +33,10 @@ public interface IZulipGateway
     Task DeleteMessageAsync(DeleteMessageRequest request, CancellationToken cancellationToken = default);
     Task SetMessageStarredAsync(SetMessageStarredRequest request, CancellationToken cancellationToken = default);
     Task<UploadedAttachment> UploadAttachmentAsync(UploadAttachmentRequest request, CancellationToken cancellationToken = default);
+    Task<string> UploadOwnAvatarAsync(UploadAttachmentRequest request, CancellationToken cancellationToken = default) =>
+        Task.FromException<string>(new NotSupportedException("Avatar uploads are not available."));
+    Task<string> UpdateOwnNameAsync(UpdateOwnNameRequest request, CancellationToken cancellationToken = default) =>
+        Task.FromException<string>(new NotSupportedException("Name updates are not available."));
     Task<RealmMediaResult> GetRealmMediaAsync(GetRealmMediaRequest request, CancellationToken cancellationToken = default);
     Task<RealmMediaDownloadResult> DownloadRealmMediaAsync(
         GetRealmMediaRequest request,

@@ -16,11 +16,21 @@ public sealed class ChatHeaderViewTests
         var searchButton = buttons.Single(element => element.Attribute(x + "Name")?.Value == "SearchButton");
         var settingsButton = buttons.Single(element => element.Attribute(x + "Name")?.Value == "SettingsButton");
 
-        Assert.Equal("{Binding OpenSearchCommand}", searchButton.Attribute("Command")?.Value);
+        Assert.Equal("{Binding OpenConversationSearchCommand}", searchButton.Attribute("Command")?.Value);
+        Assert.Equal("搜索当前会话消息", searchButton.Attribute("SemanticProperties.Description")?.Value);
         Assert.Equal("{Binding ToggleDetailsCommand}", settingsButton.Attribute("Command")?.Value);
         Assert.Equal("{Binding CanOpenConversationSettings}", settingsButton.Attribute("IsEnabled")?.Value);
         Assert.Equal("打开会话设置", settingsButton.Attribute("SemanticProperties.Description")?.Value);
         Assert.DoesNotContain(buttons, element => element.Attribute(x + "Name")?.Value is "DetailsButton" or "TopicMenuButton");
+    }
+
+    [Fact]
+    public void ConversationDetails_WhenSearchIsClicked_UsesConversationSearch()
+    {
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "DetailsPaneView.xaml"));
+        var searchButton = source.Descendants().Single(element => element.Attribute("Text")?.Value == "查找聊天内容");
+
+        Assert.Equal("{Binding OpenConversationSearchCommand}", searchButton.Attribute("Command")?.Value);
     }
 
     private static string FindWorkspaceFile(params string[] parts)

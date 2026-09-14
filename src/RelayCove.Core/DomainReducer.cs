@@ -63,6 +63,13 @@ public static class DomainReducer
 
         switch (domainEvent)
         {
+            case RealmEmojiUpdatedEvent updatedEmoji:
+                state = state with { RealmEmojis = updatedEmoji.Emojis.ToDictionary(item => item.Id, StringComparer.Ordinal) };
+                break;
+            case MessageActionPolicyInvalidatedEvent:
+                // A fresh instance also identifies this invalidation for in-flight refreshes.
+                state = state with { MessageActions = MessageActionPolicy.Unavailable with { } };
+                break;
             case MessageUpsertEvent upsert:
                 var upsertMessage = PreserveClientLocalId(messages, upsert.Message, upsert.LocalId);
                 unread = AdjustForReplacement(unread, messages, upsertMessage, upsert.Source);
@@ -82,7 +89,11 @@ public static class DomainReducer
                 }
                 break;
             case MessageContentChangedEvent changed when messages.TryGetValue(changed.MessageId, out var existing):
-                messages[changed.MessageId] = existing with { Content = changed.Content };
+                messages[changed.MessageId] = existing with
+                {
+                    Content = changed.Content,
+                    IsEdited = existing.IsEdited || changed.IsEdited
+                };
                 UpdateConversationSummary(summaries, messages[changed.MessageId]);
                 messageMutations.Remove(changed.MessageId);
                 break;
@@ -152,14 +163,17 @@ public static class DomainReducer
                     : preferenceExisting with { IsPinned = preference.Value };
                 break;
             case UserUpsertEvent user:
-                users[user.User.UserId] = user.User;
+                users[user.User.UserId] = user.User.PreserveAvatarSource(users.GetValueOrDefault(user.User.UserId));
                 break;
             case UserPatchedEvent userPatch when users.TryGetValue(userPatch.UserId, out var userExisting):
                 users[userPatch.UserId] = userExisting with
                 {
                     FullName = userPatch.FullName ?? userExisting.FullName,
                     Email = userPatch.Email ?? userExisting.Email,
-                    IsActive = userPatch.IsActive ?? userExisting.IsActive
+                    IsActive = userPatch.IsActive ?? userExisting.IsActive,
+                    AvatarUrl = userPatch.HasAvatar ? userPatch.AvatarUrl : userExisting.AvatarUrl,
+                    AvatarVersion = userPatch.HasAvatar ? userPatch.AvatarVersion : userExisting.AvatarVersion,
+                    AvatarSource = userPatch.HasAvatar ? userPatch.AvatarSource : userExisting.AvatarSource
                 };
                 break;
             case UserPresenceChangedEvent presence when state.Presence.IsAvailable:
@@ -188,7 +202,8 @@ public static class DomainReducer
                     .ToArray();
                 foreach (var id in deleted.MessageIds)
                 {
-                    if (messages.TryGetValue(id, out var deletedMessage) && !deletedMessage.IsRead)
+                    if (deleted.Source != DomainEventSource.History &&
+                        messages.TryGetValue(id, out var deletedMessage) && !deletedMessage.IsRead)
                     {
                         unread = unread.Adjust(deletedMessage.Conversation.CanonicalKey, -1);
                     }
@@ -277,7 +292,11 @@ public static class DomainReducer
             lastEventId,
             messageMutations,
             state.Presence,
-            state.UserStatuses);
+            state.UserStatuses,
+            state.MessageActions)
+        {
+            RealmEmojis = state.RealmEmojis
+        };
     }
 
     private static UnreadState AdjustForReplacement(
@@ -286,6 +305,7 @@ public static class DomainReducer
         ChatMessage replacement,
         DomainEventSource source)
     {
+        if (source == DomainEventSource.History) return unread;
         if (messages.TryGetValue(replacement.Id, out var existing))
         {
             if (!existing.IsRead)

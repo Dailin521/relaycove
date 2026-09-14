@@ -8,7 +8,7 @@ namespace RelayCove.Data;
 
 public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
 {
-    public const int CurrentSchemaVersion = 6;
+    public const int CurrentSchemaVersion = 8;
 
     private readonly string _accountsRoot;
     private readonly Channel<IWorkItem> _mutations;
@@ -278,7 +278,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         await using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id, conversation_kind, channel_id, topic, dm_user_ids, sender_id,
-                   content, timestamp_utc, is_read, sender_display_name, sender_avatar_url, is_starred
+                   content, timestamp_utc, is_read, sender_display_name, sender_avatar_url, is_starred, is_edited
             FROM messages
             WHERE conversation_key = $conversation
               AND ($before IS NULL OR id < $before)
@@ -357,7 +357,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         if (keys is { Length: 0 }) return [];
         await using var command = CreateCommand(connection, transaction, $"""
             SELECT m.id, m.conversation_kind, m.channel_id, m.topic, m.dm_user_ids, m.sender_id,
-                   m.content, m.timestamp_utc, m.is_read, m.sender_display_name, m.sender_avatar_url, m.is_starred
+                   m.content, m.timestamp_utc, m.is_read, m.sender_display_name, m.sender_avatar_url, m.is_starred, m.is_edited
             FROM messages AS m
             INNER JOIN (
                 SELECT conversation_key, MAX(id) AS latest_id
@@ -636,7 +636,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
             await ExecuteNonQueryAsync(connection, "UPDATE schema_info SET version = 5; PRAGMA user_version = 5;", transaction, cancellationToken).ConfigureAwait(false);
             version = 5;
         }
-        if (version <= 6)
+        if (version <= CurrentSchemaVersion)
         {
             var hasPrivate = await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'is_private';", transaction, cancellationToken).ConfigureAwait(false) > 0;
             var hasTopicsPolicy = await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'topics_policy';", transaction, cancellationToken).ConfigureAwait(false) > 0;
@@ -649,6 +649,24 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                 await ExecuteNonQueryAsync(connection, "UPDATE schema_info SET version = 6; PRAGMA user_version = 6;", transaction, cancellationToken).ConfigureAwait(false);
                 version = 6;
             }
+        }
+        if (version < 7)
+        {
+            var hasAvatarSource = await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM pragma_table_info('users') WHERE name = 'avatar_source';", transaction, cancellationToken).ConfigureAwait(false) > 0;
+            if (!hasAvatarSource) await ExecuteNonQueryAsync(connection, "ALTER TABLE users ADD COLUMN avatar_source INTEGER NOT NULL DEFAULT 0;", transaction, cancellationToken).ConfigureAwait(false);
+            await ExecuteNonQueryAsync(connection, """
+                UPDATE schema_info SET version = 7;
+                PRAGMA user_version = 7;
+                """, transaction, cancellationToken).ConfigureAwait(false);
+        }
+        if (version < 8)
+        {
+            var hasEdited = await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'is_edited';", transaction, cancellationToken).ConfigureAwait(false) > 0;
+            if (!hasEdited) await ExecuteNonQueryAsync(connection, "ALTER TABLE messages ADD COLUMN is_edited INTEGER NOT NULL DEFAULT 0 CHECK(is_edited IN (0, 1));", transaction, cancellationToken).ConfigureAwait(false);
+            await ExecuteNonQueryAsync(connection, """
+                UPDATE schema_info SET version = 8;
+                PRAGMA user_version = 8;
+                """, transaction, cancellationToken).ConfigureAwait(false);
         }
         await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -686,8 +704,8 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                     break;
                 case MessageContentChangedEvent changed:
                     await ExecuteAsync(connection, transaction,
-                        "UPDATE messages SET content = $content WHERE id = $id;",
-                        cancellationToken, ("$content", changed.Content), ("$id", changed.MessageId)).ConfigureAwait(false);
+                        "UPDATE messages SET content = $content, is_edited = MAX(is_edited, $edited) WHERE id = $id;",
+                        cancellationToken, ("$content", changed.Content), ("$edited", changed.IsEdited ? 1 : 0), ("$id", changed.MessageId)).ConfigureAwait(false);
                     break;
                 case MessageReactionChangedEvent changed when changed.Add:
                     await ExecuteAsync(connection, transaction, """
@@ -719,7 +737,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                     var deletedMessages = await ReadMessagesByIdsAsync(connection, transaction, deleted.MessageIds, cancellationToken).ConfigureAwait(false);
                     foreach (var message in deletedMessages)
                     {
-                        if (updateUnread && !message.IsRead)
+                        if (updateUnread && deleted.Source != DomainEventSource.History && !message.IsRead)
                         {
                             unread = unread.Adjust(message.Conversation.CanonicalKey, -1);
                             unreadChanged = true;
@@ -877,12 +895,18 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                         UPDATE users SET
                             full_name = COALESCE($name, full_name),
                             email = COALESCE($email, email),
-                            is_active = COALESCE($active, is_active)
+                            is_active = COALESCE($active, is_active),
+                            avatar_url = CASE WHEN $has_avatar THEN $avatar ELSE avatar_url END,
+                            avatar_version = CASE WHEN $has_avatar THEN $version ELSE avatar_version END,
+                            avatar_source = CASE WHEN $has_avatar THEN $source ELSE avatar_source END
                         WHERE user_id = $id;
                         """, cancellationToken,
                         ("$name", patched.FullName),
                         ("$email", patched.Email),
                         ("$active", patched.IsActive is null ? null : patched.IsActive.Value ? 1 : 0),
+                        ("$has_avatar", patched.HasAvatar ? 1 : 0),
+                        ("$avatar", patched.AvatarUrl), ("$version", patched.AvatarVersion),
+                        ("$source", (int)patched.AvatarSource),
                         ("$id", patched.UserId)).ConfigureAwait(false);
                     break;
                 case TopicUpsertEvent upsert:
@@ -918,7 +942,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         {
             return (unread, unreadChanged);
         }
-        if (updateUnread)
+        if (updateUnread && source != DomainEventSource.History)
         {
             if (existing is not null)
             {
@@ -966,7 +990,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         }
 
         var users = new Dictionary<long, UserProfile>();
-        await using (var command = CreateCommand(connection, transaction, "SELECT user_id, full_name, email, is_active, avatar_url, avatar_version, is_bot FROM users;"))
+        await using (var command = CreateCommand(connection, transaction, "SELECT user_id, full_name, email, is_active, avatar_url, avatar_version, is_bot, avatar_source FROM users;"))
         await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
         {
             while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
@@ -978,7 +1002,8 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                     reader.GetInt64(3) != 0,
                     reader.IsDBNull(4) ? null : reader.GetString(4),
                     reader.IsDBNull(5) ? null : reader.GetInt32(5),
-                    reader.GetInt64(6) != 0);
+                    reader.GetInt64(6) != 0,
+                    (UserAvatarSource)reader.GetInt32(7));
                 users[user.UserId] = user;
             }
         }
@@ -1103,19 +1128,24 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         UserProfile user,
         CancellationToken cancellationToken) =>
         ExecuteAsync(connection, transaction, """
-            INSERT INTO users(user_id, full_name, email, is_active, avatar_url, avatar_version, is_bot)
-            VALUES($id, $name, $email, $active, $avatar, $avatar_version, $bot)
+            INSERT INTO users(user_id, full_name, email, is_active, avatar_url, avatar_version, is_bot, avatar_source)
+            VALUES($id, $name, $email, $active, $avatar, $avatar_version, $bot, $avatar_source)
             ON CONFLICT(user_id) DO UPDATE SET
                 full_name = excluded.full_name,
                 email = excluded.email,
                 is_active = excluded.is_active,
                 avatar_url = excluded.avatar_url,
                 avatar_version = excluded.avatar_version,
+                avatar_source = CASE
+                    WHEN excluded.avatar_source = 0 AND users.avatar_url IS excluded.avatar_url
+                        AND users.avatar_version IS excluded.avatar_version THEN users.avatar_source
+                    ELSE excluded.avatar_source END,
                 is_bot = excluded.is_bot;
             """, cancellationToken,
             ("$id", user.UserId), ("$name", user.FullName), ("$email", user.Email),
             ("$active", user.IsActive ? 1 : 0), ("$avatar", user.AvatarUrl),
-            ("$avatar_version", user.AvatarVersion), ("$bot", user.IsBot ? 1 : 0));
+            ("$avatar_version", user.AvatarVersion), ("$bot", user.IsBot ? 1 : 0),
+            ("$avatar_source", (int)user.AvatarSource));
 
     private static Task DeleteSubscriptionAsync(
         SqliteConnection connection,
@@ -1196,7 +1226,7 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         }
         command.CommandText = $"""
             SELECT id, conversation_kind, channel_id, topic, dm_user_ids, sender_id,
-                   content, timestamp_utc, is_read, sender_display_name, sender_avatar_url, is_starred
+                   content, timestamp_utc, is_read, sender_display_name, sender_avatar_url, is_starred, is_edited
             FROM messages WHERE id IN ({string.Join(',', parameterNames)});
             """;
         var messages = new List<ChatMessage>(ids.Length);
@@ -1330,8 +1360,8 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
         await ExecuteAsync(connection, transaction, """
             INSERT INTO messages(
                 id, conversation_key, conversation_kind, channel_id, topic, dm_user_ids,
-                sender_id, sender_display_name, sender_avatar_url, content, timestamp_utc, is_read, is_starred)
-            VALUES($id, $key, $kind, $channel, $topic, $dm, $sender, $sender_name, $sender_avatar, $content, $timestamp, $read, $starred)
+                sender_id, sender_display_name, sender_avatar_url, content, timestamp_utc, is_read, is_starred, is_edited)
+            VALUES($id, $key, $kind, $channel, $topic, $dm, $sender, $sender_name, $sender_avatar, $content, $timestamp, $read, $starred, $edited)
             ON CONFLICT(id) DO UPDATE SET
                 conversation_key = excluded.conversation_key,
                 conversation_kind = excluded.conversation_kind,
@@ -1344,13 +1374,15 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
                 content = excluded.content,
                 timestamp_utc = excluded.timestamp_utc,
                 is_read = excluded.is_read,
-                is_starred = excluded.is_starred;
+                is_starred = excluded.is_starred,
+                is_edited = excluded.is_edited;
             """, cancellationToken,
             ("$id", message.Id), ("$key", message.Conversation.CanonicalKey), ("$kind", kind),
             ("$channel", channelId), ("$topic", topic), ("$dm", dmUserIds), ("$sender", message.SenderId),
             ("$sender_name", message.SenderDisplayName), ("$sender_avatar", message.SenderAvatarUrl), ("$content", message.Content),
             ("$timestamp", message.Timestamp.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture)),
-            ("$read", message.IsRead ? 1 : 0), ("$starred", message.IsStarred ? 1 : 0)).ConfigureAwait(false);
+            ("$read", message.IsRead ? 1 : 0), ("$starred", message.IsStarred ? 1 : 0),
+            ("$edited", message.IsEdited ? 1 : 0)).ConfigureAwait(false);
     }
 
     private static Task UpsertTopicFromMessageAsync(
@@ -1417,7 +1449,8 @@ public sealed partial class SqliteAccountStore : IAccountStore, IAsyncDisposable
             reader.GetInt64(8) != 0,
             reader.IsDBNull(9) ? null : reader.GetString(9),
             reader.IsDBNull(10) ? null : reader.GetString(10),
-            reader.GetInt64(11) != 0);
+            reader.GetInt64(11) != 0,
+            isEdited: reader.GetInt64(12) != 0);
     }
 
     private static async Task PopulateReactionsAsync(

@@ -13,6 +13,7 @@ public interface IClientSession
     UserStatusContent? OwnUserStatus => null;
     bool IsOwnUserStatusConfirmed => false;
     long MaxFileUploadBytes { get; }
+    long MaxAvatarUploadBytes => 5 * 1024 * 1024;
     ClientState State { get; }
     ConversationKey? SelectedConversation { get; }
     ConversationHistoryState HistoryState { get; }
@@ -22,13 +23,16 @@ public interface IClientSession
     Task LoginAsync(string realm, string email, string password, CancellationToken cancellationToken = default);
     Task LogoutAsync(CancellationToken cancellationToken = default);
     Task SelectConversationAsync(ConversationKey conversation, CancellationToken cancellationToken = default);
+    Task CloseConversationAsync(AccountId expectedAccountId, ConversationKey conversation, CancellationToken cancellationToken = default) =>
+        Task.FromException(new NotSupportedException("Closing a conversation is not available."));
     Task LoadOlderAsync(CancellationToken cancellationToken = default);
     Task<MessageQueryPage> SearchMessagesAsync(
         string query,
         long? beforeMessageId,
         int limit,
         CancellationToken cancellationToken = default,
-        MessageSearchFilter filter = MessageSearchFilter.Messages) =>
+        MessageSearchFilter filter = MessageSearchFilter.Messages,
+        ConversationKey? conversation = null) =>
         Task.FromException<MessageQueryPage>(new NotSupportedException("Server message search is not available."));
     Task<MessageQueryPage> LoadSavedMessagesAsync(long? beforeMessageId, int limit, CancellationToken cancellationToken = default) =>
         Task.FromException<MessageQueryPage>(new NotSupportedException("Saved messages are not available."));
@@ -50,6 +54,10 @@ public interface IClientSession
     Task DeleteMessageAsync(long messageId, CancellationToken cancellationToken = default);
     Task SetMessageStarredAsync(long messageId, bool isStarred, CancellationToken cancellationToken = default);
     Task<UploadedAttachment> UploadAttachmentAsync(AttachmentUpload upload, CancellationToken cancellationToken = default);
+    Task UploadOwnAvatarAsync(AccountId expectedAccountId, AttachmentUpload upload, CancellationToken cancellationToken = default) =>
+        Task.FromException(new NotSupportedException("Avatar uploads are not available."));
+    Task<bool> UpdateOwnNameAsync(AccountId expectedAccountId, string fullName, CancellationToken cancellationToken = default) =>
+        Task.FromException<bool>(new NotSupportedException("Name updates are not available."));
     Task<RealmMediaResult> GetRealmMediaAsync(RealmMediaRequest request, CancellationToken cancellationToken = default);
     Task<RealmMediaDownloadResult> DownloadRealmMediaAsync(
         RealmMediaRequest request,
@@ -61,6 +69,9 @@ public interface IClientSession
     Task<IReadOnlyList<ChannelSummary>> GetAvailableChannelsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<ChannelSummary>>([]);
     Task SubscribeToChannelAsync(long channelId, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException());
     Task SetSubscriptionPreferenceAsync(long channelId, SubscriptionPreference preference, bool value, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException());
+    Task SetSubscriptionPreferenceAsync(AccountId expectedAccountId, long channelId, SubscriptionPreference preference, bool value, CancellationToken cancellationToken = default) =>
+        AccountId == expectedAccountId ? SetSubscriptionPreferenceAsync(channelId, preference, value, cancellationToken) :
+            Task.FromException(new OperationCanceledException());
     Task SetOwnPresenceAsync(UserPresenceStatus status, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("Presence settings are not available."));
     Task SetOwnUserStatusAsync(UserStatusContent status, CancellationToken cancellationToken = default) => Task.FromException(new NotSupportedException("User status settings are not available."));
     Task<ChannelSettingsSnapshot> LoadChannelSettingsSnapshotAsync(CancellationToken cancellationToken = default) => Task.FromException<ChannelSettingsSnapshot>(new NotSupportedException("Channel settings are not available."));

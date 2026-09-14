@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using RelayCove.Core;
 
 namespace RelayCove.App.ViewModels;
 
@@ -10,7 +11,7 @@ internal static class EmojiShortcodeCatalog
 
     private static readonly IReadOnlyDictionary<string, string> DisplaysByName = ParseDisplays();
     private static readonly Regex ShortcodeOrCodeSpan = new(
-        @"(?<code>```[\s\S]*?```|`[^`\r\n]*`)|(?<!\\):(?<name>[\p{L}\p{N}_+\-]+):",
+        """(?<literal>```[\s\S]*?```|`[^`\r\n]*`|(?i:https?://|www\.)[^\s\p{C}<>"'`\\，。！？；：、（）【】]+)|(?<!\\):(?<name>[\p{L}\p{N}_+\-]+):""",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     internal static string ReplaceKnownShortcodes(string source)
@@ -19,9 +20,31 @@ internal static class EmojiShortcodeCatalog
 
         return ShortcodeOrCodeSpan.Replace(source, match =>
         {
-            if (match.Groups["code"].Success) return match.Value;
+            if (match.Groups["literal"].Success) return match.Value;
             return DisplaysByName.GetValueOrDefault(match.Groups["name"].Value) ?? match.Value;
         });
+    }
+
+    internal static IReadOnlyList<MessageTextRun> CreateRuns(
+        string source, IReadOnlyDictionary<string, RealmEmoji>? realmEmojis, bool replaceUnicode = true)
+    {
+        var byName = (realmEmojis?.Values ?? [])
+            .OrderBy(emoji => emoji.IsDeactivated)
+            .GroupBy(emoji => emoji.Name, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        var runs = new List<MessageTextRun>();
+        var offset = 0;
+        foreach (Match match in ShortcodeOrCodeSpan.Matches(source))
+        {
+            if (match.Index > offset) runs.Add(new(source[offset..match.Index]));
+            if (!match.Groups["literal"].Success && byName.TryGetValue(match.Groups["name"].Value, out var emoji))
+                runs.Add(new(match.Value, emoji.StillUrl ?? emoji.SourceUrl));
+            else
+                runs.Add(new(replaceUnicode ? ReplaceKnownShortcodes(match.Value) : match.Value));
+            offset = match.Index + match.Length;
+        }
+        if (offset < source.Length) runs.Add(new(source[offset..]));
+        return runs;
     }
 
     private static IReadOnlyDictionary<string, string> ParseDisplays()

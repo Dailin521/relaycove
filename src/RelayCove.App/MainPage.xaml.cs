@@ -1,15 +1,16 @@
 using System.ComponentModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using RelayCove.App.Services;
 using RelayCove.App.ViewModels;
-using Windows.System;
 
 namespace RelayCove.App;
 
 public partial class MainPage : ContentPage
 {
     private readonly ShellViewModel _viewModel;
+    private readonly PointerEventHandler _messageMenuPointerPressedHandler;
     private FrameworkElement? _platformRoot;
     private Microsoft.Maui.Controls.Window? _activationWindow;
     private int _windowActivationRevision;
@@ -17,6 +18,7 @@ public partial class MainPage : ContentPage
     public MainPage(ShellViewModel viewModel)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
+        _messageMenuPointerPressedHandler = OnPagePointerPressed;
         InitializeComponent();
         BindingContext = _viewModel;
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
@@ -106,12 +108,34 @@ public partial class MainPage : ContentPage
         });
     }
 
+    protected override void OnHandlerChanging(HandlerChangingEventArgs args)
+    {
+        _platformRoot?.RemoveHandler(UIElement.PointerPressedEvent, _messageMenuPointerPressedHandler);
+        _platformRoot = null;
+        base.OnHandlerChanging(args);
+    }
+
     protected override void OnHandlerChanged()
     {
-        if (_platformRoot is not null) _platformRoot.KeyDown -= OnPlatformKeyDown;
         base.OnHandlerChanged();
         _platformRoot = Handler?.PlatformView as FrameworkElement;
-        if (_platformRoot is not null) _platformRoot.KeyDown += OnPlatformKeyDown;
+        _platformRoot?.AddHandler(UIElement.PointerPressedEvent, _messageMenuPointerPressedHandler, true);
+    }
+
+    private void OnPagePointerPressed(object sender, PointerRoutedEventArgs eventArgs)
+    {
+        if (!_viewModel.IsMessageMenuOpen) return;
+        var menu = MessageMenuPopover.Handler?.PlatformView;
+        for (var source = eventArgs.OriginalSource as DependencyObject;
+             source is not null;
+             source = VisualTreeHelper.GetParent(source))
+        {
+            if (ReferenceEquals(source, menu)) return;
+        }
+
+        // Dismiss outside presses without consuming them. The same right-click
+        // must still reach the underlying message/image and open its menu.
+        _viewModel.CloseMessageMenuCommand.Execute(null);
     }
 
     private void OnPageSizeChanged(object? sender, EventArgs eventArgs) => UpdateViewport();
@@ -119,7 +143,7 @@ public partial class MainPage : ContentPage
     private void UpdateViewport()
     {
         var width = Width > 0 ? Width : 1440d;
-        _viewModel.UpdateViewport(width);
+        _viewModel.UpdateViewport(width, Height > 0 ? Height : 900d);
         _viewModel.ChannelSettings.UpdateViewport(width);
     }
 
@@ -152,6 +176,15 @@ public partial class MainPage : ContentPage
             case nameof(ShellViewModel.IsAccountMenuOpen) when _viewModel.IsAccountMenuOpen:
                 Dispatcher.Dispatch(() => FirstAccountMenuButton.Focus());
                 break;
+            case nameof(ShellViewModel.IsOwnNameEditing) when _viewModel.IsOwnNameEditing:
+                Dispatcher.Dispatch(() =>
+                {
+                    if (!_viewModel.IsOwnNameEditing || !_viewModel.IsAccountMenuOpen) return;
+                    OwnNameEntry.Focus();
+                    OwnNameEntry.CursorPosition = 0;
+                    OwnNameEntry.SelectionLength = OwnNameEntry.Text?.Length ?? 0;
+                });
+                break;
             case nameof(ShellViewModel.IsDownloadCenterOpen) when _viewModel.IsDownloadCenterOpen:
                 Dispatcher.Dispatch(() => DownloadCenterCloseButton.Focus());
                 break;
@@ -169,9 +202,6 @@ public partial class MainPage : ContentPage
                 break;
             case nameof(ShellViewModel.IsImageViewerOpen) when _viewModel.IsImageViewerOpen:
                 Dispatcher.Dispatch(() => ImageViewerCloseButton.Focus());
-                break;
-            case nameof(ShellViewModel.IsMessageMenuOpen) when _viewModel.IsMessageMenuOpen:
-                Dispatcher.Dispatch(() => GetFirstMessageMenuButton().Focus());
                 break;
             case nameof(ShellViewModel.IsChannelMenuOpen) when _viewModel.IsChannelMenuOpen:
                 Dispatcher.Dispatch(() => FirstChannelMenuButton.Focus());
@@ -211,200 +241,4 @@ public partial class MainPage : ContentPage
         }
     }
 
-    private void OnPlatformKeyDown(object sender, KeyRoutedEventArgs eventArgs)
-    {
-        if (eventArgs.Key == VirtualKey.Escape && CloseTopOverlay())
-        {
-            eventArgs.Handled = true;
-            return;
-        }
-
-        if (_viewModel.IsSearchOpen && HandleSearchKey(eventArgs.Key) ||
-            _viewModel.IsComposerEmojiPickerOpen && HandleEmojiKey(eventArgs.Key, reaction: false) ||
-            _viewModel.IsReactionPickerOpen && HandleEmojiKey(eventArgs.Key, reaction: true) ||
-            _viewModel.IsAccountMenuOpen && HandleAccountMenuKey(eventArgs.Key) ||
-            _viewModel.IsMessageMenuOpen && HandleMessageMenuKey(eventArgs.Key) ||
-            _viewModel.IsChannelMenuOpen && HandleChannelMenuKey(eventArgs.Key))
-        {
-            eventArgs.Handled = true;
-        }
-    }
-
-    private bool CloseTopOverlay()
-    {
-        if (_viewModel.ChannelSettings.IsOpen) _viewModel.ChannelSettings.CloseTopLayerCommand.Execute(null);
-        else if (_viewModel.IsTopicMoveDialogOpen) _viewModel.CancelTopicMoveDialogCommand.Execute(null);
-        else if (_viewModel.IsTopicResolutionConfirmationOpen) _viewModel.CancelTopicResolutionCommand.Execute(null);
-        else if (_viewModel.IsTopicDeleteConfirmationOpen) _viewModel.CancelTopicDeleteCommand.Execute(null);
-        else if (_viewModel.IsNewConversationOpen) _viewModel.CloseNewConversationCommand.Execute(null);
-        else if (_viewModel.IsImageViewerOpen) _viewModel.CloseImageViewerCommand.Execute(null);
-        else if (_viewModel.IsChannelUnsubscribeConfirmationOpen) _viewModel.CancelChannelUnsubscribeCommand.Execute(null);
-        else if (_viewModel.IsDeleteConfirmationOpen) _viewModel.CancelDeleteMessageCommand.Execute(null);
-        else if (_viewModel.IsEditDialogOpen) _viewModel.CancelEditDialogCommand.Execute(null);
-        else if (_viewModel.IsReactionPickerOpen) _viewModel.CloseReactionPickerCommand.Execute(null);
-        else if (_viewModel.IsMessageMenuOpen) _viewModel.CloseMessageMenuCommand.Execute(null);
-        else if (_viewModel.IsTopicMenuOpen) _viewModel.CloseTopicMenuCommand.Execute(null);
-        else if (_viewModel.IsChannelMenuOpen) _viewModel.CloseChannelMenuCommand.Execute(null);
-        else if (_viewModel.IsDownloadCenterOpen)
-        {
-            _viewModel.CloseDownloadCenterCommand.Execute(null);
-        }
-        else if (_viewModel.IsAccountMenuOpen)
-        {
-            _viewModel.CloseAccountMenuCommand.Execute(null);
-        }
-        else if (_viewModel.IsComposerEmojiPickerOpen) _viewModel.ToggleComposerEmojiPickerCommand.Execute(null);
-        else if (_viewModel.IsSearchOpen) _viewModel.CloseSearchCommand.Execute(null);
-        else if (_viewModel.LogoutConfirmationVisible) _viewModel.CancelLogoutCommand.Execute(null);
-        else if (_viewModel.IsOverlayDetailsVisible) _viewModel.ToggleDetailsCommand.Execute(null);
-        else return false;
-        return true;
-    }
-
-    private bool HandleSearchKey(VirtualKey key)
-    {
-        if (_viewModel.SearchResults.Count == 0) return false;
-        if (key == VirtualKey.Enter && _viewModel.SelectedSearchResult is not null)
-        {
-            _viewModel.SelectSearchResultCommand.Execute(_viewModel.SelectedSearchResult);
-            return true;
-        }
-        var current = _viewModel.SelectedSearchResult is { } selected
-            ? _viewModel.SearchResults.IndexOf(selected)
-            : -1;
-        var next = key switch
-        {
-            VirtualKey.Up => Math.Max(0, current - 1),
-            VirtualKey.Down => Math.Min(_viewModel.SearchResults.Count - 1, current + 1),
-            VirtualKey.Home => 0,
-            VirtualKey.End => _viewModel.SearchResults.Count - 1,
-            _ => -1
-        };
-        if (next < 0) return false;
-        _viewModel.SelectedSearchResult = _viewModel.SearchResults[next];
-        return true;
-    }
-
-    private bool HandleEmojiKey(VirtualKey key, bool reaction)
-    {
-        if (_viewModel.VisibleEmojiChoices.Count == 0) return false;
-
-        var selected = reaction ? _viewModel.SelectedReactionEmoji : _viewModel.SelectedComposerEmoji;
-        var current = selected is null ? -1 : IndexOfEmoji(selected);
-        if (key == VirtualKey.Enter)
-        {
-            if (reaction) _viewModel.SelectReactionEmojiCommand.Execute(selected ?? _viewModel.VisibleEmojiChoices[0]);
-            else _viewModel.InsertComposerEmojiCommand.Execute(selected ?? _viewModel.VisibleEmojiChoices[0]);
-            return true;
-        }
-        var next = selected is null && key is VirtualKey.Left or VirtualKey.Right or VirtualKey.Up or VirtualKey.Down
-            ? 0
-            : key switch
-            {
-                VirtualKey.Left => Math.Max(0, current - 1),
-                VirtualKey.Right => Math.Min(_viewModel.VisibleEmojiChoices.Count - 1, current + 1),
-                VirtualKey.Up => Math.Max(0, current - 6),
-                VirtualKey.Down => Math.Min(_viewModel.VisibleEmojiChoices.Count - 1, current + 6),
-                VirtualKey.Home => 0,
-                VirtualKey.End => _viewModel.VisibleEmojiChoices.Count - 1,
-                _ => -1
-            };
-        if (next < 0) return false;
-        var choice = _viewModel.VisibleEmojiChoices[next];
-        if (reaction)
-        {
-            _viewModel.SelectedReactionEmoji = choice;
-            ReactionEmojiCollection.ScrollTo(choice);
-        }
-        else
-        {
-            _viewModel.SelectedComposerEmoji = choice;
-            ComposerEmojiCollection.ScrollTo(choice);
-        }
-        return true;
-    }
-
-    private int IndexOfEmoji(EmojiChoice selected)
-    {
-        for (var index = 0; index < _viewModel.VisibleEmojiChoices.Count; index++)
-        {
-            if (Equals(_viewModel.VisibleEmojiChoices[index], selected)) return index;
-        }
-        return 0;
-    }
-
-    private bool HandleMessageMenuKey(VirtualKey key)
-    {
-        if (key == VirtualKey.Tab)
-        {
-            _viewModel.CloseMessageMenuCommand.Execute(null);
-            return true;
-        }
-        if (key == VirtualKey.Home)
-        {
-            GetFirstMessageMenuButton().Focus();
-            return true;
-        }
-        if (key == VirtualKey.End)
-        {
-            LastMessageMenuButton.Focus();
-            return true;
-        }
-        if (key is not (VirtualKey.Up or VirtualKey.Down)) return false;
-        FocusManager.TryMoveFocus(key == VirtualKey.Up
-            ? FocusNavigationDirection.Up
-            : FocusNavigationDirection.Down);
-        return true;
-    }
-
-    private bool HandleAccountMenuKey(VirtualKey key)
-    {
-        if (key == VirtualKey.Tab)
-        {
-            _viewModel.CloseAccountMenuCommand.Execute(null);
-            return true;
-        }
-        if (key == VirtualKey.Home)
-        {
-            FirstAccountMenuButton.Focus();
-            return true;
-        }
-        if (key == VirtualKey.End)
-        {
-            LastAccountMenuButton.Focus();
-            return true;
-        }
-        if (key is not (VirtualKey.Up or VirtualKey.Down)) return false;
-        FocusManager.TryMoveFocus(key == VirtualKey.Up
-            ? FocusNavigationDirection.Up
-            : FocusNavigationDirection.Down);
-        return true;
-    }
-
-    private Button GetFirstMessageMenuButton() =>
-        _viewModel.HasActiveMessageAttachment ? ImageDownloadMenuButton : FirstMessageMenuButton;
-
-    private bool HandleChannelMenuKey(VirtualKey key)
-    {
-        if (key == VirtualKey.Tab)
-        {
-            _viewModel.CloseChannelMenuCommand.Execute(null);
-            return true;
-        }
-        if (key == VirtualKey.Home)
-        {
-            FirstChannelMenuButton.Focus();
-            return true;
-        }
-        if (key == VirtualKey.End)
-        {
-            LastChannelMenuButton.Focus();
-            return true;
-        }
-        if (key is not (VirtualKey.Up or VirtualKey.Down)) return false;
-        FocusManager.TryMoveFocus(key == VirtualKey.Up
-            ? FocusNavigationDirection.Up
-            : FocusNavigationDirection.Down);
-        return true;
-    }
 }

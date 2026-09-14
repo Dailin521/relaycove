@@ -4,5 +4,6 @@ public enum RealmMediaKind
 {
     Avatar,
     Image,
-    File
+    File,
+    Emoji
 }

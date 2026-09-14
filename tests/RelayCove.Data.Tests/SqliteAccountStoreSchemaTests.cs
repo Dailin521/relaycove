@@ -7,6 +7,59 @@ namespace RelayCove.Data.Tests;
 public sealed class SqliteAccountStoreSchemaTests
 {
     [Fact]
+    public async Task MigrateAsync_WhenSchemaIsVersionSeven_PreservesMessagesAndAddsUneditedDefault()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var conversation = new DirectMessage([20]);
+        await context.Store.InitializeAsync(account);
+        await context.Store.ApplyBatchAsync(account.AccountId,
+            [new MessageUpsertEvent(StoreTestData.Message(1, conversation, isRead: true))]);
+        await using (var connection = context.Open(account.AccountId))
+        {
+            await ExecuteAsync(connection, """
+                ALTER TABLE messages DROP COLUMN is_edited;
+                UPDATE schema_info SET version = 7;
+                PRAGMA user_version = 7;
+                """);
+        }
+
+        await context.Store.MigrateAsync(account.AccountId);
+        await context.Store.MigrateAsync(account.AccountId);
+
+        var message = Assert.Single(await context.Store.QueryMessagesAsync(account.AccountId, conversation, null, 20));
+        Assert.Equal("message-1", message.Content);
+        Assert.True(message.IsRead);
+        Assert.False(message.IsEdited);
+        await using var verify = context.Open(account.AccountId);
+        Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(verify, "PRAGMA user_version;"));
+        Assert.Equal(SqliteAccountStore.CurrentSchemaVersion, await ScalarLongAsync(verify, "SELECT version FROM schema_info;"));
+    }
+
+    [Fact]
+    public async Task MigrateAsync_WhenSchemaIsVersionSix_PreservesAvatarAndAddsUnknownSource()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        await context.Store.InitializeAsync(account);
+        await context.Store.ApplyBatchAsync(account.AccountId,
+            [new UserUpsertEvent(new UserProfile(20, "Bea", avatarUrl: "/user_avatars/old.png", avatarVersion: 2))]);
+        await using (var connection = context.Open(account.AccountId))
+        {
+            await ExecuteAsync(connection, """
+                ALTER TABLE users DROP COLUMN avatar_source;
+                UPDATE schema_info SET version = 6;
+                PRAGMA user_version = 6;
+                """);
+        }
+        await context.Store.MigrateAsync(account.AccountId);
+        var user = (await context.Store.LoadAsync(account.AccountId))!.State.Users[20];
+        Assert.Equal("/user_avatars/old.png", user.DisplayAvatarUrl);
+        Assert.Equal(2, user.AvatarVersion);
+        Assert.Equal(UserAvatarSource.Unknown, user.AvatarSource);
+    }
+
+    [Fact]
     public async Task NativeSqlite_WhenLoaded_IsAtLeastPatchedVersion()
     {
         await using var context = StoreTestContext.Create();

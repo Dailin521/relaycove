@@ -1,12 +1,223 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Xml.Linq;
 using RelayCove.App.Platforms.Windows;
 using RelayCove.App.Services;
+using RelayCove.Core;
 
 namespace RelayCove.App.Tests;
 
 public sealed class WindowsAppNotificationServiceTests
 {
+    [Fact]
+    public void DesktopActivation_WhenAccountChanges_InvalidatesOldNotificationToken()
+    {
+        var first = AccountId.Create(RealmEndpoint.Parse("https://notification.example.test"), 7);
+        var second = AccountId.Create(RealmEndpoint.Parse("https://notification.example.test"), 8);
+        var session = new AvatarCacheTests.AvatarSession { Account = first };
+        using var service = new WindowsAppNotificationService(
+            new TestAvatarFileStore(), new ImmediateDispatcher(), new WindowsWindowShellAdapter(), session);
+        var tokenField = typeof(WindowsAppNotificationService).GetField("_desktopActivationToken", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        session.Publish();
+        var oldToken = (string)tokenField.GetValue(service)!;
+        session.Account = second;
+        session.Publish();
+
+        Assert.NotEqual(oldToken, (string)tokenField.GetValue(service)!);
+        Assert.Null(WindowsDesktopToastPayload.GetConversation($"conversation=dm%3A9&session={oldToken}",
+            (string)tokenField.GetValue(service)!));
+    }
+
+    [Fact]
+    public void AvatarChanged_WhenAccountChanges_DiscardsOldPreviewAndRejectsOtherAccountEvents()
+    {
+        var first = AccountId.Create(RealmEndpoint.Parse("https://avatar.example.test"), 7);
+        var second = AccountId.Create(RealmEndpoint.Parse("https://avatar.example.test"), 8);
+        var session = new AvatarCacheTests.AvatarSession { Account = first };
+        var avatars = new TestAvatarFileStore();
+        using var service = new WindowsAppNotificationService(avatars, new ImmediateDispatcher(), new WindowsWindowShellAdapter(), session);
+        const string url = "/user_avatars/shared.png";
+        service.UpdateTrayPreview(new AppMessageNotification("dm:8", "First", "first body", url));
+        Assert.Equal(1, avatars.Reads);
+        session.Account = second;
+        session.Publish();
+        var previewField = typeof(WindowsAppNotificationService).GetField("_trayPreviewNotification", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        Assert.Null(previewField.GetValue(service));
+        avatars.Publish(second, url);
+        Assert.Equal(1, avatars.Reads);
+        service.UpdateTrayPreview(new AppMessageNotification("dm:7", "Second", "second body", url));
+        Assert.Equal(2, avatars.Reads);
+        avatars.Publish(first, url);
+        Assert.Equal(2, avatars.Reads);
+        avatars.Publish(second, url);
+        Assert.Equal(3, avatars.Reads);
+    }
+
+    private sealed class ImmediateDispatcher : IUiDispatcher
+    {
+        public void Dispatch(Action action) => action();
+        public Task YieldToRenderAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class TestAvatarFileStore : INotificationAvatarFileStore
+    {
+        public event EventHandler<AvatarChangedEventArgs>? AvatarChanged;
+        public int Reads { get; private set; }
+        public void Publish(AccountId accountId, string url) => AvatarChanged?.Invoke(this, new(accountId, url));
+        public Task<Uri?> GetAvatarUriAsync(string sourceUrl, CancellationToken cancellationToken = default)
+        {
+            Reads++;
+            return Task.FromResult<Uri?>(null);
+        }
+        public Task ClearAccountAsync(AccountId accountId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    [Theory]
+    [InlineData(3, false)]
+    [InlineData(0, true)]
+    public void UpdateUnreadBadge_WhenPreferenceChangesWithoutVisibleWindow_UpdatesTrayWithoutClearingUnread(
+        int count, bool isTruncated)
+    {
+        const BindingFlags privateInstance = BindingFlags.NonPublic | BindingFlags.Instance;
+        var controller = new WindowsTrayIconController(_ => { }, () => { });
+        var controllerType = typeof(WindowsTrayIconController);
+        controllerType.GetField("_iconHandle", privateInstance)!.SetValue(controller, (nint)41);
+        controllerType.GetField("_unreadIconHandle", privateInstance)!.SetValue(controller, (nint)42);
+        using var service = new WindowsAppNotificationService(
+            new UnusedAvatarFileStore(), new MauiUiDispatcher(), new WindowsWindowShellAdapter());
+        typeof(WindowsAppNotificationService).GetField("_trayIconController", privateInstance)!
+            .SetValue(service, controller);
+        try
+        {
+            service.UpdateTrayUnread(count, isTruncated);
+            service.UpdateUnreadBadge(count, isTruncated);
+            Assert.Equal((nint)42, ReadIcon());
+
+            service.UpdateUnreadBadge(0, false); // The existing badge preference is off.
+            Assert.Equal((nint)41, ReadIcon());
+            Assert.Equal(count, controllerType.GetField("_unreadCount", privateInstance)!.GetValue(controller));
+            Assert.Equal(isTruncated, controllerType.GetField("_unreadIsTruncated", privateInstance)!.GetValue(controller));
+
+            service.UpdateUnreadBadge(count, isTruncated);
+            service.StopTrayFlash(); // Acknowledging the flash must retain the unread dot.
+            Assert.Equal((nint)42, ReadIcon());
+
+            service.UpdateTrayUnread(0, false);
+            Assert.Equal((nint)41, ReadIcon());
+        }
+        finally
+        {
+            // No real HICON/HWND or shell registration is used by this test.
+            controllerType.GetField("_iconHandle", privateInstance)!.SetValue(controller, nint.Zero);
+            controllerType.GetField("_unreadIconHandle", privateInstance)!.SetValue(controller, nint.Zero);
+        }
+
+        nint ReadIcon()
+        {
+            var data = controllerType.GetMethod("CreateIconData", privateInstance)!.Invoke(controller, [6u])!;
+            return (nint)data.GetType().GetField("IconHandle")!.GetValue(data)!;
+        }
+    }
+
+    [Fact]
+    public void BuildNotification_WhenCustomSoundIsPlayed_DoesNotAlsoPlaySystemSound()
+    {
+        // Activate only the local SDK payload builder. The test host has no app
+        // identity; do not register a sender, show a notification or play audio.
+        var previousHandler = WinRT.ActivationFactory.ActivationHandler;
+        WinRT.ActivationFactory.ActivationHandler = (name, iid) =>
+            name.StartsWith("Microsoft.Windows.AppNotifications.", StringComparison.Ordinal)
+                ? ActivateNotificationFactory(name, iid)
+                : previousHandler?.Invoke(name, iid) ?? 0;
+        try
+        {
+            var notification = WindowsAppNotificationService.BuildNotification(
+                new AppMessageNotification("dm:8", "Test sender", "Test message"), null);
+            var payload = XDocument.Parse(notification.Payload);
+
+            var audio = Assert.Single(payload.Root!.Elements("audio"));
+            Assert.Equal("true", (string?)audio.Attribute("silent"));
+            Assert.Null(audio.Attribute("src"));
+            Assert.Equal(new[] { "Test sender", "Test message" },
+                payload.Descendants("text").Select(element => element.Value));
+        }
+        finally
+        {
+            WinRT.ActivationFactory.ActivationHandler = previousHandler;
+        }
+    }
+
+    [Fact]
+    public void FlashTaskbar_WhenMainWindowHandleIsAbsent_StillStartsTrayTimer()
+    {
+        const BindingFlags privateInstance = BindingFlags.NonPublic | BindingFlags.Instance;
+        var starts = 0;
+        var controller = new WindowsTrayIconController(_ => { }, () => { });
+        var controllerType = typeof(WindowsTrayIconController);
+        var timer = new WindowsTrayBlinkTimer(
+            () => { },
+            (_, id, _) => { starts++; return id; },
+            (_, _) => { });
+        controllerType.GetField("_blinkTimer", privateInstance)!.SetValue(controller, timer);
+        controllerType.GetField("_messageWindowHandle", privateInstance)!.SetValue(controller, (nint)42);
+        using var service = new WindowsAppNotificationService(
+            new UnusedAvatarFileStore(), new MauiUiDispatcher(), new WindowsWindowShellAdapter());
+        typeof(WindowsAppNotificationService).GetField("_trayIconController", privateInstance)!
+            .SetValue(service, controller);
+        try
+        {
+            service.UpdateTrayUnread(1, false);
+
+            service.FlashTaskbar();
+
+            Assert.True(timer.IsRunning);
+            Assert.Equal(1, starts);
+        }
+        finally
+        {
+            // The test supplies no real HWND, tray icon, dispatcher or system notification.
+            controllerType.GetField("_messageWindowHandle", privateInstance)!.SetValue(controller, nint.Zero);
+        }
+    }
+
+    [Fact]
+    public void UpdateUnread_WhenTrayIsAlreadyBlinking_PreservesPhaseAndTimerDeadline()
+    {
+        const BindingFlags privateInstance = BindingFlags.NonPublic | BindingFlags.Instance;
+        var starts = 0;
+        var stops = 0;
+        using var controller = new WindowsTrayIconController(_ => { }, () => { });
+        var controllerType = typeof(WindowsTrayIconController);
+        var timer = new WindowsTrayBlinkTimer(
+            () => { },
+            (_, id, _) => { starts++; return id; },
+            (_, _) => stops++);
+        controllerType.GetField("_blinkTimer", privateInstance)!.SetValue(controller, timer);
+        controllerType.GetField("_messageWindowHandle", privateInstance)!.SetValue(controller, (nint)42);
+        try
+        {
+            controller.UpdateUnread(1, false);
+            controller.StartFlashing();
+            controllerType.GetField("_iconShowingArtwork", privateInstance)!.SetValue(controller, false);
+
+            controller.UpdateUnread(1, false);
+            controller.UpdateUnread(2, false);
+            controller.StartFlashing();
+
+            Assert.False((bool)controllerType.GetField("_iconShowingArtwork", privateInstance)!.GetValue(controller)!);
+            Assert.Equal(1, starts);
+            Assert.Equal(0, stops);
+
+            controller.UpdateUnread(0, false);
+            Assert.False(timer.IsRunning);
+            Assert.Equal(1, stops);
+        }
+        finally
+        {
+            controllerType.GetField("_messageWindowHandle", privateInstance)!.SetValue(controller, nint.Zero);
+        }
+    }
+
     [Theory]
     [InlineData(0, false, 0)]
     [InlineData(1, false, 1)]
@@ -113,6 +324,33 @@ public sealed class WindowsAppNotificationServiceTests
         Assert.Equal(expected, WindowsTrayIconController.ShouldShowPreview(count, isTruncated));
 
     [Theory]
+    [InlineData(0u)] // Delete, set version and set focus.
+    [InlineData(7u)] // Add: message, icon and tooltip.
+    [InlineData(6u)] // Modify: icon and tooltip.
+    public void TrayIdentity_WhenPortableExecutableMoves_UsesWindowAndIdWithoutPathBoundGuid(uint flags)
+    {
+        var controller = new WindowsTrayIconController(_ => { }, () => { });
+        var controllerType = typeof(WindowsTrayIconController);
+        const BindingFlags privateInstance = BindingFlags.NonPublic | BindingFlags.Instance;
+        var windowHandle = new nint(123);
+        controllerType.GetField("_messageWindowHandle", privateInstance)!.SetValue(controller, windowHandle);
+
+        // Inspect the actual payloads without registering an icon or opening a window.
+        var data = controllerType.GetMethod("CreateIconData", privateInstance)!.Invoke(controller, [flags])!;
+        var identifier = controllerType.GetMethod("CreateIconIdentifier", privateInstance)!.Invoke(controller, null)!;
+
+        Assert.Equal(flags, (uint)data.GetType().GetField("Flags")!.GetValue(data)!);
+        Assert.Equal(0u, (uint)data.GetType().GetField("Flags")!.GetValue(data)! & 0x20u);
+        foreach (var payload in new[] { data, identifier })
+        {
+            var payloadType = payload.GetType();
+            Assert.Equal(windowHandle, (nint)payloadType.GetField("WindowHandle")!.GetValue(payload)!);
+            Assert.Equal(1u, (uint)payloadType.GetField("Id")!.GetValue(payload)!);
+            Assert.Equal(Guid.Empty, (Guid)payloadType.GetField("Guid")!.GetValue(payload)!);
+        }
+    }
+
+    [Theory]
     [InlineData(3, false, 2, false, true)]
     [InlineData(1, true, 0, true, true)]
     [InlineData(0, true, 0, false, true)]
@@ -167,4 +405,35 @@ public sealed class WindowsAppNotificationServiceTests
         uint command,
         bool expected) =>
         Assert.Equal(expected, WindowsTrayIconController.IsExitMenuCommand(command));
+
+    private static nint ActivateNotificationFactory(string name, Guid iid)
+    {
+        var nameHandle = WinRT.MarshalString.FromManaged(name);
+        nint factory = 0;
+        try
+        {
+            Marshal.ThrowExceptionForHR(DllGetActivationFactory(nameHandle, out factory));
+            Marshal.ThrowExceptionForHR(Marshal.QueryInterface(factory, in iid, out var result));
+            return result;
+        }
+        finally
+        {
+            if (factory != 0) Marshal.Release(factory);
+            WinRT.MarshalString.DisposeAbi(nameHandle);
+        }
+    }
+
+    [DllImport("Microsoft.WindowsAppRuntime.dll", ExactSpelling = true)]
+    private static extern int DllGetActivationFactory(nint name, out nint factory);
+
+    private sealed class UnusedAvatarFileStore : INotificationAvatarFileStore
+    {
+        public event EventHandler<AvatarChangedEventArgs>? AvatarChanged { add { } remove { } }
+
+        public Task<Uri?> GetAvatarUriAsync(string sourceUrl, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The tray timer test must not fetch avatars.");
+
+        public Task ClearAccountAsync(AccountId accountId, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("The tray timer test must not change account data.");
+    }
 }

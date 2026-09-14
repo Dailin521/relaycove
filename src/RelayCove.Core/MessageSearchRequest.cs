@@ -5,4 +5,5 @@ public sealed record MessageSearchRequest(
     string Query,
     long? BeforeMessageId,
     int Limit,
-    MessageSearchFilter Filter = MessageSearchFilter.Messages);
+    MessageSearchFilter Filter = MessageSearchFilter.Messages,
+    ConversationKey? Conversation = null);

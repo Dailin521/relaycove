@@ -6,6 +6,83 @@ namespace RelayCove.Data.Tests;
 public sealed class SqliteAccountStoreCacheTests
 {
     [Fact]
+    public async Task QueryMessagesAsync_WhenReopened_RetainsHistoryAndRealtimeEditIndicators()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var conversation = new DirectMessage([20]);
+        await context.Store.InitializeAsync(account);
+        await context.Store.ApplyBatchAsync(account.AccountId,
+        [
+            new MessagesUpdatedEvent([
+                StoreTestData.Message(1, conversation) with { IsEdited = true },
+                StoreTestData.Message(2, conversation),
+                StoreTestData.Message(3, conversation)], Source: DomainEventSource.History),
+            new MessageContentChangedEvent(3, "edited"),
+            new MessageContentChangedEvent(3, "edited", Source: DomainEventSource.Local, IsEdited: false),
+            new MessageContentChangedEvent(2, "message-2", Source: DomainEventSource.Local, IsEdited: false)
+        ]);
+
+        await using var reopened = new SqliteAccountStore(context.Root);
+        var messages = (await reopened.QueryMessagesAsync(account.AccountId, conversation, null, 20)).ToDictionary(message => message.Id);
+        Assert.True(messages[1].IsEdited);
+        Assert.False(messages[2].IsEdited);
+        Assert.True(messages[3].IsEdited);
+        Assert.Equal("edited", messages[3].Content);
+        var summary = Assert.Single(await reopened.QueryConversationSummariesAsync(account.AccountId));
+        Assert.True(summary.LatestMessage.IsEdited);
+    }
+
+    [Fact]
+    public async Task ReplaceRegisterSnapshotAsync_WhenServerReportsCachedMessageUnread_CorrectsFlagWithoutDoublingCount()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        var conversation = new DirectMessage([20]);
+        var message = StoreTestData.Message(100, conversation) with { IsRead = true };
+        await context.Store.InitializeAsync(account);
+        await context.Store.StoreMessagePageAsync(account.AccountId, [message]);
+
+        await context.Store.ReplaceRegisterSnapshotAsync(account.AccountId, StoreTestData.Register([], []) with
+        {
+            Unread = new UnreadState(new Dictionary<string, int> { [conversation.CanonicalKey] = 1 }),
+            Events = [new MessageFlagsChangedEvent([100], false, MessageFlagOperation.Remove, "read", Source: DomainEventSource.Register)]
+        });
+
+        var page = await context.Store.QueryMessagesAsync(account.AccountId, conversation, null, 50);
+        Assert.False(Assert.Single(page).IsRead);
+        Assert.Equal(1, (await context.Store.LoadAsync(account.AccountId))!.State.Unread.Total);
+
+        await context.Store.ApplyBatchAsync(account.AccountId,
+            [new MessageFlagsChangedEvent([100], false, MessageFlagOperation.Add, "read", Source: DomainEventSource.Local)]);
+
+        Assert.Equal(0, (await context.Store.LoadAsync(account.AccountId))!.State.Unread.Total);
+    }
+
+    [Fact]
+    public async Task ApplyBatchAsync_WhenAvatarChanges_PersistsSourceAndClearsRemovedUrl()
+    {
+        await using var context = StoreTestContext.Create();
+        var account = StoreTestData.Account();
+        await context.Store.InitializeAsync(account);
+        await context.Store.ApplyBatchAsync(account.AccountId,
+            [new UserUpsertEvent(new UserProfile(20, "Bea", avatarUrl: "/user_avatars/old.png", avatarVersion: 2, avatarSource: UserAvatarSource.Uploaded))]);
+        Assert.Equal(UserAvatarSource.Uploaded, (await context.Store.LoadAsync(account.AccountId))!.State.Users[20].AvatarSource);
+        await context.Store.ApplyBatchAsync(account.AccountId,
+            [new UserPatchedEvent(20, null, null, null, HasAvatar: true, AvatarUrl: "/user_avatars/generated.png", AvatarVersion: 3, AvatarSource: UserAvatarSource.Generated),
+             new UserPatchedEvent(20, "New name", null, null)]);
+        var generated = (await context.Store.LoadAsync(account.AccountId))!.State.Users[20];
+        Assert.Null(generated.DisplayAvatarUrl);
+        Assert.Equal(3, generated.AvatarVersion);
+        await context.Store.ApplyBatchAsync(account.AccountId,
+            [new UserUpsertEvent(generated with { AvatarSource = UserAvatarSource.Unknown })]);
+        Assert.Equal(UserAvatarSource.Generated, (await context.Store.LoadAsync(account.AccountId))!.State.Users[20].AvatarSource);
+        await context.Store.ApplyBatchAsync(account.AccountId,
+            [new UserPatchedEvent(20, null, null, null, HasAvatar: true, AvatarUrl: null, AvatarVersion: 4, AvatarSource: UserAvatarSource.Gravatar)]);
+        Assert.Null((await context.Store.LoadAsync(account.AccountId))!.State.Users[20].AvatarUrl);
+    }
+
+    [Fact]
     public async Task InitializeAsync_WhenExistingCacheIsLocked_PreservesFailClosedState()
     {
         await using var context = StoreTestContext.Create();

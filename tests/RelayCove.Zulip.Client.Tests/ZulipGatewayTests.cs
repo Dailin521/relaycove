@@ -11,8 +11,532 @@ namespace RelayCove.Zulip.Client.Tests;
 
 public sealed class ZulipGatewayTests
 {
+    [Theory]
+    [InlineData("", false)]
+    [InlineData(",\"last_edit_timestamp\":200", true)]
+    [InlineData(",\"last_edit_timestamp\":null", false)]
+    [InlineData(",\"last_moved_timestamp\":200,\"edit_history\":[{\"prev_subject\":\"old\"}]", false)]
+    public async Task GetHistoryAsync_WhenEditMetadataVaries_UsesContentEditTimestamp(string metadata, bool expected)
+    {
+        using var handler = new RecordingHandler(Json($$"""
+            {"messages":[{"id":44,"type":"stream","stream_id":42,"subject":"","sender_id":9,
+            "content":"body","timestamp":100{{metadata}}}],"found_oldest":true,"found_newest":true}
+            """));
+        using var gateway = new ZulipGateway(handler);
+
+        var history = await gateway.GetHistoryAsync(new HistoryRequest(Credentials, new ChannelTopic(42, string.Empty), null, true, 10));
+
+        Assert.Equal(expected, Assert.Single(history.Messages).IsEdited);
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_WhenMessageOnlyMoves_DoesNotMarkContentEdited()
+    {
+        using var handler = new RecordingHandler(Json("""
+            {"events":[{"id":20,"type":"update_message","message_id":100,"message_ids":[100],
+             "rendering_only":false,"stream_id":42,"new_stream_id":43,"orig_subject":"","subject":""}]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+        var state = new ClientState(messages: new Dictionary<long, ChatMessage>
+        {
+            [100] = new(100, new ChannelTopic(42, string.Empty), 9, "body", DateTimeOffset.UnixEpoch)
+        });
+
+        var batch = await gateway.GetEventsAsync(new GetEventsRequest(Credentials, "queue-1", 19, TimeSpan.FromSeconds(30)));
+        var changed = DomainReducer.Apply(state, batch.Events);
+
+        Assert.Equal(new ChannelTopic(43, string.Empty), changed.Messages[100].Conversation);
+        Assert.False(changed.Messages[100].IsEdited);
+    }
+
+    [Fact]
+    public async Task Register_WhenRealmEmojiAreProvided_MapsIdentityImagesAndDeactivation()
+    {
+        using var handler = new RecordingHandler(Json(MessagePolicyPayload("""
+            ,"realm_emoji":{
+                "1":{"id":"1","name":"party","source_url":"/user_avatars/1/emoji/images/1.gif","still_url":"/user_avatars/1/emoji/images/1-still.png","deactivated":false},
+                "2":{"id":"2","name":"old","source_url":"/user_avatars/1/emoji/images/2.png","deactivated":true},
+                "3":{"id":"wrong","name":"invalid","source_url":"/user_avatars/1/emoji/images/3.png","deactivated":false},
+                "4":{"id":"4","name":"missing_flag","source_url":"/user_avatars/1/emoji/images/4.png"}
+            }
+            """)));
+        using var gateway = new ZulipGateway(handler);
+        var result = await gateway.RegisterAsync(new RegisterRequest(Credentials));
+
+        Assert.Equal(2, result.RealmEmojis!.Count);
+        Assert.Equal(new RealmEmoji("1", "party", "/user_avatars/1/emoji/images/1.gif", false,
+            "/user_avatars/1/emoji/images/1-still.png"), result.RealmEmojis[0]);
+        Assert.True(result.RealmEmojis[1].IsDeactivated);
+        var form = ParseForm(Assert.Single(handler.Requests).Body!);
+        Assert.Contains("\"realm_emoji\"", form["event_types"], StringComparison.Ordinal);
+        Assert.Contains("\"realm_emoji\"", form["fetch_event_types"], StringComparison.Ordinal);
+        Assert.DoesNotContain("individual_emoji_changes", form["client_capabilities"], StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("{}", 0)]
+    [InlineData("{\"1\":{\"id\":\"1\",\"name\":\"party\",\"source_url\":\"/user_avatars/1/emoji/images/1.png\",\"deactivated\":true}}", 1)]
+    public async Task GetEvents_WhenRealmEmojiUpdateArrives_MapsCompleteSnapshot(string emojis, int count)
+    {
+        using var handler = new RecordingHandler(Json("{\"events\":[{\"id\":10,\"type\":\"realm_emoji\",\"op\":\"update\",\"realm_emoji\":" + emojis + "}]}"));
+        using var gateway = new ZulipGateway(handler);
+        var batch = await gateway.GetEventsAsync(new GetEventsRequest(Credentials, "queue-1", 9, TimeSpan.FromSeconds(90)));
+
+        var update = Assert.IsType<RealmEmojiUpdatedEvent>(Assert.Single(batch.Events));
+        Assert.Equal(count, update.Emojis.Count);
+        Assert.Equal(10, update.EventId);
+        Assert.Equal(DomainEventSource.Realtime, update.Source);
+    }
+
+    [Fact]
+    public async Task GetRealmMedia_WhenCustomEmojiIsSameRealm_ReadsPublicImageWithoutCredentials()
+    {
+        using var handler = new RecordingHandler(Binary([9, 8], "image/png"));
+        using var gateway = new ZulipGateway(handler);
+        var result = await gateway.GetRealmMediaAsync(new GetRealmMediaRequest(Credentials,
+            new RealmMediaRequest("/user_avatars/1/emoji/images/1.png", RealmMediaKind.Emoji, 1024)));
+
+        Assert.Equal([9, 8], result.Content);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("https://chat.example.test/user_avatars/1/emoji/images/1.png", request.Uri!.AbsoluteUri);
+        Assert.Null(request.Authorization);
+    }
+
+    [Theory]
+    [InlineData("https://other.example/user_avatars/1/emoji/images/1.png")]
+    [InlineData("/user_uploads/file.png")]
+    [InlineData("/user_avatars/1/avatar.png")]
+    [InlineData("http://chat.example.test/user_avatars/1/emoji/images/1.png")]
+    public async Task GetRealmMedia_WhenCustomEmojiAddressIsNotAllowed_RejectsBeforeRequest(string url)
+    {
+        using var handler = new RecordingHandler();
+        using var gateway = new ZulipGateway(handler);
+        var error = await Assert.ThrowsAsync<GatewayException>(() => gateway.GetRealmMediaAsync(
+            new GetRealmMediaRequest(Credentials, new RealmMediaRequest(url, RealmMediaKind.Emoji, 1024))));
+
+        Assert.Equal(GatewayErrorCode.MediaAddressNotAllowed, error.Code);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("", 600, 600)]
+    [InlineData(",\"realm_message_content_edit_limit_seconds\":60,\"realm_message_content_delete_limit_seconds\":120", 60, 120)]
+    [InlineData(",\"realm_message_content_edit_limit_seconds\":null,\"realm_message_content_delete_limit_seconds\":null", null, null)]
+    [InlineData(",\"realm_message_content_edit_limit_seconds\":\"600\",\"realm_message_content_delete_limit_seconds\":-1", 0, 0)]
+    public async Task Register_WhenMessageActionLimitsAreProvided_DistinguishesMissingUnlimitedAndInvalid(
+        string fields, int? edit, int? delete)
+    {
+        using var handler = new RecordingHandler(Json(MessagePolicyPayload(fields)));
+        using var gateway = new ZulipGateway(handler);
+        var result = await gateway.RegisterAsync(new RegisterRequest(Credentials));
+        Assert.Equal(edit, result.MessageActions!.EditLimitSeconds);
+        Assert.Equal(delete, result.MessageActions.DeleteLimitSeconds);
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("{\"direct_members\":[7],\"direct_subgroups\":[]}", "[]", true)]
+    [InlineData("1", "[{\"id\":1,\"name\":\"deletors\",\"members\":[],\"direct_subgroup_ids\":[2]},{\"id\":2,\"name\":\"nested\",\"members\":[7],\"direct_subgroup_ids\":[]}]", true)]
+    [InlineData("1", "[{\"id\":1,\"name\":\"deletors\",\"members\":[8],\"direct_subgroup_ids\":[]}]", false)]
+    [InlineData("1", "[{\"id\":1,\"name\":\"deletors\",\"members\":[7],\"direct_subgroup_ids\":[],\"deactivated\":true}]", false)]
+    [InlineData("1", "[{\"id\":1,\"name\":\"deletors\",\"members\":[7,\"bad\"],\"direct_subgroup_ids\":[]}]", false)]
+    [InlineData("null", "[]", false)]
+    public async Task Register_WhenMessageDeleteGroupsAreProvided_MapsRealmAndChannelMembership(
+        string setting, string groups, bool expected)
+    {
+        var fields = $$"""
+            ,"realm_allow_message_editing":false,"realm_can_delete_own_message_group":{{setting}},
+            "realm_can_delete_any_message_group":{{setting}},"realm_user_groups":{{groups}},
+            "subscriptions":[{"stream_id":10,"name":"chat","is_archived":true,
+            "can_delete_own_message_group":{{setting}},"can_delete_any_message_group":{{setting}}}]
+            """;
+        using var handler = new RecordingHandler(Json(MessagePolicyPayload(fields)));
+        using var gateway = new ZulipGateway(handler);
+        var policy = (await gateway.RegisterAsync(new RegisterRequest(Credentials))).MessageActions!;
+        Assert.False(policy.AllowEditing);
+        Assert.Equal(expected, policy.CanDeleteOwn);
+        Assert.Equal(expected, policy.CanDeleteAny);
+        var channel = Assert.Single(policy.Channels).Value;
+        Assert.True(channel.IsArchived);
+        Assert.Equal(expected, channel.CanDeleteOwn);
+        Assert.Equal(expected, channel.CanDeleteAny);
+    }
+
+    [Theory]
+    [InlineData("\"type\":\"realm\",\"op\":\"update\",\"property\":\"allow_message_editing\",\"value\":false", true)]
+    [InlineData("\"type\":\"realm\",\"op\":\"update_dict\",\"property\":\"default\",\"data\":{\"message_content_edit_limit_seconds\":null}", true)]
+    [InlineData("\"type\":\"realm\",\"op\":\"update\",\"property\":\"message_content_delete_limit_seconds\",\"value\":60", true)]
+    [InlineData("\"type\":\"user_group\",\"op\":\"remove_members\",\"group_id\":1,\"user_ids\":[7]", true)]
+    [InlineData("\"type\":\"stream\",\"op\":\"update\",\"stream_id\":10,\"property\":\"can_delete_any_message_group\",\"value\":1", true)]
+    [InlineData("\"type\":\"stream\",\"op\":\"update\",\"stream_id\":10,\"property\":\"is_archived\",\"value\":true", true)]
+    [InlineData("\"type\":\"subscription\",\"op\":\"add\",\"subscriptions\":[{\"stream_id\":10,\"name\":\"chat\"}]", true)]
+    [InlineData("\"type\":\"realm_user\",\"op\":\"update\",\"person\":{\"user_id\":7,\"role\":400}", true)]
+    [InlineData("\"type\":\"realm_user\",\"op\":\"update\",\"person\":{\"user_id\":7,\"full_name\":\"name\"}", false)]
+    [InlineData("\"type\":\"realm\",\"op\":\"update\",\"property\":\"name\",\"value\":\"new name\"", false)]
+    public async Task GetEvents_WhenMessageActionSettingsChange_InvalidatesPolicy(string fields, bool expected)
+    {
+        using var handler = new RecordingHandler(Json("{\"events\":[{\"id\":10," + fields + "}]}"));
+        using var gateway = new ZulipGateway(handler);
+        var batch = await gateway.GetEventsAsync(new GetEventsRequest(Credentials, "queue-1", 9, TimeSpan.FromSeconds(90)));
+        Assert.Equal(expected, batch.Events.OfType<MessageActionPolicyInvalidatedEvent>().Any());
+        Assert.All(batch.Events, item => Assert.Equal(10, item.EventId));
+        Assert.Equal(10, batch.LastEventId);
+    }
+
+    private static string MessagePolicyPayload(string fields) =>
+        "{\"queue_id\":\"queue-1\",\"last_event_id\":9,\"event_queue_longpoll_timeout_seconds\":90,\"max_message_length\":10000,\"max_topic_length\":60" + fields + "}";
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, false, GatewayErrorKind.ReauthRequired, GatewayErrorCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Unauthorized, true, GatewayErrorKind.ReauthRequired, GatewayErrorCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden, false, GatewayErrorKind.RequestFailed, GatewayErrorCode.RequestFailed)]
+    [InlineData(HttpStatusCode.Forbidden, true, GatewayErrorKind.RequestFailed, GatewayErrorCode.RequestFailed)]
+    [InlineData(HttpStatusCode.TooManyRequests, false, GatewayErrorKind.RateLimited, GatewayErrorCode.RateLimited)]
+    [InlineData(HttpStatusCode.TooManyRequests, true, GatewayErrorKind.RateLimited, GatewayErrorCode.RateLimited)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, false, GatewayErrorKind.Server, GatewayErrorCode.ServerError)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, true, GatewayErrorKind.Server, GatewayErrorCode.ServerError)]
+    public async Task ConnectionRequest_WhenErrorBodyCannotBeRead_PreservesHttpFailureAndDisposesResponse(
+        HttpStatusCode status, bool disconnects, GatewayErrorKind kind, GatewayErrorCode code)
+    {
+        using var handler = new HangingRequestHandler(headersReceived: true, disconnects: disconnects, status: status);
+        var time = new ManualTimeoutProvider();
+        using var gateway = new ZulipGateway(handler, time);
+        var pending = gateway.RegisterAsync(new RegisterRequest(Credentials));
+        await handler.Body.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (!disconnects) time.Expire();
+
+        var error = await Assert.ThrowsAsync<GatewayException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        Assert.Equal(kind, error.Kind);
+        Assert.Equal(code, error.Code);
+        Assert.Equal((int)status, error.StatusCode);
+        Assert.Equal(status == HttpStatusCode.TooManyRequests ? TimeSpan.FromSeconds(120) : (TimeSpan?)null, error.RetryAfter);
+        Assert.Equal(1, handler.Calls);
+        Assert.True(handler.Body.IsDisposed);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    public async Task ConnectionRequest_WhenCallerCancelsErrorBody_PropagatesCancellation(HttpStatusCode status)
+    {
+        using var handler = new HangingRequestHandler(headersReceived: true, status: status);
+        using var gateway = new ZulipGateway(handler);
+        using var cancellation = new CancellationTokenSource();
+        var pending = gateway.RegisterAsync(new RegisterRequest(Credentials), cancellation.Token);
+        await handler.Body.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(handler.Body.IsDisposed);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Theory]
+    [InlineData("probe")]
+    [InlineData("register")]
+    [InlineData("events")]
+    public async Task ConnectionRequest_WhenResponseBodyDisconnects_ReportsRetryableNetworkFailure(string operation)
+    {
+        using var handler = new HangingRequestHandler(headersReceived: true, disconnects: true);
+        using var gateway = new ZulipGateway(handler);
+        var error = await Assert.ThrowsAsync<GatewayException>(async () =>
+        {
+            if (operation == "probe") await gateway.ProbeRealmAsync(Realm);
+            else if (operation == "register") await gateway.RegisterAsync(new RegisterRequest(Credentials));
+            else await gateway.GetEventsAsync(new GetEventsRequest(Credentials, "queue-1", 1, TimeSpan.FromSeconds(90)));
+        });
+
+        Assert.Equal(GatewayErrorKind.Offline, error.Kind);
+        Assert.Equal(GatewayErrorCode.NetworkError, error.Code);
+        Assert.Equal(1, handler.Calls);
+        Assert.True(handler.Body.IsDisposed);
+    }
+
+    [Theory]
+    [InlineData("probe", false, false)]
+    [InlineData("probe", true, false)]
+    [InlineData("register", false, false)]
+    [InlineData("register", true, false)]
+    [InlineData("events", false, false)]
+    [InlineData("events", true, false)]
+    [InlineData("probe", false, true)]
+    [InlineData("probe", true, true)]
+    [InlineData("register", false, true)]
+    [InlineData("register", true, true)]
+    [InlineData("events", false, true)]
+    [InlineData("events", true, true)]
+    public async Task ConnectionRequest_WhenResponseHangs_HonorsDeadlineAndCallerCancellation(
+        string operation, bool headersReceived, bool callerCancels)
+    {
+        using var handler = new HangingRequestHandler(headersReceived);
+        var time = new ManualTimeoutProvider();
+        using var gateway = new ZulipGateway(handler, time);
+        using var cancellation = new CancellationTokenSource();
+        Task pending = operation switch
+        {
+            "probe" => gateway.ProbeRealmAsync(Realm, cancellation.Token),
+            "register" => gateway.RegisterAsync(new RegisterRequest(Credentials), cancellation.Token),
+            _ => gateway.GetEventsAsync(new GetEventsRequest(Credentials, "queue-1", 1, TimeSpan.FromSeconds(90)), cancellation.Token)
+        };
+        await (headersReceived ? handler.Body.Entered.Task : handler.Entered.Task).WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            Assert.Equal(TimeSpan.FromSeconds(operation == "events" ? 90 : 30), time.DueTime);
+            if (callerCancels)
+            {
+                cancellation.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+            }
+            else
+            {
+                time.Expire();
+                var error = await Assert.ThrowsAsync<GatewayException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+                Assert.Equal(GatewayErrorKind.Offline, error.Kind);
+                Assert.Equal(GatewayErrorCode.RequestTimedOut, error.Code);
+            }
+            Assert.Equal(1, handler.Calls);
+            if (headersReceived) Assert.True(handler.Body.IsDisposed);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try { await pending.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (Exception exception) when (exception is OperationCanceledException or GatewayException) { }
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UploadOwnAvatarAsync_WhenRequestHangs_CancelsOnceWithoutRetry(bool callerCancels)
+    {
+        using var handler = new HangingRequestHandler();
+        var time = new ManualTimeoutProvider();
+        using var gateway = new ZulipGateway(handler, time);
+        using var cancellation = new CancellationTokenSource();
+        await using var stream = new MemoryStream([1]);
+        var pending = gateway.UploadOwnAvatarAsync(new UploadAttachmentRequest(
+            Credentials, new AttachmentUpload("avatar.png", "image/png", 1, stream)), cancellation.Token);
+        await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(TimeSpan.FromSeconds(60), time.DueTime);
+
+        if (callerCancels)
+        {
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        else
+        {
+            time.Expire();
+            var error = await Assert.ThrowsAsync<GatewayException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(GatewayErrorKind.Offline, error.Kind);
+            Assert.Equal(GatewayErrorCode.RequestTimedOut, error.Code);
+        }
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task UploadOwnAvatarAsync_WhenAccepted_PostsOneImageToOwnAvatarEndpoint()
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success","msg":"","avatar_url":"/user_avatars/1/portrait.png?x=2"}"""));
+        using var gateway = new ZulipGateway(handler);
+        await using var stream = new MemoryStream([1, 2, 3]);
+
+        var url = await gateway.UploadOwnAvatarAsync(new UploadAttachmentRequest(
+            Credentials, new AttachmentUpload("头像.png", "image/png", 3, stream)));
+
+        Assert.Equal("/user_avatars/1/portrait.png?x=2", url);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("https://chat.example.test/api/v1/users/me/avatar", request.Uri!.AbsoluteUri);
+        Assert.Equal("Basic", request.Authorization?.Scheme);
+        Assert.Contains("Content-Type: image/png", request.Body);
+        Assert.Contains("Content-Length: 3", request.Body);
+        Assert.DoesNotContain("user_uploads", request.Uri.AbsoluteUri);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.Redirect)]
+    public async Task UploadOwnAvatarAsync_WhenServerRejects_DoesNotRetry(HttpStatusCode status)
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"error","msg":"rejected"}""", status));
+        using var gateway = new ZulipGateway(handler);
+        await using var stream = new MemoryStream([1]);
+
+        await Assert.ThrowsAsync<GatewayException>(() => gateway.UploadOwnAvatarAsync(
+            new UploadAttachmentRequest(Credentials, new AttachmentUpload("avatar.png", "image/png", 1, stream))));
+
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("{\"result\":\"success\",\"msg\":\"\"}")]
+    [InlineData("{\"result\":\"success\",\"avatar_url\":\"\"}")]
+    [InlineData("{\"result\":\"error\",\"avatar_url\":\"/user_avatars/1/avatar.png\"}")]
+    public async Task UploadOwnAvatarAsync_WhenResponseIsInvalid_DoesNotClaimSuccess(string response)
+    {
+        using var handler = new RecordingHandler(Json(response));
+        using var gateway = new ZulipGateway(handler);
+        await using var stream = new MemoryStream([1]);
+        await Assert.ThrowsAsync<GatewayException>(() => gateway.UploadOwnAvatarAsync(
+            new UploadAttachmentRequest(Credentials, new AttachmentUpload("avatar.png", "image/png", 1, stream))));
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("新名字 & Ada")]
+    [InlineData("Original name")]
+    public async Task UpdateOwnNameAsync_WhenPatchSucceeds_ReadsAuthoritativeName(string serverName)
+    {
+        using var handler = new RecordingHandler(
+            Json("""{"result":"success","msg":""}"""),
+            Json(JsonSerializer.Serialize(new { result = "success", user_id = 7, full_name = serverName })));
+        using var gateway = new ZulipGateway(handler);
+
+        var name = await gateway.UpdateOwnNameAsync(new UpdateOwnNameRequest(Credentials, " 新名字 & Ada "));
+
+        Assert.Equal(serverName, name);
+        Assert.Equal(2, handler.Requests.Count);
+        var write = handler.Requests[0];
+        Assert.Equal(HttpMethod.Patch, write.Method);
+        Assert.Equal("https://chat.example.test/api/v1/settings", write.Uri!.AbsoluteUri);
+        Assert.Equal("Basic", write.Authorization?.Scheme);
+        Assert.Equal("full_name=" + WebUtility.UrlEncode("新名字 & Ada"), write.Body);
+        Assert.Equal(HttpMethod.Get, handler.Requests[1].Method);
+        Assert.Equal("https://chat.example.test/api/v1/users/me", handler.Requests[1].Uri!.AbsoluteUri);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.Redirect)]
+    public async Task UpdateOwnNameAsync_WhenRejected_DoesNotRetryOrRead(HttpStatusCode status)
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"error","msg":"rejected"}""", status));
+        using var gateway = new ZulipGateway(handler);
+        await Assert.ThrowsAsync<GatewayException>(() => gateway.UpdateOwnNameAsync(new UpdateOwnNameRequest(Credentials, "New name")));
+        Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"result\":\"success\",\"user_id\":8,\"full_name\":\"Other user\"}")]
+    [InlineData("{\"result\":\"success\",\"user_id\":7,\"full_name\":\" \"}")]
+    [InlineData("{\"result\":\"error\",\"user_id\":7,\"full_name\":\"New name\"}")]
+    public async Task UpdateOwnNameAsync_WhenReadbackIsInvalid_DoesNotClaimSuccess(string body)
+    {
+        using var handler = new RecordingHandler(Json("""{"result":"success","msg":""}"""), Json(body));
+        using var gateway = new ZulipGateway(handler);
+        await Assert.ThrowsAsync<GatewayException>(() => gateway.UpdateOwnNameAsync(new UpdateOwnNameRequest(Credentials, "New name")));
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UpdateOwnNameAsync_WhenRequestHangs_CancelsWithoutRetry(bool callerCancels)
+    {
+        using var handler = new HangingRequestHandler();
+        var time = new ManualTimeoutProvider();
+        using var gateway = new ZulipGateway(handler, time);
+        using var cancellation = new CancellationTokenSource();
+        var pending = gateway.UpdateOwnNameAsync(new UpdateOwnNameRequest(Credentials, "New name"), cancellation.Token);
+        await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(TimeSpan.FromSeconds(30), time.DueTime);
+        if (callerCancels)
+        {
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        else
+        {
+            time.Expire();
+            var error = await Assert.ThrowsAsync<GatewayException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(GatewayErrorCode.RequestTimedOut, error.Code);
+        }
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Theory]
+    [InlineData(false, false, HttpStatusCode.Unauthorized)]
+    [InlineData(true, false, HttpStatusCode.Unauthorized)]
+    [InlineData(false, true, HttpStatusCode.Unauthorized)]
+    [InlineData(true, true, HttpStatusCode.Unauthorized)]
+    [InlineData(false, false, HttpStatusCode.OK)]
+    [InlineData(true, false, HttpStatusCode.OK)]
+    [InlineData(false, true, HttpStatusCode.OK)]
+    [InlineData(true, true, HttpStatusCode.OK)]
+    public async Task UpdateOwnNameAsync_WhenResponseBodyFails_PreservesKnownFailure(
+        bool readback, bool disconnects, HttpStatusCode status)
+    {
+        using var body = new HangingResponseStream(disconnects);
+        var failedResponse = new HttpResponseMessage(status) { Content = new StreamContent(body) };
+        using var handler = new RecordingHandler(readback
+            ? [Json("""{"result":"success","msg":""}"""), failedResponse]
+            : [failedResponse]);
+        var time = new ManualTimeoutProvider();
+        using var gateway = new ZulipGateway(handler, time);
+        var pending = gateway.UpdateOwnNameAsync(new UpdateOwnNameRequest(Credentials, "New name"));
+        await body.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (!disconnects) time.Expire();
+        var error = await Assert.ThrowsAsync<GatewayException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(status == HttpStatusCode.Unauthorized ? GatewayErrorKind.ReauthRequired : GatewayErrorKind.Offline, error.Kind);
+        Assert.Equal(status == HttpStatusCode.Unauthorized ? GatewayErrorCode.Unauthorized :
+            disconnects ? GatewayErrorCode.NetworkError : GatewayErrorCode.RequestTimedOut, error.Code);
+        Assert.Equal(readback ? 2 : 1, handler.Requests.Count);
+        Assert.True(body.IsDisposed);
+    }
+
     private static readonly RealmEndpoint Realm = RealmEndpoint.Parse("https://chat.example.test");
     private static readonly CredentialEnvelope Credentials = new(Realm, "ada@example.test", 7, "api-key-secret");
+
+    [Theory]
+    [InlineData("J", UserAvatarSource.Generated)]
+    [InlineData("U", UserAvatarSource.Uploaded)]
+    [InlineData("G", UserAvatarSource.Gravatar)]
+    public async Task RegisterAsync_WhenAvatarSourceIsAtRoot_MapsOnlyCurrentUser(string source, UserAvatarSource expected)
+    {
+        using var handler = new RecordingHandler(Json($$"""
+            {"queue_id":"queue-1","last_event_id":9,"event_queue_longpoll_timeout_seconds":90,
+             "max_message_length":10000,"max_topic_length":60,"max_avatar_file_size_mib":3,"subscriptions":[],"avatar_source":"{{source}}",
+             "realm_users":[{"user_id":7,"full_name":"Ada","avatar_url":"/user_avatars/1/hash.png","avatar_version":2},
+                            {"user_id":8,"full_name":"Bea","avatar_url":"/user_avatars/1/other.png","avatar_version":2}]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+        var result = await gateway.RegisterAsync(new RegisterRequest(Credentials));
+        Assert.Equal(expected, result.Users[0].AvatarSource);
+        Assert.Equal(3, result.MaxAvatarFileSizeMiB);
+        Assert.Equal(UserAvatarSource.Unknown, result.Users[1].AvatarSource);
+        Assert.Contains("\"user_avatar_url_field_optional\":false", ParseForm(handler.Requests[0].Body)["client_capabilities"], StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("J", UserAvatarSource.Generated)]
+    [InlineData("U", UserAvatarSource.Uploaded)]
+    [InlineData("G", UserAvatarSource.Gravatar)]
+    public async Task GetEventsAsync_WhenAvatarIsChanged_MapsSourceVersionAndNullableUrl(string source, UserAvatarSource expected)
+    {
+        using var handler = new RecordingHandler(Json($$$"""
+            {"events":[{"id":12,"type":"realm_user","op":"update","person":
+                {"user_id":7,"avatar_source":"{{{source}}}","avatar_url":null,"avatar_version":3}}]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+        var batch = await gateway.GetEventsAsync(new GetEventsRequest(Credentials, "queue-1", 11, TimeSpan.FromSeconds(30)));
+        var patch = Assert.IsType<UserPatchedEvent>(Assert.Single(batch.Events));
+        Assert.True(patch.HasAvatar);
+        Assert.Null(patch.AvatarUrl);
+        Assert.Equal(3, patch.AvatarVersion);
+        Assert.Equal(expected, patch.AvatarSource);
+    }
 
     [Fact]
     public async Task Probe_uses_server_settings_without_credentials_and_ignores_unknown_fields()
@@ -35,6 +559,22 @@ public sealed class ZulipGatewayTests
     {
         using var handler = ZulipGateway.CreateDefaultHandler();
         Assert.False(handler.AllowAutoRedirect);
+    }
+
+    [Fact]
+    public void CreateDefaultHandler_WhenCreated_ConnectsDirectlyWithoutSystemProxy()
+    {
+        using var handler = ZulipGateway.CreateDefaultHandler();
+
+        Assert.False(handler.UseProxy);
+    }
+
+    [Fact]
+    public void CreateDefaultHandler_WhenCreated_PreservesSystemCertificateValidation()
+    {
+        using var handler = ZulipGateway.CreateDefaultHandler();
+
+        Assert.Null(handler.ServerCertificateCustomValidationCallback);
     }
 
     [Fact]
@@ -87,7 +627,7 @@ public sealed class ZulipGatewayTests
         Assert.Equal("false", form["apply_markdown"]);
         Assert.Equal("false", form["include_subscribers"]);
         Assert.Equal("3600", form["idle_queue_timeout"]);
-        Assert.Equal("[\"subscription\",\"realm_user\",\"realm\",\"realm_user_groups\",\"recent_private_conversations\",\"presence\",\"user_settings\",\"user_status\"]", form["fetch_event_types"]);
+        Assert.Equal("[\"subscription\",\"realm_user\",\"realm\",\"realm_user_groups\",\"recent_private_conversations\",\"presence\",\"user_settings\",\"user_status\",\"realm_emoji\"]", form["fetch_event_types"]);
         Assert.Equal("true", form["slim_presence"]);
         Assert.Contains("\"bulk_message_deletion\":true", form["client_capabilities"], StringComparison.Ordinal);
         Assert.Contains("\"archived_channels\":true", form["client_capabilities"], StringComparison.Ordinal);
@@ -112,7 +652,11 @@ public sealed class ZulipGatewayTests
         Assert.Equal("会议中", userStatus.Content.StatusText);
         Assert.Equal("1f4c5", userStatus.Content.Emoji!.EmojiCode);
         Assert.Equal(TopicVisibilityPolicy.Followed, Assert.Single(result.UserTopics!).Policy);
-        Assert.Empty(result.Events);
+        var unreadFlags = Assert.IsType<MessageFlagsChangedEvent>(Assert.Single(result.Events));
+        Assert.Equal(new long[] { 1, 2, 3 }, unreadFlags.MessageIds);
+        Assert.Equal(DomainEventSource.Register, unreadFlags.Source);
+        Assert.Equal(MessageFlagOperation.Remove, unreadFlags.Operation);
+        Assert.Equal("read", unreadFlags.Flag);
     }
 
     [Theory]
@@ -518,6 +1062,69 @@ public sealed class ZulipGatewayTests
         Assert.Equal($"[{{\"operator\":\"has\",\"operand\":\"{operand}\"}}]", query["narrow"]);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SearchMessages_WhenQueryIsEmpty_UsesEmptyNarrowAndRetainsPaging(bool older)
+    {
+        using var handler = new RecordingHandler(Json("""{"messages":[],"found_oldest":true,"found_newest":true,"found_anchor":true}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        await gateway.SearchMessagesAsync(new MessageSearchRequest(Credentials, " \t ", older ? 90 : null, 25));
+
+        var query = ParseQuery(Assert.Single(handler.Requests).Uri!);
+        Assert.Equal("[]", query["narrow"]);
+        Assert.Equal(older ? "90" : "newest", query["anchor"]);
+        Assert.Equal("25", query["num_before"]);
+        Assert.Equal("0", query["num_after"]);
+        Assert.Equal("false", query["apply_markdown"]);
+        if (older) Assert.Equal("false", query["include_anchor"]);
+    }
+
+    [Theory]
+    [InlineData("dm", false, " report ")]
+    [InlineData("dm", true, " report ")]
+    [InlineData("self", false, " report ")]
+    [InlineData("self", true, " report ")]
+    [InlineData("group", false, " report ")]
+    [InlineData("group", true, " report ")]
+    [InlineData("dm", false, "")]
+    [InlineData("dm", true, "")]
+    [InlineData("self", false, "")]
+    [InlineData("self", true, "")]
+    [InlineData("group", false, "")]
+    [InlineData("group", true, "")]
+    public async Task SearchMessages_WhenConversationIsProvided_CombinesExactScopeWithSearchAndContentFilter(string kind, bool older, string keyword)
+    {
+        ConversationKey conversation = kind switch
+        {
+            "group" => new ChannelTopic(42, string.Empty),
+            "self" => new DirectMessage([]),
+            _ => new DirectMessage([9])
+        };
+        var expectedConversation = kind switch
+        {
+            "group" => "{\"operator\":\"channel\",\"operand\":42},{\"operator\":\"topic\",\"operand\":\"\"}",
+            "self" => "{\"operator\":\"dm\",\"operand\":[7]}",
+            _ => "{\"operator\":\"dm\",\"operand\":[9]}"
+        };
+        using var handler = new RecordingHandler(Json("""{"messages":[],"found_oldest":true,"found_newest":true,"found_anchor":true}"""));
+        using var gateway = new ZulipGateway(handler);
+
+        await gateway.SearchMessagesAsync(new MessageSearchRequest(
+            Credentials, keyword, older ? 90 : null, 25, MessageSearchFilter.Files, conversation));
+
+        var query = ParseQuery(Assert.Single(handler.Requests).Uri!);
+        var searchTerm = keyword.Length == 0 ? string.Empty : "{\"operator\":\"search\",\"operand\":\"report\"},";
+        Assert.Equal("[" + searchTerm + "{\"operator\":\"has\",\"operand\":\"attachment\"}," + expectedConversation + "]", query["narrow"]);
+        Assert.Equal(older ? "90" : "newest", query["anchor"]);
+        Assert.Equal("25", query["num_before"]);
+        Assert.Equal("0", query["num_after"]);
+        Assert.Equal("true", query["allow_empty_topic_name"]);
+        Assert.Equal("false", query["apply_markdown"]);
+        if (older) Assert.Equal("false", query["include_anchor"]);
+    }
+
     [Fact]
     public async Task LoadSavedMessages_UsesStarredNarrowAndSupportsPaging()
     {
@@ -535,19 +1142,86 @@ public sealed class ZulipGatewayTests
     }
 
     [Fact]
-    public async Task Mark_read_uses_a_json_encoded_narrow()
+    public async Task MarkReadAsync_WhenReadStatesDiffer_UpdatesOnlyTheRequestedMessageIds()
     {
-        using var handler = new RecordingHandler(Json("""{"result":"success"}"""));
+        using var handler = new RecordingHandler(Json("""{"result":"success","messages":[102,100]}"""));
         using var gateway = new ZulipGateway(handler);
 
-        await gateway.MarkReadAsync(new MarkReadRequest(Credentials, new DirectMessage([]), 99, 50));
+        // Message 101 can be unread on the server even if this client thinks it is read.
+        // A range of two unread messages ending at 102 would miss message 100.
+        await gateway.MarkReadAsync(new MarkReadRequest(Credentials, [100, 102]));
 
-        var form = ParseForm(Assert.Single(handler.Requests).Body);
-        Assert.Equal("[{\"operator\":\"dm\",\"operand\":[7]},{\"operator\":\"is\",\"operand\":\"unread\"}]", form["narrow"]);
-        Assert.Equal("99", form["anchor"]);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/api/v1/messages/flags", request.Uri!.AbsolutePath);
+        var form = ParseForm(request.Body);
+        Assert.Equal("[100,102]", form["messages"]);
         Assert.Equal("read", form["flag"]);
         Assert.Equal("add", form["op"]);
-        Assert.Equal("49", form["num_before"]);
+        Assert.Equal(3, form.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RegisterAsync_WhenSnapshotListsUnreadIds_CorrectsOnlyThoseCachedFlags(bool truncated)
+    {
+        var fields = $$"""
+            ,"unread_msgs":{"count":3,"old_unreads_missing":{{truncated.ToString().ToLowerInvariant()}},
+            "streams":[{"stream_id":42,"topic":"","unread_message_ids":[100]}],
+            "pms":[{"other_user_id":9,"unread_message_ids":[102]}],
+            "huddles":[{"user_ids_string":"7,8,9","unread_message_ids":[104]}]}
+            """;
+        using var handler = new RecordingHandler(Json(MessagePolicyPayload(fields)));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.RegisterAsync(new RegisterRequest(Credentials));
+
+        var flags = Assert.IsType<MessageFlagsChangedEvent>(Assert.Single(result.Events));
+        Assert.Equal(new long[] { 100, 102, 104 }, flags.MessageIds);
+        Assert.Equal(MessageFlagOperation.Remove, flags.Operation);
+        Assert.Equal("read", flags.Flag);
+        Assert.Equal(DomainEventSource.Register, flags.Source);
+        Assert.False(flags.AllMessages);
+        Assert.Equal(3, result.Unread.Total);
+        Assert.Equal(truncated, result.Unread.IsTruncated);
+    }
+
+    [Theory]
+    [InlineData("{\"result\":\"success\",\"messages\":[]}")]
+    [InlineData("{\"result\":\"success\",\"messages\":[100]}")]
+    [InlineData("{\"result\":\"success\",\"messages\":[101,102]}")]
+    [InlineData("{\"result\":\"success\"}")]
+    [InlineData("{\"result\":\"error\",\"messages\":[100,102]}")]
+    [InlineData("{\"result\":\"success\",\"messages\":[100,102],\"ignored_parameters_unsupported\":[\"messages\"]}")]
+    public async Task MarkReadAsync_WhenResponseDoesNotConfirmRequestedMessages_FailsWithoutRetry(string response)
+    {
+        using var handler = new RecordingHandler(Json(response));
+        using var gateway = new ZulipGateway(handler);
+
+        var exception = await Assert.ThrowsAsync<GatewayException>(() =>
+            gateway.MarkReadAsync(new MarkReadRequest(Credentials, [100, 102])));
+
+        Assert.Equal(GatewayErrorCode.InvalidResponse, exception.Code);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task RegisterAsync_WhenUnreadSnapshotIsLarge_BoundsCacheUpdateBatchesWithoutLosingIds()
+    {
+        var ids = Enumerable.Range(1, 1200).Select(id => (long)id).ToArray();
+        var fields = $$"""
+            ,"unread_msgs":{"count":1200,"pms":[{"other_user_id":9,"unread_message_ids":{{JsonSerializer.Serialize(ids)}}}]}
+            """;
+        using var handler = new RecordingHandler(Json(MessagePolicyPayload(fields)));
+        using var gateway = new ZulipGateway(handler);
+
+        var result = await gateway.RegisterAsync(new RegisterRequest(Credentials));
+
+        var batches = result.Events.Cast<MessageFlagsChangedEvent>().ToArray();
+        Assert.Equal(3, batches.Length);
+        Assert.All(batches, batch => Assert.InRange(batch.MessageIds.Count, 1, 500));
+        Assert.Equal(ids, batches.SelectMany(batch => batch.MessageIds));
+        Assert.Equal(1200, result.Unread.Total);
     }
 
     [Fact]
@@ -564,6 +1238,7 @@ public sealed class ZulipGatewayTests
         Assert.Equal("topic", form["topic"]);
         Assert.Equal("**raw** _markdown_", form["content"]);
         Assert.Equal("queue-1", form["queue_id"]);
+        Assert.Equal("true", form["read_by_sender"]);
         Assert.Equal("77", form["local_id"]);
         Assert.Equal("77", result.LocalId);
         Assert.Equal(123, result.MessageId);
@@ -722,22 +1397,71 @@ public sealed class ZulipGatewayTests
     }
 
     [Theory]
-    [InlineData("[\"read\"]", MessageFlagOperation.Add)]
-    [InlineData("[]", MessageFlagOperation.Remove)]
-    public async Task Event_UpdateMessage_WhenFlagsArePresent_MapsReadState(
-        string flags,
-        MessageFlagOperation expectedOperation)
+    [InlineData(false, true, false, "[]")]
+    [InlineData(false, true, false, "[\"starred\"]")]
+    [InlineData(false, false, true, "[\"read\"]")]
+    [InlineData(true, true, false, "[]")]
+    [InlineData(true, true, false, "[\"starred\"]")]
+    [InlineData(true, false, true, "[\"read\"]")]
+    public async Task Event_UpdateMessage_WhenFlagsSnapshotIsStale_PreservesReadAndStarState(
+        bool renderingOnly, bool isRead, bool isStarred, string flags)
     {
-        using var handler = new RecordingHandler(Json($$"""{"events":[{"id":23,"type":"update_message","message_id":100,"flags":{{flags}},"rendering_only":true}]}"""));
+        using var handler = new RecordingHandler(Json($$"""
+            {"events":[{"id":23,"type":"update_message","message_id":100,"content":"edited",
+              "flags":{{flags}},"rendering_only":{{renderingOnly.ToString().ToLowerInvariant()}}}]}
+            """));
         using var gateway = new ZulipGateway(handler);
+        var conversation = new DirectMessage([9]);
+        var original = new ChatMessage(100, conversation, 7, "original", DateTimeOffset.UnixEpoch,
+            isRead: isRead, isStarred: isStarred);
+        var state = new ClientState(messages: new Dictionary<long, ChatMessage> { [100] = original },
+            unread: new UnreadState(new Dictionary<string, int> { [conversation.CanonicalKey] = isRead ? 0 : 1 }),
+            lastEventId: 22);
 
-        var batch = await gateway.GetEventsAsync(
-            new GetEventsRequest(Credentials, "queue-1", 22, TimeSpan.FromSeconds(30)));
+        var batch = await gateway.GetEventsAsync(new GetEventsRequest(Credentials, "queue-1", 22, TimeSpan.FromSeconds(30)));
+        var changed = DomainReducer.Apply(state, batch.Events);
 
-        var changed = Assert.IsType<MessageFlagsChangedEvent>(Assert.Single(batch.Events));
-        Assert.Equal([100L], changed.MessageIds);
-        Assert.Equal(expectedOperation, changed.Operation);
-        Assert.Equal("read", changed.Flag);
+        Assert.Equal(renderingOnly ? "original" : "edited", changed.Messages[100].Content);
+        Assert.Equal(!renderingOnly, changed.Messages[100].IsEdited);
+        Assert.Equal(isRead, changed.Messages[100].IsRead);
+        Assert.Equal(isStarred, changed.Messages[100].IsStarred);
+        Assert.Equal(state.Unread.Total, changed.Unread.Total);
+        Assert.Equal(state.Unread.Counts, changed.Unread.Counts);
+        Assert.DoesNotContain(batch.Events, item => item is MessageFlagsChangedEvent);
+        Assert.Equal(23, changed.LastEventId);
+    }
+
+    [Theory]
+    [InlineData("read", true, false)]
+    [InlineData("read", false, false)]
+    [InlineData("starred", true, true)]
+    [InlineData("starred", false, true)]
+    public async Task Event_UpdateMessage_WhenExplicitFlagEventPrecedesEdit_PreservesExplicitChange(
+        string flag, bool add, bool initialRead)
+    {
+        using var handler = new RecordingHandler(Json($$"""
+            {"events":[
+              {"id":23,"type":"update_message_flags","messages":[100],"all":false,"flag":"{{flag}}","op":"{{(add ? "add" : "remove")}}"},
+              {"id":24,"type":"update_message","message_id":100,"content":"edited","flags":["starred"],"rendering_only":false}
+            ]}
+            """));
+        using var gateway = new ZulipGateway(handler);
+        var conversation = new DirectMessage([9]);
+        var state = new ClientState(messages: new Dictionary<long, ChatMessage>
+            { [100] = new(100, conversation, 9, "original", DateTimeOffset.UnixEpoch, isRead: initialRead, isStarred: !add) },
+            unread: new UnreadState(new Dictionary<string, int> { [conversation.CanonicalKey] = initialRead ? 0 : 1 }),
+            lastEventId: 22);
+
+        var batch = await gateway.GetEventsAsync(new GetEventsRequest(Credentials, "queue-1", 22, TimeSpan.FromSeconds(30)));
+        var changed = DomainReducer.Apply(state, batch.Events);
+
+        var expectedRead = flag == "read" ? add : initialRead;
+        Assert.Equal("edited", changed.Messages[100].Content);
+        Assert.Equal(expectedRead, changed.Messages[100].IsRead);
+        Assert.Equal(expectedRead ? 0 : 1, changed.Unread.Total);
+        Assert.Equal(flag == "starred" ? add : !add, changed.Messages[100].IsStarred);
+        Assert.Single(batch.Events.OfType<MessageFlagsChangedEvent>());
+        Assert.Equal(24, changed.LastEventId);
     }
 
     [Fact]
@@ -750,8 +1474,10 @@ public sealed class ZulipGatewayTests
 
         var batch = await gateway.GetEventsAsync(new GetEventsRequest(Credentials, "queue-1", 20, TimeSpan.FromSeconds(30)));
 
-        Assert.Equal(2, batch.Events.Count);
-        Assert.All(batch.Events, item => Assert.True(Assert.IsType<SubscriptionChangedEvent>(item).IsRemoved));
+        var removals = batch.Events.OfType<SubscriptionChangedEvent>().ToArray();
+        Assert.Equal(2, removals.Length);
+        Assert.All(removals, item => Assert.True(item.IsRemoved));
+        Assert.Single(batch.Events.OfType<MessageActionPolicyInvalidatedEvent>());
     }
 
     [Fact]
@@ -1017,6 +1743,63 @@ public sealed class ZulipGatewayTests
             new UploadAttachmentRequest(Credentials, new AttachmentUpload("design.png", "image/png", 1, stream))));
 
         Assert.Equal(GatewayErrorKind.Protocol, error.Kind);
+    }
+
+    [Theory]
+    [InlineData("url", "/user_uploads/7/ab/中文图片.png", "中文图片.png")]
+    [InlineData("url", "https://chat.example.test/user_uploads/7/ab/设计图-v2_é.png", "设计图-v2_é.png")]
+    [InlineData("uri", "/user_uploads/7/ab/中文图片.png", "中文图片.png")]
+    [InlineData("url", "/user_uploads/7/ab/%E4%B8%AD%E6%96%87.png", "中文.png")]
+    [InlineData("url", "/user_uploads/7/ab/中文%20%25%2520%2F%3F%23%5B%5D%28%29%5C%0A%0D.png",
+        "中文%20%25%2520%2F%3F%23%5B%5D%28%29%5C%0A%0D.png")]
+    public async Task UploadAttachment_WhenUrlContainsUnicode_PreservesMessagePathAndEscapedDelimiters(
+        string urlField, string returnedUrl, string expectedPathLeaf)
+    {
+        using var handler = new RecordingHandler(
+            Json(JsonSerializer.Serialize(new Dictionary<string, string>
+            {
+                ["result"] = "success",
+                ["filename"] = "显示名.png",
+                [urlField] = returnedUrl
+            })),
+            Json("""{"id":123}"""));
+        using var gateway = new ZulipGateway(handler);
+        await using var stream = new MemoryStream([1, 2, 3]);
+
+        var uploaded = await gateway.UploadAttachmentAsync(new UploadAttachmentRequest(
+            Credentials, new AttachmentUpload("本地名.png", "image/png", 3, stream)));
+        var expectedUrl = "https://chat.example.test/user_uploads/7/ab/" + expectedPathLeaf;
+        Assert.Equal(expectedUrl, uploaded.Url);
+        Assert.Equal("显示名.png", uploaded.FileName);
+
+        await gateway.SendAsync(new SendRequest(
+            Credentials, "queue-1", "77", new DirectMessage([9]), $"![{uploaded.FileName}]({uploaded.Url})"));
+
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(HttpMethod.Post, handler.Requests[1].Method);
+        Assert.Equal($"![显示名.png]({expectedUrl})", ParseForm(handler.Requests[1].Body)["content"]);
+    }
+
+    [Theory]
+    [InlineData("https://user:password@chat.example.test/user_uploads/7/ab/中文.png")]
+    [InlineData("/user_uploads/7/ab/中文.png?key=not-a-real-secret")]
+    [InlineData("/user_uploads/7/ab/中文.png#fragment")]
+    [InlineData("http://chat.example.test/user_uploads/7/ab/中文.png")]
+    [InlineData("https://chat.example.test:444/user_uploads/7/ab/中文.png")]
+    [InlineData("/user_uploads/temporary/7/中文.png")]
+    [InlineData("/user_avatars/7/中文.png")]
+    public async Task UploadAttachment_WhenUrlIsNotPermanentRealmUpload_FailsClosedWithoutRetry(string returnedUrl)
+    {
+        using var handler = new RecordingHandler(Json(JsonSerializer.Serialize(new { url = returnedUrl })));
+        using var gateway = new ZulipGateway(handler);
+        await using var stream = new MemoryStream([1]);
+
+        var error = await Assert.ThrowsAsync<GatewayException>(() => gateway.UploadAttachmentAsync(
+            new UploadAttachmentRequest(Credentials, new AttachmentUpload("中文.png", "image/png", 1, stream))));
+
+        Assert.Equal(GatewayErrorKind.Protocol, error.Kind);
+        Assert.Equal(GatewayErrorCode.InvalidResponse, error.Code);
+        Assert.Single(handler.Requests);
     }
 
     [Fact]
@@ -1461,6 +2244,31 @@ public sealed class ZulipGatewayTests
         Assert.Single(handler.Requests);
     }
 
+    [Theory]
+    [InlineData("json", "中文图-v2.png")]
+    [InlineData("no-content", "中文图-v2.png")]
+    [InlineData("lost-response", "中文图-v2.png")]
+    [InlineData("json", "large.bin")]
+    [InlineData("no-content", "large.bin")]
+    [InlineData("lost-response", "large.bin")]
+    public async Task UploadAttachment_WhenTusCompletes_PreservesServerPathInJsonAndLocationRecovery(
+        string completionMode, string serverFileName)
+    {
+        const long length = 25L * 1024 * 1024;
+        using var handler = new ResumableUploadHandler(
+            length, disconnectFirstPatch: false, serverFileName, completionMode);
+        using var gateway = new ZulipGateway(handler);
+        await using var stream = new FixedLengthReadStream(length);
+
+        var uploaded = await gateway.UploadAttachmentAsync(new UploadAttachmentRequest(
+            Credentials, new AttachmentUpload("本地显示名.bin", "application/octet-stream", length, stream)));
+
+        Assert.Equal("https://chat.example.test/user_uploads/7/ab/" + serverFileName, uploaded.Url);
+        Assert.Equal(1, handler.CreationCount);
+        Assert.Equal(completionMode == "lost-response" ? 1 : 0, handler.HeadCount);
+        Assert.Equal(5, handler.PatchOffsets.Count);
+    }
+
     [Fact]
     public async Task UploadAttachment_WhenTusPatchKeepsDisconnecting_StopsAfterBoundedRecovery()
     {
@@ -1768,6 +2576,69 @@ public sealed class ZulipGatewayTests
     private static Dictionary<string, string> ParseQuery(Uri uri) => ParseForm(uri.Query.TrimStart('?'));
     private static string DecodeForm(string value) => Uri.UnescapeDataString(value.Replace('+', ' '));
 
+    private sealed class HangingRequestHandler(
+        bool headersReceived = false, bool disconnects = false, HttpStatusCode status = HttpStatusCode.OK) : HttpMessageHandler
+    {
+        public TaskCompletionSource<bool> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int Calls { get; private set; }
+        public HangingResponseStream Body { get; } = new(disconnects);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            Entered.TrySetResult(true);
+            if (headersReceived)
+            {
+                var response = new HttpResponseMessage(status) { Content = new StreamContent(Body) };
+                if (status == HttpStatusCode.TooManyRequests)
+                    response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(120));
+                return response;
+            }
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException("The request must be cancelled.");
+        }
+    }
+
+    private sealed class HangingResponseStream(bool disconnects) : MemoryStream
+    {
+        public TaskCompletionSource<bool> Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool IsDisposed { get; private set; }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Entered.TrySetResult(true);
+            if (disconnects) throw new IOException("Response body disconnected.");
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            IsDisposed = true;
+            base.Dispose(disposing);
+        }
+    }
+
+    private sealed class ManualTimeoutProvider : TimeProvider
+    {
+        private Action? _expire;
+        public TimeSpan DueTime { get; private set; }
+        public void Expire() => _expire?.Invoke();
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            DueTime = dueTime;
+            _expire = () => callback(state);
+            return new ManualTimer(() => _expire = null);
+        }
+
+        private sealed class ManualTimer(Action dispose) : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period) => true;
+            public void Dispose() => dispose();
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
+    }
+
     private sealed class RecordingHandler(params HttpResponseMessage[] responses) : HttpMessageHandler
     {
         private readonly Queue<HttpResponseMessage> _responses = new(responses);
@@ -1781,7 +2652,11 @@ public sealed class ZulipGatewayTests
 
     private sealed record CapturedRequest(HttpMethod Method, Uri? Uri, AuthenticationHeaderValue? Authorization, string Body);
 
-    private sealed class ResumableUploadHandler(long totalLength, bool disconnectFirstPatch) : HttpMessageHandler
+    private sealed class ResumableUploadHandler(
+        long totalLength,
+        bool disconnectFirstPatch,
+        string serverFileName = "large.bin",
+        string completionMode = "json") : HttpMessageHandler
     {
         private bool _disconnectFirstPatch = disconnectFirstPatch;
         private long _serverOffset;
@@ -1803,7 +2678,7 @@ public sealed class ZulipGatewayTests
                 UploadMetadata = Assert.Single(request.Headers.GetValues("Upload-Metadata"));
                 Assert.Equal(totalLength.ToString(CultureInfo.InvariantCulture), Assert.Single(request.Headers.GetValues("Upload-Length")));
                 var created = new HttpResponseMessage(HttpStatusCode.Created);
-                created.Headers.Location = new Uri("/api/v1/tus/7/ab/large.bin", UriKind.Relative);
+                created.Headers.Location = new Uri("/api/v1/tus/7/ab/" + Uri.EscapeDataString(serverFileName), UriKind.Relative);
                 return created;
             }
 
@@ -1830,8 +2705,10 @@ public sealed class ZulipGatewayTests
             await request.Content!.CopyToAsync(Stream.Null, cancellationToken);
             _serverOffset += request.Content.Headers.ContentLength!.Value;
             var isComplete = _serverOffset == totalLength;
-            var response = isComplete
-                ? Json("""{"url":"/user_uploads/7/ab/large.bin","filename":"large.bin"}""")
+            if (isComplete && completionMode == "lost-response")
+                throw new HttpRequestException("simulated loss of completed upload response");
+            var response = isComplete && completionMode == "json"
+                ? Json(JsonSerializer.Serialize(new { url = "/user_uploads/7/ab/" + serverFileName, filename = serverFileName }))
                 : new HttpResponseMessage(HttpStatusCode.NoContent);
             return WithTusOffset(response, _serverOffset);
         }

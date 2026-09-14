@@ -45,6 +45,8 @@
                      Color="{AppThemeBinding Light={StaticResource LightGroundColor}, Dark={StaticResource DarkGroundColor}}" />
     <SolidColorBrush x:Key="SurfaceBrush"
                      Color="{AppThemeBinding Light={StaticResource LightSurfaceColor}, Dark={StaticResource DarkSurfaceColor}}" />
+    <SolidColorBrush x:Key="ChatBackgroundBrush"
+                     Color="{AppThemeBinding Light=#FAFAFA, Dark={StaticResource DarkSurfaceColor}}" />
     <SolidColorBrush x:Key="SurfaceRaisedBrush"
                      Color="{AppThemeBinding Light={StaticResource LightSurfaceRaisedColor}, Dark={StaticResource DarkSurfaceRaisedColor}}" />
     <SolidColorBrush x:Key="SurfaceSoftBrush"

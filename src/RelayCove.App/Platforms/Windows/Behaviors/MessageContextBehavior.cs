@@ -1,10 +1,7 @@
 using System.Windows.Input;
 using Microsoft.Maui.Controls;
-using Microsoft.UI.Input;
 using Microsoft.UI.Xaml.Input;
 using RelayCove.App.ViewModels;
-using Windows.System;
-using Windows.UI.Core;
 using WinPoint = Windows.Foundation.Point;
 using WinUiBorder = Microsoft.Maui.Platform.ContentPanel;
 using WinUiFrameworkElement = Microsoft.UI.Xaml.FrameworkElement;
@@ -17,10 +14,9 @@ public sealed class MessageContextBehavior : Behavior<Border>
     private WinUiBorder? _platformView;
     private Microsoft.UI.Xaml.UIElement? _inputSource;
     private Border? _virtualView;
-    private ShellViewModel? _viewModel;
-    private bool _opened;
-    private bool _pointerOver;
-    private bool _keyboardFocused;
+    private readonly RightTappedEventHandler _rightTappedHandler;
+
+    public MessageContextBehavior() => _rightTappedHandler = OnRightTapped;
 
     public static readonly BindableProperty CommandProperty = BindableProperty.Create(
         nameof(Command),
@@ -32,19 +28,6 @@ public sealed class MessageContextBehavior : Behavior<Border>
         typeof(object),
         typeof(MessageContextBehavior));
 
-    public static readonly BindableProperty FocusRequestProperty = BindableProperty.Create(
-        nameof(FocusRequest),
-        typeof(int),
-        typeof(MessageContextBehavior),
-        0,
-        propertyChanged: OnFocusRequestChanged);
-
-    public static readonly BindableProperty RevealElementProperty = BindableProperty.Create(
-        nameof(RevealElement),
-        typeof(VisualElement),
-        typeof(MessageContextBehavior),
-        propertyChanged: OnRevealElementChanged);
-
     public ICommand? Command
     {
         get => (ICommand?)GetValue(CommandProperty);
@@ -55,18 +38,6 @@ public sealed class MessageContextBehavior : Behavior<Border>
     {
         get => GetValue(CommandParameterProperty);
         set => SetValue(CommandParameterProperty, value);
-    }
-
-    public int FocusRequest
-    {
-        get => (int)GetValue(FocusRequestProperty);
-        set => SetValue(FocusRequestProperty, value);
-    }
-
-    public VisualElement? RevealElement
-    {
-        get => (VisualElement?)GetValue(RevealElementProperty);
-        set => SetValue(RevealElementProperty, value);
     }
 
     protected override void OnAttachedTo(Border bindable)
@@ -96,7 +67,7 @@ public sealed class MessageContextBehavior : Behavior<Border>
         if (platformView is null) return;
 
         _platformView = platformView;
-        platformView.IsTabStop = true;
+        platformView.IsTabStop = false;
         platformView.Loaded += OnPlatformViewLoaded;
         AttachInputSource(platformView);
     }
@@ -108,9 +79,7 @@ public sealed class MessageContextBehavior : Behavior<Border>
 
         platformView.Loaded -= OnPlatformViewLoaded;
         DetachInputSource();
-        StopWatchingFocusReturn();
         _platformView = null;
-        _opened = false;
     }
 
     private void OnPlatformViewLoaded(object sender, Microsoft.UI.Xaml.RoutedEventArgs eventArgs)
@@ -125,85 +94,41 @@ public sealed class MessageContextBehavior : Behavior<Border>
         while (current is not null and not WinUiListViewItem)
             current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current);
         _inputSource = current as Microsoft.UI.Xaml.UIElement ?? platformView;
-        _inputSource.RightTapped += OnRightTapped;
-        _inputSource.KeyDown += OnKeyDown;
-        _inputSource.PointerEntered += OnPointerEntered;
-        _inputSource.PointerExited += OnPointerExited;
-        _inputSource.GotFocus += OnGotFocus;
-        _inputSource.LostFocus += OnLostFocus;
+        _inputSource.AddHandler(Microsoft.UI.Xaml.UIElement.RightTappedEvent, _rightTappedHandler, true);
     }
 
     private void DetachInputSource()
     {
         if (_inputSource is null) return;
-        _inputSource.RightTapped -= OnRightTapped;
-        _inputSource.KeyDown -= OnKeyDown;
-        _inputSource.PointerEntered -= OnPointerEntered;
-        _inputSource.PointerExited -= OnPointerExited;
-        _inputSource.GotFocus -= OnGotFocus;
-        _inputSource.LostFocus -= OnLostFocus;
+        _inputSource.RemoveHandler(Microsoft.UI.Xaml.UIElement.RightTappedEvent, _rightTappedHandler);
         _inputSource = null;
-        _pointerOver = false;
-        _keyboardFocused = false;
-        UpdateRevealState();
-    }
-
-    private void OnPointerEntered(object sender, PointerRoutedEventArgs eventArgs)
-    {
-        _pointerOver = true;
-        UpdateRevealState();
-    }
-
-    private void OnPointerExited(object sender, PointerRoutedEventArgs eventArgs)
-    {
-        _pointerOver = false;
-        UpdateRevealState();
-    }
-
-    private void OnGotFocus(object sender, Microsoft.UI.Xaml.RoutedEventArgs eventArgs)
-    {
-        _keyboardFocused = true;
-        UpdateRevealState();
-    }
-
-    private void OnLostFocus(object sender, Microsoft.UI.Xaml.RoutedEventArgs eventArgs)
-    {
-        _keyboardFocused = false;
-        UpdateRevealState();
     }
 
     private void OnRightTapped(object sender, RightTappedRoutedEventArgs eventArgs)
     {
+        var viewModel = ResolveViewModel();
+        var parameter = CommandParameter ?? _virtualView?.BindingContext;
+        // The image's own handler runs first. Keep its attachment-specific menu
+        // when this same routed event reaches the enclosing message row.
+        if (eventArgs.Handled && viewModel is { IsMessageMenuOpen: true, HasActiveMessageAttachment: true } &&
+            ReferenceEquals(viewModel.ActiveMessageAction, parameter)) return;
         var pageRoot = GetPageRoot();
         WinPoint? anchor = pageRoot is null ? null : eventArgs.GetPosition(pageRoot);
-        if (!Open(anchor)) return;
+        if (!Open(viewModel, parameter, anchor)) return;
         eventArgs.Handled = true;
     }
 
-    private void OnKeyDown(object sender, KeyRoutedEventArgs eventArgs)
+    private bool Open(ShellViewModel? viewModel, object? parameter, WinPoint? anchor)
     {
-        var menuKey = eventArgs.Key == VirtualKey.Application;
-        var shiftF10 = eventArgs.Key == VirtualKey.F10 && IsShiftPressed();
-        if ((!menuKey && !shiftF10) || !Open()) return;
-        eventArgs.Handled = true;
-    }
-
-    private bool Open(WinPoint? anchor = null)
-    {
-        var parameter = CommandParameter ?? _virtualView?.BindingContext;
         var command = Command;
-        _viewModel = ResolveViewModel();
-        if (command is null && _viewModel is not null && parameter is MessageItem message)
+        if (command is null && viewModel is not null && parameter is MessageItem message)
         {
             var position = anchor ?? GetDefaultAnchor(message);
             parameter = new MessageMenuRequest(message, position.X, position.Y);
-            command = _viewModel.OpenMessageMenuAtCommand;
+            command = viewModel.OpenMessageMenuAtCommand;
         }
-        else if (command is null) command = _viewModel?.OpenMessageMenuCommand;
+        else if (command is null) command = viewModel?.OpenMessageMenuCommand;
         if (command?.CanExecute(parameter) != true) return false;
-        _opened = true;
-        UpdateRevealState();
-        if (_viewModel is not null) _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         command.Execute(parameter);
         return true;
     }
@@ -236,48 +161,4 @@ public sealed class MessageContextBehavior : Behavior<Border>
             .FirstOrDefault();
     }
 
-    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs eventArgs)
-    {
-        if (!_opened || eventArgs.PropertyName != nameof(ShellViewModel.MessageActionFocusRequest) ||
-            _inputSource is null) return;
-        _inputSource.Focus(Microsoft.UI.Xaml.FocusState.Keyboard);
-        StopWatchingFocusReturn();
-    }
-
-    private void StopWatchingFocusReturn()
-    {
-        if (_viewModel is not null) _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
-        _viewModel = null;
-        _opened = false;
-        UpdateRevealState();
-    }
-
-    private static bool IsShiftPressed()
-    {
-        var state = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift);
-        return (state & CoreVirtualKeyStates.Down) == CoreVirtualKeyStates.Down;
-    }
-
-    private static void OnFocusRequestChanged(BindableObject bindable, object oldValue, object newValue)
-    {
-        var behavior = (MessageContextBehavior)bindable;
-        if (!behavior._opened || behavior._inputSource is null) return;
-        behavior._opened = false;
-        behavior._inputSource.Focus(Microsoft.UI.Xaml.FocusState.Keyboard);
-    }
-
-    private static void OnRevealElementChanged(BindableObject bindable, object oldValue, object newValue) =>
-        ((MessageContextBehavior)bindable).UpdateRevealState();
-
-    private void UpdateRevealState()
-    {
-        var reveal = RevealElement;
-        if (reveal is null) return;
-        var visible = _pointerOver || _keyboardFocused || _opened;
-        reveal.Dispatcher.Dispatch(() =>
-        {
-            reveal.Opacity = visible ? 1d : 0d;
-            reveal.IsEnabled = visible;
-        });
-    }
 }

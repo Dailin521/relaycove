@@ -2,7 +2,6 @@ using Microsoft.Maui.Controls;
 using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
-using Windows.System;
 using ReflectionPropertyInfo = System.Reflection.PropertyInfo;
 
 namespace RelayCove.App.Platforms.Windows.Behaviors;
@@ -11,13 +10,11 @@ public sealed class ComposerResizeBehavior : PlatformBehavior<Button, FrameworkE
 {
     private const double MinimumHeight = 128d;
     private const double MaximumHeight = 300d;
-    private const double KeyboardStep = 16d;
     private readonly PointerEventHandler _pointerPressedHandler;
     private readonly PointerEventHandler _pointerMovedHandler;
     private readonly PointerEventHandler _pointerReleasedHandler;
     private readonly PointerEventHandler _pointerCanceledHandler;
     private readonly PointerEventHandler _pointerCaptureLostHandler;
-    private readonly KeyEventHandler _keyDownHandler;
     private static readonly ReflectionPropertyInfo? ProtectedCursorProperty = typeof(UIElement).GetProperty(
         "ProtectedCursor",
         System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
@@ -34,7 +31,6 @@ public sealed class ComposerResizeBehavior : PlatformBehavior<Button, FrameworkE
         _pointerReleasedHandler = OnPointerReleased;
         _pointerCanceledHandler = OnPointerCanceled;
         _pointerCaptureLostHandler = OnPointerCaptureLost;
-        _keyDownHandler = OnKeyDown;
     }
 
     public static readonly BindableProperty HeightProperty = BindableProperty.Create(
@@ -60,7 +56,6 @@ public sealed class ComposerResizeBehavior : PlatformBehavior<Button, FrameworkE
         platformView.AddHandler(UIElement.PointerReleasedEvent, _pointerReleasedHandler, true);
         platformView.AddHandler(UIElement.PointerCanceledEvent, _pointerCanceledHandler, true);
         platformView.AddHandler(UIElement.PointerCaptureLostEvent, _pointerCaptureLostHandler, true);
-        platformView.AddHandler(UIElement.KeyDownEvent, _keyDownHandler, true);
         platformView.LostFocus += OnLostFocus;
         platformView.PointerEntered += OnPointerEntered;
         platformView.PointerExited += OnPointerExited;
@@ -82,7 +77,6 @@ public sealed class ComposerResizeBehavior : PlatformBehavior<Button, FrameworkE
         platformView.PointerExited -= OnPointerExited;
         platformView.PointerEntered -= OnPointerEntered;
         platformView.LostFocus -= OnLostFocus;
-        platformView.RemoveHandler(UIElement.KeyDownEvent, _keyDownHandler);
         platformView.RemoveHandler(UIElement.PointerCaptureLostEvent, _pointerCaptureLostHandler);
         platformView.RemoveHandler(UIElement.PointerCanceledEvent, _pointerCanceledHandler);
         platformView.RemoveHandler(UIElement.PointerReleasedEvent, _pointerReleasedHandler);
@@ -190,22 +184,6 @@ public sealed class ComposerResizeBehavior : PlatformBehavior<Button, FrameworkE
     {
         if (_platformView is null || ProtectedCursorProperty is null) return;
         ProtectedCursorProperty.SetValue(_platformView, InputSystemCursor.Create(cursorShape));
-    }
-
-    private void OnKeyDown(object sender, KeyRoutedEventArgs eventArgs)
-    {
-        var next = eventArgs.Key switch
-        {
-            VirtualKey.Up => Height + KeyboardStep,
-            VirtualKey.Down => Height - KeyboardStep,
-            VirtualKey.Home => MinimumHeight,
-            VirtualKey.End => MaximumHeight,
-            _ => double.NaN
-        };
-
-        if (!double.IsFinite(next)) return;
-        Height = ClampHeight(next);
-        eventArgs.Handled = true;
     }
 
     internal static double CalculateHeight(double startHeight, double startY, double currentY) =>

@@ -14,7 +14,8 @@ public sealed record ClientState
         long? lastEventId = null,
         IReadOnlyDictionary<long, MessageMutationState>? messageMutations = null,
         PresenceState? presence = null,
-        UserStatusState? userStatuses = null)
+        UserStatusState? userStatuses = null,
+        MessageActionPolicy? messageActions = null)
     {
         Messages = new Dictionary<long, ChatMessage>(messages ?? new Dictionary<long, ChatMessage>());
         Subscriptions = new Dictionary<long, Subscription>(subscriptions ?? new Dictionary<long, Subscription>());
@@ -28,6 +29,7 @@ public sealed record ClientState
         LastEventId = lastEventId;
         Presence = presence ?? PresenceState.Unavailable;
         UserStatuses = userStatuses ?? UserStatusState.Unavailable;
+        MessageActions = messageActions ?? MessageActionPolicy.Unavailable;
     }
 
     public static ClientState Empty { get; } = new();
@@ -43,4 +45,7 @@ public sealed record ClientState
     public long? LastEventId { get; init; }
     public PresenceState Presence { get; init; }
     public UserStatusState UserStatuses { get; init; }
+    public MessageActionPolicy MessageActions { get; init; }
+    public IReadOnlyDictionary<string, RealmEmoji> RealmEmojis { get; init; } =
+        new Dictionary<string, RealmEmoji>(StringComparer.Ordinal);
 }

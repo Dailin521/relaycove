@@ -5,7 +5,7 @@
              x:Class="RelayCove.App.Controls.ChatHeaderView"
              x:DataType="viewModels:ShellViewModel"
              HeightRequest="59"
-             Background="{StaticResource SurfaceBrush}">
+             Background="{StaticResource ChatBackgroundBrush}">
     <Grid RowDefinitions="*,1">
         <Grid Grid.Row="0"
               ColumnDefinitions="Auto,*,39,39"
@@ -35,8 +35,8 @@
                          Style="{StaticResource ImageIconButtonStyle}"
                          WidthRequest="39"
                          HeightRequest="39"
-                         Command="{Binding OpenSearchCommand}"
-                         SemanticProperties.Description="搜索当前已加载工作区" />
+                         Command="{Binding OpenConversationSearchCommand}"
+                         SemanticProperties.Description="搜索当前会话消息" />
             <ImageButton x:Name="SettingsButton"
                          Grid.Column="3"
                          Source="icon_more.png"

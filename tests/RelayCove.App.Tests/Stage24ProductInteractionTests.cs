@@ -1,4 +1,4 @@
-using RelayCove.App.Services;
+﻿using RelayCove.App.Services;
 using RelayCove.App.ViewModels;
 using RelayCove.Core;
 
@@ -158,10 +158,16 @@ public sealed class Stage24ProductInteractionTests
 
     private sealed class TestPreferences : IUiPreferencesService { public UiPreferences Current { get; set; } = new(); public void Save(UiPreferences preferences) => Current = preferences; public UiPreferences Reset() => Current = new(); }
     private sealed class TestLastRealmStore : ILastRealmStore { public string Get() => PreferencesLastRealmStore.DefaultRealm; public void Set(string realm) { } }
-    private sealed class TestDispatcher : IUiDispatcher { public void Dispatch(Action action) => action(); }
+    private sealed class TestDispatcher : IUiDispatcher
+    {
+        public void Dispatch(Action action) => action();
+        public Task YieldToRenderAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
     private sealed class TestAppearance : IAppearanceService { public AppAppearanceMode Current => AppAppearanceMode.System; public void Apply(AppAppearanceMode mode) { } }
     private sealed class TestInteractions : IPlatformInteractionService { public Task CopyTextAsync(string text, CancellationToken cancellationToken = default) => Task.CompletedTask; public Task OpenUriAsync(Uri uri, CancellationToken cancellationToken = default) => Task.CompletedTask; }
     private sealed class TestFiles : IFileSelectionService { public Task<IReadOnlyList<SelectedAttachmentFile>> PickMultipleAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<SelectedAttachmentFile>>([]); }
-    private sealed class TestMedia : IRealmMediaService { public Task<Microsoft.Maui.Controls.ImageSource> GetImageAsync(string sourceUrl, RealmMediaKind kind, CancellationToken cancellationToken = default) => Task.FromResult(Microsoft.Maui.Controls.ImageSource.FromStream(() => new MemoryStream())); public Task<RealmMediaResult> GetFileAsync(string sourceUrl, CancellationToken cancellationToken = default) => Task.FromResult(new RealmMediaResult([], "image/png")); public Task<RealmMediaDownloadResult> DownloadFileAsync(string sourceUrl, Stream destination, IProgress<RealmMediaTransferProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new RealmMediaDownloadResult(0, "image/png")); }
+    private sealed class TestMedia : IRealmMediaService {
+        public event EventHandler<AvatarChangedEventArgs>? AvatarChanged { add { } remove { } }
+ public Task<Microsoft.Maui.Controls.ImageSource> GetImageAsync(string sourceUrl, RealmMediaKind kind, CancellationToken cancellationToken = default) => Task.FromResult(Microsoft.Maui.Controls.ImageSource.FromStream(() => new MemoryStream())); public Task<RealmMediaResult> GetFileAsync(string sourceUrl, CancellationToken cancellationToken = default) => Task.FromResult(new RealmMediaResult([], "image/png")); public Task<RealmMediaDownloadResult> DownloadFileAsync(string sourceUrl, Stream destination, IProgress<RealmMediaTransferProgress>? progress = null, CancellationToken cancellationToken = default) => Task.FromResult(new RealmMediaDownloadResult(0, "image/png")); }
     private sealed class TestSave : IFileSaveService { public string DownloadFolderPath => @"C:\Downloads\RelayCove"; public bool AskWhereToSave { get; set; } public Task<bool> ChooseDownloadFolderAsync(CancellationToken cancellationToken = default) => Task.FromResult(false); public Task OpenDownloadFolderAsync(CancellationToken cancellationToken = default) => Task.CompletedTask; public bool DownloadedFileExists(string filePath) => true; public Task OpenDownloadedFileAsync(string filePath, CancellationToken cancellationToken = default) => Task.CompletedTask; public Task ShowDownloadedFileInFolderAsync(string filePath, CancellationToken cancellationToken = default) => Task.CompletedTask; public async Task<DownloadSaveResult> SaveDownloadAsync(string fileName, Func<Stream, CancellationToken, Task> writeAsync, CancellationToken cancellationToken = default) { await using var stream = new MemoryStream(); await writeAsync(stream, cancellationToken); return new DownloadSaveResult(true, Path.Combine(DownloadFolderPath, fileName)); } }
 }

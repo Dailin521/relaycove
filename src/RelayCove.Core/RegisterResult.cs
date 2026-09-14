@@ -23,4 +23,7 @@ public sealed record RegisterResult(
     bool IsPresenceAvailable = false,
     bool? IsOwnPresenceEnabled = null,
     IReadOnlyList<UserCustomStatus>? UserStatuses = null,
-    bool IsUserStatusAvailable = false);
+    bool IsUserStatusAvailable = false,
+    int? MaxAvatarFileSizeMiB = null,
+    MessageActionPolicy? MessageActions = null,
+    IReadOnlyList<RealmEmoji>? RealmEmojis = null);

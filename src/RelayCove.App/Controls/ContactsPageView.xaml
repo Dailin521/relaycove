@@ -53,11 +53,13 @@
                                 </Border.StrokeShape>
                                 <Grid>
                                     <Label Text="{Binding Initial}"
+                                           IsVisible="{Binding IsFallbackVisible, Source={x:Reference ContactAvatar}, x:DataType=controls:RealmMediaImageView}"
                                            TextColor="White"
                                            FontSize="10"
                                            HorizontalTextAlignment="Center"
                                            VerticalTextAlignment="Center" />
-                                    <controls:RealmMediaImageView SourceUrl="{Binding AvatarUrl}"
+                                    <controls:RealmMediaImageView x:Name="ContactAvatar"
+                                                                  SourceUrl="{Binding AvatarUrl}"
                                                                   MediaKind="Avatar"
                                                                   Aspect="AspectFill"
                                                                   ShowFailureText="False" />

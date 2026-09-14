@@ -9,7 +9,8 @@ public sealed record UserProfile
         bool isActive = true,
         string? avatarUrl = null,
         int? avatarVersion = null,
-        bool isBot = false)
+        bool isBot = false,
+        UserAvatarSource avatarSource = UserAvatarSource.Unknown)
     {
         if (userId <= 0) throw new ArgumentOutOfRangeException(nameof(userId));
         ArgumentException.ThrowIfNullOrWhiteSpace(fullName);
@@ -20,6 +21,7 @@ public sealed record UserProfile
         AvatarUrl = string.IsNullOrWhiteSpace(avatarUrl) ? null : avatarUrl;
         AvatarVersion = avatarVersion;
         IsBot = isBot;
+        AvatarSource = avatarSource;
     }
 
     public long UserId { get; init; }
@@ -29,4 +31,12 @@ public sealed record UserProfile
     public string? AvatarUrl { get; init; }
     public int? AvatarVersion { get; init; }
     public bool IsBot { get; init; }
+    public UserAvatarSource AvatarSource { get; init; }
+    public string? DisplayAvatarUrl => AvatarSource == UserAvatarSource.Generated ? null : AvatarUrl;
+
+    public UserProfile PreserveAvatarSource(UserProfile? previous) =>
+        AvatarSource == UserAvatarSource.Unknown && previous is not null &&
+        UserId == previous.UserId && AvatarUrl == previous.AvatarUrl && AvatarVersion == previous.AvatarVersion
+            ? this with { AvatarSource = previous.AvatarSource }
+            : this;
 }

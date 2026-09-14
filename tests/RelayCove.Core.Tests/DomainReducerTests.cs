@@ -5,6 +5,28 @@ namespace RelayCove.Core.Tests;
 public sealed class DomainReducerTests
 {
     [Fact]
+    public void Apply_WhenContentEditThenMoveAndFlagsArrive_PreservesEditedStateOnlyOnEditedMessage()
+    {
+        var source = new ChannelTopic(1, string.Empty);
+        var destination = new ChannelTopic(2, string.Empty);
+        var state = DomainReducer.Apply(ClientState.Empty,
+            [new MessageUpsertEvent(Message(1, source)), new MessageUpsertEvent(Message(2, source))]);
+
+        state = DomainReducer.Apply(state,
+        [
+            new MessageContentChangedEvent(1, "updated"),
+            new MessageContentChangedEvent(1, "updated", Source: DomainEventSource.Local, IsEdited: false),
+            new MessageMovedEvent([1L, 2L], destination),
+            new MessageFlagsChangedEvent([1L, 2L], false, MessageFlagOperation.Add, "read")
+        ]);
+
+        Assert.True(state.Messages[1].IsEdited);
+        Assert.False(state.Messages[2].IsEdited);
+        Assert.Equal("updated", state.Messages[1].Content);
+        Assert.True(state.ConversationSummaries[destination.CanonicalKey].LatestMessage.IsRead);
+    }
+
+    [Fact]
     public void Apply_WhenMessageEventReplayedAndIdsSkip_RemainsIdempotentAndTracksHighestEventId()
     {
         var message = Message(1, new ChannelTopic(1, "general"));

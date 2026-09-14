@@ -2,7 +2,7 @@ namespace RelayCove.App.Services;
 
 public sealed class PreferencesLastRealmStore : ILastRealmStore
 {
-    public const string DefaultRealm = "https://hklight.2000521.xyz";
+    public const string DefaultRealm = "https://chat.myrichgame.cn/";
     private const string PreferenceKey = "relaycove.last-realm";
 
     public string Get()

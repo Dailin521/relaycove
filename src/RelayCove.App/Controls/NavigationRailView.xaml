@@ -18,12 +18,14 @@
             <Border.StrokeShape><RoundRectangle CornerRadius="21" /></Border.StrokeShape>
             <Grid>
                 <Label Text="{Binding CurrentUserInitial}"
+                       IsVisible="{Binding IsFallbackVisible, Source={x:Reference NavigationAvatar}, x:DataType=controls:RealmMediaImageView}"
                        Style="{StaticResource BaseLabelStyle}"
                        FontAttributes="Bold"
                        TextColor="White"
                        HorizontalTextAlignment="Center"
                        VerticalTextAlignment="Center" />
-                <controls:RealmMediaImageView SourceUrl="{Binding CurrentUserAvatarUrl}"
+                <controls:RealmMediaImageView x:Name="NavigationAvatar"
+                                              SourceUrl="{Binding CurrentUserAvatarUrl}"
                                               MediaKind="Avatar"
                                               Aspect="AspectFill"
                                               ShowFailureText="False" />

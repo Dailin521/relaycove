@@ -8,4 +8,8 @@ public sealed record MessageQueryPage(
     IReadOnlyList<ChatMessage> Messages,
     bool FoundOldest,
     bool FoundNewest,
-    bool FoundAnchor);
+    bool FoundAnchor)
+{
+    // Preserve the server cursor when ClientSession filters unsupported conversations.
+    public long? OldestFetchedMessageId { get; } = Messages.MinBy(message => message.Id)?.Id;
+}
