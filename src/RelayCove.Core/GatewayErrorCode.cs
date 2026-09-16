@@ -19,5 +19,9 @@ public enum GatewayErrorCode
     MediaAddressNotAllowed,
     UnsupportedImageType,
     MediaTooLarge,
-    EmptyMediaContent
+    EmptyMediaContent,
+    ChannelAlreadyExists,
+    PermissionDenied,
+    InvalidChannelName,
+    InvalidChannelMembers
 }

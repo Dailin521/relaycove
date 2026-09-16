@@ -1377,7 +1377,9 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             if (response.IsSuccessStatusCode) return response;
             using (response)
             {
-                throw await ToGatewayExceptionAsync(response, cancellationToken, callerCancellationToken).ConfigureAwait(false);
+                throw await ToGatewayExceptionAsync(
+                    response, cancellationToken, callerCancellationToken,
+                    isChannelCreation: relativePath == "channels/create").ConfigureAwait(false);
             }
         }
         catch (GatewayException) { throw; }
@@ -1556,7 +1558,8 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
     }
 
     private async Task<GatewayException> ToGatewayExceptionAsync(
-        HttpResponseMessage response, CancellationToken cancellationToken, CancellationToken? callerCancellationToken = null)
+        HttpResponseMessage response, CancellationToken cancellationToken, CancellationToken? callerCancellationToken = null,
+        bool isChannelCreation = false)
     {
         if ((int)response.StatusCode is >= 300 and < 400)
         {
@@ -1567,12 +1570,15 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
         }
 
         string? code = null;
+        var channelCreationError = GatewayErrorCode.RequestFailed;
         TimeSpan? retryAfter = GetRetryAfter(response.Headers.RetryAfter);
         try
         {
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
             code = GetString(document.RootElement, "code");
+            if (isChannelCreation)
+                channelCreationError = MapChannelCreationError(code, GetString(document.RootElement, "msg"));
             if (GetDecimal(document.RootElement, "retry-after") is { } seconds && seconds >= 0)
             {
                 retryAfter = TimeSpan.FromSeconds((double)seconds);
@@ -1601,7 +1607,24 @@ public sealed class ZulipGateway : IZulipGateway, IDisposable
             return new GatewayException(GatewayErrorKind.RateLimited, GatewayErrorCode.RateLimited, 429, retryAfter);
         return response.StatusCode >= HttpStatusCode.InternalServerError
             ? new GatewayException(GatewayErrorKind.Server, GatewayErrorCode.ServerError, (int)response.StatusCode)
-            : new GatewayException(GatewayErrorKind.RequestFailed, GatewayErrorCode.RequestFailed, (int)response.StatusCode);
+            : new GatewayException(GatewayErrorKind.RequestFailed, channelCreationError, (int)response.StatusCode);
+    }
+
+    private static GatewayErrorCode MapChannelCreationError(string? code, string? message)
+    {
+        // Zulip 12.1 uses a code for duplicate names, but generic errors for
+        // permission/name/member validation. Only carry fixed categories into Core.
+        if (string.Equals(code, "CHANNEL_ALREADY_EXISTS", StringComparison.OrdinalIgnoreCase))
+            return GatewayErrorCode.ChannelAlreadyExists;
+        if (message == "Insufficient permission")
+            return GatewayErrorCode.PermissionDenied;
+        if (message == "Channel name can't be empty." ||
+            message?.StartsWith("Channel name too long (limit: ", StringComparison.Ordinal) == true ||
+            message?.StartsWith("Invalid character in channel name, at position ", StringComparison.Ordinal) == true)
+            return GatewayErrorCode.InvalidChannelName;
+        if (message is "No such user" or "User is deactivated")
+            return GatewayErrorCode.InvalidChannelMembers;
+        return GatewayErrorCode.RequestFailed;
     }
 
     private TimeSpan? GetRetryAfter(RetryConditionHeaderValue? retryAfter) => retryAfter?.Delta ?? (retryAfter?.Date is { } date ? date - _timeProvider.GetUtcNow() : null);

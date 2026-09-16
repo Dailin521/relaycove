@@ -2,9 +2,9 @@
 
 RichChat 是一个直接连接 Zulip Realm 的 Windows 原生 .NET MAUI 客户端。Zulip 是账号、权限、成员、消息和实时事件的唯一事实源；项目不包含自研聊天服务端、代理、BFF 或第二消息后端。
 
-当前版本为 [`1.0.5`](https://github.com/Dailin521/relaycove/releases/tag/v1.0.5)，目标平台为 Windows 11 x64，使用 .NET SDK `10.0.400`、MAUI `10.0.20` 和 `win-x64`。`RelayCove.Web` 只保留为历史源码，不再参与产品开发或 Windows 发布。
+当前版本为 [`1.0.6`](https://github.com/Dailin521/relaycove/releases/tag/v1.0.6)，目标平台为 Windows 11 x64，使用 .NET SDK `10.0.400`、MAUI `10.0.20` 和 `win-x64`。`RelayCove.Web` 只保留为历史源码，不再参与产品开发或 Windows 发布。
 
-本版本沿用 SVN 主线的 `1.0.x` 版本系列，构建号为 `12`；历史 GitHub `2.4.0` 不属于新的更新渠道。运行 `publish-installer.cmd` 会生成当前源码版本的安装包及更新清单。
+本版本沿用 SVN 主线的 `1.0.x` 版本系列，构建号为 `13`；历史 GitHub `2.4.0` 不属于新的更新渠道。运行 `publish-installer.cmd` 会生成当前源码版本的安装包及更新清单。
 
 ## 下载
 
@@ -19,6 +19,10 @@ GitHub Release 提供自包含、未签名的 ZIP 和 `RichChat-<version>-win-x6
 更新渠道只接受 `Dailin521/relaycove` 正式 Release 中配套的 `update-win-x64.json` 和 `RichChat-<version>-win-x64-Setup.exe`，按递增的 `ApplicationVersion` 构建号判断更新。旧 Release 没有清单时不会提示更新，以免将历史 `2.4.0` 误认作当前 `1.0.x` 源码的新版。安装器打包脚本自动生成清单，并核对 ZIP 内程序的版本与构建号；正式发布时需将清单和安装包上传到同一个 Release，且每次发布必须递增构建号。
 
 ## 当前范围
+
+本地开发中的表情面板包含“搜索 / 默认 / 收藏”：默认页仍将组织小表情插入输入框；搜索和收藏中的大图点击后单独发送，保留输入框文字与附件。搜索接入 [ChineseBQB](https://github.com/zhaoolee/ChineseBQB)，按名称和分类筛选，目录每天刷新，图片使用最多 200 MiB 的本地缓存。
+
+收藏支持导入 PNG/JPEG/WebP/GIF，以及聊天图片右键“收藏为表情”。收藏卡片的“⋯”可改名或移除。图片按内容去重、保存原始副本并按账号隔离；删除导入源文件不会影响收藏，注销不会删除收藏。单张上限 25 MiB，发送还受服务器上传限制约束。GIF 保留原始动图，表情面板悬停预览。首次搜索需要网络；第三方表情内容不随安装包分发。
 
 - 单账号邮箱密码登录、SecureStorage 凭据恢复和 SQLite 离线缓存。
 - 微信式统一会话：一对一/self-DM，以及受支持的私有空话题群聊。

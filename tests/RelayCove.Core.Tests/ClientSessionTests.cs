@@ -3313,12 +3313,281 @@ public sealed class ClientSessionTests
         await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
         now = now.AddSeconds(61);
         await presenceDelays.CompleteNextAsync(TimeSpan.FromSeconds(60));
-        await WaitUntilAsync(() => gateway.RealmPresenceCalls == 1);
+        await WaitUntilAsync(() => session.State.Presence.Users[20].IdleTimestamp == now);
 
         var presence = session.State.Presence.Users[20];
         Assert.Null(presence.ActiveTimestamp);
         Assert.Equal(UserPresenceStatus.Idle, presence.ResolveStatus(now));
         await session.StopAsync();
+    }
+
+    [Fact]
+    public async Task AutomaticPresence_WhenInputStopsAndResumes_ReportsChangesAndKeepsMinuteHeartbeat()
+    {
+        var activity = new FakeUserActivitySource { IsIdle = false };
+        var delays = new ControlledDelay();
+        var gateway = CreateAutomaticPresenceGateway();
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(),
+            presenceDelay: delays.DelayAsync, userActivitySource: activity);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => delays.HasPending);
+        Assert.Equal(UserPresenceStatus.Active, session.OwnPresenceStatus);
+
+        for (var index = 0; index < 11; index++) await AdvanceActivityCheckAsync(delays);
+        Assert.Equal(["report:Active"], gateway.PresenceWriteLog);
+        Assert.Equal(0, gateway.RealmPresenceCalls);
+        await AdvanceActivityCheckAsync(delays);
+        Assert.Equal(["report:Active", "report:Active"], gateway.PresenceWriteLog);
+        Assert.Equal(1, gateway.RealmPresenceCalls);
+
+        activity.IsIdle = true;
+        await AdvanceActivityCheckAsync(delays);
+        Assert.Equal(UserPresenceStatus.Idle, session.OwnPresenceStatus);
+        Assert.Equal(UserPresenceStatus.Idle, session.State.Presence.ResolveStatus(10, DateTimeOffset.UtcNow));
+        await AdvanceActivityCheckAsync(delays);
+        Assert.Equal(3, gateway.PresenceWriteLog.Count);
+        activity.IsIdle = false;
+        await AdvanceActivityCheckAsync(delays);
+        Assert.Equal(UserPresenceStatus.Active, session.OwnPresenceStatus);
+        Assert.Equal(["report:Active", "report:Active", "report:Idle", "report:Active"], gateway.PresenceWriteLog);
+        await session.StopAsync();
+        Assert.Equal(4, gateway.PresenceWriteLog.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(null)]
+    public async Task AutomaticPresence_WhenStartingIdleOrActivityUnknown_DoesNotReportActiveFirst(bool? initialIdle)
+    {
+        var activity = new FakeUserActivitySource { IsIdle = initialIdle };
+        var delays = new ControlledDelay();
+        var gateway = CreateAutomaticPresenceGateway();
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(),
+            presenceDelay: delays.DelayAsync, userActivitySource: activity);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => delays.HasPending);
+
+        Assert.Equal(["report:Idle"], gateway.PresenceWriteLog);
+        activity.IsIdle = null;
+        await AdvanceActivityCheckAsync(delays);
+        Assert.Equal(UserPresenceStatus.Idle, session.OwnPresenceStatus);
+        activity.IsIdle = false;
+        await AdvanceActivityCheckAsync(delays);
+        activity.IsIdle = null;
+        await AdvanceActivityCheckAsync(delays);
+        Assert.Equal(UserPresenceStatus.Active, session.OwnPresenceStatus);
+        Assert.Equal(["report:Idle", "report:Active"], gateway.PresenceWriteLog);
+    }
+
+    [Theory]
+    [InlineData(UserPresenceStatus.Idle)]
+    [InlineData(UserPresenceStatus.Offline)]
+    public async Task AutomaticPresence_WhenManualStatusSelected_PreservesItUntilOnlineIsSelected(UserPresenceStatus selected)
+    {
+        var activity = new FakeUserActivitySource { IsIdle = false };
+        var delays = new ControlledDelay();
+        var gateway = CreateAutomaticPresenceGateway();
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(),
+            presenceDelay: delays.DelayAsync, userActivitySource: activity);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => delays.HasPending);
+        await session.SetOwnPresenceAsync(selected);
+        activity.IsIdle = true;
+        await AdvanceActivityCheckAsync(delays);
+        activity.IsIdle = false;
+        await AdvanceActivityCheckAsync(delays);
+
+        Assert.Equal(selected, session.OwnPresenceStatus);
+        Assert.Equal(2, gateway.PresenceWriteLog.Count);
+        await session.SetOwnPresenceAsync(UserPresenceStatus.Active);
+        Assert.Equal(UserPresenceStatus.Active, session.OwnPresenceStatus);
+        activity.IsIdle = true;
+        await AdvanceActivityCheckAsync(delays);
+        Assert.Equal(UserPresenceStatus.Idle, session.OwnPresenceStatus);
+    }
+
+    [Fact]
+    public async Task AutomaticPresence_WhenReportFails_RetainsConfirmedStatusAndWaitsForHeartbeat()
+    {
+        var activity = new FakeUserActivitySource { IsIdle = false };
+        var delays = new ControlledDelay();
+        var gateway = CreateAutomaticPresenceGateway();
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(),
+            presenceDelay: delays.DelayAsync, userActivitySource: activity);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => delays.HasPending);
+        gateway.UpdateOwnPresenceHandler = (_, _) => Task.FromException(
+            new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
+        activity.IsIdle = true;
+        await AdvanceActivityCheckAsync(delays);
+        Assert.Equal(UserPresenceStatus.Active, session.OwnPresenceStatus);
+        for (var index = 0; index < 10; index++) await AdvanceActivityCheckAsync(delays);
+        Assert.Equal(["report:Active", "report:Idle"], gateway.PresenceWriteLog);
+
+        gateway.UpdateOwnPresenceHandler = null;
+        await AdvanceActivityCheckAsync(delays);
+        Assert.Equal(UserPresenceStatus.Idle, session.OwnPresenceStatus);
+        Assert.Equal(["report:Active", "report:Idle", "report:Idle"], gateway.PresenceWriteLog);
+    }
+
+    [Fact]
+    public async Task AutomaticPresence_WhenServerDisablesSharingDuringReport_DiscardsLateConfirmation()
+    {
+        var activity = new FakeUserActivitySource { IsIdle = false };
+        var delays = new ControlledDelay();
+        var gateway = CreateAutomaticPresenceGateway();
+        var events = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var report = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.GetEventsHandler = (_, token) => gateway.GetEventsCalls == 1 ? events.Task : Never<EventBatch>(token);
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(),
+            presenceDelay: delays.DelayAsync, userActivitySource: activity);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => delays.HasPending && gateway.GetEventsCalls == 1);
+        gateway.UpdateOwnPresenceHandler = (_, _) => report.Task;
+        activity.IsIdle = true;
+        await delays.CompleteNextAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => gateway.PresenceWriteLog.Count == 2);
+        events.SetResult(new EventBatch([new OwnPresenceEnabledChangedEvent(false, 2)], 2));
+        await WaitUntilAsync(() => session.OwnPresenceStatus == UserPresenceStatus.Offline);
+
+        report.SetResult();
+        await WaitUntilAsync(() => delays.HasPending);
+        activity.IsIdle = false;
+        await AdvanceActivityCheckAsync(delays);
+
+        Assert.Equal(UserPresenceStatus.Offline, session.OwnPresenceStatus);
+        Assert.Equal(UserPresenceStatus.Offline, session.State.Presence.ResolveStatus(10, DateTimeOffset.UtcNow));
+        Assert.Equal(["report:Active", "report:Idle"], gateway.PresenceWriteLog);
+    }
+
+    [Fact]
+    public async Task AutomaticPresence_WhenAccountChanges_DoesNotCarryManualBusyToNextLogin()
+    {
+        var activity = new FakeUserActivitySource { IsIdle = false };
+        var gateway = CreateAutomaticPresenceGateway();
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(),
+            userActivitySource: activity);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => session.OwnPresenceStatus == UserPresenceStatus.Active);
+        await session.SetOwnPresenceAsync(UserPresenceStatus.Idle);
+        await session.LogoutAsync();
+        await session.LoginAsync("https://other.example/", "other@example.test", "password");
+
+        await WaitUntilAsync(() => session.OwnPresenceStatus == UserPresenceStatus.Active);
+        Assert.Equal("report:Active", gateway.PresenceWriteLog[^1]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AutomaticPresence_WhenQueueReregisters_ResamplesActivityAndPreservesOnlyManualBusy(bool manualBusy)
+    {
+        var activity = new FakeUserActivitySource { IsIdle = true };
+        var delays = new ControlledDelay();
+        var reconnectDelays = new ControlledDelay();
+        var gateway = CreateAutomaticPresenceGateway();
+        var registrations = 0;
+        gateway.RegisterHandler = (_, _) => Task.FromResult(Register(
+            queue: $"queue-{Interlocked.Increment(ref registrations)}",
+            users: [new UserProfile(10, "Me", "me@example.test")],
+            isPresenceAvailable: true, isOwnPresenceEnabled: true));
+        var events = new TaskCompletionSource<EventBatch>(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.GetEventsHandler = (_, token) => gateway.GetEventsCalls == 1 ? events.Task : Never<EventBatch>(token);
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(),
+            delay: reconnectDelays.DelayAsync, presenceDelay: delays.DelayAsync, userActivitySource: activity);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => delays.HasPending && gateway.GetEventsCalls == 1);
+        if (manualBusy) await session.SetOwnPresenceAsync(UserPresenceStatus.Idle);
+
+        events.SetException(new GatewayException(GatewayErrorKind.QueueExpired, GatewayErrorCode.BadEventQueueId));
+        await reconnectDelays.CompleteNextAsync(TimeSpan.FromSeconds(20));
+        await WaitUntilAsync(() => registrations == 2 && gateway.GetEventsCalls >= 2);
+        await AdvanceActivityCheckAsync(delays);
+        Assert.Equal(UserPresenceStatus.Idle, session.OwnPresenceStatus);
+        Assert.DoesNotContain("report:Active", gateway.PresenceWriteLog);
+        activity.IsIdle = false;
+        await AdvanceActivityCheckAsync(delays);
+
+        Assert.Equal(manualBusy ? UserPresenceStatus.Idle : UserPresenceStatus.Active, session.OwnPresenceStatus);
+    }
+
+    [Fact]
+    public async Task AutomaticPresence_WhenLogoutCancelsPendingReport_DiscardsLateResultAndStopsChecks()
+    {
+        var activity = new FakeUserActivitySource { IsIdle = false };
+        var delays = new ControlledDelay();
+        var gateway = CreateAutomaticPresenceGateway();
+        var report = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken requestCancellation = default;
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(),
+            presenceDelay: delays.DelayAsync, userActivitySource: activity);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => delays.HasPending);
+        gateway.UpdateOwnPresenceHandler = (_, token) =>
+        {
+            requestCancellation = token;
+            return report.Task;
+        };
+        activity.IsIdle = true;
+        await delays.CompleteNextAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => requestCancellation.CanBeCanceled);
+
+        var logout = session.LogoutAsync();
+        await WaitUntilAsync(() => requestCancellation.IsCancellationRequested);
+        report.SetResult();
+        await logout.WaitAsync(TimeSpan.FromSeconds(3));
+
+        Assert.Null(session.AccountId);
+        Assert.Null(session.OwnPresenceStatus);
+        Assert.Empty(session.State.Presence.Users);
+        Assert.False(delays.HasPending);
+        Assert.Equal(["report:Active", "report:Idle"], gateway.PresenceWriteLog);
+    }
+
+    [Theory]
+    [InlineData(UserPresenceStatus.Idle)]
+    [InlineData(UserPresenceStatus.Offline)]
+    public async Task AutomaticPresence_WhenManualChangeIsUncertainBeforeFirstConfirmation_DoesNotResumeOldAutomaticStatus(
+        UserPresenceStatus selected)
+    {
+        var activity = new FakeUserActivitySource { IsIdle = false };
+        var delays = new ControlledDelay();
+        var gateway = CreateAutomaticPresenceGateway();
+        gateway.UpdateOwnPresenceHandler = (_, _) => Task.FromException(
+            new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
+        gateway.SetPresenceEnabledHandler = (_, _) => Task.FromException(
+            new GatewayException(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError));
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault(),
+            presenceDelay: delays.DelayAsync, userActivitySource: activity);
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await WaitUntilAsync(() => delays.HasPending);
+        Assert.Null(session.OwnPresenceStatus);
+
+        await Assert.ThrowsAsync<GatewayException>(() => session.SetOwnPresenceAsync(selected));
+        gateway.UpdateOwnPresenceHandler = null;
+        gateway.SetPresenceEnabledHandler = null;
+        for (var index = 0; index < 12; index++) await AdvanceActivityCheckAsync(delays);
+
+        Assert.Null(session.OwnPresenceStatus);
+        Assert.Equal(2, gateway.PresenceWriteLog.Count);
+    }
+
+    private static FakeGateway CreateAutomaticPresenceGateway() => new()
+    {
+        RegisterHandler = (_, _) => Task.FromResult(Register(
+            users: [new UserProfile(10, "Me", "me@example.test")],
+            isPresenceAvailable: true, isOwnPresenceEnabled: true))
+    };
+
+    private static async Task AdvanceActivityCheckAsync(ControlledDelay delays)
+    {
+        await delays.CompleteNextAsync(TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => delays.HasPending);
+    }
+
+    private sealed class FakeUserActivitySource : IUserActivitySource
+    {
+        public bool? IsIdle { get; set; }
     }
 
     [Fact]
@@ -4657,6 +4926,7 @@ public sealed class ClientSessionTests
     private sealed class ControlledDelay
     {
         private readonly ConcurrentQueue<(TimeSpan Delay, TaskCompletionSource<bool> Source)> _requests = new();
+        public bool HasPending => !_requests.IsEmpty;
 
         public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
         {

@@ -40,8 +40,7 @@ public sealed class SelectableTextBehavior : Behavior<Label>
         _platformView = platformView;
         _originalContextFlyout = platformView.ContextFlyout;
         _originalTextLineBounds = platformView.TextLineBounds;
-        // Remove the font's extra top leading; the bubble supplies equal padding.
-        platformView.TextLineBounds = TextLineBounds.TrimToCapHeight;
+        platformView.TextLineBounds = TextLineBounds.Full;
         platformView.ContextFlyout = null;
         platformView.ContextMenuOpening += OnContextMenuOpening;
         platformView.IsTextSelectionEnabled = true;

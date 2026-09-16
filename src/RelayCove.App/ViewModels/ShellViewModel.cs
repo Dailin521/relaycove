@@ -177,9 +177,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IDownloadHistoryStore? downloadHistoryStore = null,
         TimeProvider? timeProvider = null,
         IStartupService? startupService = null,
-        AppUpdateViewModel? updates = null)
+        AppUpdateViewModel? updates = null,
+        StickerPickerViewModel? stickers = null)
     {
         Updates = updates;
+        Stickers = stickers;
+        if (Stickers is not null) Stickers.Sent += OnStickerSent;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _startupService = startupService;
         RefreshStartupSettings();
@@ -238,15 +241,20 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public ObservableCollection<ConversationSettingsMemberItem> GroupMemberActionCandidates { get; } = [];
     public ChannelSettingsViewModel ChannelSettings { get; }
     public AppUpdateViewModel? Updates { get; }
+    public StickerPickerViewModel? Stickers { get; }
+    public double StickerPickerHeight => Math.Min(440d, Math.Max(0d, _viewportHeight - 24d));
+    public int StickerPickerColumns => Math.Max(1, (int)((EmojiPickerContentWidth - 16d) / 94d));
     public IReadOnlyList<EmojiChoice> EmojiChoices { get; private set; } = [];
     public IReadOnlyList<EmojiCategoryChoice> EmojiCategories { get; } = [new("custom", "自定义")];
     public double EmojiPickerWidth => Math.Min(420d, Math.Max(0d, _viewportWidth - 24d));
     public double EmojiPickerHeight => Math.Min(300d, Math.Max(0d, _viewportHeight - 24d));
+    public double DefaultEmojiPickerHeight => Math.Min(392d, Math.Max(0d, _viewportHeight - 24d));
     public double EmojiPickerContentWidth => Math.Max(0d, EmojiPickerWidth - 14d);
     public IReadOnlyDictionary<string, RealmEmoji> RealmEmojis => _session.State.RealmEmojis;
     // Zero native grid spacing; reserve 26 for the cell, 2 for its margin,
     // and 16 for the vertical scrollbar.
     public int EmojiPickerColumns => Math.Max(1, (int)((EmojiPickerContentWidth - 16d) / 28d));
+    public int ComposerEmojiPickerColumns => Math.Max(1, (int)((EmojiPickerContentWidth - 16d) / 34d));
     public IReadOnlyList<SearchCategoryChoice> SearchCategories { get; } =
     [
         new(null, "全部"),
@@ -421,6 +429,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     public partial MessageAttachmentItem? ActiveMessageAttachment { get; set; }
+
+    private string? _activeMessageSelection;
 
     [ObservableProperty]
     public partial bool IsMessageMenuOpen { get; set; }
@@ -1018,13 +1028,19 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         _allNewConversationChoices.Count(choice => choice.IsSelected && !choice.IsSelf) >= 2;
     public bool CanCreatePrivateGroup =>
         _projectedState.Connection.Status == RelayCove.Core.ConnectionStatus.Connected;
-    public string PrivateGroupCreateDisabledReason => CanCreatePrivateGroup
-        ? "群聊至少选择两名其他成员。"
-        : "当前未连接，暂时无法创建群聊。";
-    public bool ShowPrivateGroupCreateDisabledReason => IsNewConversationOpen && !CanCreatePrivateGroup;
+    public string PrivateGroupCreateDisabledReason => !CanCreatePrivateGroup
+        ? "当前未连接，暂时无法创建群聊。"
+        : string.IsNullOrWhiteSpace(NewPrivateGroupName)
+            ? "请填写群聊名称。"
+            : _allNewConversationChoices.Count(choice => choice.IsSelected && !choice.IsSelf) < 2
+                ? "请至少选择两名其他成员。"
+                : string.Empty;
+    public bool ShowPrivateGroupCreateDisabledReason => IsNewConversationOpen &&
+        (!CanCreatePrivateGroup || IsNewChannelConversationMode && !CanStartNewChannelConversation);
     public bool HasNewConversationError => !string.IsNullOrWhiteSpace(NewConversationError);
     public bool CanChooseNewConversationChannel => !IsNewConversationChannelLocked;
     public bool HasActiveMessageAction => ActiveMessageAction is not null;
+    public bool CanCopyActiveMessage => ActiveMessageAction is { HasBody: true, IsImageOnly: false };
     public bool CanEditActiveMessage => CanChangeMessage(ActiveMessageAction, delete: false);
     public bool CanDeleteActiveMessage => CanChangeMessage(ActiveMessageAction, delete: true);
 
@@ -1439,8 +1455,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         if (double.IsFinite(height) && height > 0) _viewportHeight = height;
         OnPropertyChanged(nameof(EmojiPickerWidth));
         OnPropertyChanged(nameof(EmojiPickerHeight));
+        OnPropertyChanged(nameof(DefaultEmojiPickerHeight));
+        OnPropertyChanged(nameof(StickerPickerHeight));
+        OnPropertyChanged(nameof(StickerPickerColumns));
         OnPropertyChanged(nameof(EmojiPickerContentWidth));
         OnPropertyChanged(nameof(EmojiPickerColumns));
+        OnPropertyChanged(nameof(ComposerEmojiPickerColumns));
         var next = width >= WideLayoutMinimum
             ? ShellLayoutMode.Wide
             : width <= NarrowLayoutMaximum
@@ -2474,11 +2494,19 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
         catch (GatewayException exception)
         {
-            NewConversationError = $"群聊创建未完成：{DescribeGatewayFailure(exception)} 不会自动重试。";
+            NewConversationError = DescribePrivateGroupCreationFailure(exception);
         }
         catch (InvalidOperationException exception)
         {
-            NewConversationError = DescribeInvalidOperation(exception);
+            NewConversationError = exception.InnerException is GatewayException gateway
+                ? DescribePrivateGroupCreationFailure(gateway)
+                : exception.Message == "Refresh the active user directory before creating this group."
+                    ? "群聊创建失败：所选成员已停用或不在当前联系人列表中，请刷新联系人后重新选择。"
+                    : $"群聊创建未完成：{DescribeInvalidOperation(exception)}";
+        }
+        catch (ArgumentException)
+        {
+            NewConversationError = "群聊创建失败：请填写有效群名，并至少选择两名不同的其他活跃成员。";
         }
         catch (OperationCanceledException)
         {
@@ -3027,6 +3055,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         CloseTransientOverlays();
         ActiveMessageAction = request.Message;
         ActiveMessageAttachment = null;
+        _activeMessageSelection = request.SelectedText;
         MessageMenuAnchorX = Math.Max(0d, request.AnchorX);
         MessageMenuAnchorY = Math.Max(0d, request.AnchorY);
         IsMessageMenuOpen = true;
@@ -3044,6 +3073,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         CloseTransientOverlays();
         ActiveMessageAction = request.Message;
         ActiveMessageAttachment = request.Attachment;
+        _activeMessageSelection = null;
         MessageMenuAnchorX = Math.Max(0d, request.AnchorX);
         MessageMenuAnchorY = Math.Max(0d, request.AnchorY);
         IsMessageMenuOpen = true;
@@ -3271,7 +3301,28 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         IsMessageMenuOpen = false;
         ActiveMessageAction = null;
         ActiveMessageAttachment = null;
+        _activeMessageSelection = null;
         MessageActionFocusRequest++;
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task CopyActiveMessageAsync()
+    {
+        var message = ActiveMessageAction;
+        if (!CanCopyActiveMessage || message is null) return;
+
+        var text = string.IsNullOrEmpty(_activeMessageSelection)
+            ? message.Body
+            : _activeMessageSelection;
+        CloseMessageMenu();
+        try
+        {
+            await _platformInteractions.CopyTextAsync(text).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Clipboard availability must not leave a stale menu or success banner.
+        }
     }
 
     [RelayCommand]
@@ -4576,7 +4627,26 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         NotifyOverlayProperties();
     }
     partial void OnIsChannelBrowserOpenChanged(bool value) => NotifyOverlayProperties();
-    partial void OnIsComposerEmojiPickerOpenChanged(bool value) => NotifyOverlayProperties();
+    partial void OnIsComposerEmojiPickerOpenChanged(bool value)
+    {
+        Stickers?.SetOpen(value);
+        NotifyOverlayProperties();
+    }
+
+    private void OnStickerSent(object? sender, EventArgs args)
+    {
+        IsComposerEmojiPickerOpen = false;
+        QueueScrollToLatest(MessageScrollReason.RealtimeFollow);
+        ComposerFocusRequest++;
+    }
+
+    [RelayCommand]
+    private async Task CollectActiveImageAsync()
+    {
+        if (Stickers is null || ActiveMessageAttachment is not { IsImage: true } image) return;
+        CloseMessageMenu();
+        await Stickers.CollectMessageImageAsync(image);
+    }
     partial void OnIsReactionPickerOpenChanged(bool value) => NotifyOverlayProperties();
 
     private bool IsChannelBrowserCurrent(long generation, AccountId? accountId, CancellationTokenSource? cancellation = null) =>
@@ -4622,7 +4692,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     partial void OnActiveMessageActionChanged(MessageItem? value)
     {
+        if (value is null) _activeMessageSelection = null;
         OnPropertyChanged(nameof(HasActiveMessageAction));
+        OnPropertyChanged(nameof(CanCopyActiveMessage));
         OnPropertyChanged(nameof(CanEditActiveMessage));
         OnPropertyChanged(nameof(CanDeleteActiveMessage));
         OnPropertyChanged(nameof(CanStarActiveMessage));
@@ -4958,8 +5030,12 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     partial void OnNewConversationTopicChanged(string value) =>
         OnPropertyChanged(nameof(CanStartNewChannelConversation));
 
-    partial void OnNewPrivateGroupNameChanged(string value) =>
+    partial void OnNewPrivateGroupNameChanged(string value)
+    {
         OnPropertyChanged(nameof(CanStartNewChannelConversation));
+        OnPropertyChanged(nameof(PrivateGroupCreateDisabledReason));
+        OnPropertyChanged(nameof(ShowPrivateGroupCreateDisabledReason));
+    }
 
     partial void OnNewConversationErrorChanged(string? value) =>
         OnPropertyChanged(nameof(HasNewConversationError));
@@ -6651,6 +6727,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             }
             OnPropertyChanged(nameof(CanStartNewConversation));
             OnPropertyChanged(nameof(CanStartNewChannelConversation));
+            OnPropertyChanged(nameof(PrivateGroupCreateDisabledReason));
+            OnPropertyChanged(nameof(ShowPrivateGroupCreateDisabledReason));
         }
     }
 
@@ -8042,7 +8120,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             : null;
     }
 
-    private static string BuildUploadedAttachmentMarkdown(UploadedAttachment uploaded, bool isImage)
+    internal static string BuildUploadedAttachmentMarkdown(UploadedAttachment uploaded, bool isImage)
     {
         var normalized = new string(uploaded.FileName
                 .Select(character => character < 0x20 || character == 0x7f ? '_' : character)
@@ -8067,6 +8145,41 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         GatewayErrorKind.Offline => "无法连接到服务器，请检查网络和 Realm 地址。",
         _ => "服务器请求失败，请稍后再试。"
     };
+
+    private static string DescribePrivateGroupCreationFailure(GatewayException exception)
+    {
+        var reason = exception.Code switch
+        {
+            GatewayErrorCode.ChannelAlreadyExists => "群名已存在，请换一个名称。",
+            GatewayErrorCode.PermissionDenied => "服务器拒绝了当前账号的创建或成员访问权限，请联系管理员检查权限。",
+            GatewayErrorCode.InvalidChannelName => "群名为空、过长或含有不支持的字符，请修改群名。",
+            GatewayErrorCode.InvalidChannelMembers => "所选成员已停用或不存在，请刷新联系人后重新选择。",
+            GatewayErrorCode.RequestTimedOut => "请求超时。",
+            GatewayErrorCode.NetworkError => "网络连接中断，请检查网络。",
+            GatewayErrorCode.InvalidResponse => "服务器返回的数据异常，或不支持所需的群聊设置。",
+            GatewayErrorCode.RedirectNotAllowed => "服务器要求跳转，请检查登录时填写的服务器地址。",
+            _ => exception.Kind switch
+            {
+                GatewayErrorKind.AuthenticationFailed or GatewayErrorKind.ReauthRequired => "登录已失效，请重新登录。",
+                GatewayErrorKind.RateLimited => "操作过于频繁，服务器正在限流，请稍后再试。",
+                GatewayErrorKind.Offline => "无法连接服务器，请检查网络。",
+                GatewayErrorKind.Server => "服务器内部错误，请联系管理员或稍后再试。",
+                GatewayErrorKind.IncompatibleRealm => "服务器版本或配置不支持当前群聊功能。",
+                _ => exception.StatusCode switch
+                {
+                    403 => "服务器拒绝访问，请联系管理员检查群聊权限。",
+                    404 or 405 => "服务器未提供群聊创建接口，请检查服务器版本或配置。",
+                    400 => "服务器拒绝了群聊名称、成员或设置，请检查后再试。",
+                    _ => "服务器未提供可识别的失败原因。"
+                }
+            }
+        };
+        var status = exception.StatusCode is { } statusCode ? $"（HTTP {statusCode}）" : string.Empty;
+        var resultUncertain = exception.Kind is GatewayErrorKind.Offline or GatewayErrorKind.Server or GatewayErrorKind.Protocol;
+        return resultUncertain
+            ? $"群聊创建结果无法确认：{reason}{status}请先检查会话列表中是否已创建，勿直接重试。"
+            : $"群聊创建失败：{reason}{status}";
+    }
 
     private static string DescribeInvalidOperation(InvalidOperationException exception)
     {
@@ -8400,6 +8513,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         if (_disposed) return;
         _disposed = true;
         Updates?.Dispose();
+        if (Stickers is not null) { Stickers.Sent -= OnStickerSent; Stickers.Dispose(); }
         _messageActionTimer?.Dispose();
         lock (_projectionGate)
         {

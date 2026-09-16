@@ -123,11 +123,16 @@ public sealed class RealmMediaService : IRealmMediaService, IDisposable
         }
     }
 
-    private static ImageSource ToImageSource(byte[] content) =>
-        new RealmImageSource
-        {
-            Stream = _ => Task.FromResult<Stream>(new MemoryStream(content, writable: false))
-        };
+    private static ImageSource ToImageSource(byte[] content)
+    {
+        // Each animated view needs its own playback cursor. Static images keep
+        // the shared native decode cache used by avatars and message previews.
+        StreamImageSource source = content.AsSpan().StartsWith("GIF87a"u8) || content.AsSpan().StartsWith("GIF89a"u8)
+            ? new StreamImageSource()
+            : new RealmImageSource();
+        source.Stream = _ => Task.FromResult<Stream>(new MemoryStream(content, writable: false));
+        return source;
+    }
 
     internal static string CreateCacheKey(AccountId accountId, RealmMediaKind kind, string sourceUrl) =>
         $"{accountId.Value}:{kind}:{sourceUrl}";

@@ -33,14 +33,24 @@ public sealed class MauiFileSelectionService : IFileSelectionService
             });
     }
 
-    public async Task<IReadOnlyList<SelectedAttachmentFile>> PickMultipleAsync(
-        CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<SelectedAttachmentFile>> PickStickersAsync(CancellationToken cancellationToken = default) =>
+        PickFilesAsync(new PickOptions
+        {
+            PickerTitle = "导入表情（最多 50 张，单张不超过 25 MiB）",
+            FileTypes = new FilePickerFileType(new Dictionary<DevicePlatform, IEnumerable<string>>
+            {
+                [DevicePlatform.WinUI] = [".png", ".jpg", ".jpeg", ".webp", ".gif"]
+            })
+        }, cancellationToken);
+
+    public Task<IReadOnlyList<SelectedAttachmentFile>> PickMultipleAsync(CancellationToken cancellationToken = default) =>
+        PickFilesAsync(new PickOptions { PickerTitle = "选择最多 10 个附件" }, cancellationToken);
+
+    private static async Task<IReadOnlyList<SelectedAttachmentFile>> PickFilesAsync(
+        PickOptions options, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var results = await FilePicker.Default.PickMultipleAsync(new PickOptions
-        {
-            PickerTitle = "选择最多 10 个附件"
-        });
+        var results = await FilePicker.Default.PickMultipleAsync(options);
         if (results is null) return [];
         var selected = new List<SelectedAttachmentFile>();
         foreach (var result in results)

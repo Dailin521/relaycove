@@ -359,6 +359,38 @@ public sealed class MainShellLayoutTests
     }
 
     [Fact]
+    public void NewPrivateGroupDialog_WhenErrorShown_ReservesWrappedErrorRowAboveButtonsOutsideMemberList()
+    {
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
+        XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+        var error = source.Descendants(maui + "Label").Single(element =>
+            element.Attribute("Text")?.Value == "{Binding NewConversationError}");
+        var feedback = error.Parent!;
+        var layout = feedback.Parent!;
+        var choices = layout.Descendants(maui + "CollectionView").Single(element =>
+            element.Attribute("ItemsSource")?.Value == "{Binding NewConversationChoices}");
+        var createButton = layout.Descendants(maui + "Button").Single(element =>
+            element.Attribute("Command")?.Value == "{Binding StartNewChannelConversationCommand}");
+        var errorRow = int.Parse(feedback.Attribute("Grid.Row")!.Value);
+        var rowDefinitions = layout.Attribute("RowDefinitions")!.Value.Split(',');
+
+        Assert.Same(layout, choices.Parent!.Parent);
+        Assert.Same(layout, createButton.Parent!.Parent);
+        Assert.True(int.Parse(choices.Parent.Attribute("Grid.Row")!.Value) < errorRow);
+        Assert.True(int.Parse(createButton.Parent.Attribute("Grid.Row")!.Value) > errorRow);
+        Assert.Equal("Auto", rowDefinitions[errorRow]);
+        Assert.Equal("{Binding HasNewConversationError}", error.Attribute("IsVisible")?.Value);
+        Assert.Equal("WordWrap", error.Attribute("LineBreakMode")?.Value);
+        Assert.Null(error.Attribute("MaxLines"));
+        Assert.Null(choices.Parent.Attribute("MinimumHeightRequest"));
+        var disabledReason = layout.Descendants(maui + "Label").Single(element =>
+            element.Attribute("Text")?.Value == "{Binding PrivateGroupCreateDisabledReason}");
+        Assert.Same(feedback, disabledReason.Parent);
+        Assert.Equal("{Binding ShowPrivateGroupCreateDisabledReason}", disabledReason.Attribute("IsVisible")?.Value);
+        Assert.Equal("WordWrap", disabledReason.Attribute("LineBreakMode")?.Value);
+    }
+
+    [Fact]
     public void NewConversationDialog_WhenRendered_UsesRowSelectionForPrivateAndRightCheckboxForGroup()
     {
         var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
@@ -398,7 +430,23 @@ public sealed class MainShellLayoutTests
     }
 
     [Fact]
-    public void EmojiPickers_WhenRendered_ShowOnlyTheCompactEmojiGrid()
+    public void MessageMenu_WhenCopyIsAvailable_UsesTheSharedCopyIconAndCommand()
+    {
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
+        XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+        XNamespace xaml = "http://schemas.microsoft.com/winfx/2009/xaml";
+
+        var copy = Assert.Single(source.Descendants(maui + "Button"), button =>
+            button.Attribute(xaml + "Name")?.Value == "CopyMessageMenuButton");
+
+        Assert.Equal("复制", copy.Attribute("Text")?.Value);
+        Assert.Equal("icon_copy.png", copy.Attribute("ImageSource")?.Value);
+        Assert.Equal("{Binding CopyActiveMessageCommand}", copy.Attribute("Command")?.Value);
+        Assert.Equal("{Binding CanCopyActiveMessage}", copy.Attribute("IsVisible")?.Value);
+    }
+
+    [Fact]
+    public void EmojiPickers_WhenStickersAdded_KeepLargerDefaultAndCompactReactionGrids()
     {
         var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
         XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
@@ -407,10 +455,11 @@ public sealed class MainShellLayoutTests
             .Where(element => element.Attribute("ItemsSource")?.Value == "{Binding VisibleEmojiChoices}").ToArray();
 
         Assert.Equal(2, lists.Length);
+        var composer = Assert.Single(lists, list => list.Attribute("IsVisible") is not null);
+        var reaction = Assert.Single(lists, list => list.Attribute("IsVisible") is null);
+        Assert.Same(reaction, Assert.Single(reaction.Parent!.Elements()));
         Assert.All(lists, list =>
         {
-            // No header or category strip should consume space beside the list.
-            Assert.Same(list, Assert.Single(list.Parent!.Elements()));
             Assert.Single(list.Descendants(), element => element.Name.LocalName == "CompactEmojiGridBehavior");
             var grid = Assert.Single(list.Descendants(maui + "GridItemsLayout"));
             Assert.Equal("0", grid.Attribute("HorizontalItemSpacing")?.Value);
@@ -418,9 +467,35 @@ public sealed class MainShellLayoutTests
             Assert.DoesNotContain(list.Descendants(maui + "Label"), label =>
                 label.Parent!.Name != maui + "CollectionView.EmptyView");
         });
+        var composerGrid = Assert.Single(composer.Descendants(maui + "GridItemsLayout"));
+        Assert.Equal("{Binding ComposerEmojiPickerColumns}", composerGrid.Attribute("Span")?.Value);
+        var composerCell = Assert.Single(composer.Descendants(maui + "Grid"), grid =>
+            grid.Attribute("SemanticProperties.Description")?.Value == "{Binding AccessibleLabel}");
+        Assert.Equal("32", composerCell.Attribute("HeightRequest")?.Value);
+        var composerImage = Assert.Single(composerCell.Descendants(), image => image.Name.LocalName == "RealmMediaImageView");
+        Assert.Equal("25", composerImage.Attribute("WidthRequest")?.Value);
+        var reactionGrid = Assert.Single(reaction.Descendants(maui + "GridItemsLayout"));
+        Assert.Equal("{Binding EmojiPickerColumns}", reactionGrid.Attribute("Span")?.Value);
         var raw = source.ToString();
         Assert.DoesNotContain("选择后插入光标位置", raw, StringComparison.Ordinal);
         Assert.DoesNotContain("再次选择可移除", raw, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StickerSearchResults_WhenRendered_HideNamesAndFavoriteActionsOutsideFavoritesTab()
+    {
+        var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
+        XNamespace maui = "http://schemas.microsoft.com/dotnet/2021/maui";
+        var list = Assert.Single(source.Descendants(maui + "CollectionView"), element =>
+            element.Attribute("ItemsSource")?.Value == "{Binding Stickers.Items}");
+        var card = Assert.Single(list.Descendants(maui + "DataTemplate")).Element(maui + "Grid")!;
+        Assert.Equal("82,Auto", card.Attribute("RowDefinitions")?.Value);
+        var footer = Assert.Single(card.Elements(maui + "Grid"));
+        Assert.Equal("{Binding ViewModel.Stickers.IsFavorites, Source={x:Reference RootPage}, x:DataType=local:MainPage}",
+            footer.Attribute("IsVisible")?.Value);
+        Assert.Contains(footer.Descendants(maui + "Label"), label => label.Attribute("Text")?.Value == "{Binding Label}");
+        Assert.Contains(footer.Descendants(maui + "Button"), button =>
+            button.Attribute("Command")?.Value == "{Binding ViewModel.Stickers.ManageCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}");
     }
 
     [Fact]
@@ -435,16 +510,23 @@ public sealed class MainShellLayoutTests
         Assert.All(lists, list =>
         {
             Assert.Null(list.Attribute("HeightRequest"));
-            Assert.Equal("0", list.Attribute("Grid.Row")?.Value);
+            var composer = list.Attribute("IsVisible") is not null;
+            Assert.Equal(composer ? "2" : "0", list.Attribute("Grid.Row")?.Value);
             Assert.Equal("Always", list.Attribute("VerticalScrollBarVisibility")?.Value);
             Assert.Equal("Never", list.Attribute("HorizontalScrollBarVisibility")?.Value);
             var layout = list.Parent!;
             Assert.Equal(maui + "Grid", layout.Name);
-            Assert.Equal("*", layout.Attribute("RowDefinitions")?.Value);
-            Assert.Equal("{Binding EmojiPickerHeight}", layout.Parent!.Attribute("HeightRequest")?.Value);
+            Assert.Equal(composer ? "Auto,Auto,*,Auto,Auto,Auto" : "*", layout.Attribute("RowDefinitions")?.Value);
+            Assert.Equal(composer ? "{Binding StickerPickerHeight}" : "{Binding EmojiPickerHeight}", layout.Parent!.Attribute("HeightRequest")?.Value);
             var anchor = Assert.Single(layout.Parent.Descendants(), element => element.Name.LocalName == "PopoverAnchorBehavior");
             Assert.NotNull(anchor.Attribute("IsOpen"));
         });
+        var composerBorder = lists.Single(list => list.Attribute("IsVisible") is not null).Parent!.Parent!;
+        Assert.Contains(composerBorder.Descendants(maui + "DataTrigger"), trigger =>
+            trigger.Attribute("Binding")?.Value == "{Binding Stickers.IsDefault}" &&
+            trigger.Descendants(maui + "Setter").Any(setter =>
+                setter.Attribute("Property")?.Value == "HeightRequest" &&
+                setter.Attribute("Value")?.Value == "{Binding DefaultEmojiPickerHeight}"));
     }
 
     [Fact]
@@ -681,19 +763,32 @@ public sealed class MainShellLayoutTests
     }
 
     [Fact]
-    public void MessageBody_WhenRendered_TrimsExtraTopLeadingInsideSymmetricBubblePadding()
+    public void MessageBody_WhenRendered_UsesReadableLineHeightAndFullFontBounds()
     {
         var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "MessageListView.xaml"));
         XNamespace x = "http://schemas.microsoft.com/winfx/2009/xaml";
         var bubble = source.Descendants().Single(element => element.Attribute(x + "Name")?.Value == "Bubble");
         var padding = (Microsoft.Maui.Thickness)new Microsoft.Maui.Converters.ThicknessTypeConverter()
             .ConvertFromInvariantString(bubble.Attribute("Padding")!.Value)!;
-        Assert.Equal(padding.Top, padding.Bottom);
+        Assert.Equal(14d, padding.Left);
+        Assert.Equal(14d, padding.Right);
+        Assert.Equal(10d, padding.Top);
+        Assert.Equal(10d, padding.Bottom);
+
+        var plainLabel = source.Descendants().Single(element =>
+            element.Name.LocalName == "Label" &&
+            element.Attribute("Text")?.Value == "{Binding Body}" &&
+            element.Attribute("IsVisible")?.Value == "{Binding HasPlainBody}");
+        var emojiLabel = source.Descendants().Single(element => element.Name.LocalName == "MessageEmojiLabel");
+        Assert.Equal("1.5", plainLabel.Attribute("LineHeight")?.Value);
+        Assert.Equal("1.5", emojiLabel.Attribute("LineHeight")?.Value);
 
         var plainBody = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "Platforms", "Windows", "Behaviors", "SelectableTextBehavior.cs"));
         var emojiBody = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "Platforms", "Windows", "Handlers", "MessageEmojiLabelHandler.cs"));
-        Assert.Contains("platformView.TextLineBounds = TextLineBounds.TrimToCapHeight;", plainBody);
-        Assert.Contains("? TextLineBounds.Full : TextLineBounds.TrimToCapHeight;", emojiBody);
+        Assert.Contains("platformView.TextLineBounds = TextLineBounds.Full;", plainBody);
+        Assert.Contains("handler.PlatformView.TextLineBounds = TextLineBounds.Full;", emojiBody);
+        Assert.Contains("handler.PlatformView.ClearValue(RichTextBlock.LineHeightProperty);", emojiBody);
+        Assert.Contains("if (view.MaxLines != 1 && view.LineHeight > 0)", emojiBody);
     }
 
     [Fact]
@@ -802,10 +897,18 @@ public sealed class MainShellLayoutTests
 
         var menu = page.Descendants(maui + "Grid")
             .Single(element => element.Attribute("IsVisible")?.Value == "{Binding IsMessageMenuOpen}");
-        Assert.DoesNotContain(menu.Descendants(maui + "Button"), button =>
-            button.Attribute("Text")?.Value?.StartsWith("复制", StringComparison.Ordinal) == true);
+        var copy = menu.Descendants(maui + "Button").Single(button =>
+            button.Attribute("Text")?.Value == "复制");
+        Assert.Equal("{Binding CopyActiveMessageCommand}", copy.Attribute("Command")?.Value);
+        Assert.Equal("{Binding CanCopyActiveMessage}", copy.Attribute("IsVisible")?.Value);
         Assert.Contains(menu.Descendants(maui + "Button"), button =>
             button.Attribute("Command")?.Value == "{Binding QuoteMessageCommand}");
+
+        var messageContext = File.ReadAllText(FindWorkspaceFile(
+            "src", "RelayCove.App", "Platforms", "Windows", "Behaviors", "MessageContextBehavior.cs"));
+        Assert.Contains("GetSelectedText(eventArgs.OriginalSource", messageContext, StringComparison.Ordinal);
+        Assert.Contains("WinUiTextBlock { IsTextSelectionEnabled: true }", messageContext, StringComparison.Ordinal);
+        Assert.Contains("WinUiRichTextBlock { IsTextSelectionEnabled: true }", messageContext, StringComparison.Ordinal);
     }
 
     [Fact]

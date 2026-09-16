@@ -2511,6 +2511,65 @@ public sealed class ZulipGatewayTests
     }
 
     [Theory]
+    [InlineData(409, "CHANNEL_ALREADY_EXISTS", "Channel 'existing' already exists", GatewayErrorKind.RequestFailed, GatewayErrorCode.ChannelAlreadyExists)]
+    [InlineData(400, "BAD_REQUEST", "Insufficient permission", GatewayErrorKind.RequestFailed, GatewayErrorCode.PermissionDenied)]
+    [InlineData(400, "BAD_REQUEST", "Channel name can't be empty.", GatewayErrorKind.RequestFailed, GatewayErrorCode.InvalidChannelName)]
+    [InlineData(400, "BAD_REQUEST", "Channel name too long (limit: 60 characters).", GatewayErrorKind.RequestFailed, GatewayErrorCode.InvalidChannelName)]
+    [InlineData(400, "BAD_REQUEST", "Invalid character in channel name, at position 2.", GatewayErrorKind.RequestFailed, GatewayErrorCode.InvalidChannelName)]
+    [InlineData(400, "BAD_REQUEST", "No such user", GatewayErrorKind.RequestFailed, GatewayErrorCode.InvalidChannelMembers)]
+    [InlineData(400, "BAD_REQUEST", "User is deactivated", GatewayErrorKind.RequestFailed, GatewayErrorCode.InvalidChannelMembers)]
+    [InlineData(400, "UNKNOWN_CODE", "Unrecognized server detail", GatewayErrorKind.RequestFailed, GatewayErrorCode.RequestFailed)]
+    [InlineData(401, "BAD_REQUEST", "Insufficient permission", GatewayErrorKind.ReauthRequired, GatewayErrorCode.Unauthorized)]
+    [InlineData(429, "BAD_REQUEST", "Insufficient permission", GatewayErrorKind.RateLimited, GatewayErrorCode.RateLimited)]
+    [InlineData(500, "BAD_REQUEST", "Insufficient permission", GatewayErrorKind.Server, GatewayErrorCode.ServerError)]
+    public async Task CreatePrivateGroupAsync_WhenServerRejects_MapsSafeReasonWithoutRetryOrRawDetails(
+        int status, string code, string message, GatewayErrorKind expectedKind, GatewayErrorCode expectedCode)
+    {
+        var payload = JsonSerializer.Serialize(new { result = "error", code, msg = message });
+        using var handler = new RecordingHandler(Json(payload, (HttpStatusCode)status));
+        using var gateway = new ZulipGateway(handler);
+
+        var exception = await Assert.ThrowsAsync<GatewayException>(() => gateway.CreatePrivateGroupAsync(
+            new PrivateGroupCreateRequest(Credentials, new PrivateGroupCreateOptions("group", [8, 9]))));
+
+        Assert.Equal(expectedKind, exception.Kind);
+        Assert.Equal(expectedCode, exception.Code);
+        Assert.Equal(status, exception.StatusCode);
+        Assert.DoesNotContain(message, exception.ToString(), StringComparison.Ordinal);
+        Assert.Null(exception.InnerException);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task CreatePrivateGroupAsync_WhenErrorBodyEchoesCredentials_DiscardsSensitiveDetails()
+    {
+        var payload = JsonSerializer.Serialize(new { result = "error", code = Credentials.ApiKey, msg = Credentials.ApiKey });
+        using var handler = new RecordingHandler(Json(payload, HttpStatusCode.BadRequest));
+        using var gateway = new ZulipGateway(handler);
+
+        var exception = await Assert.ThrowsAsync<GatewayException>(() => gateway.CreatePrivateGroupAsync(
+            new PrivateGroupCreateRequest(Credentials, new PrivateGroupCreateOptions("group", [8, 9]))));
+
+        Assert.Equal(GatewayErrorCode.RequestFailed, exception.Code);
+        Assert.DoesNotContain(Credentials.ApiKey, exception.ToString(), StringComparison.Ordinal);
+        Assert.Null(exception.InnerException);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task GetEventsAsync_WhenErrorUsesChannelCreationMessage_KeepsExistingClassification()
+    {
+        using var handler = new RecordingHandler(Json(
+            """{"result":"error","code":"BAD_REQUEST","msg":"Insufficient permission"}""", HttpStatusCode.BadRequest));
+        using var gateway = new ZulipGateway(handler);
+
+        var exception = await Assert.ThrowsAsync<GatewayException>(() => gateway.GetEventsAsync(
+            new GetEventsRequest(Credentials, "queue-1", 1, TimeSpan.FromSeconds(30))));
+
+        Assert.Equal(GatewayErrorCode.RequestFailed, exception.Code);
+    }
+
+    [Theory]
     [InlineData("{\"result\":\"success\"}")]
     [InlineData("{\"result\":\"error\",\"id\":61}")]
     [InlineData("{\"result\":\"success\",\"id\":61,\"ignored_parameters_unsupported\":[\"topics_policy\"]}")]

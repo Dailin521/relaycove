@@ -50,6 +50,11 @@ public static class MauiProgram
         builder.Services.AddSingleton<IConversationPreferencesStore, MauiConversationPreferencesStore>();
         builder.Services.AddSingleton<IPlatformInteractionService, MauiPlatformInteractionService>();
         builder.Services.AddSingleton<IFileSelectionService, MauiFileSelectionService>();
+        builder.Services.AddSingleton<IStickerCatalogService>(_ => new ChineseBqbStickerCatalogService(
+            Path.Combine(FileSystem.AppDataDirectory, "sticker-cache")));
+        builder.Services.AddSingleton<IStickerLibraryStore>(_ => new LocalStickerLibraryStore(
+            Path.Combine(FileSystem.AppDataDirectory, "sticker-favorites")));
+        builder.Services.AddSingleton<StickerPickerViewModel>();
         builder.Services.AddSingleton<IRealmMediaService, RealmMediaService>();
         builder.Services.AddSingleton<AvatarCache>();
         builder.Services.AddSingleton<INotificationAvatarFileStore, NotificationAvatarFileStore>();
@@ -59,6 +64,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<IAppNotificationService, WindowsAppNotificationService>();
         builder.Services.AddSingleton<IAccountStore>(_ => new SqliteAccountStore(FileSystem.AppDataDirectory));
         builder.Services.AddSingleton<IZulipGateway, ZulipGateway>();
+        builder.Services.AddSingleton<IUserActivitySource, WindowsUserActivitySource>();
 #if DEBUG
         if (NativeShellPreviewSession.IsRequested)
             builder.Services.AddSingleton<IClientSession, NativeShellPreviewSession>();

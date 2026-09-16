@@ -775,7 +775,7 @@
                             HeightRequest="420"
                             MaximumHeightRequest="420">
                         <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
-                        <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="10">
+                        <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="10">
                             <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
                                 <VerticalStackLayout>
                                     <Label Text="发起私聊" IsVisible="{Binding IsNewDirectConversationMode}" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
@@ -819,7 +819,6 @@
                             </Grid>
                             <Grid Grid.Row="2"
                                   IsVisible="{Binding IsNewConversationModeSwitcherVisible}"
-                                  MinimumHeightRequest="120"
                                   MaximumHeightRequest="220">
                                 <CollectionView ItemsSource="{Binding NewConversationChoices}"
                                                 SelectionMode="None"
@@ -886,19 +885,18 @@
                                        Style="{StaticResource MutedLabelStyle}"
                                        HorizontalOptions="Center"
                                        VerticalOptions="Center" />
+                            </Grid>
+                            <VerticalStackLayout Grid.Row="3" Spacing="4">
                                 <Label Text="{Binding PrivateGroupCreateDisabledReason}"
                                        IsVisible="{Binding ShowPrivateGroupCreateDisabledReason}"
                                        Style="{StaticResource MutedLabelStyle}"
-                                       HorizontalOptions="Center"
-                                       VerticalOptions="End" />
+                                       LineBreakMode="WordWrap" />
                                 <Label Text="{Binding NewConversationError}"
                                        IsVisible="{Binding HasNewConversationError}"
                                        Style="{StaticResource DangerLabelStyle}"
-                                       HorizontalOptions="Center"
-                                       VerticalOptions="Start"
                                        LineBreakMode="WordWrap" />
-                            </Grid>
-                            <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                            </VerticalStackLayout>
+                            <Grid Grid.Row="4" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
                                 <Button Grid.Column="1"
                                         Text="取消"
                                         Style="{StaticResource BaseButtonStyle}"
@@ -932,22 +930,33 @@
                             WidthRequest="{Binding EmojiPickerWidth}"
                             MinimumWidthRequest="{Binding EmojiPickerWidth}"
                             MaximumWidthRequest="{Binding EmojiPickerWidth}"
-                            HeightRequest="{Binding EmojiPickerHeight}"
+                            HeightRequest="{Binding StickerPickerHeight}"
                             HorizontalOptions="Start"
                             VerticalOptions="Start">
                         <Border.StrokeShape><RoundRectangle CornerRadius="11" /></Border.StrokeShape>
+                        <Border.Triggers>
+                            <DataTrigger TargetType="Border" Binding="{Binding Stickers.IsDefault}" Value="True">
+                                <Setter Property="HeightRequest" Value="{Binding DefaultEmojiPickerHeight}" />
+                            </DataTrigger>
+                        </Border.Triggers>
                         <Border.Behaviors>
                             <windowsBehaviors:PopoverAnchorBehavior
                                 IsOpen="{Binding ViewModel.IsComposerEmojiPickerOpen, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
                                 AnchorX="{Binding ViewModel.ComposerEmojiAnchorX, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
                                 AnchorY="{Binding ViewModel.ComposerEmojiAnchorY, Source={x:Reference RootPage}, x:DataType=local:MainPage}" />
                         </Border.Behaviors>
-                        <Grid RowDefinitions="*">
+                        <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" RowSpacing="4">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="4" IsVisible="{Binding Stickers.IsImageTab}">
+                                <Entry Placeholder="搜索表情名称" Text="{Binding Stickers.Query}" FontSize="13" ClearButtonVisibility="WhileEditing" />
+                                <Button Grid.Column="1" Text="导入" Command="{Binding Stickers.ImportCommand}" IsVisible="{Binding Stickers.IsFavorites}" IsEnabled="{Binding Stickers.CanAct}" Style="{StaticResource BaseButtonStyle}" />
+                            </Grid>
+                            <Picker Grid.Row="1" Title="表情分类" ItemsSource="{Binding Stickers.Categories}" SelectedItem="{Binding Stickers.Category}" IsVisible="{Binding Stickers.IsSearch}" FontSize="12" />
                             <CollectionView x:Name="ComposerEmojiCollection"
                                             ItemsSource="{Binding VisibleEmojiChoices}"
+                                            IsVisible="{Binding Stickers.IsDefault}"
                                             SelectionMode="None"
                                             WidthRequest="{Binding EmojiPickerContentWidth}"
-                                            Grid.Row="0"
+                                            Grid.Row="2"
                                             VerticalScrollBarVisibility="Always"
                                             HorizontalScrollBarVisibility="Never"
                                             HorizontalOptions="Start">
@@ -958,11 +967,11 @@
                                     <Label Text="暂无可用的自定义表情" HorizontalTextAlignment="Center" VerticalOptions="Center" Style="{StaticResource BaseLabelStyle}" />
                                 </CollectionView.EmptyView>
                                 <CollectionView.ItemsLayout>
-                                    <GridItemsLayout Orientation="Vertical" Span="{Binding EmojiPickerColumns}" HorizontalItemSpacing="0" VerticalItemSpacing="0" />
+                                    <GridItemsLayout Orientation="Vertical" Span="{Binding ComposerEmojiPickerColumns}" HorizontalItemSpacing="0" VerticalItemSpacing="0" />
                                 </CollectionView.ItemsLayout>
                                 <CollectionView.ItemTemplate>
                                     <DataTemplate x:DataType="viewModels:EmojiChoice">
-                                        <Grid Margin="1" HeightRequest="26" MinimumWidthRequest="26"
+                                        <Grid Margin="1" HeightRequest="32" MinimumWidthRequest="32"
                                               BackgroundColor="Transparent"
                                               SemanticProperties.Description="{Binding AccessibleLabel}">
                                             <Grid.GestureRecognizers>
@@ -974,8 +983,8 @@
                                                     PointerExited="OnEmojiPointerExited" />
                                             </Grid.GestureRecognizers>
                                             <Border InputTransparent="True"
-                                                    WidthRequest="26"
-                                                    HeightRequest="26"
+                                                    WidthRequest="30"
+                                                    HeightRequest="30"
                                                     HorizontalOptions="Center"
                                                     VerticalOptions="Center"
                                                     Stroke="Transparent"
@@ -995,8 +1004,8 @@
                                             </Border>
                                             <controls:RealmMediaImageView SourceUrl="{Binding SourceUrl}"
                                                                           MediaKind="Emoji"
-                                                                          WidthRequest="19"
-                                                                          HeightRequest="19"
+                                                                          WidthRequest="25"
+                                                                          HeightRequest="25"
                                                                           HorizontalOptions="Center"
                                                                           VerticalOptions="Center"
                                                                           ShowFailureText="False"
@@ -1005,6 +1014,60 @@
                                     </DataTemplate>
                                 </CollectionView.ItemTemplate>
                             </CollectionView>
+                            <CollectionView Grid.Row="2" ItemsSource="{Binding Stickers.Items}" IsVisible="{Binding Stickers.IsImageTab}"
+                                            IsEnabled="{Binding Stickers.CanAct}"
+                                            SelectionMode="None" VerticalScrollBarVisibility="Always" HorizontalScrollBarVisibility="Never"
+                                            RemainingItemsThreshold="12" RemainingItemsThresholdReachedCommand="{Binding Stickers.LoadMoreCommand}">
+                                <CollectionView.ItemsLayout>
+                                    <GridItemsLayout Orientation="Vertical" Span="{Binding StickerPickerColumns}" HorizontalItemSpacing="3" VerticalItemSpacing="5" />
+                                </CollectionView.ItemsLayout>
+                                <CollectionView.ItemTemplate>
+                                    <DataTemplate x:DataType="viewModels:StickerPickerItem">
+                                        <Grid RowDefinitions="82,Auto" Padding="2" MinimumWidthRequest="86">
+                                            <controls:StickerImageView Item="{Binding .}" HeightRequest="80" SemanticProperties.Description="{Binding Label}">
+                                                <controls:StickerImageView.GestureRecognizers>
+                                                    <TapGestureRecognizer Command="{Binding ViewModel.Stickers.SendCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}" CommandParameter="{Binding .}" />
+                                                </controls:StickerImageView.GestureRecognizers>
+                                            </controls:StickerImageView>
+                                            <Grid Grid.Row="1" ColumnDefinitions="*,26"
+                                                  IsVisible="{Binding ViewModel.Stickers.IsFavorites, Source={x:Reference RootPage}, x:DataType=local:MainPage}">
+                                                <Label Text="{Binding Label}" FontSize="10" LineBreakMode="TailTruncation" VerticalTextAlignment="Center" Style="{StaticResource MutedLabelStyle}" />
+                                                <Button Grid.Column="1" Text="{Binding ActionLabel}" Padding="0" FontSize="17" MinimumWidthRequest="24" HeightRequest="24"
+                                                        BackgroundColor="Transparent" TextColor="{StaticResource AccentColor}" SemanticProperties.Description="{Binding ActionDescription}"
+                                                        Command="{Binding ViewModel.Stickers.ManageCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}" CommandParameter="{Binding .}" />
+                                            </Grid>
+                                        </Grid>
+                                    </DataTemplate>
+                                </CollectionView.ItemTemplate>
+                            </CollectionView>
+                            <ActivityIndicator Grid.Row="2" IsVisible="{Binding Stickers.IsLoading}" IsRunning="{Binding Stickers.IsLoading}" WidthRequest="28" HeightRequest="28" InputTransparent="True" />
+                            <Grid Grid.Row="3" RowDefinitions="Auto,Auto" IsVisible="{Binding Stickers.IsEditing}">
+                                <Entry Text="{Binding Stickers.EditLabel}" MaxLength="100" Placeholder="收藏名称" FontSize="12" />
+                                <HorizontalStackLayout Grid.Row="1" Spacing="4" HorizontalOptions="End" IsEnabled="{Binding Stickers.CanAct}">
+                                    <Button Text="改名" Command="{Binding Stickers.SaveNameCommand}" Style="{StaticResource BaseButtonStyle}" />
+                                    <Button Text="移除" Command="{Binding Stickers.RemoveCommand}" Style="{StaticResource BaseButtonStyle}" />
+                                    <Button Text="取消" Command="{Binding Stickers.CancelEditCommand}" Style="{StaticResource BaseButtonStyle}" />
+                                </HorizontalStackLayout>
+                            </Grid>
+                            <VerticalStackLayout Grid.Row="4" Spacing="2">
+                                <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding Stickers.HasStatus}">
+                                    <Label Text="{Binding Stickers.Status}" FontSize="11" MaxLines="2" Style="{StaticResource MutedLabelStyle}" />
+                                    <Button Grid.Column="1" Text="重试" Command="{Binding Stickers.ReloadCommand}" IsVisible="{Binding Stickers.IsImageTab}" Padding="4,0" FontSize="11" BackgroundColor="Transparent" />
+                                </Grid>
+                                <Label Text="来源：ChineseBQB · 按名称/分类搜索" FontSize="10" IsVisible="{Binding Stickers.IsSearch}" Style="{StaticResource MutedLabelStyle}" />
+                                <Label Text="点图片直接发送 · 收藏仅保存在本机" FontSize="10" IsVisible="{Binding Stickers.IsFavorites}" Style="{StaticResource MutedLabelStyle}" />
+                            </VerticalStackLayout>
+                            <Grid Grid.Row="5" ColumnDefinitions="*,*,*" ColumnSpacing="4">
+                                <Button Text="⌕ 搜索" Command="{Binding Stickers.SelectTabCommand}" CommandParameter="search" Style="{StaticResource BaseButtonStyle}">
+                                    <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding Stickers.IsSearch}" Value="True"><Setter Property="TextColor" Value="{StaticResource AccentColor}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers>
+                                </Button>
+                                <Button Grid.Column="1" Text="☺ 默认" Command="{Binding Stickers.SelectTabCommand}" CommandParameter="default" Style="{StaticResource BaseButtonStyle}">
+                                    <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding Stickers.IsDefault}" Value="True"><Setter Property="TextColor" Value="{StaticResource AccentColor}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers>
+                                </Button>
+                                <Button Grid.Column="2" Text="♡ 收藏" Command="{Binding Stickers.SelectTabCommand}" CommandParameter="favorites" Style="{StaticResource BaseButtonStyle}">
+                                    <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding Stickers.IsFavorites}" Value="True"><Setter Property="TextColor" Value="{StaticResource AccentColor}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers>
+                                </Button>
+                            </Grid>
                         </Grid>
                     </Border>
                 </Grid>
@@ -1181,6 +1244,14 @@
                                 AnchorY="{Binding ViewModel.MessageMenuAnchorY, Source={x:Reference RootPage}, x:DataType=local:MainPage}" />
                         </Border.Behaviors>
                         <VerticalStackLayout Spacing="4">
+                            <Button x:Name="CopyMessageMenuButton"
+                                    Text="复制"
+                                    ImageSource="icon_copy.png"
+                                    Style="{StaticResource PopoverMenuButtonStyle}"
+                                    Command="{Binding CopyActiveMessageCommand}"
+                                    IsVisible="{Binding CanCopyActiveMessage}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
                             <Button x:Name="ImageDownloadMenuButton"
                                     Text="下载原图"
                                     ImageSource="icon_attachment.png"
@@ -1203,6 +1274,10 @@
                                 <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
                             </Button>
                             <Button x:Name="DeleteMessageMenuButton" Text="删除消息" ImageSource="icon_close.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding RequestDeleteMessageCommand}" IsVisible="{Binding CanDeleteActiveMessage}" TextColor="{StaticResource DangerColor}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button Text="收藏为表情" ImageSource="icon_star.png" Style="{StaticResource PopoverMenuButtonStyle}" Command="{Binding CollectActiveImageCommand}"
+                                    IsVisible="{Binding HasActiveMessageAttachment}" IsEnabled="{Binding Stickers.CanAct}">
                                 <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
                             </Button>
                         </VerticalStackLayout>

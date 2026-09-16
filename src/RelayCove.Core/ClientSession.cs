@@ -10,6 +10,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
     private static long s_nextLocalId;
     private static readonly TimeSpan ConnectionRetryInterval = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan PresenceRefreshInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan UserActivityCheckInterval = TimeSpan.FromSeconds(5);
     private const int HistoryPageSize = 50;
     private const int MessageWindowLimit = 250;
     private const int HistoryMemoryCacheLimit = 12;
@@ -20,6 +21,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
     private readonly Func<TimeSpan, CancellationToken, Task> _delay;
     private readonly Func<TimeSpan, CancellationToken, Task> _sendDeadlineDelay;
     private readonly Func<TimeSpan, CancellationToken, Task> _presenceDelay;
+    private readonly IUserActivitySource? _userActivitySource;
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly Func<TimeSpan> _serverRestartDelay;
     private readonly SemaphoreSlim _commands = new(1, 1);
@@ -59,6 +61,11 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
     private bool _isPresenceAvailable;
     private bool? _isOwnPresenceEnabled;
     private UserPresenceStatus? _ownPresenceStatus;
+    private UserPresenceStatus? _preferredOwnPresenceStatus;
+    private bool _isUserIdle;
+    private long _ownPresenceRevision;
+    private long _lastPresenceAttemptRevision = -1;
+    private UserPresenceStatus? _lastPresenceAttemptStatus;
     private bool _isUserStatusAvailable;
     private bool _isOwnUserStatusConfirmed;
     private UserStatusContent? _pendingOwnUserStatusConfirmation;
@@ -103,7 +110,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
         Func<DateTimeOffset>? utcNow = null,
         Func<TimeSpan>? serverRestartDelay = null,
         Func<TimeSpan, CancellationToken, Task>? sendDeadlineDelay = null,
-        Func<TimeSpan, CancellationToken, Task>? presenceDelay = null)
+        Func<TimeSpan, CancellationToken, Task>? presenceDelay = null,
+        IUserActivitySource? userActivitySource = null)
     {
         _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
         _store = store ?? throw new ArgumentNullException(nameof(store));
@@ -111,6 +119,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
         _delay = delay ?? Task.Delay;
         _sendDeadlineDelay = sendDeadlineDelay ?? Task.Delay;
         _presenceDelay = presenceDelay ?? Task.Delay;
+        _userActivitySource = userActivitySource;
+        _isUserIdle = userActivitySource is not null;
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _serverRestartDelay = serverRestartDelay ?? (() => ConnectionRetryInterval);
     }
@@ -2078,6 +2088,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
             long generation;
             CancellationTokenSource runCancellation;
             bool? wasEnabled;
+            UserPresenceStatus reportedStatus;
+            var isIdle = _userActivitySource?.IsIdle;
             lock (_stateGate)
             {
                 if (!_isPresenceAvailable || _isOwnPresenceEnabled is null)
@@ -2089,6 +2101,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
                 generation = _queryEpoch;
                 runCancellation = _runCancellation ?? throw new InvalidOperationException("The session is stopped.");
                 wasEnabled = _isOwnPresenceEnabled;
+                if (isIdle is { } observedIdle) _isUserIdle = observedIdle;
+                reportedStatus = status == UserPresenceStatus.Active && _isUserIdle ? UserPresenceStatus.Idle : status;
             }
 
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(
@@ -2105,7 +2119,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
                 else
                 {
                     await _gateway.UpdateOwnPresenceAsync(
-                        new UpdateOwnPresenceRequest(credentials, status),
+                        new UpdateOwnPresenceRequest(credentials, reportedStatus),
                         linked.Token).ConfigureAwait(false);
                     if (wasEnabled is false)
                     {
@@ -2149,12 +2163,16 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
             {
                 if (!IsChannelOperationCurrentLocked(accountId, generation, runCancellation)) return;
                 _isOwnPresenceEnabled = status != UserPresenceStatus.Offline;
-                _ownPresenceStatus = status;
+                _preferredOwnPresenceStatus = status;
+                _ownPresenceStatus = reportedStatus;
+                _ownPresenceRevision++;
+                _lastPresenceAttemptRevision = _ownPresenceRevision;
+                _lastPresenceAttemptStatus = reportedStatus;
             }
             Mutate(state => SetPresenceValue(
                 state,
                 credentials.UserId,
-                status,
+                reportedStatus,
                 now));
         }
         finally
@@ -2804,7 +2822,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
 
     private async Task<bool> TryReportOwnPresenceAsync(
         CredentialEnvelope credentials,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool force = true)
     {
         await _ownPresenceLane.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -2814,6 +2833,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
             AccountId accountId;
             long generation;
             CancellationTokenSource runCancellation;
+            long revision;
+            var isIdle = _userActivitySource?.IsIdle;
             lock (_stateGate)
             {
                 if (_runCancellation is null ||
@@ -2822,11 +2843,19 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
                 {
                     return false;
                 }
-                status = _ownPresenceStatus;
+                if (isIdle is { } observedIdle) _isUserIdle = observedIdle;
+                status = _preferredOwnPresenceStatus == UserPresenceStatus.Active && _isUserIdle
+                    ? UserPresenceStatus.Idle
+                    : _preferredOwnPresenceStatus;
                 isEnabled = _isOwnPresenceEnabled;
                 accountId = _accountId ?? throw new InvalidOperationException("No account is active.");
                 generation = _queryEpoch;
                 runCancellation = _runCancellation;
+                revision = _ownPresenceRevision;
+                if (!force && _lastPresenceAttemptStatus == status && _lastPresenceAttemptRevision == revision)
+                    return true;
+                _lastPresenceAttemptStatus = status;
+                _lastPresenceAttemptRevision = revision;
             }
             if (isEnabled is not true || status is not (UserPresenceStatus.Active or UserPresenceStatus.Idle))
                 return true;
@@ -2854,11 +2883,13 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
 
             if (!IsPresenceOperationCurrent(accountId, generation, runCancellation, credentials)) return false;
             var now = _utcNow();
-            Mutate(state => SetPresenceValue(
-                state,
-                credentials.UserId,
-                status.Value,
-                now));
+            Mutate(state =>
+            {
+                if (!IsPresenceOperationCurrent(accountId, generation, runCancellation, credentials) ||
+                    _ownPresenceRevision != revision) return state;
+                _ownPresenceStatus = status.Value;
+                return SetPresenceValue(state, credentials.UserId, status.Value, now);
+            }, publishWhenUnchanged: false);
             return true;
         }
         finally
@@ -2891,11 +2922,13 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
         {
             if (!IsChannelOperationCurrentLocked(accountId, generation, runCancellation) ||
                 !EqualityComparer<CredentialEnvelope>.Default.Equals(_credentials, credentials) ||
-                _ownPresenceStatus is null)
+                _ownPresenceStatus is null && _preferredOwnPresenceStatus is null)
             {
                 return;
             }
             _ownPresenceStatus = null;
+            _preferredOwnPresenceStatus = null;
+            _ownPresenceRevision++;
             changed = true;
         }
         if (changed) RaiseStateChanged();
@@ -3026,12 +3059,17 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
             _canCreatePrivateGroup = normalizedRegister.CanCreatePrivateChannel;
             _isPresenceAvailable = normalizedRegister.IsPresenceAvailable;
             _isOwnPresenceEnabled = normalizedRegister.IsOwnPresenceEnabled;
-            _ownPresenceStatus = normalizedRegister.IsOwnPresenceEnabled switch
+            _preferredOwnPresenceStatus = normalizedRegister.IsOwnPresenceEnabled switch
             {
                 false => UserPresenceStatus.Offline,
+                true when _preferredOwnPresenceStatus == UserPresenceStatus.Idle => UserPresenceStatus.Idle,
                 true => UserPresenceStatus.Active,
                 _ => null
             };
+            _ownPresenceStatus = _userActivitySource is not null && normalizedRegister.IsOwnPresenceEnabled is true
+                ? null
+                : _preferredOwnPresenceStatus;
+            _ownPresenceRevision++;
             _isUserStatusAvailable = normalizedRegister.IsUserStatusAvailable;
             _isOwnUserStatusConfirmed = normalizedRegister.IsUserStatusAvailable;
             _pendingOwnUserStatusConfirmation = null;
@@ -3195,13 +3233,17 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
         {
             if (!_isPresenceAvailable) return;
             _isOwnPresenceEnabled = changed.IsEnabled;
-            _ownPresenceStatus = changed.IsEnabled switch
+            _preferredOwnPresenceStatus = changed.IsEnabled switch
             {
                 false => UserPresenceStatus.Offline,
-                true when _ownPresenceStatus == UserPresenceStatus.Idle => UserPresenceStatus.Idle,
+                true when _preferredOwnPresenceStatus == UserPresenceStatus.Idle => UserPresenceStatus.Idle,
                 true => UserPresenceStatus.Active,
                 _ => null
             };
+            _ownPresenceStatus = _userActivitySource is not null && changed.IsEnabled is true
+                ? null
+                : _preferredOwnPresenceStatus;
+            _ownPresenceRevision++;
             currentUserId = _credentials?.UserId;
             status = _ownPresenceStatus;
         }
@@ -3222,16 +3264,21 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
         try
         {
             if (initialRegistration is not null && !await initialRegistration.ConfigureAwait(false)) return;
+            var checkInterval = _userActivitySource is null ? PresenceRefreshInterval : UserActivityCheckInterval;
+            var elapsed = TimeSpan.Zero;
             while (!cancellationToken.IsCancellationRequested)
             {
                 CredentialEnvelope? credentials;
                 lock (_stateGate) credentials = _credentials;
                 if (credentials is null ||
-                    !await TryReportOwnPresenceAsync(credentials, cancellationToken).ConfigureAwait(false))
+                    !await TryReportOwnPresenceAsync(credentials, cancellationToken, force: elapsed == TimeSpan.Zero).ConfigureAwait(false))
                 {
                     return;
                 }
-                await _presenceDelay(PresenceRefreshInterval, cancellationToken).ConfigureAwait(false);
+                await _presenceDelay(checkInterval, cancellationToken).ConfigureAwait(false);
+                elapsed += checkInterval;
+                if (elapsed < PresenceRefreshInterval) continue;
+                elapsed = TimeSpan.Zero;
                 lock (_stateGate) credentials = _credentials;
                 if (credentials is null ||
                     !await TryRefreshRealmPresenceAsync(credentials, cancellationToken).ConfigureAwait(false))
@@ -3938,6 +3985,8 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
             _isPresenceAvailable = false;
             _isOwnPresenceEnabled = null;
             _ownPresenceStatus = null;
+            _preferredOwnPresenceStatus = null;
+            _ownPresenceRevision++;
             _isUserStatusAvailable = false;
             _isOwnUserStatusConfirmed = false;
             _pendingOwnUserStatusConfirmation = null;
@@ -4142,6 +4191,9 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
             _isPresenceAvailable = false;
             _isOwnPresenceEnabled = null;
             _ownPresenceStatus = null;
+            _preferredOwnPresenceStatus = null;
+            _ownPresenceRevision++;
+            _isUserIdle = _userActivitySource is not null;
             _credentials = null;
             _queueId = null;
             _selectedConversation = null;

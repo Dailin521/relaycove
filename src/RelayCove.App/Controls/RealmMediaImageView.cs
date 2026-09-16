@@ -18,7 +18,7 @@ public sealed class RealmMediaImageView : ContentView
 
     public RealmMediaImageView()
     {
-        _image = new Image { Aspect = Aspect.AspectFit, IsVisible = false };
+        _image = new Image { Aspect = Aspect.AspectFit, IsVisible = false, IsAnimationPlaying = true };
         _loading = new ActivityIndicator
         {
             IsRunning = true,
@@ -120,6 +120,7 @@ public sealed class RealmMediaImageView : ContentView
 
     private void DetachServices()
     {
+        _image.IsAnimationPlaying = false;
         if (_mediaService is not null) _mediaService.AvatarChanged -= OnAvatarChanged;
         if (_session is not null) _session.StateChanged -= OnSessionStateChanged;
         _mediaService = null;
@@ -130,6 +131,7 @@ public sealed class RealmMediaImageView : ContentView
     private void AttachServices()
     {
         DetachServices();
+        _image.IsAnimationPlaying = true;
         _mediaService = Handler?.MauiContext?.Services.GetService<IRealmMediaService>();
         _session = Handler?.MauiContext?.Services.GetService<IClientSession>();
         if (_mediaService is not null) _mediaService.AvatarChanged += OnAvatarChanged;

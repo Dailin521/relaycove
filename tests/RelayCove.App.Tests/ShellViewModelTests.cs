@@ -6,7 +6,7 @@ using RelayCove.Core;
 
 namespace RelayCove.App.Tests;
 
-public sealed class ShellViewModelTests
+public sealed partial class ShellViewModelTests
 {
     [Theory]
     [InlineData(7)]
@@ -2673,8 +2673,67 @@ public sealed class ShellViewModelTests
         Assert.True(viewModel.IsNewConversationOpen);
         Assert.True(viewModel.IsNewChannelConversationMode);
         Assert.True(viewModel.CanCreatePrivateGroup);
-        Assert.False(viewModel.ShowPrivateGroupCreateDisabledReason);
+        Assert.True(viewModel.ShowPrivateGroupCreateDisabledReason);
+        Assert.Equal("请填写群聊名称。", viewModel.PrivateGroupCreateDisabledReason);
         Assert.Null(viewModel.NewConversationError);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task StartNewChannelConversation_WhenNameMissing_ShowsDisabledReasonAndDoesNotCreate(string name)
+    {
+        var calls = 0;
+        var session = CreateGroupCreationSession();
+        session.CreatePrivateGroupAction = (_, _) =>
+        {
+            calls++;
+            return Task.FromResult(new PrivateGroupCreated(55, "group", new ChannelTopic(55, string.Empty), 3));
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.ShowNewChannelConversationCommand.Execute(null);
+        foreach (var choice in viewModel.NewConversationChoices) choice.IsSelected = true;
+        viewModel.NewPrivateGroupName = name;
+
+        await ((IAsyncRelayCommand)viewModel.StartNewChannelConversationCommand).ExecuteAsync(null);
+
+        Assert.False(viewModel.CanStartNewChannelConversation);
+        Assert.True(viewModel.ShowPrivateGroupCreateDisabledReason);
+        Assert.Equal("请填写群聊名称。", viewModel.PrivateGroupCreateDisabledReason);
+        Assert.Equal(0, calls);
+    }
+
+    [Fact]
+    public void NewPrivateGroupForm_WhenNameOrMembersChange_UpdatesDisabledReasonAndButtonAvailability()
+    {
+        using var viewModel = CreateViewModel(CreateGroupCreationSession());
+        viewModel.ShowNewChannelConversationCommand.Execute(null);
+        var notifications = new List<string?>();
+        viewModel.PropertyChanged += (_, args) => notifications.Add(args.PropertyName);
+
+        viewModel.NewPrivateGroupName = "产品设计群";
+
+        Assert.Contains(nameof(ShellViewModel.PrivateGroupCreateDisabledReason), notifications);
+        Assert.Contains(nameof(ShellViewModel.ShowPrivateGroupCreateDisabledReason), notifications);
+        Assert.Equal("请至少选择两名其他成员。", viewModel.PrivateGroupCreateDisabledReason);
+        Assert.True(viewModel.ShowPrivateGroupCreateDisabledReason);
+        viewModel.NewConversationChoices[0].IsSelected = true;
+        Assert.False(viewModel.CanStartNewChannelConversation);
+        notifications.Clear();
+
+        viewModel.NewConversationChoices[1].IsSelected = true;
+
+        Assert.Contains(nameof(ShellViewModel.PrivateGroupCreateDisabledReason), notifications);
+        Assert.Contains(nameof(ShellViewModel.ShowPrivateGroupCreateDisabledReason), notifications);
+        Assert.True(viewModel.CanStartNewChannelConversation);
+        Assert.False(viewModel.ShowPrivateGroupCreateDisabledReason);
+        Assert.Equal(string.Empty, viewModel.PrivateGroupCreateDisabledReason);
+        viewModel.NewPrivateGroupName = " ";
+        Assert.False(viewModel.CanStartNewChannelConversation);
+        Assert.True(viewModel.ShowPrivateGroupCreateDisabledReason);
+        Assert.Equal("请填写群聊名称。", viewModel.PrivateGroupCreateDisabledReason);
+        viewModel.ShowNewDirectConversationCommand.Execute(null);
+        Assert.False(viewModel.ShowPrivateGroupCreateDisabledReason);
     }
 
     [Fact]
@@ -2781,6 +2840,104 @@ public sealed class ShellViewModelTests
         Assert.Contains(viewModel.Conversations, item => item.Title == "产品设计群" && item.IsPrivateGroup);
         Assert.False(viewModel.IsNewConversationOpen);
     }
+
+    [Theory]
+    [InlineData(GatewayErrorKind.RequestFailed, GatewayErrorCode.ChannelAlreadyExists, 409, "群名已存在", false)]
+    [InlineData(GatewayErrorKind.RequestFailed, GatewayErrorCode.PermissionDenied, 400, "权限", false)]
+    [InlineData(GatewayErrorKind.RequestFailed, GatewayErrorCode.InvalidChannelName, 400, "修改群名", false)]
+    [InlineData(GatewayErrorKind.RequestFailed, GatewayErrorCode.InvalidChannelMembers, 400, "刷新联系人", false)]
+    [InlineData(GatewayErrorKind.ReauthRequired, GatewayErrorCode.Unauthorized, 401, "重新登录", false)]
+    [InlineData(GatewayErrorKind.RateLimited, GatewayErrorCode.RateLimited, 429, "限流", false)]
+    [InlineData(GatewayErrorKind.RequestFailed, GatewayErrorCode.RequestFailed, 403, "服务器拒绝访问", false)]
+    [InlineData(GatewayErrorKind.RequestFailed, GatewayErrorCode.RequestFailed, 404, "创建接口", false)]
+    [InlineData(GatewayErrorKind.RequestFailed, GatewayErrorCode.RequestFailed, 400, "名称、成员或设置", false)]
+    [InlineData(GatewayErrorKind.RequestFailed, GatewayErrorCode.RequestFailed, 418, "未提供可识别", false)]
+    [InlineData(GatewayErrorKind.IncompatibleRealm, GatewayErrorCode.RedirectNotAllowed, 302, "服务器地址", false)]
+    [InlineData(GatewayErrorKind.Offline, GatewayErrorCode.RequestTimedOut, null, "超时", false)]
+    [InlineData(GatewayErrorKind.Offline, GatewayErrorCode.RequestTimedOut, null, "超时", true)]
+    [InlineData(GatewayErrorKind.Offline, GatewayErrorCode.NetworkError, null, "网络连接中断", true)]
+    [InlineData(GatewayErrorKind.Server, GatewayErrorCode.ServerError, 500, "服务器内部错误", true)]
+    [InlineData(GatewayErrorKind.Protocol, GatewayErrorCode.InvalidResponse, null, "数据异常", true)]
+    public async Task StartNewChannelConversation_WhenCreationFails_ShowsReasonAndPreservesDraftWithoutRetry(
+        GatewayErrorKind kind, GatewayErrorCode code, int? status, string expectedReason, bool wrapped)
+    {
+        var calls = 0;
+        var session = CreateGroupCreationSession();
+        var gateway = new GatewayException(kind, code, status);
+        session.CreatePrivateGroupAction = (_, _) =>
+        {
+            calls++;
+            return Task.FromException<PrivateGroupCreated>(wrapped
+                ? new InvalidOperationException("群聊创建结果无法确认；已刷新权威会话列表，请先检查是否已创建，勿直接重试。", gateway)
+                : gateway);
+        };
+        using var viewModel = CreateViewModel(session);
+        viewModel.ShowNewChannelConversationCommand.Execute(null);
+        viewModel.NewPrivateGroupName = "产品设计群";
+        foreach (var choice in viewModel.NewConversationChoices) choice.IsSelected = true;
+        var notifications = new List<string?>();
+        viewModel.PropertyChanged += (_, args) => notifications.Add(args.PropertyName);
+
+        await ((IAsyncRelayCommand)viewModel.StartNewChannelConversationCommand).ExecuteAsync(null);
+
+        Assert.Contains(expectedReason, viewModel.NewConversationError);
+        Assert.True(viewModel.HasNewConversationError);
+        Assert.Contains(nameof(ShellViewModel.HasNewConversationError), notifications);
+        if (status is not null) Assert.Contains($"HTTP {status}", viewModel.NewConversationError);
+        if (kind is GatewayErrorKind.Offline or GatewayErrorKind.Server or GatewayErrorKind.Protocol)
+        {
+            Assert.Contains("结果无法确认", viewModel.NewConversationError);
+            Assert.Contains("勿直接重试", viewModel.NewConversationError);
+        }
+        Assert.Equal(1, calls);
+        Assert.True(viewModel.IsNewConversationOpen);
+        Assert.Equal("产品设计群", viewModel.NewPrivateGroupName);
+        Assert.All(viewModel.NewConversationChoices, choice => Assert.True(choice.IsSelected));
+        Assert.Null(session.SelectedConversation);
+    }
+
+    [Theory]
+    [InlineData("members", "刷新联系人")]
+    [InlineData("arguments", "至少选择两名")]
+    [InlineData("cancelled", "创建已取消")]
+    [InlineData("unexpected", "群聊创建失败")]
+    public async Task StartNewChannelConversation_WhenLocalFailureOccurs_ShowsSafeActionableMessage(string failure, string expectedReason)
+    {
+        const string privateDetail = "untrusted-private-detail";
+        Exception error = failure switch
+        {
+            "members" => new InvalidOperationException("Refresh the active user directory before creating this group."),
+            "arguments" => new ArgumentException(privateDetail),
+            "cancelled" => new OperationCanceledException(privateDetail),
+            _ => new Exception(privateDetail)
+        };
+        var session = CreateGroupCreationSession();
+        session.CreatePrivateGroupAction = (_, _) => Task.FromException<PrivateGroupCreated>(error);
+        using var viewModel = CreateViewModel(session);
+        viewModel.ShowNewChannelConversationCommand.Execute(null);
+        viewModel.NewPrivateGroupName = "产品设计群";
+        foreach (var choice in viewModel.NewConversationChoices) choice.IsSelected = true;
+
+        await ((IAsyncRelayCommand)viewModel.StartNewChannelConversationCommand).ExecuteAsync(null);
+
+        Assert.Contains(expectedReason, viewModel.NewConversationError);
+        Assert.DoesNotContain(privateDetail, viewModel.NewConversationError);
+        Assert.True(viewModel.HasNewConversationError);
+        Assert.True(viewModel.IsNewConversationOpen);
+    }
+
+    private static FakeSession CreateGroupCreationSession() => new()
+    {
+        CurrentUserId = 7,
+        StateValue = new ClientState(
+            users: new Dictionary<long, UserProfile>
+            {
+                [7] = new UserProfile(7, "Ada"),
+                [8] = new UserProfile(8, "Bea"),
+                [9] = new UserProfile(9, "Chen")
+            },
+            connection: new ConnectionState(ConnectionStatus.Connected))
+    };
 
     [Fact]
     public async Task ChannelMenu_WhenOpenedForAnotherChannel_TargetsThatChannelForLabelsAndExit()
@@ -3436,6 +3593,8 @@ public sealed class ShellViewModelTests
 
         Assert.Equal(expected, viewModel.EmojiPickerWidth);
         Assert.True(viewModel.EmojiPickerColumns * 28 + 16 <= viewModel.EmojiPickerContentWidth);
+        Assert.True(viewModel.ComposerEmojiPickerColumns * 34 + 16 <= viewModel.EmojiPickerContentWidth);
+        Assert.Equal(392d, viewModel.DefaultEmojiPickerHeight);
         Assert.True(viewModel.EmojiPickerWidth <= width - 24);
     }
 
@@ -3454,6 +3613,9 @@ public sealed class ShellViewModelTests
         Assert.True(position.X >= 12 && position.X + viewModel.EmojiPickerWidth <= width - 12);
         Assert.True(position.Y >= 12 && position.Y + viewModel.EmojiPickerHeight <= height - 12);
         Assert.True((viewModel.EmojiPickerContentWidth - 16) / viewModel.EmojiPickerColumns >= 28);
+        Assert.True((viewModel.EmojiPickerContentWidth - 16) / viewModel.ComposerEmojiPickerColumns >= 34);
+        Assert.True(viewModel.DefaultEmojiPickerHeight <= 392d);
+        Assert.True(viewModel.DefaultEmojiPickerHeight <= height - 24d);
         Assert.True(viewModel.EmojiPickerHeight > 100);
         Assert.Equal(2, viewModel.VisibleEmojiChoices.Count);
     }
@@ -3908,6 +4070,85 @@ public sealed class ShellViewModelTests
         Assert.Same(message, viewModel.ActiveMessageAction);
         Assert.Equal(812.5d, viewModel.MessageMenuAnchorX);
         Assert.Equal(244d, viewModel.MessageMenuAnchorY);
+    }
+
+    [Fact]
+    public async Task CopyActiveMessage_WhenTextWasSelected_CopiesTheSelectionAndClosesMenu()
+    {
+        var interactions = new FakePlatformInteractionService();
+        using var viewModel = CreateViewModel(new FakeSession(), platformInteractions: interactions);
+        var message = new MessageItem("message-1", 1, 7, "Ada", "第一行\n第二行", "10:00");
+
+        viewModel.OpenMessageMenuAtCommand.Execute(new MessageMenuRequest(message, 812.5d, 244d, "第二行"));
+        await viewModel.CopyActiveMessageCommand.ExecuteAsync(null);
+
+        Assert.Equal(["第二行"], interactions.Copied);
+        Assert.False(viewModel.IsMessageMenuOpen);
+        Assert.Null(viewModel.ActiveMessageAction);
+    }
+
+    [Fact]
+    public async Task CopyActiveMessage_WhenNothingIsSelected_CopiesTheFullDisplayedBodyAndPreservesLineBreaks()
+    {
+        var interactions = new FakePlatformInteractionService();
+        using var viewModel = CreateViewModel(new FakeSession(), platformInteractions: interactions);
+        var message = new MessageItem("message-1", 1, 7, "Ada", "第一行\n第二行", "10:00");
+
+        viewModel.OpenMessageMenuAtCommand.Execute(new MessageMenuRequest(message, 812.5d, 244d));
+        await viewModel.CopyActiveMessageCommand.ExecuteAsync(null);
+
+        Assert.Equal(["第一行\n第二行"], interactions.Copied);
+    }
+
+    [Fact]
+    public async Task CopyActiveMessage_WhenMenuMovesToAnotherMessage_DoesNotReuseThePreviousSelection()
+    {
+        var interactions = new FakePlatformInteractionService();
+        using var viewModel = CreateViewModel(new FakeSession(), platformInteractions: interactions);
+        var first = new MessageItem("message-1", 1, 7, "Ada", "第一条消息", "10:00");
+        var second = new MessageItem("message-2", 2, 8, "Bea", "第二条消息", "10:01");
+
+        viewModel.OpenMessageMenuAtCommand.Execute(new MessageMenuRequest(first, 812.5d, 244d, "第一条"));
+        viewModel.OpenMessageMenuAtCommand.Execute(new MessageMenuRequest(second, 400d, 520d));
+        await viewModel.CopyActiveMessageCommand.ExecuteAsync(null);
+
+        Assert.Equal(["第二条消息"], interactions.Copied);
+    }
+
+    [Fact]
+    public async Task CopyActiveMessage_WhenClipboardFails_ClosesMenuWithoutShowingABanner()
+    {
+        var interactions = new FakePlatformInteractionService
+        {
+            CopyTextAction = _ => Task.FromException(new InvalidOperationException("Clipboard unavailable."))
+        };
+        using var viewModel = CreateViewModel(new FakeSession(), platformInteractions: interactions);
+        var message = new MessageItem("message-1", 1, 7, "Ada", "正文", "10:00");
+
+        viewModel.OpenMessageMenuAtCommand.Execute(new MessageMenuRequest(message, 812.5d, 244d));
+        await viewModel.CopyActiveMessageCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsMessageMenuOpen);
+        Assert.Null(viewModel.ActiveMessageAction);
+        Assert.Null(viewModel.MediaActionStatus);
+    }
+
+    [Fact]
+    public void OpenMessageMenuAtCommand_WhenMessageHasNoText_HidesCopyAction()
+    {
+        using var viewModel = CreateViewModel(new FakeSession());
+        var message = new MessageItem(
+            "message-1",
+            1,
+            7,
+            "Ada",
+            "![图片](/user_uploads/image.png)",
+            "10:00",
+            realm: RealmEndpoint.Parse("https://chat.example.test/"));
+
+        viewModel.OpenMessageMenuAtCommand.Execute(new MessageMenuRequest(message, 812.5d, 244d));
+
+        Assert.False(viewModel.CanCopyActiveMessage);
     }
 
     [Theory]
@@ -7651,7 +7892,8 @@ public sealed class ShellViewModelTests
         IDownloadHistoryStore? downloadHistoryStore = null,
         TimeProvider? timeProvider = null,
         IUiDispatcher? dispatcher = null,
-        IStartupService? startupService = null) =>
+        IStartupService? startupService = null,
+        StickerPickerViewModel? stickers = null) =>
         new(
             session,
             lastRealmStore ?? new FakeLastRealmStore(),
@@ -7669,7 +7911,7 @@ public sealed class ShellViewModelTests
             null,
             downloadHistoryStore,
             timeProvider,
-            startupService);
+            startupService, stickers: stickers);
 
     private sealed class FakeStartupService : IStartupService
     {
@@ -7873,12 +8115,13 @@ public sealed class ShellViewModelTests
     {
         public List<string> Copied { get; } = [];
         public List<Uri> Opened { get; } = [];
+        public Func<string, Task>? CopyTextAction { get; set; }
         public Func<Uri, Task>? OpenUriAction { get; set; }
 
         public Task CopyTextAsync(string text, CancellationToken cancellationToken = default)
         {
             Copied.Add(text);
-            return Task.CompletedTask;
+            return CopyTextAction?.Invoke(text) ?? Task.CompletedTask;
         }
 
         public Task OpenUriAsync(Uri uri, CancellationToken cancellationToken = default)

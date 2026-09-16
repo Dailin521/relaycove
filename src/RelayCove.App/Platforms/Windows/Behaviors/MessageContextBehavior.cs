@@ -6,6 +6,8 @@ using WinPoint = Windows.Foundation.Point;
 using WinUiBorder = Microsoft.Maui.Platform.ContentPanel;
 using WinUiFrameworkElement = Microsoft.UI.Xaml.FrameworkElement;
 using WinUiListViewItem = Microsoft.UI.Xaml.Controls.ListViewItem;
+using WinUiRichTextBlock = Microsoft.UI.Xaml.Controls.RichTextBlock;
+using WinUiTextBlock = Microsoft.UI.Xaml.Controls.TextBlock;
 
 namespace RelayCove.App.Platforms.Windows.Behaviors;
 
@@ -114,23 +116,43 @@ public sealed class MessageContextBehavior : Behavior<Border>
             ReferenceEquals(viewModel.ActiveMessageAction, parameter)) return;
         var pageRoot = GetPageRoot();
         WinPoint? anchor = pageRoot is null ? null : eventArgs.GetPosition(pageRoot);
-        if (!Open(viewModel, parameter, anchor)) return;
+        var selectedText = GetSelectedText(eventArgs.OriginalSource as Microsoft.UI.Xaml.DependencyObject);
+        if (!Open(viewModel, parameter, anchor, selectedText)) return;
         eventArgs.Handled = true;
     }
 
-    private bool Open(ShellViewModel? viewModel, object? parameter, WinPoint? anchor)
+    private bool Open(ShellViewModel? viewModel, object? parameter, WinPoint? anchor, string? selectedText)
     {
         var command = Command;
         if (command is null && viewModel is not null && parameter is MessageItem message)
         {
             var position = anchor ?? GetDefaultAnchor(message);
-            parameter = new MessageMenuRequest(message, position.X, position.Y);
+            parameter = new MessageMenuRequest(
+                message,
+                position.X,
+                position.Y,
+                selectedText);
             command = viewModel.OpenMessageMenuAtCommand;
         }
         else if (command is null) command = viewModel?.OpenMessageMenuCommand;
         if (command?.CanExecute(parameter) != true) return false;
         command.Execute(parameter);
         return true;
+    }
+
+    private static string? GetSelectedText(Microsoft.UI.Xaml.DependencyObject? source)
+    {
+        for (var current = source; current is not null; current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current))
+        {
+            var selectedText = current switch
+            {
+                WinUiTextBlock { IsTextSelectionEnabled: true } text => text.SelectedText,
+                WinUiRichTextBlock { IsTextSelectionEnabled: true } richText => richText.SelectedText,
+                _ => null
+            };
+            if (!string.IsNullOrEmpty(selectedText)) return selectedText;
+        }
+        return null;
     }
 
     private WinPoint GetDefaultAnchor(MessageItem message)

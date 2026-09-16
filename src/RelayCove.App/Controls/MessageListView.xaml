@@ -43,7 +43,7 @@
             </CollectionView.Footer>
             <CollectionView.ItemTemplate>
                 <DataTemplate x:DataType="viewModels:MessageItem">
-                    <Grid Padding="20,0,20,10"
+                    <Grid Padding="20,0,20,12"
                           ColumnDefinitions="*,16"
                           SemanticProperties.Description="{Binding AccessibleLabel}">
                         <Grid.RowDefinitions>
@@ -110,7 +110,7 @@
                                 </Border>
 
                                 <VerticalStackLayout Grid.Column="1"
-                                                     Spacing="4"
+                                                     Spacing="6"
                                                      MaximumWidthRequest="690"
                                                      HorizontalOptions="Start"
                                                      FlowDirection="LeftToRight">
@@ -157,7 +157,7 @@
                                     </Grid>
 
                                     <Border x:Name="Bubble"
-                                            Padding="12,10"
+                                            Padding="14,10"
                                             HorizontalOptions="Start"
                                             Background="{StaticResource BubbleBrush}"
                                             Stroke="{StaticResource BorderBrush}"
@@ -242,6 +242,7 @@
                                                    IsVisible="{Binding HasPlainBody}"
                                                    Style="{StaticResource BaseLabelStyle}"
                                                    LineBreakMode="WordWrap"
+                                                   LineHeight="1.5"
                                                    FlowDirection="LeftToRight">
                                                 <Label.Behaviors>
                                                     <windowsBehaviors:SelectableTextBehavior />
@@ -253,6 +254,7 @@
                                                                         Runs="{Binding BodyRuns}"
                                                                         IsVisible="{Binding HasCustomEmoji}"
                                                                         Style="{StaticResource BaseLabelStyle}"
+                                                                        LineHeight="1.5"
                                                                         FlowDirection="LeftToRight" />
 
                                             <VerticalStackLayout BindableLayout.ItemsSource="{Binding Attachments}"

@@ -24,6 +24,7 @@ public sealed class MessageEmojiLabelHandler : ViewHandler<MessageEmojiLabel, Ri
             [nameof(Label.FontSize)] = MapRuns,
             [nameof(Label.TextColor)] = MapRuns,
             [nameof(Label.FontFamily)] = MapRuns,
+            [nameof(Label.LineHeight)] = MapRuns,
             [nameof(Label.MaxLines)] = MapRuns,
             [nameof(Label.LineBreakMode)] = MapRuns
         };
@@ -77,10 +78,10 @@ public sealed class MessageEmojiLabelHandler : ViewHandler<MessageEmojiLabel, Ri
         MapAppearance(handler, view);
         handler.PlatformView.IsTextSelectionEnabled = view.IsTextSelectionEnabled;
         handler.PlatformView.MaxLines = view.MaxLines < 0 ? 0 : view.MaxLines;
-        // Match the plain message body's top trim while retaining font descenders
-        // and the existing single-line conversation summary layout.
-        handler.PlatformView.TextLineBounds = view.MaxLines == 1
-            ? TextLineBounds.Full : TextLineBounds.TrimToCapHeight;
+        handler.PlatformView.TextLineBounds = TextLineBounds.Full;
+        handler.PlatformView.ClearValue(RichTextBlock.LineHeightProperty);
+        if (view.MaxLines != 1 && view.LineHeight > 0)
+            handler.PlatformView.LineHeight = view.FontSize * view.LineHeight;
         handler.PlatformView.TextWrapping = view.MaxLines == 1 ? TextWrapping.NoWrap : TextWrapping.Wrap;
         handler.PlatformView.TextTrimming = view.LineBreakMode == LineBreakMode.TailTruncation
             ? TextTrimming.CharacterEllipsis : TextTrimming.None;
