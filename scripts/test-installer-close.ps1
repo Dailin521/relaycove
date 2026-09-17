@@ -104,9 +104,12 @@ $unrelated = $null
 $target = $null
 try {
     $unrelated = Start-Fixture $unrelatedRoot
-    foreach ($mode in @('baseline', 'configured')) {
+    foreach ($mode in @('baseline', 'declined', 'configured')) {
         $target = Start-Fixture $targetRoot
         $close = if ($mode -eq 'baseline') { 'yes' } else { $settings['CloseApplications'] }
+        $closeHook = if ($mode -eq 'baseline') { '' } else {
+            '#include "' + (Join-Path $PSScriptRoot 'installer/CloseInstalledApp.iss') + '"'
+        }
         $scriptPath = Join-Path $fixtureRoot "$mode.iss"
         Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @"
 [Setup]
@@ -127,19 +130,22 @@ CloseApplicationsFilter=$($settings['CloseApplicationsFilter'])
 RestartApplications=$($settings['RestartApplications'])
 [Files]
 Source: "$payloadRoot\RichChat.exe"; DestDir: "{app}"; Flags: ignoreversion
+$closeHook
 "@
         & $IsccPath /Q $scriptPath
         if ($LASTEXITCODE -ne 0) { throw "Could not compile $mode fixture." }
         $setup = Start-Process -FilePath (Join-Path $fixtureRoot "$mode-setup.exe") -WindowStyle Hidden -PassThru -ArgumentList @(
-            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + (Join-Path $fixtureRoot "$mode.log") + '"'))
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
+            $(if ($mode -eq 'declined') { '/NOCLOSEAPPLICATIONS' } else { '/CLOSEAPPLICATIONS' }),
+            ('/LOG="' + (Join-Path $fixtureRoot "$mode.log") + '"'))
         try {
             if (-not $setup.WaitForExit(90000)) { $setup.Kill($true); throw "$mode fixture timed out." }
             $target.Refresh()
             $unrelated.Refresh()
             if ($unrelated.HasExited) { throw 'Installer closed an unrelated executable.' }
-            if ($mode -eq 'baseline') {
+            if ($mode -ne 'configured') {
                 if ($setup.ExitCode -eq 0 -or $target.HasExited) { throw 'Baseline did not reproduce the shutdown failure.' }
-                Write-Host 'PASS: normal shutdown leaves the stubborn tray process running and installation fails.'
+                Write-Host "PASS: $mode leaves the tray process running and does not replace its executable."
             }
             else {
                 if ($setup.ExitCode -ne 0 -or -not $target.HasExited) { throw 'Configured shutdown did not release the executable.' }

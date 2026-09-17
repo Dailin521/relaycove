@@ -89,7 +89,9 @@ public sealed class WindowsWindowShellAdapterTests
         Assert.Contains("private void OnWindowDestroying", source, StringComparison.Ordinal);
         Assert.Contains("ScheduleForcedExit();", source, StringComparison.Ordinal);
         Assert.Contains("WindowsApplicationLifetime.MarkExitRequested", source, StringComparison.Ordinal);
-        Assert.Contains("RequestShutdownAsync(ApplicationShutdownEntryPoint.TrayExit)", source, StringComparison.Ordinal);
+        Assert.Contains("RequestShutdownAsync(entryPoint)", source, StringComparison.Ordinal);
+        Assert.Contains("RequestExit(ApplicationShutdownEntryPoint.TrayExit)", source, StringComparison.Ordinal);
+        Assert.Contains("RequestExit(ApplicationShutdownEntryPoint.RestartManager)", source, StringComparison.Ordinal);
     }
 
     private static string FindWorkspaceFile(params string[] parts)

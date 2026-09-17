@@ -986,6 +986,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public bool HasSearchResults => SearchResults.Count > 0;
     public bool IsSearchEmpty => !HasSearchResults;
     public string SearchEmptyText => IsSearchBusy ? "正在搜索…"
+        : HasSearchError ? "搜索未完成，请重试。"
         : _hasSubmittedSearch ? "没有匹配结果。"
         : string.IsNullOrWhiteSpace(SearchQuery) ? "点击搜索或按 Enter 查看记录"
         : "点击搜索或按 Enter 开始搜索";
@@ -4635,7 +4636,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(SearchEmptyText));
         ScheduleServerSearch(value);
     }
-    partial void OnSearchErrorChanged(string? value) => OnPropertyChanged(nameof(HasSearchError));
+    partial void OnSearchErrorChanged(string? value)
+    {
+        OnPropertyChanged(nameof(HasSearchError));
+        OnPropertyChanged(nameof(SearchEmptyText));
+    }
     partial void OnIsSearchBusyChanged(bool value) => OnPropertyChanged(nameof(SearchEmptyText));
     partial void OnSavedErrorChanged(string? value)
     {
@@ -6323,6 +6328,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             IsSearchBusy = true;
             SearchError = null;
             _searchBeforeMessageId = null;
+            _serverSearchResults = [];
+            SelectedSearchResult = null;
+            ProjectSearch();
+            OnPropertyChanged(nameof(HasMoreSearchResults));
             if (debounce) await Task.Delay(TimeSpan.FromMilliseconds(300), cancellation.Token).ConfigureAwait(false);
             var page = await _session.SearchMessagesAsync(
                 query,
@@ -6529,14 +6538,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(IsSearchEmpty));
             return;
         }
-        IEnumerable<SearchResultItem> localMatches = _searchConversation is null
-            ? []
-            : _projectedState.Messages.Values
-                .Where(message => message.Conversation.CanonicalKey == _searchConversation.CanonicalKey &&
-                                  (string.IsNullOrWhiteSpace(SearchQuery) || Contains(message.Content, SearchQuery.Trim())) &&
-                                  MatchesSearchFilter(SearchContentClassifier.Classify(message.Content, _session.ActiveRealm), filter))
-                .OrderByDescending(message => message.Id)
-                .Select(message => ToSearchResult(message, SelectedSearchFilter));
         Reconcile(
             SearchResults,
             _serverSearchResults
@@ -6544,7 +6545,6 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                                  (_searchConversation is null ||
                                   result.Conversation?.CanonicalKey == _searchConversation.CanonicalKey) &&
                                  MatchesSearchFilter(result.ContentKinds, filter))
-                .Concat(localMatches)
                 .DistinctBy(result => result.MessageId),
             item => item.Id);
         OnPropertyChanged(nameof(HasSearchResults));

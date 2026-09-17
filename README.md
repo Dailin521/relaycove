@@ -2,9 +2,9 @@
 
 RichChat 是一个直接连接 Zulip Realm 的 Windows 原生 .NET MAUI 客户端。Zulip 是账号、权限、成员、消息和实时事件的唯一事实源；项目不包含自研聊天服务端、代理、BFF 或第二消息后端。
 
-当前版本为 [`1.0.7`](https://github.com/Dailin521/relaycove/releases/tag/v1.0.7)，目标平台为 Windows 11 x64，使用 .NET SDK `10.0.400`、MAUI `10.0.20` 和 `win-x64`。`RelayCove.Web` 只保留为历史源码，不再参与产品开发或 Windows 发布。
+当前版本为 [`1.0.8`](https://github.com/Dailin521/relaycove/releases/tag/v1.0.8)，目标平台为 Windows 11 x64，使用 .NET SDK `10.0.400`、MAUI `10.0.20` 和 `win-x64`。`RelayCove.Web` 只保留为历史源码，不再参与产品开发或 Windows 发布。
 
-本版本沿用 SVN 主线的 `1.0.x` 版本系列，构建号为 `14`；历史 GitHub `2.4.0` 不属于新的更新渠道。运行 `publish-installer.cmd` 会生成当前源码版本的安装包及更新清单。
+本版本沿用 SVN 主线的 `1.0.x` 版本系列，构建号为 `15`；历史 GitHub `2.4.0` 不属于新的更新渠道。运行 `publish-installer.cmd` 会生成当前源码版本的安装包及更新清单。
 
 ## 下载
 
@@ -14,13 +14,13 @@ GitHub Release 提供自包含、未签名的 ZIP 和 `RichChat-<version>-win-x6
 
 应用退出后不会接收消息，也不包含后台推送、静默安装更新、MSIX 或代码签名。
 
-在“设置 → 通用”可开启或关闭“启动时检查更新”，默认开启，每个新版只提醒一次。“设置 → 关于”可以手动检查 GitHub 正式 Release、下载更新并打开安装包；下载完成后不会自动安装或重启。下载文件经过大小和 SHA-256 校验，打开安装包前请先处理未发送的草稿。
+在“设置 → 账户”可开启或关闭“启动时检查更新”，默认开启，每个新版只提醒一次。“设置 → 关于”可以手动检查 GitHub 正式 Release、下载更新并打开安装包；下载完成后不会自动安装或重启。下载文件经过大小和 SHA-256 校验，打开安装包前请先处理未发送的草稿。
 
 更新渠道只接受 `Dailin521/relaycove` 正式 Release 中配套的 `update-win-x64.json` 和 `RichChat-<version>-win-x64-Setup.exe`，按递增的 `ApplicationVersion` 构建号判断更新。旧 Release 没有清单时不会提示更新，以免将历史 `2.4.0` 误认作当前 `1.0.x` 源码的新版。安装器打包脚本自动生成清单，并核对 ZIP 内程序的版本与构建号；正式发布时需将清单和安装包上传到同一个 Release，且每次发布必须递增构建号。
 
 ## 当前范围
 
-表情面板包含“搜索 / 默认 / 收藏”：默认页仍将组织小表情插入输入框；搜索和收藏中的大图点击后单独发送，保留输入框文字与附件。搜索接入 [ChineseBQB](https://github.com/zhaoolee/ChineseBQB)，按名称搜索，支持空关键词浏览及滚动加载，目录每天刷新，图片使用最多 200 MiB 的本地缓存。
+表情面板依次为“表情 / gif / 收藏”，每次打开默认显示“表情”页，将组织小表情插入输入框；gif 和收藏中的大图点击后单独发送，保留输入框文字与附件。搜索接入 [ChineseBQB](https://github.com/zhaoolee/ChineseBQB)，按名称搜索，支持空关键词浏览及滚动加载，目录每天刷新，图片使用最多 200 MiB 的本地缓存。
 
 收藏支持导入 PNG/JPEG/WebP/GIF，以及聊天图片右键“收藏为表情”。收藏卡片的“⋯”可改名或移除。图片按内容去重、保存原始副本并按账号隔离；删除导入源文件不会影响收藏，注销不会删除收藏。单张上限 25 MiB，发送还受服务器上传限制约束。GIF 保留原始动图，表情面板悬停预览。首次搜索需要网络；第三方表情内容不随安装包分发。
 
@@ -80,7 +80,8 @@ pwsh ./scripts/package-installer.ps1 -IsccPath 'C:\path\to\Inno Setup 6\ISCC.exe
 - [当前产品与架构计划](RelayCove_Zulip_MAUI_重建开发计划.md)
 - [当前状态](docs/ai/STATUS.md)
 - [开发工作流](docs/ai/WORKFLOW.md)
-- [V2 优化计划](docs/ai/tasks/2026-08-25-v2-optimization-plan.md)
+- [功能说明](docs/FEATURES.md)
+- [工作日志](docs/worklogs/README.md)
 - [UI 文档](docs/ui/README.md)
 - [版本说明](docs/releases/)
 

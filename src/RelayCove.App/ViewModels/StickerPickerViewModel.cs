@@ -41,7 +41,7 @@ public sealed partial class StickerPickerViewModel : ObservableObject, IDisposab
     public event EventHandler? Sent;
     public ObservableCollection<StickerPickerItem> Items { get; } = [];
     [ObservableProperty, NotifyPropertyChangedFor(nameof(IsDefault), nameof(IsSearch), nameof(IsFavorites), nameof(IsImageTab), nameof(HasMoreItems))]
-    public partial string Tab { get; set; } = "search";
+    public partial string Tab { get; set; } = "default";
     public bool IsDefault => Tab == "default";
     public bool IsSearch => Tab == "search";
     public bool IsFavorites => Tab == "favorites";
@@ -59,6 +59,11 @@ public sealed partial class StickerPickerViewModel : ObservableObject, IDisposab
 
     public void SetOpen(bool open)
     {
+        if (open && !_open)
+        {
+            Tab = "default";
+            Query = "";
+        }
         _open = open;
         if (open) _ = RefreshAsync(reloadSource: true);
         else

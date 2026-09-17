@@ -12,6 +12,24 @@ public sealed partial class ShellViewModelTests
     private static StickerPickerItem TestSticker => new(TestStickerEntry, null);
 
     [Fact]
+    public void StickerPanel_WhenOpenedOrReopened_SelectsDefaultWithoutLoadingCatalog()
+    {
+        var catalog = new FakeStickerCatalog();
+        using var stickers = CreateStickers(StickerSession(), catalog);
+        stickers.SetOpen(true);
+        Assert.True(stickers.IsDefault);
+        Assert.Equal(0, catalog.CatalogCalls);
+        stickers.SelectTabCommand.Execute("search");
+        Assert.True(stickers.IsSearch);
+        stickers.SetOpen(false);
+        var calls = catalog.CatalogCalls;
+        stickers.SetOpen(true);
+        Assert.True(stickers.IsDefault);
+        Assert.Equal(calls, catalog.CatalogCalls);
+        Assert.Empty(stickers.Query);
+    }
+
+    [Fact]
     public async Task StickerSend_WhenComposerHasDraftAndAttachment_PreservesBothAndOriginalGif()
     {
         var session = StickerSession();
@@ -134,6 +152,7 @@ public sealed partial class ShellViewModelTests
             .Select(i => TestStickerEntry with { Id = i.ToString(), Label = $"开心猫{i}" }).Append(TestStickerEntry with { Id = "dog", Label = "开心狗", CategoryTitle = "狗狗" }).ToArray() };
         using var stickers = CreateStickers(StickerSession(), catalog);
         stickers.SetOpen(true);
+        stickers.SelectTabCommand.Execute("search");
         await WaitUntilAsync(() => stickers.Items.Count == 60);
         Assert.True(stickers.IsSearch);
         Assert.Equal(1, catalog.CatalogCalls);

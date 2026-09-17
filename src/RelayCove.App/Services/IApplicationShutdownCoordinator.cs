@@ -9,5 +9,6 @@ public interface IApplicationShutdownCoordinator
 public enum ApplicationShutdownEntryPoint
 {
     WindowDestroyed,
-    TrayExit
+    TrayExit,
+    RestartManager
 }

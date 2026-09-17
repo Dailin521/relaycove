@@ -52,3 +52,5 @@ Name: "{autodesktop}\RichChat"; Filename: "{app}\RichChat.exe"; WorkingDir: "{ap
 
 [Run]
 Filename: "{app}\RichChat.exe"; Description: "{cm:LaunchProgram,RichChat}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent unchecked
+
+#include "CloseInstalledApp.iss"

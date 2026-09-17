@@ -22,6 +22,7 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
     private DispatcherQueueTimer? _placementSaveTimer;
     private RectInt32? _lastRestoredBounds;
     private nint _windowHandle;
+    private WindowsRestartManagerShutdown? _restartManagerShutdown;
     private bool _isPinned;
     private bool _exitRequested;
     private bool _isRestoringPlacement;
@@ -102,14 +103,16 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    public void RequestExit()
+    public void RequestExit() => RequestExit(ApplicationShutdownEntryPoint.TrayExit);
+
+    private void RequestExit(ApplicationShutdownEntryPoint entryPoint)
     {
         if (_exitRequested) return;
         _exitRequested = true;
         WindowsApplicationLifetime.MarkExitRequested();
-        WindowsLifecycleDiagnostics.Write("shutdown-requested:TrayExit");
+        WindowsLifecycleDiagnostics.Write($"shutdown-requested:{entryPoint}");
         ScheduleForcedExit();
-        _ = _shutdownCoordinator?.RequestShutdownAsync(ApplicationShutdownEntryPoint.TrayExit);
+        _ = _shutdownCoordinator?.RequestShutdownAsync(entryPoint);
         if (_windowHandle == 0)
         {
             _terminateProcess(0);
@@ -140,6 +143,12 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
     {
         if (_window?.Handler?.PlatformView is not Microsoft.UI.Xaml.Window nativeWindow) return;
         var windowHandle = WindowNative.GetWindowHandle(nativeWindow);
+        if (_windowHandle != windowHandle || _restartManagerShutdown is null)
+        {
+            _restartManagerShutdown?.Dispose();
+            _restartManagerShutdown = new WindowsRestartManagerShutdown(windowHandle,
+                () => RequestExit(ApplicationShutdownEntryPoint.RestartManager));
+        }
         _windowHandle = windowHandle;
         var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(windowHandle);
         if (_appWindow is not null)

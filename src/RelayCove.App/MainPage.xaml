@@ -1073,11 +1073,11 @@
                                 <Label Text="点图片直接发送 · 收藏仅保存在本机" FontSize="10" IsVisible="{Binding Stickers.IsFavorites}" Style="{StaticResource MutedLabelStyle}" />
                             </VerticalStackLayout>
                             <Grid Grid.Row="4" ColumnDefinitions="*,*,*" ColumnSpacing="4">
-                                <Button Text="☺ 表情" Command="{Binding Stickers.SelectTabCommand}" CommandParameter="search" Style="{StaticResource BaseButtonStyle}">
-                                    <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding Stickers.IsSearch}" Value="True"><Setter Property="TextColor" Value="{StaticResource AccentColor}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers>
-                                </Button>
-                                <Button Grid.Column="1" Text="☺ 默认" Command="{Binding Stickers.SelectTabCommand}" CommandParameter="default" Style="{StaticResource BaseButtonStyle}">
+                                <Button Grid.Column="0" Text="表情" Command="{Binding Stickers.SelectTabCommand}" CommandParameter="default" Style="{StaticResource BaseButtonStyle}">
                                     <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding Stickers.IsDefault}" Value="True"><Setter Property="TextColor" Value="{StaticResource AccentColor}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers>
+                                </Button>
+                                <Button Grid.Column="1" Text="gif" Command="{Binding Stickers.SelectTabCommand}" CommandParameter="search" Style="{StaticResource BaseButtonStyle}">
+                                    <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding Stickers.IsSearch}" Value="True"><Setter Property="TextColor" Value="{StaticResource AccentColor}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers>
                                 </Button>
                                 <Button Grid.Column="2" Text="♡ 收藏" Command="{Binding Stickers.SelectTabCommand}" CommandParameter="favorites" Style="{StaticResource BaseButtonStyle}">
                                     <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding Stickers.IsFavorites}" Value="True"><Setter Property="TextColor" Value="{StaticResource AccentColor}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers>
