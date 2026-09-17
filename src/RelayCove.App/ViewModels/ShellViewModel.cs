@@ -178,8 +178,10 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         TimeProvider? timeProvider = null,
         IStartupService? startupService = null,
         AppUpdateViewModel? updates = null,
-        StickerPickerViewModel? stickers = null)
+        StickerPickerViewModel? stickers = null,
+        StorageSettingsViewModel? storageSettings = null)
     {
+        StorageSettings = storageSettings;
         Updates = updates;
         Stickers = stickers;
         if (Stickers is not null) Stickers.Sent += OnStickerSent;
@@ -241,6 +243,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public ObservableCollection<ConversationSettingsMemberItem> GroupInviteCandidates { get; } = [];
     public ObservableCollection<ConversationSettingsMemberItem> GroupMemberActionCandidates { get; } = [];
     public ChannelSettingsViewModel ChannelSettings { get; }
+    public StorageSettingsViewModel? StorageSettings { get; }
     public AppUpdateViewModel? Updates { get; }
     public StickerPickerViewModel? Stickers { get; }
     public double StickerPickerHeight => Math.Min(440d, Math.Max(0d, _viewportHeight - 24d));

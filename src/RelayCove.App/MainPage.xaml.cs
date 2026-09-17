@@ -9,6 +9,8 @@ namespace RelayCove.App;
 
 public partial class MainPage : ContentPage
 {
+    private void OnResetImagePreviewClicked(object? sender, EventArgs args) => PreviewImage.ResetPreviewTransform();
+
     private readonly ShellViewModel _viewModel;
     private readonly PointerEventHandler _messageMenuPointerPressedHandler;
     private FrameworkElement? _platformRoot;

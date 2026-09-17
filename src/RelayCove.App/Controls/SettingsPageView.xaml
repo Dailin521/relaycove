@@ -270,6 +270,20 @@
                             </Grid>
                         </VerticalStackLayout>
                     </Border>
+                    <Border Style="{StaticResource CardBorderStyle}">
+                        <VerticalStackLayout Spacing="10">
+                            <Label Text="缓存位置" Style="{StaticResource BaseLabelStyle}" FontAttributes="Bold" />
+                            <Label Text="{Binding StorageSettings.CurrentPath}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                            <Label Text="包含聊天缓存、表情、收藏和更新包。更改后，退出并重新打开应用时迁移已有数据。" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                            <HorizontalStackLayout Spacing="8">
+                                <Button Text="更改缓存位置" Style="{StaticResource BaseButtonStyle}" Command="{Binding StorageSettings.ChangeCommand}" />
+                                <Button Text="取消更改" Style="{StaticResource BaseButtonStyle}" IsVisible="{Binding StorageSettings.HasPending}" Command="{Binding StorageSettings.CancelCommand}" />
+                                <ActivityIndicator IsRunning="{Binding StorageSettings.IsBusy}" IsVisible="{Binding StorageSettings.IsBusy}" />
+                            </HorizontalStackLayout>
+                            <Label Text="{Binding StorageSettings.PendingText}" IsVisible="{Binding StorageSettings.HasPending}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                            <Label Text="{Binding StorageSettings.Status}" Style="{StaticResource MutedLabelStyle}" LineBreakMode="WordWrap" />
+                        </VerticalStackLayout>
+                    </Border>
                     <Label Text="{Binding DownloadSettingsStatus}"
                            IsVisible="{Binding HasDownloadSettingsStatus}"
                            Style="{StaticResource MutedLabelStyle}" />

@@ -2,6 +2,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
 using RelayCove.App.Platforms.Windows;
+using RelayCove.App.Services;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -15,6 +16,8 @@ public partial class App : MauiWinUIApplication
 {
     private static readonly TimeSpan ActivationTransferTimeout = TimeSpan.FromSeconds(5);
     private const int ActivationRetryLimit = 100;
+    private StorageLocationService? _storage;
+    private Microsoft.UI.Xaml.Window? _migrationWindow;
     private AppInstance? _mainInstance;
     private DispatcherQueue? _dispatcherQueue;
     private DispatcherQueueTimer? _activationRetryTimer;
@@ -30,7 +33,7 @@ public partial class App : MauiWinUIApplication
         this.InitializeComponent();
     }
 
-    protected override MauiApp CreateMauiApp() => MauiProgram.CreateMauiApp();
+    protected override MauiApp CreateMauiApp() => MauiProgram.CreateMauiApp(_storage ?? throw new InvalidOperationException("Storage is not ready."));
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
@@ -63,14 +66,40 @@ public partial class App : MauiWinUIApplication
             _mainInstance = registeredInstance;
             _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
             _mainInstance.Activated += OnInstanceActivated;
+            _storage = new StorageLocationService(FileSystem.AppDataDirectory, FileSystem.CacheDirectory);
+            await _storage.LoadAsync();
+            if (_storage.PendingPath is not null)
+            {
+                _migrationWindow = new Microsoft.UI.Xaml.Window { Title = "RichChat — 正在迁移缓存" };
+                _migrationWindow.Content = new Microsoft.UI.Xaml.Controls.StackPanel
+                {
+                    Padding = new Microsoft.UI.Xaml.Thickness(32),
+                    Spacing = 16,
+                    Children =
+                    {
+                        new Microsoft.UI.Xaml.Controls.TextBlock { Text = "正在迁移缓存，请稍候。完成后将自动打开聊天窗口。", TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap },
+                        new Microsoft.UI.Xaml.Controls.ProgressRing { IsActive = true }
+                    }
+                };
+                _migrationWindow.Closed += OnMigrationWindowClosed;
+                _migrationWindow.Activate();
+            }
+            await Task.Run(() => _storage.PrepareAsync());
             MouseOnlyNavigation.Enable();
             base.OnLaunched(args);
+            if (_migrationWindow is not null)
+            {
+                _migrationWindow.Closed -= OnMigrationWindowClosed;
+                _migrationWindow.Close();
+                _migrationWindow = null;
+            }
         }
         catch (Exception exception)
         {
             // Single-instance enforcement fails closed so a second tray owner
             // can never start after an AppLifecycle failure.
             WindowsLifecycleDiagnostics.Write($"launch-failed:{exception.GetType().Name}");
+            _ = MessageBox(0, "RichChat 启动失败。请确认缓存磁盘已连接、目录可读写，然后重新打开。原数据不会被重置。", "RichChat", 0);
             Environment.Exit(1);
         }
     }
@@ -104,8 +133,11 @@ public partial class App : MauiWinUIApplication
         _dispatcherQueue?.TryEnqueue(BeginMainWindowActivation);
     }
 
+    private void OnMigrationWindowClosed(object sender, WindowEventArgs args) => Environment.Exit(0);
+
     private void BeginMainWindowActivation()
     {
+        if (_migrationWindow is not null) { _migrationWindow.Activate(); return; }
         if (WindowsApplicationLifetime.IsExitRequested) return;
         if (TryActivateMainWindow()) return;
         _activationRetryCount = 0;

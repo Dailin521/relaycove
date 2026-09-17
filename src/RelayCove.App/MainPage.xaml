@@ -1190,13 +1190,16 @@
                             StrokeThickness="1">
                         <Border.StrokeShape><RoundRectangle CornerRadius="12" /></Border.StrokeShape>
                         <Grid RowDefinitions="Auto,*,Auto" RowSpacing="10">
-                            <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                            <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
                                 <VerticalStackLayout>
                                     <Label Text="图片预览" Style="{StaticResource BaseLabelStyle}" FontSize="18" FontAttributes="Bold" />
                                     <Label Text="{Binding ActiveImageAttachment.Name}" Style="{StaticResource MutedLabelStyle}" />
                                 </VerticalStackLayout>
+                                <Button Grid.Column="1" Text="重置" Style="{StaticResource BaseButtonStyle}"
+                                        VerticalOptions="Center" Clicked="OnResetImagePreviewClicked"
+                                        SemanticProperties.Description="重置图片缩放和位置" />
                                 <Button x:Name="ImageViewerCloseButton"
-                                        Grid.Column="1"
+                                        Grid.Column="2"
                                         Text="×"
                                         Style="{StaticResource IconButtonStyle}"
                                         FontSize="32"
@@ -1216,9 +1219,8 @@
                                     Stroke="{StaticResource BorderBrush}"
                                     StrokeThickness="1">
                                 <Border.StrokeShape><RoundRectangle CornerRadius="10" /></Border.StrokeShape>
-                                <controls:RealmMediaImageView IsPreview="True"
-                                                              SourceUrl="{Binding ActiveImageAttachment.SourceUrl}"
-                                                              Aspect="AspectFit" />
+                                <controls:ImagePreviewViewport x:Name="PreviewImage"
+                                                               SourceUrl="{Binding ActiveImageAttachment.SourceUrl}" />
                             </Border>
                             <Grid Grid.Row="2" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
                                 <Label Text="{Binding MediaActionStatus}"

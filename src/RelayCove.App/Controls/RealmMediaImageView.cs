@@ -180,6 +180,7 @@ public sealed class RealmMediaImageView : ContentView
 
     private async Task ReloadAsync(bool preserveImage = false)
     {
+        if (IsPreview) ImagePreviewDiagnostics.Record("load-request");
         var services = Handler?.MauiContext?.Services;
         var service = services?.GetService<IRealmMediaService>();
         var accountId = services?.GetService<IClientSession>()?.AccountId;
@@ -233,7 +234,9 @@ public sealed class RealmMediaImageView : ContentView
                 await ready.Task.WaitAsync(cancellationToken);
             }
             cancellationToken.ThrowIfCancellationRequested();
+            if (IsPreview) ImagePreviewDiagnostics.Record("media-read-start");
             var source = await service.GetImageAsync(SourceUrl, MediaKind, cancellationToken);
+            if (IsPreview) ImagePreviewDiagnostics.Record("media-read-complete");
             if (current.IsCancellationRequested || accountId != _session?.AccountId) return;
             if (MediaKind == RealmMediaKind.Image && source is RealmGifImageSource transparentGif &&
                 StartTransparentGif(transparentGif))
@@ -245,11 +248,14 @@ public sealed class RealmMediaImageView : ContentView
             }
             // Keep the spinner until pixels are ready, not just the downloaded
             // stream. The shared source service reuses this decode for the Image.
+            if (IsPreview) ImagePreviewDiagnostics.Record("decode-start");
             using var decodedImage = IsPreview
                 ? await DecodePreviewAsync(source, cancellationToken)
                 : null;
+            if (IsPreview) ImagePreviewDiagnostics.Record("decode-complete");
             if (current.IsCancellationRequested || accountId != _session?.AccountId) return;
             _image.Source = source;
+            if (IsPreview) ImagePreviewDiagnostics.Record("source-assigned");
             _loadedSourceKey = sourceKey;
             _image.IsVisible = true;
             SetValue(IsFallbackVisiblePropertyKey, false);
@@ -259,6 +265,7 @@ public sealed class RealmMediaImageView : ContentView
         }
         catch (Exception exception)
         {
+            if (IsPreview) ImagePreviewDiagnostics.Record("load-failed", exception);
             if (!current.IsCancellationRequested)
             {
                 _loadedSourceKey = null;

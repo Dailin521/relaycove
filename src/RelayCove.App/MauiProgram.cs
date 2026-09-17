@@ -13,7 +13,7 @@ namespace RelayCove.App;
 
 public static class MauiProgram
 {
-    public static MauiApp CreateMauiApp()
+    public static MauiApp CreateMauiApp(StorageLocationService storage)
     {
         var builder = MauiApp.CreateBuilder();
         builder
@@ -30,6 +30,9 @@ public static class MauiProgram
         builder.Logging.AddDebug();
 #endif
 
+        builder.Services.AddSingleton(storage);
+        builder.Services.AddSingleton<IStorageFolderPicker, WindowsStorageFolderPicker>();
+        builder.Services.AddSingleton<StorageSettingsViewModel>();
         builder.Services.AddSingleton<ISecureKeyValueStore, MauiSecureKeyValueStore>();
         builder.Services.AddSingleton<ICredentialVault, SecureStorageCredentialVault>();
         builder.Services.AddSingleton<ILastRealmStore, PreferencesLastRealmStore>();
@@ -44,26 +47,26 @@ public static class MauiProgram
             provider.GetRequiredService<IAppUpdatePreferences>(),
             provider.GetRequiredService<IUiDispatcher>(),
             provider.GetRequiredService<IFileSaveService>(),
-            Path.Combine(FileSystem.AppDataDirectory, "updates"),
+            Path.Combine(storage.DataPath, "updates"),
             AppUpdateViewModel.ReadCurrentBuildNumber()));
         builder.Services.AddSingleton<INotificationPreferencesService, MauiNotificationPreferencesService>();
         builder.Services.AddSingleton<IConversationPreferencesStore, MauiConversationPreferencesStore>();
         builder.Services.AddSingleton<IPlatformInteractionService, MauiPlatformInteractionService>();
         builder.Services.AddSingleton<IFileSelectionService, MauiFileSelectionService>();
         builder.Services.AddSingleton<IStickerCatalogService>(_ => new ChineseBqbStickerCatalogService(
-            Path.Combine(FileSystem.AppDataDirectory, "sticker-cache")));
+            Path.Combine(storage.DataPath, "sticker-cache")));
         builder.Services.AddSingleton<IStickerLibraryStore>(_ => new LocalStickerLibraryStore(
-            Path.Combine(FileSystem.AppDataDirectory, "sticker-favorites")));
+            Path.Combine(storage.DataPath, "sticker-favorites")));
         builder.Services.AddSingleton<StickerPickerViewModel>();
         builder.Services.AddSingleton<IRealmMediaService, RealmMediaService>();
-        builder.Services.AddSingleton<AvatarCache>();
+        builder.Services.AddSingleton(provider => new AvatarCache(provider.GetRequiredService<IClientSession>(), storage.CachePath));
         builder.Services.AddSingleton<INotificationAvatarFileStore, NotificationAvatarFileStore>();
         builder.Services.AddSingleton<IFileSaveService, WindowsFileSaveService>();
         builder.Services.AddSingleton<IDownloadHistoryStore, MauiDownloadHistoryStore>();
         builder.Services.AddSingleton<IWindowShellAdapter, WindowsWindowShellAdapter>();
         builder.Services.AddSingleton<IAppNotificationService, WindowsAppNotificationService>();
         builder.Services.AddSingleton<IApplicationShutdownCoordinator, ApplicationShutdownCoordinator>();
-        builder.Services.AddSingleton<IAccountStore>(_ => new SqliteAccountStore(FileSystem.AppDataDirectory));
+        builder.Services.AddSingleton<IAccountStore>(_ => new SqliteAccountStore(storage.DataPath));
         builder.Services.AddSingleton<IZulipGateway, ZulipGateway>();
         builder.Services.AddSingleton<IUserActivitySource, WindowsUserActivitySource>();
 #if DEBUG

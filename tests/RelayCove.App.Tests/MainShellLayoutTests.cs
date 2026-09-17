@@ -5,6 +5,21 @@ namespace RelayCove.App.Tests;
 public sealed class MainShellLayoutTests
 {
     [Fact]
+    public void ImagePreview_WhenAttachingPointerInput_UsesTypedWinRtEventsWithSymmetricCleanup()
+    {
+        var source = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "Controls", "ImagePreviewViewport.cs"));
+        // Keep preview input registration typed and symmetric across native node changes.
+        Assert.DoesNotContain(".AddHandler(", source);
+        Assert.DoesNotContain(".RemoveHandler(", source);
+        foreach (var name in new[] { "WheelChanged", "Pressed", "Moved", "Released", "Canceled", "CaptureLost" })
+        {
+            Assert.Contains($"root.Pointer{name} +=", source);
+            Assert.Contains($"root.Pointer{name} -=", source);
+        }
+        Assert.Contains("ReferenceEquals(root, inputRoot)", source);
+    }
+
+    [Fact]
     public void QuoteCard_WhenAttachmentsExist_UsesControlledThumbnailsAndNamedFileCards()
     {
         var page = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "Controls", "MessageListView.xaml"));
