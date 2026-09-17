@@ -30,8 +30,11 @@ public sealed class ConversationPaneViewTests
         var codeBehind = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "Controls", "ConversationPaneView.xaml.cs"));
         Assert.Contains("Text = \"发起私聊\"", codeBehind, StringComparison.Ordinal);
         Assert.Contains("Text = \"发起群聊\"", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("Text = \"查看我的所有群聊\"", codeBehind, StringComparison.Ordinal);
         Assert.Contains("Command = viewModel.OpenNewConversationCommand", codeBehind, StringComparison.Ordinal);
         Assert.Contains("Command = viewModel.ShowNewChannelConversationCommand", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("viewModel.PrivateGroupConversations.ToArray()", codeBehind, StringComparison.Ordinal);
+        Assert.Contains("viewModel.ActivateConversation(group)", codeBehind, StringComparison.Ordinal);
         Assert.DoesNotContain("频道", labels);
         Assert.DoesNotContain("私信", labels);
         Assert.DoesNotContain(source.Descendants(), element => element.Attribute("ItemsSource")?.Value is "{Binding FilteredChannels}" or "{Binding FilteredDirectMessages}");

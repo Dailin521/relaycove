@@ -496,6 +496,15 @@ public sealed class MainShellLayoutTests
         Assert.Contains(footer.Descendants(maui + "Label"), label => label.Attribute("Text")?.Value == "{Binding Label}");
         Assert.Contains(footer.Descendants(maui + "Button"), button =>
             button.Attribute("Command")?.Value == "{Binding ViewModel.Stickers.ManageCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}");
+        Assert.DoesNotContain(source.Descendants(maui + "Picker"), picker =>
+            picker.Attribute("Title")?.Value == "表情分类");
+        Assert.Null(list.Attribute("RemainingItemsThreshold"));
+        var paging = Assert.Single(list.Descendants(), element => element.Name.LocalName == "StickerInfiniteScrollBehavior");
+        Assert.Equal("KeepScrollOffset", list.Attribute("ItemsUpdatingScrollMode")?.Value);
+        Assert.Equal("{Binding Stickers.LoadMoreCommand}",
+            paging.Attribute("LoadMoreCommand")?.Value);
+        Assert.Equal("{Binding Stickers.HasMoreItems}",
+            paging.Attribute("HasMoreItems")?.Value);
     }
 
     [Fact]
@@ -511,12 +520,12 @@ public sealed class MainShellLayoutTests
         {
             Assert.Null(list.Attribute("HeightRequest"));
             var composer = list.Attribute("IsVisible") is not null;
-            Assert.Equal(composer ? "2" : "0", list.Attribute("Grid.Row")?.Value);
+            Assert.Equal(composer ? "1" : "0", list.Attribute("Grid.Row")?.Value);
             Assert.Equal("Always", list.Attribute("VerticalScrollBarVisibility")?.Value);
             Assert.Equal("Never", list.Attribute("HorizontalScrollBarVisibility")?.Value);
             var layout = list.Parent!;
             Assert.Equal(maui + "Grid", layout.Name);
-            Assert.Equal(composer ? "Auto,Auto,*,Auto,Auto,Auto" : "*", layout.Attribute("RowDefinitions")?.Value);
+            Assert.Equal(composer ? "Auto,*,Auto,Auto,Auto" : "*", layout.Attribute("RowDefinitions")?.Value);
             Assert.Equal(composer ? "{Binding StickerPickerHeight}" : "{Binding EmojiPickerHeight}", layout.Parent!.Attribute("HeightRequest")?.Value);
             var anchor = Assert.Single(layout.Parent.Descendants(), element => element.Name.LocalName == "PopoverAnchorBehavior");
             Assert.NotNull(anchor.Attribute("IsOpen"));
@@ -541,9 +550,13 @@ public sealed class MainShellLayoutTests
         Assert.Equal(2, labels.Length);
         Assert.All(labels, label =>
             Assert.Contains("SearchQuery", label.Attribute("HighlightQuery")?.Value, StringComparison.Ordinal));
-        var resultGrid = labels[0].Parent!;
+        var resultGrid = labels[0].Parent!.Parent!;
         Assert.Null(resultGrid.Attribute("ColumnDefinitions"));
         Assert.DoesNotContain(resultGrid.Descendants(), element => element.Attribute("Text")?.Value == "{Binding Kind}");
+        Assert.Contains(resultGrid.Descendants(), element =>
+            element.Name.LocalName == "Label" &&
+            element.Attribute("Text")?.Value == "{Binding TimestampText}" &&
+            element.Attribute("IsVisible")?.Value == "{Binding HasTimestamp}");
         Assert.Contains(resultGrid.Parent!.Descendants(), element =>
             element.Name.LocalName == "TapGestureRecognizer" &&
             element.Attribute("Command")?.Value?.Contains("SelectSearchResultCommand", StringComparison.Ordinal) == true);
@@ -594,7 +607,7 @@ public sealed class MainShellLayoutTests
     }
 
     [Fact]
-    public void SearchEntry_WhenSubmitted_UsesButtonOrEnterWithoutAutomaticSearch()
+    public void SearchEntry_WhenQueryChanges_UsesDebouncedSearchAndKeepsButtonOrEnterForImmediateSearch()
     {
         var source = XDocument.Load(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml"));
         var code = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "MainPage.xaml.cs"));
@@ -609,7 +622,8 @@ public sealed class MainShellLayoutTests
         Assert.Equal("{Binding SearchNowCommand}", button.Attribute("Command")?.Value);
         Assert.Equal("OnSearchCompleted", entry.Attribute("Completed")?.Value);
         Assert.Contains("_viewModel.SearchNowCommand.Execute(null);", code, StringComparison.Ordinal);
-        Assert.DoesNotContain("ScheduleServerSearch", viewModel, StringComparison.Ordinal);
+        Assert.Contains("ScheduleServerSearch(value);", viewModel, StringComparison.Ordinal);
+        Assert.Contains("TimeSpan.FromMilliseconds(300)", viewModel, StringComparison.Ordinal);
         Assert.DoesNotContain(source.Descendants(maui + "Label"), label =>
             label.Attribute("Text")?.Value?.StartsWith("搜索消息、文件、图片、视频", StringComparison.Ordinal) == true);
     }
@@ -697,6 +711,12 @@ public sealed class MainShellLayoutTests
         var imagePreview = attachmentLayout
             .Descendants(maui + "Border")
             .Single(element => element.Attribute("IsVisible")?.Value == "{Binding IsImage}");
+        var imageAttachmentCard = attachmentLayout
+            .Descendants(maui + "Border")
+            .Single(element => element.Attribute("SemanticProperties.Description")?.Value == "{Binding AccessibleLabel}");
+        var imageCardTrigger = imageAttachmentCard
+            .Descendants(maui + "DataTrigger")
+            .Single(element => element.Attribute("Binding")?.Value == "{Binding IsImage}");
         var bubble = messageSource
             .Descendants(maui + "Border")
             .Single(element => element.Attribute(x + "Name")?.Value == "Bubble");
@@ -718,6 +738,11 @@ public sealed class MainShellLayoutTests
         Assert.Equal("360", imagePreview.Attribute("MaximumWidthRequest")?.Value);
         Assert.Equal("Start", imagePreview.Attribute("HorizontalOptions")?.Value);
         Assert.Equal("Start", imagePreview.Attribute("VerticalOptions")?.Value);
+        Assert.Equal("Transparent", imagePreview.Attribute("Background")?.Value);
+        Assert.Contains(imageCardTrigger.Elements(maui + "Setter"), setter =>
+            setter.Attribute("Property")?.Value == "Background" && setter.Attribute("Value")?.Value == "Transparent");
+        Assert.Contains(imageCardTrigger.Elements(maui + "Setter"), setter =>
+            setter.Attribute("Property")?.Value == "StrokeThickness" && setter.Attribute("Value")?.Value == "0");
         Assert.Contains(imageOnlyTrigger.Elements(maui + "Setter"), setter =>
             setter.Attribute("Property")?.Value == "Padding" && setter.Attribute("Value")?.Value == "0");
         Assert.Contains(imageOnlyTrigger.Elements(maui + "Setter"), setter =>
@@ -727,10 +752,15 @@ public sealed class MainShellLayoutTests
         Assert.Contains(fileDetails.Descendants(maui + "Label"), label =>
             label.Attribute("Text")?.Value == "{Binding Name}");
         Assert.Contains(fileDetails.Descendants(maui + "Button"), button =>
-            button.Attribute("Text")?.Value == "下载");
+            button.Attribute("Text")?.Value == "{Binding DownloadActionText}");
         Assert.Equal("{Binding HasActiveMessageAttachment}", imageDownload.Attribute("IsVisible")?.Value);
         Assert.Equal("{Binding DownloadAttachmentCommand}", imageDownload.Attribute("Command")?.Value);
         Assert.Equal("{Binding ActiveMessageAttachment}", imageDownload.Attribute("CommandParameter")?.Value);
+        var imageCopy = pageSource.Descendants(maui + "Button")
+            .Single(button => button.Attribute(x + "Name")?.Value == "ImageCopyMenuButton");
+        Assert.Equal("{Binding HasActiveMessageAttachment}", imageCopy.Attribute("IsVisible")?.Value);
+        Assert.Equal("{Binding CopyActiveImageCommand}", imageCopy.Attribute("Command")?.Value);
+        Assert.Equal("复制图片", imageCopy.Attribute("Text")?.Value);
     }
 
     [Fact]
@@ -772,7 +802,7 @@ public sealed class MainShellLayoutTests
             .ConvertFromInvariantString(bubble.Attribute("Padding")!.Value)!;
         Assert.Equal(14d, padding.Left);
         Assert.Equal(14d, padding.Right);
-        Assert.Equal(10d, padding.Top);
+        Assert.Equal(7d, padding.Top);
         Assert.Equal(10d, padding.Bottom);
 
         var plainLabel = source.Descendants().Single(element =>
@@ -1014,6 +1044,18 @@ public sealed class MainShellLayoutTests
         Assert.Equal("{Binding ShowMoreConversationFilterResults}", button.Attribute("IsVisible")?.Value);
         Assert.Equal("{Binding LoadMoreConversationFilterCommand}", button.Attribute("Command")?.Value);
         Assert.Empty(source.Descendants(maui + "CollectionView.Footer"));
+    }
+
+    [Fact]
+    public void StickerPaging_WhenPreservingPosition_DoesNotHoldALockForANullSenderLayoutEvent()
+    {
+        var behavior = File.ReadAllText(FindWorkspaceFile("src", "RelayCove.App", "Platforms", "Windows",
+            "Behaviors", "StickerInfiniteScrollBehavior.cs"));
+        Assert.DoesNotContain("ReferenceEquals(sender", behavior);
+        Assert.DoesNotContain("ChangeView(", behavior);
+        Assert.DoesNotContain("ContainerContentChanging +=", behavior);
+        Assert.Contains("DispatcherQueuePriority.Low", behavior);
+        Assert.Contains("finally", behavior);
     }
 
     private static string FindWorkspaceFile(params string[] parts)

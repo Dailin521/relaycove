@@ -62,6 +62,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<IDownloadHistoryStore, MauiDownloadHistoryStore>();
         builder.Services.AddSingleton<IWindowShellAdapter, WindowsWindowShellAdapter>();
         builder.Services.AddSingleton<IAppNotificationService, WindowsAppNotificationService>();
+        builder.Services.AddSingleton<IApplicationShutdownCoordinator, ApplicationShutdownCoordinator>();
         builder.Services.AddSingleton<IAccountStore>(_ => new SqliteAccountStore(FileSystem.AppDataDirectory));
         builder.Services.AddSingleton<IZulipGateway, ZulipGateway>();
         builder.Services.AddSingleton<IUserActivitySource, WindowsUserActivitySource>();

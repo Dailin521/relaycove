@@ -43,6 +43,19 @@ public partial class ConversationPaneView : ContentView
             Command = viewModel.ShowNewChannelConversationCommand,
             IsEnabled = viewModel.CanCreatePrivateGroup
         });
+        var groups = viewModel.PrivateGroupConversations.ToArray();
+        var groupMenu = new Microsoft.UI.Xaml.Controls.MenuFlyoutSubItem
+        {
+            Text = "查看我的所有群聊",
+            IsEnabled = groups.Length > 0
+        };
+        foreach (var group in groups)
+        {
+            var groupItem = new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = group.Title };
+            groupItem.Click += (_, _) => viewModel.ActivateConversation(group);
+            groupMenu.Items.Add(groupItem);
+        }
+        menu.Items.Add(groupMenu);
         menu.ShowAt(anchor);
     }
 

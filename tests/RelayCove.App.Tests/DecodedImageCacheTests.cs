@@ -77,6 +77,30 @@ public sealed class DecodedImageCacheTests
     }
 
     [Fact]
+    public async Task ReturnNullWhenCanceledAsync_WhenNativeViewCancels_ReturnsNoImage()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var image = await ImageLoadCancellationPolicy.ReturnNullWhenCanceledAsync<object>(
+            () => Task.FromException<object?>(new OperationCanceledException(cancellation.Token)),
+            cancellation.Token);
+
+        Assert.Null(image);
+    }
+
+    [Fact]
+    public async Task ReturnNullWhenCanceledAsync_WhenLoadCancelsWithoutCallerCancellation_Propagates()
+    {
+        using var cancellation = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            ImageLoadCancellationPolicy.ReturnNullWhenCanceledAsync<object>(
+                () => Task.FromException<object?>(new OperationCanceledException()),
+                cancellation.Token));
+    }
+
+    [Fact]
     public async Task GetAsync_WhenDecodeFails_NextRequestCanDecode()
     {
         var cache = new DecodedImageCache<object>();

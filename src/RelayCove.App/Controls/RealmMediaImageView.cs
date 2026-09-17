@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using RelayCove.App.Platforms.Windows;
 using RelayCove.App.Services;
 using RelayCove.Core;
 
@@ -15,6 +16,9 @@ public sealed class RealmMediaImageView : ContentView
     private IClientSession? _session;
     private AccountId? _displayAccountId;
     private volatile string? _requestedSourceKey;
+    private IDispatcherTimer? _transparentGifTimer;
+    private TransparentGifFrameRenderer? _transparentGif;
+    private int _transparentGifFrameIndex;
 
     public RealmMediaImageView()
     {
@@ -120,6 +124,7 @@ public sealed class RealmMediaImageView : ContentView
 
     private void DetachServices()
     {
+        StopTransparentGif();
         _image.IsAnimationPlaying = false;
         if (_mediaService is not null) _mediaService.AvatarChanged -= OnAvatarChanged;
         if (_session is not null) _session.StateChanged -= OnSessionStateChanged;
@@ -190,6 +195,7 @@ public sealed class RealmMediaImageView : ContentView
             return;
         }
 
+        StopTransparentGif();
         var cancellation = Interlocked.Exchange(ref _loadCancellation, null);
         if (cancellation is not null)
         {
@@ -229,6 +235,14 @@ public sealed class RealmMediaImageView : ContentView
             cancellationToken.ThrowIfCancellationRequested();
             var source = await service.GetImageAsync(SourceUrl, MediaKind, cancellationToken);
             if (current.IsCancellationRequested || accountId != _session?.AccountId) return;
+            if (MediaKind == RealmMediaKind.Image && source is RealmGifImageSource transparentGif &&
+                StartTransparentGif(transparentGif))
+            {
+                _loadedSourceKey = sourceKey;
+                _image.IsVisible = true;
+                SetValue(IsFallbackVisiblePropertyKey, false);
+                return;
+            }
             // Keep the spinner until pixels are ready, not just the downloaded
             // stream. The shared source service reuses this decode for the Image.
             using var decodedImage = IsPreview
@@ -260,6 +274,65 @@ public sealed class RealmMediaImageView : ContentView
                 _loading.IsVisible = false;
             }
         }
+    }
+
+    private bool StartTransparentGif(RealmGifImageSource source)
+    {
+        if (!TransparentGifFrameRenderer.TryCreate(source.Content, out var renderer) || renderer is null) return false;
+
+        try
+        {
+            _transparentGif = renderer;
+            _transparentGifFrameIndex = 0;
+            _image.IsAnimationPlaying = false;
+            SetTransparentGifFrame(renderer, _transparentGifFrameIndex);
+            _transparentGifTimer = Dispatcher.CreateTimer();
+            _transparentGifTimer.Interval = renderer.GetFrameDelay(_transparentGifFrameIndex);
+            _transparentGifTimer.Tick += OnTransparentGifTimerTick;
+            _transparentGifTimer.Start();
+            return true;
+        }
+        catch
+        {
+            StopTransparentGif();
+            return false;
+        }
+    }
+
+    private void OnTransparentGifTimerTick(object? sender, EventArgs eventArgs)
+    {
+        if (_transparentGif is null || _transparentGifTimer is null) return;
+
+        try
+        {
+            _transparentGifFrameIndex = (_transparentGifFrameIndex + 1) % _transparentGif.FrameCount;
+            SetTransparentGifFrame(_transparentGif, _transparentGifFrameIndex);
+            _transparentGifTimer.Interval = _transparentGif.GetFrameDelay(_transparentGifFrameIndex);
+        }
+        catch
+        {
+            StopTransparentGif();
+        }
+    }
+
+    private void StopTransparentGif()
+    {
+        if (_transparentGifTimer is not null)
+        {
+            _transparentGifTimer.Stop();
+            _transparentGifTimer.Tick -= OnTransparentGifTimerTick;
+            _transparentGifTimer = null;
+        }
+
+        _transparentGif?.Dispose();
+        _transparentGif = null;
+        _transparentGifFrameIndex = 0;
+    }
+
+    private void SetTransparentGifFrame(TransparentGifFrameRenderer renderer, int frameIndex)
+    {
+        var png = renderer.RenderFramePng(frameIndex);
+        _image.Source = ImageSource.FromStream(() => new MemoryStream(png, writable: false));
     }
 
     private async Task<IImageSourceServiceResult<Microsoft.UI.Xaml.Media.ImageSource>?> DecodePreviewAsync(

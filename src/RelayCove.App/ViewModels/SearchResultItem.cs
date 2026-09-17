@@ -10,9 +10,11 @@ public sealed record SearchResultItem(
     ConversationKey? Conversation = null,
     long? MessageId = null,
     long? ChannelId = null,
-    SearchContentKind ContentKinds = SearchContentKind.Message)
+    SearchContentKind ContentKinds = SearchContentKind.Message,
+    string TimestampText = "")
 {
     public IReadOnlyList<MessageAttachmentItem> Images { get; init; } = [];
     public bool HasImages => Images.Count > 0;
     public bool HasSubtitle => !string.IsNullOrWhiteSpace(Subtitle);
+    public bool HasTimestamp => !string.IsNullOrWhiteSpace(TimestampText);
 }

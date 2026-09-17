@@ -32,7 +32,7 @@
                              Style="{StaticResource ImageIconButtonStyle}"
                              BackgroundColor="{AppThemeBinding Light={StaticResource LightSurfaceHoverColor}, Dark={StaticResource DarkSurfaceHoverColor}}"
                              Clicked="OnNewConversationClicked"
-                             SemanticProperties.Description="选择发起私聊或发起群聊" />
+                             SemanticProperties.Description="发起私聊、群聊或查看我的所有群聊" />
             </Grid>
             <Label Grid.Row="1"
                    Text="{Binding NativePreviewStatus}"

@@ -11,10 +11,13 @@ internal sealed class RealmImageSourceService : StreamImageSourceService, IImage
         float scale = 1,
         CancellationToken cancellationToken = default)
     {
-        var image = await _images.GetAsync(imageSource, async token =>
+        var image = await ImageLoadCancellationPolicy.ReturnNullWhenCanceledAsync(() =>
         {
-            using var result = await base.GetImageSourceAsync(imageSource, scale, token);
-            return result?.Value;
+            return _images.GetAsync(imageSource, async token =>
+            {
+                using var result = await base.GetImageSourceAsync(imageSource, scale, token);
+                return result?.Value;
+            }, cancellationToken);
         }, cancellationToken);
         return image is null ? null : new ImageSourceServiceResult(image);
     }

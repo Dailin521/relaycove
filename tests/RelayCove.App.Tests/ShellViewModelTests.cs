@@ -1206,6 +1206,38 @@ public sealed partial class ShellViewModelTests
     }
 
     [Fact]
+    public async Task ConversationSearch_WhenQueryChanges_AfterDebounceSearchesCurrentDirectConversation()
+    {
+        var conversation = new DirectMessage([20]);
+        var session = new FakeSession
+        {
+            Account = AccountId.Create(RealmEndpoint.Parse("https://zulip.example"), 7),
+            CurrentUserId = 7,
+            Selected = conversation,
+            SearchMessagesAction = (_, _, _, _) => Task.FromResult(new MessageQueryPage(
+                [new ChatMessage(90, conversation, 20, "needle", DateTimeOffset.UnixEpoch)], true, true, true))
+        };
+        var dispatcher = new SearchTrackingDispatcher();
+        using var viewModel = CreateViewModel(session, dispatcher: dispatcher);
+
+        viewModel.OpenConversationSearchCommand.Execute(null);
+        viewModel.SearchQuery = "needle";
+        var undispatchedChanges = 0;
+        viewModel.SearchResults.CollectionChanged += (_, _) =>
+        {
+            if (!dispatcher.IsDispatching) Interlocked.Increment(ref undispatchedChanges);
+        };
+
+        await WaitUntilAsync(() => viewModel.SearchResults.Count == 1 && !viewModel.IsSearchBusy);
+
+        var request = Assert.Single(session.SearchRequests);
+        Assert.Equal("needle", request.Query);
+        Assert.Equal(conversation.CanonicalKey, request.Conversation?.CanonicalKey);
+        Assert.Equal(90, Assert.Single(viewModel.SearchResults).MessageId);
+        Assert.Equal(0, undispatchedChanges);
+    }
+
+    [Fact]
     public async Task ConversationSearch_WhenReopenedForAnotherPerson_DiscardsPreviousResponseAndReplacesScope()
     {
         var first = new DirectMessage([20]);
@@ -5395,8 +5427,9 @@ public sealed partial class ShellViewModelTests
         };
         using var viewModel = CreateViewModel(session);
         session.Publish();
+        var serverMessage = new ChatMessage(5, conversation, 8, "native search from server", DateTimeOffset.UnixEpoch);
         session.SearchMessagesAction = (_, _, _, _) => Task.FromResult(new MessageQueryPage(
-            [new ChatMessage(5, conversation, 8, "native search from server", DateTimeOffset.UnixEpoch)],
+            [serverMessage],
             false, true, true));
 
         viewModel.OpenSearchCommand.Execute(null);
@@ -5408,6 +5441,7 @@ public sealed partial class ShellViewModelTests
         Assert.Equal(5, result.MessageId);
         Assert.Equal(conversation, result.Conversation);
         Assert.Equal("native search from server", result.Subtitle);
+        Assert.Equal(serverMessage.Timestamp.LocalDateTime.ToString("yyyy-MM-dd HH:mm"), result.TimestampText);
         Assert.True(viewModel.HasMoreSearchResults);
         session.Publish();
         Assert.Single(viewModel.SearchResults);
@@ -5581,7 +5615,7 @@ public sealed partial class ShellViewModelTests
     [InlineData("design")]
     [InlineData("")]
     [InlineData(" \t ")]
-    public async Task SearchNow_WhenAllCategoryIsSelected_SearchesAllContentOnlyAfterExplicitSubmit(string query)
+    public async Task SearchNow_WhenAllCategoryIsSelected_SearchesAllContentAfterDebounceOrExplicitSubmit(string query)
     {
         var calls = 0;
         var conversation = new DirectMessage([8]);
@@ -5609,13 +5643,19 @@ public sealed partial class ShellViewModelTests
         viewModel.OpenSearchCommand.Execute(null);
         Assert.Equal("全部", Assert.Single(viewModel.SearchCategories, category => category.IsSelected).Label);
         viewModel.SearchQuery = query;
-        Assert.Equal(0, calls);
-        Assert.Empty(viewModel.SearchResults);
-        Assert.Equal(string.IsNullOrWhiteSpace(query)
-            ? "点击搜索或按 Enter 查看记录"
-            : "点击搜索或按 Enter 开始搜索", viewModel.SearchEmptyText);
-
-        await viewModel.SearchNowCommand.ExecuteAsync(null);
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            Assert.Equal(0, calls);
+            Assert.Empty(viewModel.SearchResults);
+            Assert.Equal("点击搜索或按 Enter 查看记录", viewModel.SearchEmptyText);
+            await viewModel.SearchNowCommand.ExecuteAsync(null);
+        }
+        else
+        {
+            Assert.True(viewModel.IsSearchBusy);
+            Assert.Equal("正在搜索…", viewModel.SearchEmptyText);
+            await WaitUntilAsync(() => viewModel.SearchResults.Count == 5);
+        }
         Assert.Equal(1, calls);
         Assert.Equal(5, viewModel.SearchResults.Count);
 
@@ -5623,7 +5663,6 @@ public sealed partial class ShellViewModelTests
             viewModel.SearchCategories.Single(category => category.Filter == MessageSearchFilter.Messages));
         Assert.Equal(1, calls);
         Assert.Empty(viewModel.SearchResults);
-        Assert.False(viewModel.IsSearchBusy);
         await viewModel.SearchNowCommand.ExecuteAsync(null);
         Assert.Equal(2, calls);
         Assert.Equal(1, Assert.Single(viewModel.SearchResults).MessageId);
@@ -7864,6 +7903,20 @@ public sealed partial class ShellViewModelTests
         Assert.Equal(1, reads);
     }
 
+    private sealed class SearchTrackingDispatcher : IUiDispatcher
+    {
+        private readonly AsyncLocal<bool> _dispatching = new();
+        public bool IsDispatching => _dispatching.Value;
+        public void Dispatch(Action action)
+        {
+            var previous = _dispatching.Value;
+            _dispatching.Value = true;
+            try { action(); }
+            finally { _dispatching.Value = previous; }
+        }
+        public Task YieldToRenderAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
     private sealed class RenderGateDispatcher : IUiDispatcher
     {
         public TaskCompletionSource RenderReady { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -8011,6 +8064,8 @@ public sealed partial class ShellViewModelTests
 
         public RealmMediaResult FileResult { get; set; } = new([1, 2, 3], "application/octet-stream");
         public Exception? DownloadFailure { get; set; }
+        public Func<Task<RealmMediaResult>>? GetFileAction { get; set; }
+        public Func<IProgress<RealmMediaTransferProgress>?, CancellationToken, Task>? DownloadWait { get; set; }
         public int FileCalls { get; private set; }
 
         public Task<Microsoft.Maui.Controls.ImageSource> GetImageAsync(
@@ -8025,7 +8080,7 @@ public sealed partial class ShellViewModelTests
             CancellationToken cancellationToken = default)
         {
             FileCalls++;
-            return Task.FromResult(FileResult);
+            return GetFileAction?.Invoke() ?? Task.FromResult(FileResult);
         }
 
         public async Task<RealmMediaDownloadResult> DownloadFileAsync(
@@ -8036,6 +8091,7 @@ public sealed partial class ShellViewModelTests
         {
             FileCalls++;
             if (DownloadFailure is not null) throw DownloadFailure;
+            if (DownloadWait is not null) await DownloadWait(progress, cancellationToken);
             progress?.Report(new RealmMediaTransferProgress(0, FileResult.Content.LongLength));
             await destination.WriteAsync(FileResult.Content, cancellationToken);
             progress?.Report(new RealmMediaTransferProgress(FileResult.Content.LongLength, FileResult.Content.LongLength));
@@ -8055,6 +8111,7 @@ public sealed partial class ShellViewModelTests
         public HashSet<string> ExistingFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
         public List<string> OpenedFiles { get; } = [];
         public List<string> RevealedFiles { get; } = [];
+        public Exception? OpenError { get; set; }
 
         public Task<bool> ChooseDownloadFolderAsync(CancellationToken cancellationToken = default)
         {
@@ -8073,6 +8130,7 @@ public sealed partial class ShellViewModelTests
 
         public Task OpenDownloadedFileAsync(string filePath, CancellationToken cancellationToken = default)
         {
+            if (OpenError is not null) throw OpenError;
             if (!DownloadedFileExists(filePath)) throw new FileNotFoundException();
             OpenedFiles.Add(filePath);
             return Task.CompletedTask;
@@ -8113,6 +8171,14 @@ public sealed partial class ShellViewModelTests
 
     private sealed class FakePlatformInteractionService : IPlatformInteractionService
     {
+        public List<byte[]> CopiedImages { get; } = [];
+        public Exception? CopyImageError { get; set; }
+        public Task CopyImageAsync(byte[] content, CancellationToken cancellationToken = default)
+        {
+            if (CopyImageError is not null) throw CopyImageError;
+            CopiedImages.Add(content);
+            return Task.CompletedTask;
+        }
         public List<string> Copied { get; } = [];
         public List<Uri> Opened { get; } = [];
         public Func<string, Task>? CopyTextAction { get; set; }

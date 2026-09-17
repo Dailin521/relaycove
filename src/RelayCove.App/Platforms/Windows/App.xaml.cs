@@ -1,9 +1,7 @@
-using System.Runtime.InteropServices;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
 using RelayCove.App.Platforms.Windows;
-using WinRT.Interop;
 
 // To learn more about WinUI, the WinUI project structure,
 // and more about our project templates, see: http://aka.ms/winui-project-info.
@@ -15,7 +13,8 @@ namespace RelayCove.App.WinUI;
 /// </summary>
 public partial class App : MauiWinUIApplication
 {
-    private const int ShowWindowRestore = 9;
+    private static readonly TimeSpan ActivationTransferTimeout = TimeSpan.FromSeconds(5);
+    private const int ActivationRetryLimit = 100;
     private AppInstance? _mainInstance;
     private DispatcherQueue? _dispatcherQueue;
     private DispatcherQueueTimer? _activationRetryTimer;
@@ -41,9 +40,24 @@ public partial class App : MauiWinUIApplication
             var registeredInstance = AppInstance.FindOrRegisterForKey(RichChatInstancePolicy.InstanceKey);
             if (RichChatInstancePolicy.ShouldRedirect(registeredInstance.IsCurrent))
             {
-                await registeredInstance.RedirectActivationToAsync(activation);
-                Environment.Exit(0);
-                return;
+                WindowsLifecycleDiagnostics.Write("activation-redirect-requested");
+                if (await TryRedirectActivationAsync(registeredInstance, activation))
+                {
+                    WindowsLifecycleDiagnostics.Write("activation-redirected");
+                    Environment.Exit(0);
+                    return;
+                }
+
+                registeredInstance = AppInstance.FindOrRegisterForKey(RichChatInstancePolicy.InstanceKey);
+                if (RichChatInstancePolicy.ShouldRedirect(registeredInstance.IsCurrent))
+                {
+                    WindowsLifecycleDiagnostics.Write("activation-redirect-failed");
+                    ShowActivationFailure();
+                    Environment.Exit(1);
+                    return;
+                }
+
+                WindowsLifecycleDiagnostics.Write("activation-instance-reclaimed");
             }
 
             _mainInstance = registeredInstance;
@@ -52,21 +66,47 @@ public partial class App : MauiWinUIApplication
             MouseOnlyNavigation.Enable();
             base.OnLaunched(args);
         }
-        catch
+        catch (Exception exception)
         {
             // Single-instance enforcement fails closed so a second tray owner
             // can never start after an AppLifecycle failure.
+            WindowsLifecycleDiagnostics.Write($"launch-failed:{exception.GetType().Name}");
             Environment.Exit(1);
+        }
+    }
+
+    private static async Task<bool> TryRedirectActivationAsync(AppInstance instance, AppActivationArguments activation)
+    {
+        try
+        {
+            await instance.RedirectActivationToAsync(activation).AsTask().WaitAsync(ActivationTransferTimeout);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            WindowsLifecycleDiagnostics.Write("activation-redirect-timed-out");
+            return false;
+        }
+        catch (Exception exception)
+        {
+            WindowsLifecycleDiagnostics.Write($"activation-redirect-failed:{exception.GetType().Name}");
+            return false;
         }
     }
 
     private void OnInstanceActivated(object? sender, AppActivationArguments args)
     {
+        if (WindowsApplicationLifetime.IsExitRequested)
+        {
+            WindowsLifecycleDiagnostics.Write("activation-ignored-during-exit");
+            return;
+        }
         _dispatcherQueue?.TryEnqueue(BeginMainWindowActivation);
     }
 
     private void BeginMainWindowActivation()
     {
+        if (WindowsApplicationLifetime.IsExitRequested) return;
         if (TryActivateMainWindow()) return;
         _activationRetryCount = 0;
         _activationRetryTimer ??= CreateActivationRetryTimer();
@@ -86,27 +126,28 @@ public partial class App : MauiWinUIApplication
     private void OnActivationRetryTimerTick(DispatcherQueueTimer sender, object args)
     {
         _activationRetryCount++;
-        if (TryActivateMainWindow() || _activationRetryCount >= 20) sender.Stop();
+        if (TryActivateMainWindow())
+        {
+            WindowsLifecycleDiagnostics.Write("activation-window-restored");
+            sender.Stop();
+            return;
+        }
+
+        if (_activationRetryCount >= ActivationRetryLimit)
+        {
+            WindowsLifecycleDiagnostics.Write("activation-window-unavailable");
+            sender.Stop();
+        }
     }
 
-    private static bool TryActivateMainWindow()
-    {
-        var mauiWindow = Microsoft.Maui.Controls.Application.Current?.Windows.FirstOrDefault();
-        if (mauiWindow?.Handler?.PlatformView is not Microsoft.UI.Xaml.Window nativeWindow) return false;
+    private static bool TryActivateMainWindow() => WindowsMainWindowActivator.TryActivate();
 
-        var windowHandle = WindowNative.GetWindowHandle(nativeWindow);
-        if (windowHandle == 0) return false;
-        _ = ShowWindow(windowHandle, ShowWindowRestore);
-        nativeWindow.Activate();
-        _ = SetForegroundWindow(windowHandle);
-        return true;
-    }
+    private static void ShowActivationFailure() => _ = MessageBox(
+        0,
+        "RichChat 正在退出或未响应，请稍后重试。",
+        "RichChat",
+        0);
 
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ShowWindow(nint windowHandle, int command);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetForegroundWindow(nint windowHandle);
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int MessageBox(nint windowHandle, string text, string caption, uint type);
 }

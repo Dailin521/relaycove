@@ -128,24 +128,25 @@ public sealed partial class ShellViewModelTests
     }
 
     [Fact]
-    public async Task StickerSearch_WhenFilteredAndPaged_UsesCategoryAndNameWithoutMixingDefaults()
+    public async Task StickerSearch_WhenFilteredAndPaged_UsesNameAcrossAllCategoriesWithoutMixingDefaults()
     {
         var catalog = new FakeStickerCatalog { Entries = Enumerable.Range(1, 130)
             .Select(i => TestStickerEntry with { Id = i.ToString(), Label = $"开心猫{i}" }).Append(TestStickerEntry with { Id = "dog", Label = "开心狗", CategoryTitle = "狗狗" }).ToArray() };
         using var stickers = CreateStickers(StickerSession(), catalog);
         stickers.SetOpen(true);
-        Assert.Equal(0, catalog.CatalogCalls);
-        stickers.SelectTabCommand.Execute("search");
-        await stickers.ReloadCommand.ExecuteAsync(null);
+        await WaitUntilAsync(() => stickers.Items.Count == 60);
+        Assert.True(stickers.IsSearch);
+        Assert.Equal(1, catalog.CatalogCalls);
         Assert.Equal(60, stickers.Items.Count);
+        Assert.True(stickers.HasMoreItems);
         stickers.LoadMoreCommand.Execute(null);
         Assert.Equal(120, stickers.Items.Count);
-        stickers.Category = "狗狗";
+        Assert.True(stickers.HasMoreItems);
+        stickers.LoadMoreCommand.Execute(null);
+        Assert.False(stickers.HasMoreItems);
+        stickers.Query = "狗";
         await stickers.ReloadCommand.ExecuteAsync(null);
         Assert.Equal("开心狗", Assert.Single(stickers.Items).Label);
-        stickers.Query = "猫";
-        await stickers.ReloadCommand.ExecuteAsync(null);
-        Assert.Empty(stickers.Items);
     }
 
     [Fact]
@@ -239,18 +240,24 @@ public sealed partial class ShellViewModelTests
         Assert.Contains("离线", stickers.Status);
     }
 
-    [Fact]
-    public void StickerSearch_WhenNativePickerClearsSelectionDuringCategoryReset_RestoresFilterWithoutCancellingLoad()
-    {
-        var catalog = new FakeStickerCatalog();
-        using var stickers = CreateStickers(StickerSession(), catalog);
-        stickers.Categories.CollectionChanged += (_, _) => stickers.Category = null;
-        stickers.SetOpen(true);
-        stickers.SelectTabCommand.Execute("search");
-        Assert.Equal("全部分类", stickers.Category);
-        Assert.Single(stickers.Items);
-        Assert.Equal(1, catalog.CatalogCalls);
-    }
+    [Theory]
+    [InlineData(901, 1000, true, false, true)]
+    [InlineData(900, 1000, true, false, false)]
+    [InlineData(899, 1000, true, false, false)]
+    [InlineData(900, 1000, false, false, false)]
+    [InlineData(900, 1000, true, true, false)]
+    [InlineData(0, 0, true, false, false)]
+    public void StickerPaging_WhenNativeScrollPassesNinetyPercent_LoadsOnlyWhenMoreItemsAreAvailable(
+        double verticalOffset,
+        double scrollableHeight,
+        bool hasMoreItems,
+        bool isLoading,
+        bool expected) =>
+        Assert.Equal(expected, RelayCove.App.Controls.StickerPagingPolicy.ShouldLoadMore(
+            verticalOffset,
+            scrollableHeight,
+            hasMoreItems,
+            isLoading));
 
     [Fact]
     public async Task StickerSend_WhenSessionCancelsAfterSendStarts_ReportsUnknownResultWithoutRetry()
@@ -262,6 +269,37 @@ public sealed partial class ShellViewModelTests
         Assert.Contains("发送未确认", stickers.Status);
         Assert.Single(session.SentContents);
         Assert.Equal(1, session.UploadCalls);
+    }
+
+    [Fact]
+    public void StickerPaging_WhenRepeatedEventsStayAboveThreshold_RequestsOnlyOnce()
+    {
+        var paging = new RelayCove.App.Controls.StickerPagingPolicy();
+        Assert.False(paging.TryRequest(900, 1000, true, false));
+        Assert.True(paging.TryRequest(901, 1000, true, false));
+        Assert.False(paging.TryRequest(950, 1000, true, false));
+        Assert.False(paging.TryRequest(1000, 1000, true, false));
+    }
+
+    [Fact]
+    public void StickerPaging_WhenAppendIncreasesExtent_RearmsWithoutMovingTheViewport()
+    {
+        var paging = new RelayCove.App.Controls.StickerPagingPolicy();
+        Assert.True(paging.TryRequest(950, 1000, true, false));
+        Assert.False(paging.TryRequest(950, 2000, true, true));
+        Assert.True(paging.TryRequest(1850, 2000, true, false));
+        Assert.False(paging.TryRequest(1900, 2000, true, false));
+    }
+
+    [Fact]
+    public void StickerPaging_WhenBusyOrEmpty_DoesNotConsumeTheNextCrossing()
+    {
+        var paging = new RelayCove.App.Controls.StickerPagingPolicy();
+        Assert.False(paging.TryRequest(950, 1000, true, true));
+        Assert.False(paging.TryRequest(950, 1000, false, false));
+        Assert.True(paging.TryRequest(950, 1000, true, false));
+        paging.Reset();
+        Assert.True(paging.TryRequest(950, 1000, true, false));
     }
 
     private static StickerPickerViewModel CreateStickers(FakeSession session, FakeStickerCatalog? catalog = null,

@@ -831,6 +831,7 @@ public sealed class ChannelSettingsViewModelTests
 
     private sealed class Interactions : IPlatformInteractionService
     {
+        public Task CopyImageAsync(byte[] content, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public List<string> Copied { get; } = [];
         public Task CopyTextAsync(string text, CancellationToken cancellationToken = default) { Copied.Add(text); return Task.CompletedTask; }
         public Task OpenUriAsync(Uri uri, CancellationToken cancellationToken = default) => Task.CompletedTask;

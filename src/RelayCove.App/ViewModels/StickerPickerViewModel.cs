@@ -21,7 +21,6 @@ public sealed partial class StickerPickerViewModel : ObservableObject, IDisposab
     private bool _sendStarted;
     private bool _open;
     private bool _disposed;
-    private bool _updatingCategories;
     private bool _catalogOffline;
     private IReadOnlyList<StickerCatalogEntry> _entries = [];
     private IReadOnlyList<StickerFavorite> _favorites = [];
@@ -41,15 +40,13 @@ public sealed partial class StickerPickerViewModel : ObservableObject, IDisposab
 
     public event EventHandler? Sent;
     public ObservableCollection<StickerPickerItem> Items { get; } = [];
-    public ObservableCollection<string> Categories { get; } = ["全部分类"];
-    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsDefault), nameof(IsSearch), nameof(IsFavorites), nameof(IsImageTab))]
-    public partial string Tab { get; set; } = "default";
+    [ObservableProperty, NotifyPropertyChangedFor(nameof(IsDefault), nameof(IsSearch), nameof(IsFavorites), nameof(IsImageTab), nameof(HasMoreItems))]
+    public partial string Tab { get; set; } = "search";
     public bool IsDefault => Tab == "default";
     public bool IsSearch => Tab == "search";
     public bool IsFavorites => Tab == "favorites";
     public bool IsImageTab => !IsDefault;
     [ObservableProperty] public partial string Query { get; set; } = "";
-    [ObservableProperty] public partial string? Category { get; set; } = "全部分类";
     [ObservableProperty] public partial bool IsLoading { get; set; }
     [ObservableProperty, NotifyPropertyChangedFor(nameof(CanAct))] public partial bool IsWorking { get; set; }
     [ObservableProperty, NotifyPropertyChangedFor(nameof(HasStatus))] public partial string Status { get; set; } = "";
@@ -58,12 +55,21 @@ public sealed partial class StickerPickerViewModel : ObservableObject, IDisposab
     public bool IsEditing => EditingItem is not null;
     public bool CanAct => !IsWorking && _session.AccountId is not null;
     public bool HasStatus => Status.Length > 0;
+    public bool HasMoreItems => Items.Count < _matches.Count;
 
     public void SetOpen(bool open)
     {
         _open = open;
         if (open) _ = RefreshAsync(reloadSource: true);
-        else { _refresh?.Cancel(); IsLoading = false; EditingItem = null; Items.Clear(); _matches = []; }
+        else
+        {
+            _refresh?.Cancel();
+            IsLoading = false;
+            EditingItem = null;
+            Items.Clear();
+            _matches = [];
+            OnPropertyChanged(nameof(HasMoreItems));
+        }
     }
 
     [RelayCommand]
@@ -77,11 +83,6 @@ public sealed partial class StickerPickerViewModel : ObservableObject, IDisposab
     }
 
     partial void OnQueryChanged(string value) { if (_open) _ = RefreshAsync(debounce: true); }
-    partial void OnCategoryChanged(string? value)
-    {
-        if (_open && IsSearch && !_updatingCategories) _ = RefreshAsync();
-    }
-
     [RelayCommand]
     private Task ReloadAsync() => RefreshAsync(reloadSource: true);
 
@@ -96,6 +97,7 @@ public sealed partial class StickerPickerViewModel : ObservableObject, IDisposab
         IsLoading = false;
         Items.Clear();
         _matches = [];
+        OnPropertyChanged(nameof(HasMoreItems));
         if (!_open || IsDefault || account is null) { _refresh = null; return; }
         try
         {
@@ -110,20 +112,6 @@ public sealed partial class StickerPickerViewModel : ObservableObject, IDisposab
                     _entries = snapshot.Entries;
                     _catalogOffline = snapshot.IsOffline;
                 }
-                var categories = _entries.Select(entry => entry.CategoryTitle).Distinct().Order(StringComparer.CurrentCulture).Prepend("全部分类").ToArray();
-                if (!Categories.SequenceEqual(categories))
-                {
-                    var selectedCategory = Category;
-                    _updatingCategories = true;
-                    try
-                    {
-                        // A bound native Picker clears SelectedItem while its collection resets.
-                        Categories.Clear();
-                        foreach (var title in categories) Categories.Add(title);
-                        Category = selectedCategory is not null && categories.Contains(selectedCategory) ? selectedCategory : "全部分类";
-                    }
-                    finally { _updatingCategories = false; }
-                }
                 Status = _catalogOffline ? "当前离线，显示缓存目录；已缓存的表情仍可使用。" : "";
                 if (_catalogOffline && _entries.Count == 0)
                 {
@@ -131,8 +119,8 @@ public sealed partial class StickerPickerViewModel : ObservableObject, IDisposab
                     return;
                 }
                 var words = (Query ?? string.Empty).Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                _matches = _entries.Where(entry => (string.IsNullOrEmpty(Category) || Category == "全部分类" || entry.CategoryTitle == Category) &&
-                    words.All(word => (entry.Label + " " + entry.CategoryTitle).Contains(word, StringComparison.OrdinalIgnoreCase)))
+                _matches = _entries.Where(entry =>
+                    words.All(word => entry.Label.Contains(word, StringComparison.OrdinalIgnoreCase)))
                     .Select(entry => new StickerPickerItem(entry, null)).ToArray();
             }
             else
@@ -145,7 +133,7 @@ public sealed partial class StickerPickerViewModel : ObservableObject, IDisposab
                     .Select(item => new StickerPickerItem(null, item, account.Value.Value)).ToArray();
             }
             LoadMore();
-            if (Items.Count == 0) Status = tab == "favorites" ? "暂无匹配的收藏，可导入图片或收藏聊天图片。" : "没有匹配的表情，请换个名称或分类。";
+            if (Items.Count == 0) Status = tab == "favorites" ? "暂无匹配的收藏，可导入图片或收藏聊天图片。" : "没有匹配的表情，请换个名称试试。";
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch { if (!token.IsCancellationRequested) Status = "表情加载失败，请检查网络后点击重试。"; }
@@ -159,6 +147,7 @@ public sealed partial class StickerPickerViewModel : ObservableObject, IDisposab
     private void LoadMore()
     {
         foreach (var item in _matches.Skip(Items.Count).Take(60)) Items.Add(item);
+        OnPropertyChanged(nameof(HasMoreItems));
     }
 
     public async Task<StickerMedia> LoadImageAsync(StickerPickerItem item, bool thumbnail, CancellationToken token)
@@ -324,6 +313,7 @@ public sealed partial class StickerPickerViewModel : ObservableObject, IDisposab
             EditingItem = null;
             Status = "";
             OnPropertyChanged(nameof(CanAct));
+            OnPropertyChanged(nameof(HasMoreItems));
             if (_open) _ = RefreshAsync();
         });
     }

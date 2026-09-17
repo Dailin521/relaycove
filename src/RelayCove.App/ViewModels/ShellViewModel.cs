@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -226,6 +226,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public ObservableCollection<NavigationItem> DirectMessages { get; } = [];
     public ObservableCollection<NavigationItem> FilteredDirectMessages { get; } = [];
     public ObservableCollection<ConversationListItem> Conversations { get; } = [];
+    public ObservableCollection<ConversationListItem> PrivateGroupConversations { get; } = [];
     public ObservableCollection<ConversationListItem> FilteredConversations { get; } = [];
     public ObservableCollection<ConversationMessagePresentation> MessagePresentations { get; } = [];
     public ObservableCollection<ContactItem> KnownContacts { get; } = [];
@@ -1497,6 +1498,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     internal void SetWindowActive(bool isActive)
     {
         if (_disposed) return;
+        if (isActive) RefreshAttachmentDownloads();
         Updates?.SetWindowActive(isActive);
         if (_isWindowActive == isActive)
         {
@@ -2241,6 +2243,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ProjectSearch();
         OnPropertyChanged(nameof(HasMoreSearchResults));
         OnPropertyChanged(nameof(SearchEmptyText));
+        ScheduleServerSearch(SearchQuery);
     }
 
     [RelayCommand(AllowConcurrentExecutions = false)]
@@ -2790,6 +2793,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         MessageActionFocusRequest++;
     }
 
+    private MessageAttachmentItem? _downloadingAttachment;
+    private AccountId? _downloadingAttachmentAccount;
+
     [RelayCommand(IncludeCancelCommand = true, AllowConcurrentExecutions = false)]
     private async Task DownloadAttachmentAsync(
         MessageAttachmentItem? attachment,
@@ -2807,11 +2813,19 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         HasKnownMediaDownloadLength = false;
         MediaDownloadProgressText = null;
         IsMediaActionBusy = true;
+        _downloadingAttachment = attachment;
+        _downloadingAttachmentAccount = downloadAccountId;
+        RefreshAttachmentTransfer();
         MediaActionStatus = AskWhereToSaveDownloads ? "请选择保存位置…" : "准备下载…";
         try
         {
             var progress = new InlineProgress<RealmMediaTransferProgress>(value =>
-                _dispatcher.Dispatch(() => UpdateMediaDownloadProgress(value)));
+                _dispatcher.Dispatch(() =>
+                {
+                    if (!ReferenceEquals(_downloadingAttachment, attachment) || cancellationToken.IsCancellationRequested) return;
+                    UpdateMediaDownloadProgress(value);
+                    RefreshAttachmentTransfer();
+                }));
             var saved = await _fileSaveService.SaveDownloadAsync(
                 attachment.Name,
                 async (destination, token) =>
@@ -2836,7 +2850,13 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                         attachment.Name,
                         filePath,
                         downloadedLength,
-                        DateTimeOffset.Now));
+                        DateTimeOffset.Now,
+                        attachment.AttachmentKey));
+                if (_session.AccountId == accountId)
+                {
+                    attachment.SetDownloaded(DownloadedFileExists(filePath));
+                    RefreshAttachmentDownloads();
+                }
             }
             ScheduleMediaStatusClear();
         }
@@ -2862,7 +2882,62 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
         finally
         {
+            attachment.SetTransfer(false, 0, false);
+            _downloadingAttachment = null;
+            _downloadingAttachmentAccount = null;
+            RefreshAttachmentTransfer();
             IsMediaActionBusy = false;
+        }
+    }
+
+    private string? FindDownloadedAttachment(MessageAttachmentItem attachment) =>
+        _session.AccountId is not null && _session.AccountId == _downloadHistoryAccountId
+            ? RecentDownloads.Where(item => item.Entry.AttachmentKey == attachment.AttachmentKey)
+                .Select(item => item.FilePath).FirstOrDefault(DownloadedFileExists)
+            : null;
+
+    private void RefreshAttachmentDownloads()
+    {
+        foreach (var attachment in Messages.SelectMany(message => message.Attachments).Where(item => item.IsFile))
+            attachment.SetDownloaded(FindDownloadedAttachment(attachment) is not null);
+        RefreshAttachmentTransfer();
+    }
+
+    private void RefreshAttachmentTransfer()
+    {
+        _downloadingAttachment?.SetTransfer(true, MediaDownloadProgress, !HasKnownMediaDownloadLength);
+        foreach (var item in Messages.SelectMany(message => message.Attachments).Where(item => item.IsFile))
+        {
+            var active = _session.AccountId == _downloadingAttachmentAccount && item.Equals(_downloadingAttachment);
+            if (active || item.IsDownloading)
+                item.SetTransfer(active, active ? MediaDownloadProgress : 0, active && !HasKnownMediaDownloadLength);
+        }
+    }
+
+    [RelayCommand]
+    private async Task OpenOrDownloadAttachmentAsync(MessageAttachmentItem? attachment)
+    {
+        if (attachment is null || IsMediaActionBusy || attachment.IsDownloading) return;
+        var path = FindDownloadedAttachment(attachment);
+        attachment.SetDownloaded(path is not null);
+        if (path is null)
+        {
+            await DownloadAttachmentCommand.ExecuteAsync(attachment);
+            return;
+        }
+        try
+        {
+            await _fileSaveService.OpenDownloadedFileAsync(path, _lifetimeCancellation.Token);
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested) { }
+        catch (FileNotFoundException)
+        {
+            attachment.SetDownloaded(false);
+            MediaActionStatus = "文件已移走或删除，请重新下载";
+        }
+        catch
+        {
+            MediaActionStatus = "无法打开文件，请检查关联程序";
         }
     }
 
@@ -3303,6 +3378,26 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ActiveMessageAttachment = null;
         _activeMessageSelection = null;
         MessageActionFocusRequest++;
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = false)]
+    private async Task CopyActiveImageAsync()
+    {
+        if (ActiveMessageAttachment is not { IsImage: true } image) return;
+        var account = _session.AccountId;
+        CloseMessageMenu();
+        try
+        {
+            var result = await _realmMediaService.GetFileAsync(image.SourceUrl, _lifetimeCancellation.Token);
+            if (_disposed || _session.AccountId != account) return;
+            await _platformInteractions.CopyImageAsync(result.Content, _lifetimeCancellation.Token);
+        }
+        catch (OperationCanceledException) when (_lifetimeCancellation.IsCancellationRequested) { }
+        catch
+        {
+            if (!_disposed && _session.AccountId == account)
+                MediaActionStatus = "无法复制图片，请重试";
+        }
     }
 
     [RelayCommand(AllowConcurrentExecutions = false)]
@@ -4529,7 +4624,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     partial void OnSearchQueryChanged(string value)
     {
         CancelSearchInput();
-        _hasSubmittedSearch = false;
+        _hasSubmittedSearch = !string.IsNullOrWhiteSpace(value);
         _serverSearchResults = [];
         _searchBeforeMessageId = null;
         SelectedSearchResult = null;
@@ -4538,6 +4633,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         ProjectSearch();
         OnPropertyChanged(nameof(HasMoreSearchResults));
         OnPropertyChanged(nameof(SearchEmptyText));
+        ScheduleServerSearch(value);
     }
     partial void OnSearchErrorChanged(string? value) => OnPropertyChanged(nameof(HasSearchError));
     partial void OnIsSearchBusyChanged(bool value) => OnPropertyChanged(nameof(SearchEmptyText));
@@ -5630,7 +5726,15 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             .Select(conversation => CreateDirectConversationListItem(state, conversation));
         var privateGroups = state.Subscriptions.Values
             .Where(static subscription => PrivateGroupPolicy.IsEligible(subscription))
-            .Select(subscription => CreatePrivateGroupConversationListItem(state, subscription));
+            .Select(subscription => CreatePrivateGroupConversationListItem(state, subscription))
+            .OrderByDescending(static item => item.IsPinned)
+            .ThenByDescending(static item => item.LatestMessageTimestamp)
+            .ThenBy(static item => item.Conversation.CanonicalKey, StringComparer.Ordinal)
+            .ToArray();
+        ReconcileConversationListItems(
+            PrivateGroupConversations,
+            privateGroups,
+            item => item.Conversation.CanonicalKey);
         ReconcileConversationListItems(
             Conversations,
             directConversations
@@ -5744,6 +5848,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             }
         }
 
+        RefreshAttachmentDownloads();
         var newestMessageId = projectedMessages
             .Select(message => message.MessageId)
             .Max();
@@ -6172,14 +6277,41 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         await RunServerSearchCoreAsync(
             query.Trim(),
             filter,
+            debounce: false,
             ++_searchInputGeneration,
             accountId.Value,
             cancellation).ConfigureAwait(false);
     }
 
+    private void ScheduleServerSearch(string query)
+    {
+        if (!IsSearchOpen || string.IsNullOrWhiteSpace(query)) return;
+
+        CancelSearchInput();
+        var cancellation = new CancellationTokenSource();
+        _searchInputCancellation = cancellation;
+        var accountId = _session.AccountId;
+        if (accountId is null)
+        {
+            CancelSearchInput();
+            return;
+        }
+
+        _searchAccountId = accountId;
+        IsSearchBusy = true;
+        _ = RunServerSearchCoreAsync(
+            query.Trim(),
+            SelectedSearchFilter,
+            debounce: true,
+            ++_searchInputGeneration,
+            accountId.Value,
+            cancellation);
+    }
+
     private async Task RunServerSearchCoreAsync(
         string query,
         MessageSearchFilter filter,
+        bool debounce,
         long generation,
         AccountId accountId,
         CancellationTokenSource cancellation)
@@ -6191,6 +6323,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             IsSearchBusy = true;
             SearchError = null;
             _searchBeforeMessageId = null;
+            if (debounce) await Task.Delay(TimeSpan.FromMilliseconds(300), cancellation.Token).ConfigureAwait(false);
             var page = await _session.SearchMessagesAsync(
                 query,
                 null,
@@ -6198,35 +6331,47 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                 cancellation.Token,
                 filter,
                 _searchConversation).ConfigureAwait(false);
-            if (!IsSearchCurrent(generation, accountId) ||
-                !IsSearchOpen ||
-                SelectedSearchFilter != filter ||
-                !string.Equals(SearchQuery.Trim(), query, StringComparison.Ordinal)) return;
-            _serverSearchResults = page.Messages
-                .Where(message => IsRelayCoveConversation(message.Conversation, _projectedState))
-                .OrderByDescending(message => message.Id)
-                .Select(message => ToSearchResult(message, filter))
-                .ToArray();
-            ProjectSearch();
-            _searchBeforeMessageId = page.FoundOldest ? null : page.OldestFetchedMessageId;
-            OnPropertyChanged(nameof(HasMoreSearchResults));
+            _dispatcher.Dispatch(() =>
+            {
+                if (!IsSearchCurrent(generation, accountId) ||
+                    !IsSearchOpen ||
+                    SelectedSearchFilter != filter ||
+                    !string.Equals(SearchQuery.Trim(), query, StringComparison.Ordinal)) return;
+                _serverSearchResults = page.Messages
+                    .Where(message => IsRelayCoveConversation(message.Conversation, _projectedState))
+                    .OrderByDescending(message => message.Id)
+                    .Select(message => ToSearchResult(message, filter))
+                    .ToArray();
+                ProjectSearch();
+                _searchBeforeMessageId = page.FoundOldest ? null : page.OldestFetchedMessageId;
+                OnPropertyChanged(nameof(HasMoreSearchResults));
+            });
         }
         catch (OperationCanceledException)
         {
         }
         catch (GatewayException exception)
         {
-            if (IsSearchCurrent(generation, accountId)) SearchError = DescribeGatewayFailure(exception);
+            _dispatcher.Dispatch(() =>
+            {
+                if (IsSearchCurrent(generation, accountId)) SearchError = DescribeGatewayFailure(exception);
+            });
         }
         catch (Exception)
         {
-            if (IsSearchCurrent(generation, accountId)) SearchError = "服务器搜索失败，请稍后重试。";
+            _dispatcher.Dispatch(() =>
+            {
+                if (IsSearchCurrent(generation, accountId)) SearchError = "服务器搜索失败，请稍后重试。";
+            });
         }
         finally
         {
-            if (IsSearchCurrent(generation, accountId)) IsSearchBusy = false;
-            if (ReferenceEquals(_searchInputCancellation, cancellation)) _searchInputCancellation = null;
-            cancellation.Dispose();
+            _dispatcher.Dispatch(() =>
+            {
+                if (IsSearchCurrent(generation, accountId)) IsSearchBusy = false;
+                if (ReferenceEquals(_searchInputCancellation, cancellation)) _searchInputCancellation = null;
+                cancellation.Dispose();
+            });
         }
     }
 
@@ -6346,7 +6491,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             TruncateForSearch(subtitle),
             message.Conversation,
             message.Id,
-            ContentKinds: contentKinds)
+            ContentKinds: contentKinds,
+            TimestampText: message.Timestamp.LocalDateTime.ToString("yyyy-MM-dd HH:mm"))
         {
             Images = images
         };
@@ -6383,6 +6529,14 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(IsSearchEmpty));
             return;
         }
+        IEnumerable<SearchResultItem> localMatches = _searchConversation is null
+            ? []
+            : _projectedState.Messages.Values
+                .Where(message => message.Conversation.CanonicalKey == _searchConversation.CanonicalKey &&
+                                  (string.IsNullOrWhiteSpace(SearchQuery) || Contains(message.Content, SearchQuery.Trim())) &&
+                                  MatchesSearchFilter(SearchContentClassifier.Classify(message.Content, _session.ActiveRealm), filter))
+                .OrderByDescending(message => message.Id)
+                .Select(message => ToSearchResult(message, SelectedSearchFilter));
         Reconcile(
             SearchResults,
             _serverSearchResults
@@ -6390,6 +6544,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
                                  (_searchConversation is null ||
                                   result.Conversation?.CanonicalKey == _searchConversation.CanonicalKey) &&
                                  MatchesSearchFilter(result.ContentKinds, filter))
+                .Concat(localMatches)
                 .DistinctBy(result => result.MessageId),
             item => item.Id);
         OnPropertyChanged(nameof(HasSearchResults));
@@ -7714,7 +7869,8 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         try
         {
             var persisted = _downloadHistoryStore.Load(accountId)
-                .Where(existing => existing.Id != entry.Id)
+                .Where(existing => existing.Id != entry.Id &&
+                    !string.Equals(existing.FilePath, entry.FilePath, StringComparison.OrdinalIgnoreCase))
                 .Prepend(entry)
                 .Take(RecentDownloadLimit)
                 .ToArray();
@@ -7725,8 +7881,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
 
         if (_session.AccountId != accountId || _downloadHistoryAccountId != accountId) return;
-        var existingItem = RecentDownloads.FirstOrDefault(item => item.Id == entry.Id);
-        if (existingItem is not null) RecentDownloads.Remove(existingItem);
+        foreach (var existingItem in RecentDownloads.Where(item => item.Id == entry.Id ||
+                     string.Equals(item.FilePath, entry.FilePath, StringComparison.OrdinalIgnoreCase)).ToArray())
+            RecentDownloads.Remove(existingItem);
         RecentDownloads.Insert(0, new DownloadHistoryItem(entry, !DownloadedFileExists(entry.FilePath)));
         while (RecentDownloads.Count > RecentDownloadLimit) RecentDownloads.RemoveAt(RecentDownloads.Count - 1);
         if (!IsDownloadCenterOpen) HasUnseenCompletedDownloads = true;
@@ -7762,6 +7919,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             item.IsMissing = !DownloadedFileExists(item.FilePath);
         }
+        RefreshAttachmentDownloads();
     }
 
     private bool DownloadedFileExists(string path)
@@ -7791,6 +7949,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     private void NotifyDownloadHistoryProperties()
     {
+        RefreshAttachmentDownloads();
         OnPropertyChanged(nameof(HasRecentDownloads));
         OnPropertyChanged(nameof(IsDownloadCenterEmpty));
     }

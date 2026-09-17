@@ -5,7 +5,8 @@ public sealed record DownloadHistoryEntry(
     string FileName,
     string FilePath,
     long Length,
-    DateTimeOffset CompletedAt)
+    DateTimeOffset CompletedAt,
+    string? AttachmentKey = null)
 {
     public override string ToString() =>
         $"DownloadHistoryEntry {{ Id = {Id}, FileName = [redacted], FilePath = [redacted], Length = {Length}, CompletedAt = {CompletedAt:O} }}";

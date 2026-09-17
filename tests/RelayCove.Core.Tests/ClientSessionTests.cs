@@ -1799,6 +1799,32 @@ public sealed class ClientSessionTests
     }
 
     [Fact]
+    public async Task StopAsync_WhenCommandGateIsHeldAndCancellationRequested_StopsWaitingForTheGate()
+    {
+        var conversation = new DirectMessage([20]);
+        var sendSource = new TaskCompletionSource<SendResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateway = new FakeGateway
+        {
+            RegisterHandler = (_, _) => Task.FromResult(Register(subscriptions: [new Subscription(1, "General")])),
+            SendHandler = (_, _) => sendSource.Task
+        };
+        await using var session = new ClientSession(gateway, new FakeAccountStore(), new FakeCredentialVault());
+        await session.LoginAsync("https://zulip.example/", "me@example.test", "password");
+        await session.SelectConversationAsync(conversation);
+
+        var sending = session.SendAsync("hello");
+        await WaitUntilAsync(() => gateway.SendRequests.Count == 1);
+        using var cancellation = new CancellationTokenSource();
+        var stopping = session.StopAsync(cancellation.Token);
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => stopping);
+        sendSource.SetResult(new SendResult(gateway.SendRequests[0].LocalId, 500));
+        await sending;
+        await session.StopAsync();
+    }
+
+    [Fact]
     public async Task DisposeAsync_WhenSendIsInFlight_WaitsUntilSendSettles()
     {
         var conversation = new DirectMessage([20]);

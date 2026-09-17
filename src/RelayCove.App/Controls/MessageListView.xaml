@@ -157,7 +157,7 @@
                                     </Grid>
 
                                     <Border x:Name="Bubble"
-                                            Padding="14,10"
+                                            Padding="14,7,14,10"
                                             HorizontalOptions="Start"
                                             Background="{StaticResource BubbleBrush}"
                                             Stroke="{StaticResource BorderBrush}"
@@ -268,6 +268,12 @@
                                                                 Stroke="{StaticResource BorderBrush}"
                                                                 StrokeThickness="1"
                                                                 SemanticProperties.Description="{Binding AccessibleLabel}">
+                                                            <Border.Triggers>
+                                                                <DataTrigger TargetType="Border" Binding="{Binding IsImage}" Value="True">
+                                                                    <Setter Property="Background" Value="Transparent" />
+                                                                    <Setter Property="StrokeThickness" Value="0" />
+                                                                </DataTrigger>
+                                                            </Border.Triggers>
                                                             <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
                                                             <VerticalStackLayout Spacing="0">
                                                                 <Border MaximumHeightRequest="220"
@@ -276,7 +282,7 @@
                                                                         VerticalOptions="Start"
                                                                         Padding="0"
                                                                         IsVisible="{Binding IsImage}"
-                                                                        Background="{StaticResource GroundBrush}"
+                                                                        Background="Transparent"
                                                                         StrokeThickness="0">
                                                                     <Border.StrokeShape><RoundRectangle CornerRadius="7" /></Border.StrokeShape>
                                                                     <Border.Behaviors>
@@ -300,10 +306,16 @@
                                                                     <Label Grid.Column="1" Text="{Binding Name}" Style="{StaticResource BaseLabelStyle}"
                                                                            FontSize="12" FontAttributes="Bold" />
                                                                     <Label Grid.Row="1" Grid.Column="1" Text="{Binding KindLabel}" Style="{StaticResource MutedLabelStyle}" />
-                                                                    <Button Grid.Column="2" Grid.RowSpan="2" Text="下载" Style="{StaticResource BaseButtonStyle}"
+                                                                    <Grid Grid.Column="2" Grid.RowSpan="2" HeightRequest="30" VerticalOptions="Center">
+                                                                    <Button Text="{Binding DownloadActionText}" Style="{StaticResource BaseButtonStyle}"
                                                                             HeightRequest="30" MinimumHeightRequest="30"
                                                                             IsEnabled="{Binding ViewModel.CanStartMediaDownload, Source={x:Reference Root}, x:DataType=controls:MessageListView}"
                                                                             Clicked="OnDownloadAttachmentClicked" />
+                                                                    <controls:DownloadBorderProgress Progress="{Binding DownloadProgress}"
+                                                                                                     IsRunning="{Binding IsDownloading}"
+                                                                                                     IsIndeterminate="{Binding IsDownloadIndeterminate}"
+                                                                                                     ProgressColor="{StaticResource AccentColor}" />
+                                                                    </Grid>
                                                                 </Grid>
                                                             </VerticalStackLayout>
                                                         </Border>

@@ -27,6 +27,7 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
     private bool _isRestoringPlacement;
     private bool _placementRestored;
     private readonly Action<int> _terminateProcess;
+    private readonly IApplicationShutdownCoordinator? _shutdownCoordinator;
     private int _forcedExitScheduled;
 #if DEBUG
     private bool _previewPlacementApplied;
@@ -36,13 +37,26 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
     public event EventHandler? StateChanged;
 
     public WindowsWindowShellAdapter()
-        : this(Environment.Exit)
+        : this(Environment.Exit, null)
+    {
+    }
+
+    public WindowsWindowShellAdapter(IApplicationShutdownCoordinator shutdownCoordinator)
+        : this(Environment.Exit, shutdownCoordinator)
     {
     }
 
     internal WindowsWindowShellAdapter(Action<int> terminateProcess)
+        : this(terminateProcess, null)
+    {
+    }
+
+    private WindowsWindowShellAdapter(
+        Action<int> terminateProcess,
+        IApplicationShutdownCoordinator? shutdownCoordinator)
     {
         _terminateProcess = terminateProcess ?? throw new ArgumentNullException(nameof(terminateProcess));
+        _shutdownCoordinator = shutdownCoordinator;
     }
 
     public bool IsPinned => _isPinned;
@@ -92,10 +106,10 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
     {
         if (_exitRequested) return;
         _exitRequested = true;
-        if (Interlocked.Exchange(ref _forcedExitScheduled, 1) == 0)
-        {
-            _ = ForceExitAfterDelayAsync(ForcedExitDelay, _terminateProcess);
-        }
+        WindowsApplicationLifetime.MarkExitRequested();
+        WindowsLifecycleDiagnostics.Write("shutdown-requested:TrayExit");
+        ScheduleForcedExit();
+        _ = _shutdownCoordinator?.RequestShutdownAsync(ApplicationShutdownEntryPoint.TrayExit);
         if (_windowHandle == 0)
         {
             _terminateProcess(0);
@@ -105,6 +119,12 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
         {
             _terminateProcess(0);
         }
+    }
+
+    private void ScheduleForcedExit()
+    {
+        if (Interlocked.Exchange(ref _forcedExitScheduled, 1) != 0) return;
+        _ = ForceExitAfterDelayAsync(ForcedExitDelay, _terminateProcess);
     }
 
     internal static async Task ForceExitAfterDelayAsync(TimeSpan delay, Action<int> terminateProcess)
@@ -470,6 +490,10 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
     private void OnWindowDestroying(object? sender, EventArgs eventArgs)
     {
         SaveWindowPlacement();
+        _exitRequested = true;
+        WindowsApplicationLifetime.MarkExitRequested();
+        WindowsLifecycleDiagnostics.Write("window-destroying");
+        ScheduleForcedExit();
         if (_window is not null)
         {
             _window.HandlerChanged -= OnHandlerChanged;
@@ -491,7 +515,6 @@ public sealed class WindowsWindowShellAdapter : IWindowShellAdapter
         _lastRestoredBounds = null;
         _windowHandle = 0;
         _window = null;
-        _exitRequested = false;
         _placementRestored = false;
 #if DEBUG
         _previewPlacementApplied = false;

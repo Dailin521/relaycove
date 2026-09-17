@@ -20,7 +20,11 @@ public sealed class WindowsSingleInstanceTests
 
         Assert.Contains("AppInstance.FindOrRegisterForKey", source, StringComparison.Ordinal);
         Assert.Contains("RedirectActivationToAsync", source, StringComparison.Ordinal);
+        Assert.Contains("WaitAsync(ActivationTransferTimeout)", source, StringComparison.Ordinal);
         Assert.Contains("TryActivateMainWindow", source, StringComparison.Ordinal);
+        Assert.Contains("ActivationRetryLimit = 100", source, StringComparison.Ordinal);
+        Assert.Contains("WindowsApplicationLifetime.IsExitRequested", source, StringComparison.Ordinal);
+        Assert.Contains("AppInstance.FindOrRegisterForKey", source, StringComparison.Ordinal);
         Assert.Contains("Environment.Exit(0)", source, StringComparison.Ordinal);
     }
 

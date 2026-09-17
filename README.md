@@ -2,9 +2,9 @@
 
 RichChat 是一个直接连接 Zulip Realm 的 Windows 原生 .NET MAUI 客户端。Zulip 是账号、权限、成员、消息和实时事件的唯一事实源；项目不包含自研聊天服务端、代理、BFF 或第二消息后端。
 
-当前版本为 [`1.0.6`](https://github.com/Dailin521/relaycove/releases/tag/v1.0.6)，目标平台为 Windows 11 x64，使用 .NET SDK `10.0.400`、MAUI `10.0.20` 和 `win-x64`。`RelayCove.Web` 只保留为历史源码，不再参与产品开发或 Windows 发布。
+当前版本为 [`1.0.7`](https://github.com/Dailin521/relaycove/releases/tag/v1.0.7)，目标平台为 Windows 11 x64，使用 .NET SDK `10.0.400`、MAUI `10.0.20` 和 `win-x64`。`RelayCove.Web` 只保留为历史源码，不再参与产品开发或 Windows 发布。
 
-本版本沿用 SVN 主线的 `1.0.x` 版本系列，构建号为 `13`；历史 GitHub `2.4.0` 不属于新的更新渠道。运行 `publish-installer.cmd` 会生成当前源码版本的安装包及更新清单。
+本版本沿用 SVN 主线的 `1.0.x` 版本系列，构建号为 `14`；历史 GitHub `2.4.0` 不属于新的更新渠道。运行 `publish-installer.cmd` 会生成当前源码版本的安装包及更新清单。
 
 ## 下载
 
@@ -20,7 +20,7 @@ GitHub Release 提供自包含、未签名的 ZIP 和 `RichChat-<version>-win-x6
 
 ## 当前范围
 
-本地开发中的表情面板包含“搜索 / 默认 / 收藏”：默认页仍将组织小表情插入输入框；搜索和收藏中的大图点击后单独发送，保留输入框文字与附件。搜索接入 [ChineseBQB](https://github.com/zhaoolee/ChineseBQB)，按名称和分类筛选，目录每天刷新，图片使用最多 200 MiB 的本地缓存。
+表情面板包含“搜索 / 默认 / 收藏”：默认页仍将组织小表情插入输入框；搜索和收藏中的大图点击后单独发送，保留输入框文字与附件。搜索接入 [ChineseBQB](https://github.com/zhaoolee/ChineseBQB)，按名称搜索，支持空关键词浏览及滚动加载，目录每天刷新，图片使用最多 200 MiB 的本地缓存。
 
 收藏支持导入 PNG/JPEG/WebP/GIF，以及聊天图片右键“收藏为表情”。收藏卡片的“⋯”可改名或移除。图片按内容去重、保存原始副本并按账号隔离；删除导入源文件不会影响收藏，注销不会删除收藏。单张上限 25 MiB，发送还受服务器上传限制约束。GIF 保留原始动图，表情面板悬停预览。首次搜索需要网络；第三方表情内容不随安装包分发。
 

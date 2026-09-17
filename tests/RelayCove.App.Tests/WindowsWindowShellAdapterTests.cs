@@ -79,4 +79,29 @@ public sealed class WindowsWindowShellAdapterTests
 
         Assert.Equal(0, exitCode);
     }
+
+    [Fact]
+    public void WindowsShellAdapter_WhenWindowIsDestroyed_SchedulesTheSameForcedExitFallback()
+    {
+        var source = File.ReadAllText(FindWorkspaceFile(
+            "src", "RelayCove.App", "Platforms", "Windows", "WindowsWindowShellAdapter.cs"));
+
+        Assert.Contains("private void OnWindowDestroying", source, StringComparison.Ordinal);
+        Assert.Contains("ScheduleForcedExit();", source, StringComparison.Ordinal);
+        Assert.Contains("WindowsApplicationLifetime.MarkExitRequested", source, StringComparison.Ordinal);
+        Assert.Contains("RequestShutdownAsync(ApplicationShutdownEntryPoint.TrayExit)", source, StringComparison.Ordinal);
+    }
+
+    private static string FindWorkspaceFile(params string[] parts)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            var candidate = Path.Combine([directory.FullName, .. parts]);
+            if (File.Exists(candidate)) return candidate;
+            directory = directory.Parent;
+        }
+
+        throw new FileNotFoundException($"Unable to locate workspace file: {Path.Combine(parts)}");
+    }
 }

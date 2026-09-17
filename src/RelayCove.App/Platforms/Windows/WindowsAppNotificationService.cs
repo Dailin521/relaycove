@@ -14,7 +14,6 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     private const uint FlashWindowStop = 0x00000000;
     private const uint FlashWindowTray = 0x00000002;
     private const uint FlashWindowTimerNoForeground = 0x0000000C;
-    private const int ShowWindowRestore = 9;
     private const string DesktopToastGroup = "relaycove-live";
     private const string DesktopToastAppId = "com.relaycove.client.desktop";
     private readonly TaskbarUnreadOverlay _taskbarUnreadOverlay = new();
@@ -484,9 +483,7 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
 
     private void ActivateWindow()
     {
-        if (_windowHandle == 0) return;
-        _ = ShowWindow(_windowHandle, ShowWindowRestore);
-        _ = SetForegroundWindow(_windowHandle);
+        if (!WindowsMainWindowActivator.TryActivate()) return;
         StopTaskbarFlash();
         StopTrayFlash();
     }
@@ -581,14 +578,6 @@ public sealed class WindowsAppNotificationService : IAppNotificationService
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool FlashWindowEx(ref FlashWindowInfo flashWindowInfo);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool ShowWindow(nint windowHandle, int commandShow);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetForegroundWindow(nint windowHandle);
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern int SetCurrentProcessExplicitAppUserModelID(string appId);

@@ -1133,7 +1133,7 @@ public partial class MessageListView : ContentView
     private void OnDownloadAttachmentClicked(object? sender, EventArgs eventArgs)
     {
         if (sender is Button { BindingContext: MessageAttachmentItem attachment })
-            Execute(_viewModel?.DownloadAttachmentCommand, attachment);
+            Execute(_viewModel?.OpenOrDownloadAttachmentCommand, attachment);
     }
 
     private void OnImageTapped(object? sender, TappedEventArgs eventArgs)

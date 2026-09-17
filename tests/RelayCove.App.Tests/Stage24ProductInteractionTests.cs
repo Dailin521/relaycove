@@ -164,7 +164,7 @@ public sealed class Stage24ProductInteractionTests
         public Task YieldToRenderAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
     private sealed class TestAppearance : IAppearanceService { public AppAppearanceMode Current => AppAppearanceMode.System; public void Apply(AppAppearanceMode mode) { } }
-    private sealed class TestInteractions : IPlatformInteractionService { public Task CopyTextAsync(string text, CancellationToken cancellationToken = default) => Task.CompletedTask; public Task OpenUriAsync(Uri uri, CancellationToken cancellationToken = default) => Task.CompletedTask; }
+    private sealed class TestInteractions : IPlatformInteractionService { public Task CopyImageAsync(byte[] content, CancellationToken cancellationToken = default) => Task.CompletedTask; public Task CopyTextAsync(string text, CancellationToken cancellationToken = default) => Task.CompletedTask; public Task OpenUriAsync(Uri uri, CancellationToken cancellationToken = default) => Task.CompletedTask; }
     private sealed class TestFiles : IFileSelectionService { public Task<IReadOnlyList<SelectedAttachmentFile>> PickMultipleAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<SelectedAttachmentFile>>([]); }
     private sealed class TestMedia : IRealmMediaService {
         public event EventHandler<AvatarChangedEventArgs>? AvatarChanged { add { } remove { } }

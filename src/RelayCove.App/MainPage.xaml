@@ -701,10 +701,18 @@
                                                     <TapGestureRecognizer Command="{Binding ViewModel.SelectSearchResultCommand, Source={x:Reference RootPage}, x:DataType=local:MainPage}" CommandParameter="{Binding .}" />
                                                 </Border.GestureRecognizers>
                                                 <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="4">
-                                                    <controls:SearchHighlightLabel SourceText="{Binding Title}"
-                                                                                   HighlightQuery="{Binding ViewModel.SearchQuery, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
-                                                                                   Style="{StaticResource BaseLabelStyle}"
-                                                                                   FontAttributes="Bold" />
+                                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                                        <controls:SearchHighlightLabel SourceText="{Binding Title}"
+                                                                                       HighlightQuery="{Binding ViewModel.SearchQuery, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
+                                                                                       Style="{StaticResource BaseLabelStyle}"
+                                                                                       FontAttributes="Bold" />
+                                                        <Label Grid.Column="1"
+                                                               Text="{Binding TimestampText}"
+                                                               IsVisible="{Binding HasTimestamp}"
+                                                               Style="{StaticResource MutedLabelStyle}"
+                                                               FontSize="12"
+                                                               VerticalTextAlignment="Center" />
+                                                    </Grid>
                                                     <controls:SearchHighlightLabel Grid.Row="1"
                                                                                    SourceText="{Binding Subtitle}"
                                                                                    IsVisible="{Binding HasSubtitle}"
@@ -945,18 +953,17 @@
                                 AnchorX="{Binding ViewModel.ComposerEmojiAnchorX, Source={x:Reference RootPage}, x:DataType=local:MainPage}"
                                 AnchorY="{Binding ViewModel.ComposerEmojiAnchorY, Source={x:Reference RootPage}, x:DataType=local:MainPage}" />
                         </Border.Behaviors>
-                        <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" RowSpacing="4">
+                        <Grid RowDefinitions="Auto,*,Auto,Auto,Auto" RowSpacing="4">
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="4" IsVisible="{Binding Stickers.IsImageTab}">
-                                <Entry Placeholder="搜索表情名称" Text="{Binding Stickers.Query}" FontSize="13" ClearButtonVisibility="WhileEditing" />
+                                <Entry Placeholder="搜索表情名称（可选）" Text="{Binding Stickers.Query}" FontSize="13" ClearButtonVisibility="WhileEditing" />
                                 <Button Grid.Column="1" Text="导入" Command="{Binding Stickers.ImportCommand}" IsVisible="{Binding Stickers.IsFavorites}" IsEnabled="{Binding Stickers.CanAct}" Style="{StaticResource BaseButtonStyle}" />
                             </Grid>
-                            <Picker Grid.Row="1" Title="表情分类" ItemsSource="{Binding Stickers.Categories}" SelectedItem="{Binding Stickers.Category}" IsVisible="{Binding Stickers.IsSearch}" FontSize="12" />
                             <CollectionView x:Name="ComposerEmojiCollection"
                                             ItemsSource="{Binding VisibleEmojiChoices}"
                                             IsVisible="{Binding Stickers.IsDefault}"
                                             SelectionMode="None"
                                             WidthRequest="{Binding EmojiPickerContentWidth}"
-                                            Grid.Row="2"
+                                            Grid.Row="1"
                                             VerticalScrollBarVisibility="Always"
                                             HorizontalScrollBarVisibility="Never"
                                             HorizontalOptions="Start">
@@ -1014,10 +1021,19 @@
                                     </DataTemplate>
                                 </CollectionView.ItemTemplate>
                             </CollectionView>
-                            <CollectionView Grid.Row="2" ItemsSource="{Binding Stickers.Items}" IsVisible="{Binding Stickers.IsImageTab}"
+                            <CollectionView x:Name="StickerImageCollection"
+                                            ItemsUpdatingScrollMode="KeepScrollOffset"
+                                            Grid.Row="1"
+                                            ItemsSource="{Binding Stickers.Items}"
+                                            IsVisible="{Binding Stickers.IsImageTab}"
                                             IsEnabled="{Binding Stickers.CanAct}"
-                                            SelectionMode="None" VerticalScrollBarVisibility="Always" HorizontalScrollBarVisibility="Never"
-                                            RemainingItemsThreshold="12" RemainingItemsThresholdReachedCommand="{Binding Stickers.LoadMoreCommand}">
+                                            SelectionMode="None" VerticalScrollBarVisibility="Always" HorizontalScrollBarVisibility="Never">
+                                <CollectionView.Behaviors>
+                                    <windowsBehaviors:StickerInfiniteScrollBehavior
+                                        LoadMoreCommand="{Binding Stickers.LoadMoreCommand}"
+                                        HasMoreItems="{Binding Stickers.HasMoreItems}"
+                                        IsLoading="{Binding Stickers.IsLoading}" />
+                                </CollectionView.Behaviors>
                                 <CollectionView.ItemsLayout>
                                     <GridItemsLayout Orientation="Vertical" Span="{Binding StickerPickerColumns}" HorizontalItemSpacing="3" VerticalItemSpacing="5" />
                                 </CollectionView.ItemsLayout>
@@ -1040,8 +1056,8 @@
                                     </DataTemplate>
                                 </CollectionView.ItemTemplate>
                             </CollectionView>
-                            <ActivityIndicator Grid.Row="2" IsVisible="{Binding Stickers.IsLoading}" IsRunning="{Binding Stickers.IsLoading}" WidthRequest="28" HeightRequest="28" InputTransparent="True" />
-                            <Grid Grid.Row="3" RowDefinitions="Auto,Auto" IsVisible="{Binding Stickers.IsEditing}">
+                            <ActivityIndicator Grid.Row="1" IsVisible="{Binding Stickers.IsLoading}" IsRunning="{Binding Stickers.IsLoading}" WidthRequest="28" HeightRequest="28" InputTransparent="True" />
+                            <Grid Grid.Row="2" RowDefinitions="Auto,Auto" IsVisible="{Binding Stickers.IsEditing}">
                                 <Entry Text="{Binding Stickers.EditLabel}" MaxLength="100" Placeholder="收藏名称" FontSize="12" />
                                 <HorizontalStackLayout Grid.Row="1" Spacing="4" HorizontalOptions="End" IsEnabled="{Binding Stickers.CanAct}">
                                     <Button Text="改名" Command="{Binding Stickers.SaveNameCommand}" Style="{StaticResource BaseButtonStyle}" />
@@ -1049,16 +1065,15 @@
                                     <Button Text="取消" Command="{Binding Stickers.CancelEditCommand}" Style="{StaticResource BaseButtonStyle}" />
                                 </HorizontalStackLayout>
                             </Grid>
-                            <VerticalStackLayout Grid.Row="4" Spacing="2">
+                            <VerticalStackLayout Grid.Row="3" Spacing="2">
                                 <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding Stickers.HasStatus}">
                                     <Label Text="{Binding Stickers.Status}" FontSize="11" MaxLines="2" Style="{StaticResource MutedLabelStyle}" />
                                     <Button Grid.Column="1" Text="重试" Command="{Binding Stickers.ReloadCommand}" IsVisible="{Binding Stickers.IsImageTab}" Padding="4,0" FontSize="11" BackgroundColor="Transparent" />
                                 </Grid>
-                                <Label Text="来源：ChineseBQB · 按名称/分类搜索" FontSize="10" IsVisible="{Binding Stickers.IsSearch}" Style="{StaticResource MutedLabelStyle}" />
                                 <Label Text="点图片直接发送 · 收藏仅保存在本机" FontSize="10" IsVisible="{Binding Stickers.IsFavorites}" Style="{StaticResource MutedLabelStyle}" />
                             </VerticalStackLayout>
-                            <Grid Grid.Row="5" ColumnDefinitions="*,*,*" ColumnSpacing="4">
-                                <Button Text="⌕ 搜索" Command="{Binding Stickers.SelectTabCommand}" CommandParameter="search" Style="{StaticResource BaseButtonStyle}">
+                            <Grid Grid.Row="4" ColumnDefinitions="*,*,*" ColumnSpacing="4">
+                                <Button Text="☺ 表情" Command="{Binding Stickers.SelectTabCommand}" CommandParameter="search" Style="{StaticResource BaseButtonStyle}">
                                     <Button.Triggers><DataTrigger TargetType="Button" Binding="{Binding Stickers.IsSearch}" Value="True"><Setter Property="TextColor" Value="{StaticResource AccentColor}" /><Setter Property="FontAttributes" Value="Bold" /></DataTrigger></Button.Triggers>
                                 </Button>
                                 <Button Grid.Column="1" Text="☺ 默认" Command="{Binding Stickers.SelectTabCommand}" CommandParameter="default" Style="{StaticResource BaseButtonStyle}">
@@ -1250,6 +1265,14 @@
                                     Style="{StaticResource PopoverMenuButtonStyle}"
                                     Command="{Binding CopyActiveMessageCommand}"
                                     IsVisible="{Binding CanCopyActiveMessage}">
+                                <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
+                            </Button>
+                            <Button x:Name="ImageCopyMenuButton"
+                                    Text="复制图片"
+                                    ImageSource="icon_copy.png"
+                                    Style="{StaticResource PopoverMenuButtonStyle}"
+                                    Command="{Binding CopyActiveImageCommand}"
+                                    IsVisible="{Binding HasActiveMessageAttachment}">
                                 <Button.Behaviors><windowsBehaviors:LeftAlignedButtonContentBehavior /></Button.Behaviors>
                             </Button>
                             <Button x:Name="ImageDownloadMenuButton"

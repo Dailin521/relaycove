@@ -2433,7 +2433,7 @@ public sealed class ClientSession : IClientSession, IMessageMutationObserver, IR
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        await _commands.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        await _commands.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             await StopRunAsync(setOffline: true).ConfigureAwait(false);
