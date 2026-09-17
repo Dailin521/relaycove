@@ -2,17 +2,19 @@
 
 状态：当前权威计划
 源码版本：`1.0.9`（构建号 `16`）
-平台：Windows 11 x64
+当前已发布平台：Windows 11 x64；Android/iOS 已规划，尚未适配验证
 框架：`net10.0-windows10.0.19041.0`
 更新：2026-09-17
 
 ## 1. 产品方向
 
-RichChat 是个人使用的 Windows MAUI Zulip 客户端。为保持升级与源码兼容，工程、命名空间、应用 ID 和本机缓存键继续使用既有 `RelayCove.*` 标识；`RelayCove.App` 是唯一继续开发和发布的产品客户端，历史 `RelayCove.Web` 不再要求功能对齐。
+RichChat 当前已发布产品是个人使用的 Windows MAUI Zulip 客户端。为保持升级与源码兼容，工程、命名空间、应用 ID 和本机缓存键继续使用既有 `RelayCove.*` 标识；`RelayCove.App` 是唯一继续开发和发布的产品客户端，历史 `RelayCove.Web` 不再要求功能对齐。
 
 Zulip Realm 始终是账号、权限、成员、消息和实时事件的唯一事实源。不得增加 RichChat 服务端、代理、BFF、第二消息后端或 WebView UI。
 
 所有 MAUI 修改直接在 `main` 进行，一次只处理用户明确提出的一个问题。UI/交互由用户在 Visual Studio 验证，确认后才提交推送。
+
+移动端后续按 [Android / iOS 移动适配计划](docs/MOBILE_ADAPTATION.md)实施：保持 MAUI 与既有分层，先隔离 Windows 平台依赖，再完成 Android 基础聊天、iOS 复用适配及各自签名分发。2026-09-17 本轮只落实文档，不修改代码或发布范围；移动构建、真机运行及后台推送尚未验证。
 
 ## 2. 当前个人 MVP
 
@@ -26,12 +28,13 @@ Zulip Realm 始终是账号、权限、成员、消息和实时事件的唯一�
 - Windows 通知、任务栏未读、托盘闪烁/预览/点击跳转。
 - Zulip 官方 presence：在线、忙碌（协议 `idle`）、离线，以及独立个人 emoji/text 状态。
 
-### 不做
+### 当前版本边界与后续范围
 
-- 公开频道、命名话题、多人私信和旧频道兼容入口。
-- 历史 RelayCove Web 新功能或 MAUI/Web 对齐。
-- `@` 候选、typing、应用退出后的后台 push、SSO、多账号、AI、静默安装更新。
-- Android、iOS、Mac Catalyst、Linux、MSIX 和代码签名。
+- 不做公开频道、命名话题、多人私信和旧频道兼容入口。
+- 不做历史 RelayCove Web 新功能或 MAUI/Web 对齐。
+- `@` 候选、typing、应用退出后的后台 push、SSO、多账号、AI、静默安装更新不属于当前 MVP；移动后台推送只列为独立待规划项。
+- Android、iOS 已纳入移动适配规划，尚未实现；不将本节 Windows 已支持能力视为移动端已经完成。
+- Mac Catalyst、Linux、MSIX 和 Windows 代码签名仍不在当前范围；移动签名与分发按移动计划单独验收。
 
 ## 3. 架构边界
 
@@ -122,7 +125,7 @@ pwsh ./scripts/verify.ps1 -Mode Live
 
 ## 8. 文档策略
 
-长期维护本计划、`docs/FEATURES.md`、AI 索引/STATUS/WORKFLOW、按月工作日志及正式 Release Notes。每次功能修改必须在交付用户验证前补当月日志，并同步变化的功能说明；格式见 `docs/worklogs/README.md`。仅索引明确列出的计划视为活动计划，目前没有独立 V2 活动计划。临时 Stage 排查记录在结论沉淀后结束维护，月度工作日志长期保留；发布历史以 Git commit、tag 和 GitHub Release 交叉核对。
+长期维护本计划、`docs/FEATURES.md`、AI 索引/STATUS/WORKFLOW、按月工作日志及正式 Release Notes。每次功能修改必须在交付用户验证前补当月日志，并同步变化的功能说明；格式见 `docs/worklogs/README.md`。仅索引明确列出的计划视为活动计划；当前新增 Android/iOS 移动适配计划，没有独立 V2 活动计划。临时 Stage 排查记录在结论沉淀后结束维护，月度工作日志长期保留；发布历史以 Git commit、tag 和 GitHub Release 交叉核对。
 
 ## 9. 官方依据
 

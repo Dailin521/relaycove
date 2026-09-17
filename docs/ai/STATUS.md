@@ -2,6 +2,7 @@
 
 更新：2026-09-17
 
+- 移动适配：已建立 [Android/iOS 适配计划](../MOBILE_ADAPTATION.md)，同步产品边界和 AI 活动计划索引；本轮仅文档。源码核查基线 `5477b22`，当前仍为 Windows `1.0.9 / 16`。M1–M4 未开始；未运行 Android/iOS 构建、真机、签名、Fast/Full/Live 或发布，不将既有 Windows 验证算作移动验证。下一步按授权先隔离 App 内 Windows 依赖，再推进 Android 基础聊天；后台推送独立待规划。
 - 已发布：`1.0.9`，构建号 `16`，提交 `6f322e2`；GitHub Latest、tag、发布说明和五项资产已回读核实。保持 SVN 的 `1.0.x` 版本系列，不回写 SVN。版本变化见 [1.0.9 说明](../releases/v1.0.9.md)。
 - 1.0.9 发布前 `pwsh ./scripts/verify.ps1 -Mode Full` 通过：Core 307、Client 324、Data 41、App 1124，共 1796 项；Release 构建 0 错误、7 个既有 XamlC 警告，自包含 ZIP 及运行时/秘密检查通过。中文安装器和更新清单由同一 ZIP 打包；GitHub 上安装器和 ZIP 的 SHA-256、文件长度及更新清单版本/构建号均已回读一致。
 - 图片预览闪退已通过隔离原生窗口复现：单独覆盖通用图片控件原生 Clip 即触发与用户相同的 WinUI/0x80004002；仅显示、鼠标事件或变换可通过，事件注册修改未解决根因。现改为专用容器外层裁切、内层变换；换图/关闭/重置恢复初始状态，调整尺寸保留缩放和平移。修复版真实控件 PNG/JPEG/透明 GIF/大图、20 次加载卸载、程序调用缩放平移与重置、调整尺寸及加载中关闭通过，App 1124 项通过。证据 `.verify/preview-native-fixed-parity/phases.log`、`.verify/preview-isolated-fix-app-tests.log`；用户已在 VS 确认本地预览可用。真实 Win10 故障机覆盖仍随实际使用继续观察。
